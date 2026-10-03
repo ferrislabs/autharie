@@ -1,6 +1,6 @@
 //! Writing this cluster's own Gateway TLS Secret.
 //!
-//! `charts/aether-dataplane`'s `gateway.tls.secretName` already expects
+//! `charts/autharie-dataplane`'s `gateway.tls.secretName` already expects
 //! exactly this shape -- a `kubernetes.io/tls` Secret in the Gateway's own
 //! namespace -- because it was written for bring-your-own-secret from the
 //! start. This is what keeps that secret's contents current when an

@@ -308,7 +308,7 @@ mod tests {
     #[test]
     fn a_trailing_slash_on_the_issuer_is_absorbed() {
         let auth = ControlPlaneAuth::client_credentials(
-            "https://id.example.test/realms/aether/",
+            "https://id.example.test/realms/autharie/",
             "herald-service",
             "s3cret",
         );
@@ -318,7 +318,7 @@ mod tests {
         };
         assert_eq!(
             token_url,
-            "https://id.example.test/realms/aether/protocol/openid-connect/token"
+            "https://id.example.test/realms/autharie/protocol/openid-connect/token"
         );
     }
 }

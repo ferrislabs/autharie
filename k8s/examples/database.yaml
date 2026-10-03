@@ -2,7 +2,7 @@ apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
   name: cluster-example
-  namespace: test-aether
+  namespace: test-autharie
 spec:
   instances: 1
   storage:

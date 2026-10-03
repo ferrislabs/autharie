@@ -1,0 +1,96 @@
+use autharie_auth::Identity;
+use autharie_core::role::{Role, commands::CreateRoleCommand, ports::RoleService};
+use axum::{
+    Json,
+    extract::{Extension, State},
+};
+use axum_extra::routing::TypedPath;
+use serde::{Deserialize, Serialize};
+use utoipa::{IntoParams, ToSchema};
+use uuid::Uuid;
+
+use crate::{errors::ApiError, response::Response, state::AppState};
+
+#[derive(Deserialize, ToSchema)]
+pub struct CreateRoleRequest {
+    pub name: String,
+    pub permissions: u64,
+    pub color: Option<String>,
+}
+
+#[derive(Serialize, ToSchema, PartialEq)]
+pub struct CreateRoleResponse {
+    data: Role,
+}
+
+#[derive(TypedPath, IntoParams, Deserialize)]
+#[typed_path("/organisations/{organisation_id}/roles")]
+pub struct CreateRoleRoute {
+    pub organisation_id: Uuid,
+}
+
+#[utoipa::path(
+    post,
+    path = "/{organisation_id}/roles",
+    summary = "create role",
+    tag = "roles",
+    description = "Create a role within the specified organisation.",
+    request_body = CreateRoleRequest,
+    params(CreateRoleRoute),
+    responses(
+        (status = 201, description = "Role created successfully", body = CreateRoleResponse),
+        (status = 400, description = "Invalid request data", body = ApiError),
+        (status = 401, description = "Unauthorized", body = ApiError),
+        (status = 500, description = "Internal Server Error", body = ApiError)
+    ),
+    security(
+        ("bearer_auth" = [])
+    )
+)]
+pub async fn create_role_handler(
+    CreateRoleRoute { organisation_id }: CreateRoleRoute,
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Json(request): Json<CreateRoleRequest>,
+) -> Result<Response<CreateRoleResponse>, ApiError> {
+    let organisation_id = organisation_id.into();
+    let mut command = CreateRoleCommand::new(request.name, request.permissions)
+        .with_organisation_id(organisation_id);
+
+    if let Some(color) = request.color {
+        command = command.with_color(color);
+    }
+
+    let role = state.service.create_role(identity, command).await?;
+
+    Ok(Response::Created(CreateRoleResponse { data: role }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_helpers::{app_state, user_identity};
+
+    #[tokio::test]
+    async fn create_role_maps_service_error() {
+        let state = app_state();
+        let identity = user_identity("user-123");
+        let request = CreateRoleRequest {
+            name: "admin".to_string(),
+            permissions: 7,
+            color: None,
+        };
+
+        let result = create_role_handler(
+            CreateRoleRoute {
+                organisation_id: Uuid::new_v4(),
+            },
+            State(state),
+            Extension(identity),
+            Json(request),
+        )
+        .await;
+
+        assert!(matches!(result, Err(ApiError::Unknown { .. })));
+    }
+}

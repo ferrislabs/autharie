@@ -142,7 +142,7 @@ mod tests {
     use serde_json::json;
 
     /// The archive half, shaped the way the control plane writes it in
-    /// `archive_section`. Duplicated from `aether-core` deliberately and
+    /// `archive_section`. Duplicated from `autharie-core` deliberately and
     /// visibly: this crate does not depend on it, and a payload that fails to
     /// deserialise here costs a retry loop rather than a compile error.
     #[test]
@@ -154,10 +154,10 @@ mod tests {
             "name": "acme-prod",
             "kind": "keycloak",
             "version": "25.0.0",
-            "namespace": "aether-acme-prod",
+            "namespace": "autharie-acme-prod",
             "created_by": "11111111-2222-3333-4444-555555555555",
             "archive": {
-                "destination_path": "s3://aether-backups/9f8e7d6c-5b4a-3c2d-1e0f-a1b2c3d4e5f6/b6a1c2d3-e4f5-4a6b-8c9d-0e1f2a3b4c5d",
+                "destination_path": "s3://autharie-backups/9f8e7d6c-5b4a-3c2d-1e0f-a1b2c3d4e5f6/b6a1c2d3-e4f5-4a6b-8c9d-0e1f2a3b4c5d",
                 "encryption": "AES256",
                 "schedule": { "cron": "0 30 2 * * *", "zone": "UTC", "enabled": true }
             }
@@ -168,7 +168,11 @@ mod tests {
             .archive
             .expect("the deployment archives");
 
-        assert!(archive.destination_path.starts_with("s3://aether-backups/"));
+        assert!(
+            archive
+                .destination_path
+                .starts_with("s3://autharie-backups/")
+        );
         assert!(!archive.destination_path.ends_with('/'));
         assert_eq!(archive.encryption.as_deref(), Some("AES256"));
         assert_eq!(archive.schedule.cron, "0 30 2 * * *");
@@ -187,7 +191,7 @@ mod tests {
             "name": "acme-prod",
             "kind": "keycloak",
             "version": "25.0.0",
-            "namespace": "aether-acme-prod",
+            "namespace": "autharie-acme-prod",
             "created_by": "11111111-2222-3333-4444-555555555555"
         });
 
@@ -200,7 +204,7 @@ mod tests {
     }
 
     /// Deserialises from a literal JSON document shaped like the payload the control
-    /// plane actually writes (see `aether-core`'s `RecordActionCommand` construction),
+    /// plane actually writes (see `autharie-core`'s `RecordActionCommand` construction),
     /// not a round-trip of this struct.
     #[test]
     fn deserializes_from_the_control_plane_payload_shape() {
@@ -211,7 +215,7 @@ mod tests {
             "name": "acme-prod",
             "kind": "keycloak",
             "version": "25.0.0",
-            "namespace": "aether-acme-prod",
+            "namespace": "autharie-acme-prod",
             "created_by": "11111111-2222-3333-4444-555555555555"
         });
 
@@ -220,7 +224,7 @@ mod tests {
         assert_eq!(payload.name, "acme-prod");
         assert_eq!(payload.kind, "keycloak");
         assert_eq!(payload.version, "25.0.0");
-        assert_eq!(payload.namespace, "aether-acme-prod");
+        assert_eq!(payload.namespace, "autharie-acme-prod");
     }
 
     #[test]

@@ -3,5 +3,5 @@
 set -e
 
 rm -rf /usr/share/nginx/html/*
-cp -r /usr/local/src/aether/* /usr/share/nginx/html
-envsubst < /usr/local/src/aether/config.json > /usr/share/nginx/html/config.json
+cp -r /usr/local/src/autharie/* /usr/share/nginx/html
+envsubst < /usr/local/src/autharie/config.json > /usr/share/nginx/html/config.json

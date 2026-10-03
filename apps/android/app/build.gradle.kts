@@ -8,13 +8,13 @@ plugins {
 }
 
 android {
-    namespace = "fr.aether.android"
+    namespace = "fr.autharie.android"
     compileSdk {
         version = release(36)
     }
 
     defaultConfig {
-        applicationId = "fr.aether.android"
+        applicationId = "fr.autharie.android"
         minSdk = 26
         targetSdk = 36
         versionCode = 1

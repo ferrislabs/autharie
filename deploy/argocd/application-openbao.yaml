@@ -15,7 +15,7 @@ spec:
         valueFiles:
           - $values/deploy/openbao/values-production.yaml
     - ref: values
-      repoURL: https://github.com/NathaelB/aether
+      repoURL: https://github.com/ferrislabs/autharie
       targetRevision: main
   destination:
     server: https://kubernetes.default.svc

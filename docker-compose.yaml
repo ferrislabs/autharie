@@ -1,68 +1,68 @@
 version: "3.8"
 
 services:
-  # === PostgreSQL Database (shared by Aether and Ferriskey) ===
+  # === PostgreSQL Database (shared by Autharie and Ferriskey) ===
   postgres:
     image: postgres:17
     environment:
-      POSTGRES_USER: aether
-      POSTGRES_PASSWORD: aether
-      POSTGRES_DB: aether
+      POSTGRES_USER: autharie
+      POSTGRES_PASSWORD: autharie
+      POSTGRES_DB: autharie
     ports:
-      - "${AETHER_POSTGRES_PORT:-5433}:5432"
+      - "${AUTHARIE_POSTGRES_PORT:-5433}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./docker/postgres/init-databases.sh:/docker-entrypoint-initdb.d/init-databases.sh
     networks:
-      - aether
+      - autharie
     healthcheck:
       test:
         - CMD-SHELL
         - pg_isready
         - -U
-        - aether
+        - autharie
         - -d
-        - aether
+        - autharie
       interval: 10s
       retries: 5
       start_period: 30s
       timeout: 10s
 
-  # === Aether Services ===
-  aether-migrations:
+  # === Autharie Services ===
+  autharie-migrations:
     build:
       context: .
       target: control-plane
     networks:
-      - aether
+      - autharie
     entrypoint:
       - sqlx
     command:
       - migrate
       - run
       - --source
-      - /usr/local/src/aether/migrations
+      - /usr/local/src/autharie/migrations
     environment:
-      DATABASE_URL: postgresql://aether:aether@postgres/aether
+      DATABASE_URL: postgresql://autharie:autharie@postgres/autharie
     restart: no
     depends_on:
       postgres:
         condition: service_healthy
 
-  aether:
+  autharie:
     build:
       context: .
       target: control-plane
     ports:
-      - "${AETHER_API_PORT:-7777}:7777"
+      - "${AUTHARIE_API_PORT:-7777}:7777"
     networks:
-      - aether
+      - autharie
     environment:
       # 3333, not 3334: the "3334:3333" mapping is for reaching Ferriskey from
       # the host. Inside this network the container port is what counts, and
       # the wrong one meant the control plane could not fetch the JWKS -- so
       # every authenticated request failed with what looked like a bad token.
-      AUTH_ISSUER: http://ferriskey-api:3333/realms/aether
+      AUTH_ISSUER: http://ferriskey-api:3333/realms/autharie
       # Without this the CORS layer allows no origin at all, and the console
       # cannot call the API. It has been required since the origins became
       # configurable rather than hardcoded to localhost:5173.
@@ -70,19 +70,19 @@ services:
       SERVER_PORT: 7777
       DATABASE_HOST: postgres
       DATABASE_PORT: 5432
-      DATABASE_NAME: aether
-      DATABASE_USER: aether
-      DATABASE_PASSWORD: aether
+      DATABASE_NAME: autharie
+      DATABASE_USER: autharie
+      DATABASE_PASSWORD: autharie
       # 9000, not 9800: the published port is for reaching RustFS from the
       # host. Inside this network the container port is what counts, the same
       # way it is for Ferriskey above.
       OBJECT_STORE_ENDPOINT: http://rustfs:9000
-      OBJECT_STORE_BUCKET: aether-backups
-      OBJECT_STORE_ACCESS_KEY: aether
-      OBJECT_STORE_SECRET_KEY: aetheraether
+      OBJECT_STORE_BUCKET: autharie-backups
+      OBJECT_STORE_ACCESS_KEY: autharie
+      OBJECT_STORE_SECRET_KEY: autharieautharie
       KEY_MANAGER_ADDRESS: http://openbao:8200
-      KEY_MANAGER_TOKEN: aether-root
-      KEY_MANAGER_KEY: aether-backups
+      KEY_MANAGER_TOKEN: autharie-root
+      KEY_MANAGER_KEY: autharie-backups
       # Not a `depends_on`: an unreachable Quickwit is a search that fails, not
       # a control plane that refuses to start.
       QUICKWIT_URL: http://quickwit:7280
@@ -92,7 +92,7 @@ services:
       # the subject of whoever ran it; empty here so a checkout that starts
       # Compose by hand says in its logs that nobody can operate it, rather
       # than silently granting a subject nobody chose.
-      AETHER_BOOTSTRAP_OPERATOR: ${AETHER_BOOTSTRAP_OPERATOR:-}
+      AUTHARIE_BOOTSTRAP_OPERATOR: ${AUTHARIE_BOOTSTRAP_OPERATOR:-}
       # The oldest version a data plane may report and still be sent an
       # upgrade: the control plane refuses one for a Herald older than this,
       # which could not read the action. Set to what the local chart reports
@@ -108,7 +108,7 @@ services:
       REALM_ADMIN_USERNAME: ${FERRISKEY_ADMIN_USER:-admin}
       REALM_ADMIN_PASSWORD: ${FERRISKEY_ADMIN_PASSWORD:-admin}
     depends_on:
-      aether-migrations:
+      autharie-migrations:
         condition: service_completed_successfully
       rustfs:
         condition: service_healthy
@@ -121,7 +121,7 @@ services:
     profiles:
       - ferriskey
     networks:
-      - aether
+      - autharie
     entrypoint:
       - sqlx
     command:
@@ -130,7 +130,7 @@ services:
       - --source
       - /usr/local/src/ferriskey/migrations
     environment:
-      DATABASE_URL: postgresql://aether:aether@postgres/ferriskey
+      DATABASE_URL: postgresql://autharie:autharie@postgres/ferriskey
     restart: no
     depends_on:
       postgres:
@@ -141,15 +141,15 @@ services:
     profiles:
       - ferriskey
     networks:
-      - aether
+      - autharie
     environment:
       ALLOWED_ORIGINS: http://localhost:5556,http://localhost:5173
       WEBAPP_URL: http://localhost:5556
       DATABASE_HOST: postgres
       DATABASE_PORT: 5432
       DATABASE_NAME: ferriskey
-      DATABASE_PASSWORD: aether
-      DATABASE_USER: aether
+      DATABASE_PASSWORD: autharie
+      DATABASE_USER: autharie
     ports:
       - "${FERRISKEY_API_PORT:-3334}:3333"
     depends_on:
@@ -161,7 +161,7 @@ services:
     profiles:
       - ferriskey
     networks:
-      - aether
+      - autharie
     environment:
       API_URL: http://localhost:3334
     ports:
@@ -185,13 +185,13 @@ services:
       - -dev
       - -dev-listen-address=0.0.0.0:8200
     environment:
-      BAO_DEV_ROOT_TOKEN_ID: aether-root
+      BAO_DEV_ROOT_TOKEN_ID: autharie-root
     ports:
       - "${OPENBAO_PORT:-8200}:8200"
     cap_add:
       - IPC_LOCK
     networks:
-      - aether
+      - autharie
     healthcheck:
       test:
         - CMD-SHELL
@@ -215,8 +215,8 @@ services:
       - "${RUSTFS_PORT:-9800}:9000"
       - "${RUSTFS_CONSOLE_PORT:-9801}:9001"
     environment:
-      RUSTFS_ACCESS_KEY: aether
-      RUSTFS_SECRET_KEY: aetheraether
+      RUSTFS_ACCESS_KEY: autharie
+      RUSTFS_SECRET_KEY: autharieautharie
       RUSTFS_VOLUMES: /data
       RUSTFS_CONSOLE_ENABLE: "true"
       # Server side encryption needs a master key, and without one RustFS
@@ -228,7 +228,7 @@ services:
     volumes:
       - rustfsdata:/data
     networks:
-      - aether
+      - autharie
     healthcheck:
       # Answering at all is health. Not `curl -f`: an S3 endpoint answers an
       # unauthenticated GET with 403, which -f turns into a failure, and the
@@ -245,24 +245,24 @@ services:
 
   # === Search index bootstrap ===
   # Quickwit's own S3 client expects the bucket to already exist -- unlike
-  # aether-s3's ensure_bucket, it never creates one itself. A one-shot step,
-  # the way aether-migrations is one, rather than teaching Quickwit's own
+  # autharie-s3's ensure_bucket, it never creates one itself. A one-shot step,
+  # the way autharie-migrations is one, rather than teaching Quickwit's own
   # config how to create a bucket it was never asked to own.
   quickwit-bucket:
     # quay.io, not docker.io: Docker Hub stopped serving the minio/mc
     # namespace; quay.io/minio/mc is the same image under the same tags.
     image: quay.io/minio/mc:latest
     networks:
-      - aether
+      - autharie
     entrypoint:
       - sh
       - -c
       - |
-        until mc alias set store http://rustfs:9000 aether aetheraether; do
+        until mc alias set store http://rustfs:9000 autharie autharieautharie; do
           echo "waiting for rustfs"
           sleep 2
         done
-        mc mb --ignore-existing store/aether-logs
+        mc mb --ignore-existing store/autharie-logs
     depends_on:
       rustfs:
         condition: service_healthy
@@ -270,7 +270,7 @@ services:
 
   # === Search index (Quickwit) ===
   # V0 of the logs chantier (#293): an index Herald can write to, not yet
-  # written to by anything. A separate bucket from aether-backups, not a
+  # written to by anything. A separate bucket from autharie-backups, not a
   # prefix inside it -- see docs/log-search-index.md for why.
   quickwit:
     image: quickwit/quickwit:0.9.0
@@ -279,13 +279,13 @@ services:
     ports:
       - "${QUICKWIT_PORT:-7280}:7280"
     environment:
-      AWS_ACCESS_KEY_ID: aether
-      AWS_SECRET_ACCESS_KEY: aetheraether
+      AWS_ACCESS_KEY_ID: autharie
+      AWS_SECRET_ACCESS_KEY: autharieautharie
     volumes:
       - ./docker/quickwit/config.yaml:/quickwit/config/quickwit.yaml:ro
       - quickwitdata:/quickwit/qwdata
     networks:
-      - aether
+      - autharie
     depends_on:
       quickwit-bucket:
         condition: service_completed_successfully
@@ -310,12 +310,12 @@ services:
       - "${RABBITMQ_PORT:-5672}:5672"
       - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
     environment:
-      RABBITMQ_DEFAULT_USER: aether
-      RABBITMQ_DEFAULT_PASS: aether
+      RABBITMQ_DEFAULT_USER: autharie
+      RABBITMQ_DEFAULT_PASS: autharie
     volumes:
       - rabbitmqdata:/var/lib/rabbitmq
     networks:
-      - aether
+      - autharie
     healthcheck:
       test:
         - CMD
@@ -327,7 +327,7 @@ services:
       timeout: 10s
 
 networks:
-  aether:
+  autharie:
     driver: bridge
 
 volumes:

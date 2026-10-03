@@ -62,7 +62,7 @@ mod tests {
             "memory_mib": 1024,
             "storage_gib": 5,
             "source": {
-                "destination_path": "s3://aether-backups/9f8e7d6c-5b4a-3c2d-1e0f-a1b2c3d4e5f6/b6a1c2d3-e4f5-4a6b-8c9d-0e1f2a3b4c5d",
+                "destination_path": "s3://autharie-backups/9f8e7d6c-5b4a-3c2d-1e0f-a1b2c3d4e5f6/b6a1c2d3-e4f5-4a6b-8c9d-0e1f2a3b4c5d",
                 "server_name": "deployment-b6a1c2d3-e4f5-4a6b-8c9d-0e1f2a3b4c5d-db",
                 "backup_id": "an-archive",
             },

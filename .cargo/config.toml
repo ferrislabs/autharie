@@ -1,5 +1,5 @@
 [alias]
-coverage = "llvm-cov --open --workspace --exclude aether-postgres --exclude aether-control-plane --exclude aether-operator --no-cfg-coverage-nightly --no-cfg-coverage --ignore-filename-regex (^|/)(apps/control-plane|apps/operator|libs/aether-postgres)(/|$)"
+coverage = "llvm-cov --open --workspace --exclude autharie-postgres --exclude autharie-control-plane --exclude autharie-operator --no-cfg-coverage-nightly --no-cfg-coverage --ignore-filename-regex (^|/)(apps/control-plane|apps/operator|libs/autharie-postgres)(/|$)"
 
 [env]
-CARGO_LLVM_COV_FLAGS = { value = "--exclude aether-postgres --exclude aether-control-plane --exclude aether-operator --ignore-filename-regex (^|/)(apps/control-plane|apps/operator|libs/aether-postgres)(/|$)", force = true }
+CARGO_LLVM_COV_FLAGS = { value = "--exclude autharie-postgres --exclude autharie-control-plane --exclude autharie-operator --ignore-filename-regex (^|/)(apps/control-plane|apps/operator|libs/autharie-postgres)(/|$)", force = true }

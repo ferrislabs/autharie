@@ -1,13 +1,13 @@
-apiVersion: aether.dev/v1alpha
+apiVersion: autharie.dev/v1alpha
 kind: IdentityInstance
 metadata:
   name: cloud-iam-keycloak
-  namespace: test-aether
+  namespace: test-autharie
 spec:
   organisationId: org-123
   provider: keycloak
   version: "25.0.0"
-  hostname: keycloak.aether.local
+  hostname: keycloak.autharie.local
   ingress:
     enabled: true
   database:

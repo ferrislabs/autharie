@@ -4,7 +4,7 @@
 # here.
 FROM rust:1.96-bookworm AS chef
 
-WORKDIR /usr/local/src/aether
+WORKDIR /usr/local/src/autharie
 
 RUN cargo install cargo-chef --version 0.1.77 --locked && \
     cargo install sqlx-cli --version 0.8.6 --locked --no-default-features --features postgres
@@ -25,7 +25,7 @@ FROM chef AS builder
 
 ENV SQLX_OFFLINE=true
 
-COPY --from=planner /usr/local/src/aether/recipe.json recipe.json
+COPY --from=planner /usr/local/src/autharie/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 
 # --- Build the workspace binaries --------------------------------------
@@ -43,50 +43,50 @@ RUN \
     addgroup \
     --system \
     --gid 1000 \
-    aether && \
+    autharie && \
     adduser \
     --system \
     --no-create-home \
     --disabled-login \
     --uid 1000 \
     --gid 1000 \
-    aether
+    autharie
 
-USER aether
+USER autharie
 
 FROM runtime AS control-plane
 
-COPY --from=builder /usr/local/src/aether/target/release/aether-control-plane /usr/local/bin/
-COPY --from=builder --chown=aether:aether /usr/local/src/aether/libs/aether-core/migrations /usr/local/src/aether/migrations
+COPY --from=builder /usr/local/src/autharie/target/release/autharie-control-plane /usr/local/bin/
+COPY --from=builder --chown=autharie:autharie /usr/local/src/autharie/libs/autharie-core/migrations /usr/local/src/autharie/migrations
 COPY --from=builder /usr/local/cargo/bin/sqlx /usr/local/bin/
 
 EXPOSE 80
 
-ENTRYPOINT [ "aether-control-plane" ]
+ENTRYPOINT [ "autharie-control-plane" ]
 
 FROM runtime AS operator
 
-COPY --from=builder /usr/local/src/aether/target/release/aether-operator /usr/local/bin/
+COPY --from=builder /usr/local/src/autharie/target/release/autharie-operator /usr/local/bin/
 
 EXPOSE 80
 
-ENTRYPOINT [ "aether-operator" ]
+ENTRYPOINT [ "autharie-operator" ]
 
 FROM runtime AS herald
 
-COPY --from=builder /usr/local/src/aether/target/release/herald /usr/local/bin/
+COPY --from=builder /usr/local/src/autharie/target/release/herald /usr/local/bin/
 
 ENTRYPOINT [ "herald" ]
 
 FROM runtime AS genesis
 
-COPY --from=builder /usr/local/src/aether/target/release/genesis /usr/local/bin/
+COPY --from=builder /usr/local/src/autharie/target/release/genesis /usr/local/bin/
 
 ENTRYPOINT [ "genesis" ]
 
 FROM node:24.12-alpine AS console-build
 
-WORKDIR /usr/local/src/aether
+WORKDIR /usr/local/src/autharie
 
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
@@ -106,7 +106,7 @@ RUN pnpm run build
 
 FROM nginx:1.28.0-alpine3.21-slim AS console
 
-COPY --from=console-build /usr/local/src/aether/dist /usr/local/src/aether
+COPY --from=console-build /usr/local/src/autharie/dist /usr/local/src/autharie
 COPY apps/console/nginx.conf /etc/nginx/conf.d/default.conf
 COPY apps/console/docker-entrypoint.sh /docker-entrypoint.d/docker-entrypoint.sh
 

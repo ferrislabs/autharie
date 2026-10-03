@@ -40,7 +40,7 @@ plane, before it leaves the cluster, under a key held in the customer's own key
 manager, which this platform can ask to unwrap and can never read directly.
 
 That is what a customer means when they ask for bring your own key, and it is
-the only version where the answer to "can Aether read my backups" is no rather
+the only version where the answer to "can Autharie read my backups" is no rather
 than "not in practice". It needs a different write path: a logical dump
 streamed through compression and per archive envelope encryption, rather than
 the object store's own encryption of what it receives.

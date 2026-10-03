@@ -1,12 +1,12 @@
 [package]
-name = "aether-control-plane"
-description = "Aether Control Plane"
+name = "autharie-control-plane"
+description = "Autharie Control Plane"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
 
 [dependencies]
-aether-api = { path = "../../libs/aether-api" }
+autharie-api = { path = "../../libs/autharie-api" }
 clap = { version = "4.5.54", features = ["derive", "env"] }
 dotenvy = "0.15.7"
 tokio = { version = "1.49.0", features = ["macros", "rt-multi-thread"] }

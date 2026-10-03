@@ -9,7 +9,7 @@ of those has to guess.
 
 A local spike (recorded in #292) ran ingestion, a time-bucketed histogram, a
 terms aggregation for facets, and full-text search against a Quickwit
-instance pointed at RustFS, on the same bucket family `libs/aether-s3`
+instance pointed at RustFS, on the same bucket family `libs/autharie-s3`
 already writes backups to. All four worked. That ruled out standing up a
 second stateful tier from scratch: the object store this platform already
 runs everywhere is enough, and Quickwit is built to carry many small indices
@@ -21,13 +21,13 @@ Isolation would then be a `WHERE` clause somebody has to remember to add to
 every query, forever. A separate index per organisation makes it a boundary
 Quickwit enforces structurally -- which index is even reachable -- instead.
 
-**Rejected: a prefix inside the `aether-backups` bucket, instead of a bucket
-of its own.** `S3ObjectStore::ensure_bucket` (`libs/aether-s3`) applies a
+**Rejected: a prefix inside the `autharie-backups` bucket, instead of a bucket
+of its own.** `S3ObjectStore::ensure_bucket` (`libs/autharie-s3`) applies a
 lifecycle rule to the *whole* bucket every time the control plane starts, by
 replacing its lifecycle configuration outright rather than merging into it.
 A log index living in that bucket would mean its own retention rule and the
 backup retention rule overwriting each other on alternating restarts. A
-second bucket, `aether-logs` (`aether-control-plane.fullname`-`-quickwit`'s
+second bucket, `autharie-logs` (`autharie-control-plane.fullname`-`-quickwit`'s
 `quickwit.bucket` value in the chart), costs nothing extra to run -- it is
 the same RustFS, the same credentials -- and keeps the two retention stories
 from ever fighting over one bucket's configuration.
@@ -84,9 +84,9 @@ docker compose up -d quickwit
 
 Quickwit answers on `localhost:7280` (`QUICKWIT_PORT` to change it). Inside
 the Compose network it is `quickwit:7280`; `quickwit-bucket` (a one-shot
-step, the way `aether-migrations` is one) creates the `aether-logs` bucket
+step, the way `autharie-migrations` is one) creates the `autharie-logs` bucket
 against RustFS before Quickwit starts, since Quickwit's own S3 client -- unlike
-`aether-s3`'s `ensure_bucket` -- never creates a bucket it does not find.
+`autharie-s3`'s `ensure_bucket` -- never creates a bucket it does not find.
 
 To try the acceptance criterion by hand -- this is the exact sequence this
 chantier was verified with, against two organisations at once to also show
@@ -133,7 +133,7 @@ curl -s -X POST "http://localhost:7280/api/v1/logs-$org1/search" \
 
 ## In the chart
 
-`charts/aether-control-plane` deploys Quickwit as `quickwit.enabled`
+`charts/autharie-control-plane` deploys Quickwit as `quickwit.enabled`
 (default `true`): a single-replica Deployment running `quickwit run` in its
 all-in-one mode (metastore, indexer, searcher and control plane in one
 process -- there is no traffic yet to split it for), a ClusterIP `Service`

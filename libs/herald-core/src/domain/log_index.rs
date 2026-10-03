@@ -254,7 +254,7 @@ mod tests {
             deployment_id: DeploymentId::new("22222222-2222-2222-2222-222222222222"),
             dataplane_id: DataPlaneId::new("11111111-1111-1111-1111-111111111111"),
             organisation_id: OrganisationId::new("55555555-5555-5555-5555-555555555555"),
-            namespace: "aether-acme".to_string(),
+            namespace: "autharie-acme".to_string(),
             kind: DeploymentKind::Ferriskey,
             session_id: LogSessionId(Uuid::nil()),
             since_minutes: 5,

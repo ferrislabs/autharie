@@ -1,4 +1,4 @@
-use aether_amqp::{Link, Live};
+use autharie_amqp::{Link, Live};
 use lapin::options::{BasicPublishOptions, ExchangeDeclareOptions};
 use lapin::types::FieldTable;
 use lapin::{BasicProperties, Channel, ExchangeKind};

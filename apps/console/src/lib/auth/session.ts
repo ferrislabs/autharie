@@ -18,7 +18,7 @@ export interface LockManagerLike {
   request<T>(name: string, work: () => Promise<T>): Promise<T>
 }
 
-const RENEWAL_LOCK = 'aether:session-renewal'
+const RENEWAL_LOCK = 'autharie:session-renewal'
 
 /**
  * Renews the session, never more than once at a time across every tab.

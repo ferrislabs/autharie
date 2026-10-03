@@ -12,7 +12,7 @@ test: ## Lancer les tests
 	cargo nextest run
 
 test-crds: ## Tester seulement les CRDs
-	cargo test -p aether-crds
+	cargo test -p autharie-crds
 
 # === CRDs ===
 
@@ -24,7 +24,7 @@ install-crds: crds ## Générer et installer les CRDs dans le cluster
 	@kubectl apply -f k8s/crds/
 	@echo "✅ CRDs installed successfully"
 	@echo ""
-	@kubectl get crd | grep aether.io
+	@kubectl get crd | grep autharie.io
 
 uninstall-crds: ## Désinstaller les CRDs du cluster
 	@echo "🗑️  Uninstalling CRDs..."
@@ -33,12 +33,12 @@ uninstall-crds: ## Désinstaller les CRDs du cluster
 
 verify-crds: ## Vérifier les CRDs installées
 	@echo "🔍 Verifying CRDs..."
-	@kubectl get crd | grep aether.io || echo "❌ No Aether CRDs found"
+	@kubectl get crd | grep autharie.io || echo "❌ No Autharie CRDs found"
 
 
 # === Démo complète ===
 
-demo: ## Monter tout Aether en local, prêt à créer un déploiement depuis la console
+demo: ## Monter tout Autharie en local, prêt à créer un déploiement depuis la console
 	@./scripts/demo.sh up
 
 demo-down: ## Tout supprimer : compose, volumes et cluster k3d
@@ -62,7 +62,7 @@ local-hosts-remove: ## Les retirer de /etc/hosts (demande sudo)
 
 # === Cluster local ===
 
-local-up: ## Créer le cluster k3d dédié à Aether et y installer CRDs + CloudNativePG
+local-up: ## Créer le cluster k3d dédié à Autharie et y installer CRDs + CloudNativePG
 	@./scripts/local-cluster.sh up
 
 local-down: ## Supprimer le cluster k3d dédié
@@ -83,8 +83,8 @@ test-objectstore: ## Lancer les tests qui ont besoin d'un vrai object store
 		echo "Voir .env.example — le port doit être celui publié par docker-compose (9800)."; \
 		exit 1; \
 	}
-	cargo test -p aether-s3 --test object_store
-	cargo test -p aether-api --test archive_bucket
+	cargo test -p autharie-s3 --test object_store
+	cargo test -p autharie-api --test archive_bucket
 
 test-keys: ## Lancer les tests qui ont besoin d'un vrai gestionnaire de clefs
 	@test -n "$$KEY_MANAGER_ADDRESS" || { \
@@ -92,8 +92,8 @@ test-keys: ## Lancer les tests qui ont besoin d'un vrai gestionnaire de clefs
 		echo "Voir .env.example — docker compose up -d openbao, puis http://localhost:8200."; \
 		exit 1; \
 	}
-	cargo test -p aether-transit --test key_provider
-	cargo test -p aether-api --test wrapping_key
+	cargo test -p autharie-transit --test key_provider
+	cargo test -p autharie-api --test wrapping_key
 
 test-integration: ## Lancer les tests qui ont besoin d'un vrai Postgres
 	@test -n "$$DATABASE_URL" || { \
@@ -101,4 +101,4 @@ test-integration: ## Lancer les tests qui ont besoin d'un vrai Postgres
 		echo "Voir .env.example — le port doit être celui publié par docker-compose."; \
 		exit 1; \
 	}
-	cargo test -p aether-postgres --tests
+	cargo test -p autharie-postgres --tests

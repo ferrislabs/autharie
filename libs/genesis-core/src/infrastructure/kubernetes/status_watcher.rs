@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use aether_crds::common::types::Phase;
-use aether_crds::v1alpha::identity_instance::{IdentityInstance, IdentityInstanceStatus};
+use autharie_crds::common::types::Phase;
+use autharie_crds::v1alpha::identity_instance::{IdentityInstance, IdentityInstanceStatus};
 use kube::runtime::watcher;
 use kube::runtime::watcher::Event;
 use kube::{Api, Client};

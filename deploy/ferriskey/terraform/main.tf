@@ -1,4 +1,4 @@
-# The realm and OIDC clients Aether needs, declared rather than created.
+# The realm and OIDC clients Autharie needs, declared rather than created.
 #
 # This replaces a script that drove the API by hand. The provider is FerrisKey's
 # own, so it stays in step with the API, it manages the redirect URIs the script
@@ -35,12 +35,12 @@ provider "ferriskey" {
   password  = var.admin_password
 }
 
-resource "ferriskey_realm" "aether" {
+resource "ferriskey_realm" "autharie" {
   name = var.realm
 }
 
-resource "ferriskey_realm_settings" "aether" {
-  realm = ferriskey_realm.aether.name
+resource "ferriskey_realm_settings" "autharie" {
+  realm = ferriskey_realm.autharie.name
 
   # Short-lived access tokens are why Herald refreshes rather than holding one:
   # the control plane checks `exp`, so a fixed token dies quietly.
@@ -64,9 +64,9 @@ resource "ferriskey_realm_settings" "aether" {
 
 # The web console. Public because a browser cannot keep a secret.
 resource "ferriskey_client" "console" {
-  realm         = ferriskey_realm.aether.name
+  realm         = ferriskey_realm.autharie.name
   client_id     = "console"
-  name          = "Aether Console"
+  name          = "Autharie Console"
   client_type   = "public"
   public_client = true
 
@@ -81,7 +81,7 @@ resource "ferriskey_client" "console" {
 # rejects any caller whose client id does not contain "herald-service", so this
 # name is a contract rather than a preference.
 resource "ferriskey_client" "herald" {
-  realm       = ferriskey_realm.aether.name
+  realm       = ferriskey_realm.autharie.name
   client_id   = "herald-service"
   name        = "Herald"
   client_type = "confidential"
@@ -97,9 +97,9 @@ resource "ferriskey_client" "herald" {
 # the installation are different jobs, and a single client would hand every
 # data plane the right to reshape the estate it runs in.
 resource "ferriskey_client" "operator_cli" {
-  realm       = ferriskey_realm.aether.name
-  client_id   = "aether-operator-cli"
-  name        = "Aether operator CLI"
+  realm       = ferriskey_realm.autharie.name
+  client_id   = "autharie-operator-cli"
+  name        = "Autharie operator CLI"
   client_type = "confidential"
 
   public_client                = false
@@ -109,12 +109,12 @@ resource "ferriskey_client" "operator_cli" {
 
 # Marks an account as operating this installation rather than using it.
 #
-# Installation-wide, unlike the permissions in `aether-permission`, which say
+# Installation-wide, unlike the permissions in `autharie-permission`, which say
 # what a member may do inside their own organisation. Only an operator sees the
 # data planes every organisation runs on.
 resource "ferriskey_role" "operator" {
-  realm       = ferriskey_realm.aether.name
-  name        = "aether-operator"
+  realm       = ferriskey_realm.autharie.name
+  name        = "autharie-operator"
   description = "Operates the installation: data planes, placement, capacity."
   permissions = []
 }

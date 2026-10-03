@@ -171,7 +171,7 @@ mod tests {
     }
 
     fn handler(upgrades: &Arc<SpyUpgrades>) -> DataplaneUpgradeEventHandler {
-        DataplaneUpgradeEventHandler::new(upgrades.clone(), "aether-dataplane")
+        DataplaneUpgradeEventHandler::new(upgrades.clone(), "autharie-dataplane")
     }
 
     fn event_with(payload: serde_json::Value) -> ActionEvent {
@@ -208,7 +208,7 @@ mod tests {
         let created = upgrades.created();
         assert_eq!(created.len(), 1);
         assert_eq!(created[0].name, DATAPLANE.to_string());
-        assert_eq!(created[0].namespace, "aether-dataplane");
+        assert_eq!(created[0].namespace, "autharie-dataplane");
         assert_eq!(created[0].dataplane_id, DATAPLANE.to_string());
         assert_eq!(created[0].target_version, "26.1.0");
         assert_eq!(

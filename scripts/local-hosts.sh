@@ -11,16 +11,16 @@
 # right now.
 set -euo pipefail
 
-CLUSTER_NAME="${AETHER_CLUSTER_NAME:-aether-local}"
+CLUSTER_NAME="${AUTHARIE_CLUSTER_NAME:-autharie-local}"
 CONTEXT="k3d-${CLUSTER_NAME}"
 # Overridable so the apply path can be exercised without touching the real one.
-HOSTS_FILE="${AETHER_HOSTS_FILE:-/etc/hosts}"
+HOSTS_FILE="${AUTHARIE_HOSTS_FILE:-/etc/hosts}"
 
 # Everything between these two lines belongs to this script. Nothing outside
 # them is ever read, moved or rewritten: /etc/hosts is a file other things care
 # about, and a tool that reformats it is a tool nobody runs twice.
-BEGIN_MARKER="# >>> aether ${CLUSTER_NAME} >>>"
-END_MARKER="# <<< aether ${CLUSTER_NAME} <<<"
+BEGIN_MARKER="# >>> autharie ${CLUSTER_NAME} >>>"
+END_MARKER="# <<< autharie ${CLUSTER_NAME} <<<"
 
 require() {
     command -v "$1" >/dev/null 2>&1 || {
@@ -38,8 +38,8 @@ usage: $(basename "$0") <print|apply|remove>
   remove  take them back out again
 
 Environment:
-  AETHER_CLUSTER_NAME   k3d cluster to read routes from (default: ${CLUSTER_NAME})
-  AETHER_HOSTS_FILE     file to write (default: /etc/hosts)
+  AUTHARIE_CLUSTER_NAME   k3d cluster to read routes from (default: ${CLUSTER_NAME})
+  AUTHARIE_HOSTS_FILE     file to write (default: /etc/hosts)
 USAGE
 }
 
@@ -157,9 +157,9 @@ main() {
             echo "nothing to remove: ${HOSTS_FILE} has no ${CLUSTER_NAME} block"
             exit 0
         fi
-        without_block >"${HOSTS_FILE}.aether.tmp"
-        cat "${HOSTS_FILE}.aether.tmp" >"${HOSTS_FILE}"
-        rm -f "${HOSTS_FILE}.aether.tmp"
+        without_block >"${HOSTS_FILE}.autharie.tmp"
+        cat "${HOSTS_FILE}.autharie.tmp" >"${HOSTS_FILE}"
+        rm -f "${HOSTS_FILE}.autharie.tmp"
         echo "✅ removed the ${CLUSTER_NAME} block from ${HOSTS_FILE}"
         exit 0
     fi
@@ -211,9 +211,9 @@ MESSAGE
     {
         without_block
         block "${names}"
-    } >"${HOSTS_FILE}.aether.tmp"
-    cat "${HOSTS_FILE}.aether.tmp" >"${HOSTS_FILE}"
-    rm -f "${HOSTS_FILE}.aether.tmp"
+    } >"${HOSTS_FILE}.autharie.tmp"
+    cat "${HOSTS_FILE}.autharie.tmp" >"${HOSTS_FILE}"
+    rm -f "${HOSTS_FILE}.autharie.tmp"
 
     warn_about_duplicates "${names}"
 

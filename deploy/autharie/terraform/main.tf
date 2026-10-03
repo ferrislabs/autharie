@@ -7,7 +7,7 @@
 #
 # What this does NOT create: a static "herald-service" client. Autharie's
 # control plane mints one client per data plane itself, using the
-# REALM_ADMIN_* credentials in charts/aether-control-plane/values-production.yaml
+# REALM_ADMIN_* credentials in charts/autharie-control-plane/values-production.yaml
 # -- there is no shared Herald identity to pre-provision.
 
 terraform {

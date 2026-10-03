@@ -6,7 +6,7 @@ export type Member = Schemas.Member
 /**
  * The permissions this console can show, and where each one lives.
  *
- * Mirrors `libs/aether-permission`. The bit is the contract: a label moved to
+ * Mirrors `libs/autharie-permission`. The bit is the contract: a label moved to
  * the wrong number grants something nobody asked for, silently, and no
  * request fails to say so.
  *

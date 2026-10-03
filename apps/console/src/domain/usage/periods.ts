@@ -15,7 +15,7 @@ export const PERIODS: Period[] = [
 ]
 
 const DEFAULT: PeriodKey = '24h'
-const STORAGE_KEY = 'aether.usage.period'
+const STORAGE_KEY = 'autharie.usage.period'
 
 export function periodFor(key: string | null | undefined): Period {
   return PERIODS.find((period) => period.key === key) ?? periodFor(DEFAULT)!

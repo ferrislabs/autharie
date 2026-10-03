@@ -1,5 +1,5 @@
 # The entry point for everything on autharie.fr: the console+API
-# (charts/aether-control-plane's HTTPRoute) and the dedicated Ferriskey
+# (charts/autharie-control-plane's HTTPRoute) and the dedicated Ferriskey
 # (deploy/autharie/ferriskey-values-production.yaml's HTTPRoute) both attach
 # to this Gateway's autharie-https listener.
 #

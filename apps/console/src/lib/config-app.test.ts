@@ -10,7 +10,7 @@ describe('isUnsubstituted', () => {
   })
 
   it('accepts a substituted value', () => {
-    expect(isUnsubstituted('http://localhost:3334/realms/aether')).toBe(false)
+    expect(isUnsubstituted('http://localhost:3334/realms/autharie')).toBe(false)
     expect(isUnsubstituted('console')).toBe(false)
   })
 

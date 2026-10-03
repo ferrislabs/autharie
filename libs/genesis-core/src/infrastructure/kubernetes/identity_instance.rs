@@ -1,16 +1,16 @@
 use std::collections::BTreeMap;
 
-use aether_crds::common::types::{ResourceList, ResourceRequirements};
-use aether_crds::v1alpha::identity_instance::{
+use autharie_crds::common::types::{ResourceList, ResourceRequirements};
+use autharie_crds::v1alpha::identity_instance::{
     BackupConfig, DatabaseConfig, DatabaseMode, FerriskeyConfig, IdentityInstance,
     IdentityInstanceSpec, IdentityProvider, ManagedClusterConfig, ManagedClusterStorage,
     RestoreConfig,
 };
-use aether_crds::v1alpha::identity_instance_backup::{
+use autharie_crds::v1alpha::identity_instance_backup::{
     IdentityInstanceBackup, IdentityInstanceBackupSchedule, IdentityInstanceBackupScheduleSpec,
     IdentityInstanceBackupSpec,
 };
-use aether_crds::v1alpha::identity_instance_upgrade::IdentityInstanceRef as CrdIdentityInstanceRef;
+use autharie_crds::v1alpha::identity_instance_upgrade::IdentityInstanceRef as CrdIdentityInstanceRef;
 use k8s_openapi::api::core::v1::{Namespace, Secret};
 use kube::api::{DeleteParams, Patch, PatchParams};
 use kube::core::ObjectMeta;
@@ -36,7 +36,7 @@ const FIELD_MANAGER: &str = "genesis";
 /// A fixed name rather than a configured one. Both ends of it are written by
 /// this platform -- genesis names it here, the operator fills it -- and a name
 /// that can differ between them is a name that eventually does.
-const ARCHIVE_CREDENTIALS_SECRET: &str = "aether-object-store";
+const ARCHIVE_CREDENTIALS_SECRET: &str = "autharie-object-store";
 
 /// Where the object store answers, from inside this data plane.
 ///
@@ -127,7 +127,7 @@ impl KubeIdentityInstancePort {
             metadata: ObjectMeta {
                 name: Some(namespace.to_string()),
                 // So an operator can tell which namespaces on a data plane are
-                // Aether's, and a cleanup can find them without guessing at
+                // Autharie's, and a cleanup can find them without guessing at
                 // the naming convention.
                 labels: Some(BTreeMap::from([(
                     "app.kubernetes.io/managed-by".to_string(),
@@ -549,12 +549,12 @@ mod tests {
             restore: None,
             reference: IdentityInstanceRef {
                 name: "deployment-b6a1c2d3-e4f5-4a6b-8c9d-0e1f2a3b4c5d".to_string(),
-                namespace: "aether-acme-prod".to_string(),
+                namespace: "autharie-acme-prod".to_string(),
             },
             organisation_id: "9f8e7d6c-5b4a-3c2d-1e0f-a1b2c3d4e5f6".to_string(),
             provider,
             version: "25.0.0".to_string(),
-            hostname: "acme-prod.aether-acme-prod.aether.local".to_string(),
+            hostname: "acme-prod.autharie-acme-prod.autharie.local".to_string(),
             database: DesiredDatabase::from_reserved(500, 1024, 1),
             archive: None,
         }
@@ -568,7 +568,7 @@ mod tests {
     fn a_recovery_carries_the_prefix_and_the_server_it_reads() {
         let mut desired = desired(IdentityInstanceProvider::Ferriskey);
         desired.restore = Some(DesiredRestore {
-            destination_path: "s3://aether-backups/an-org/the-source".to_string(),
+            destination_path: "s3://autharie-backups/an-org/the-source".to_string(),
             server_name: "deployment-the-source-db".to_string(),
             backup_id: Some("an-archive".to_string()),
         });
@@ -580,7 +580,7 @@ mod tests {
 
         assert_eq!(
             restore.destination_path,
-            "s3://aether-backups/an-org/the-source"
+            "s3://autharie-backups/an-org/the-source"
         );
         assert_eq!(restore.server_name, "deployment-the-source-db");
         assert_eq!(restore.backup_id.as_deref(), Some("an-archive"));
@@ -602,7 +602,7 @@ mod tests {
         DesiredIdentityInstance {
             restore: None,
             archive: Some(DesiredArchive {
-                destination_path: "s3://aether-backups/an-org/a-deployment".to_string(),
+                destination_path: "s3://autharie-backups/an-org/a-deployment".to_string(),
                 encryption: Some("AES256".to_string()),
                 schedule: crate::domain::entities::identity_instance::DesiredArchiveSchedule {
                     cron: "0 30 2 * * *".to_string(),
@@ -626,7 +626,7 @@ mod tests {
 
         assert_eq!(
             backup.destination_path,
-            "s3://aether-backups/an-org/a-deployment"
+            "s3://autharie-backups/an-org/a-deployment"
         );
         assert_eq!(backup.credentials_secret, ARCHIVE_CREDENTIALS_SECRET);
         assert_eq!(backup.encryption.as_deref(), Some("AES256"));
@@ -689,12 +689,12 @@ mod tests {
         );
         assert_eq!(
             resource.metadata.namespace.as_deref(),
-            Some("aether-acme-prod")
+            Some("autharie-acme-prod")
         );
         assert_eq!(resource.spec.provider, IdentityProvider::Keycloak);
         assert_eq!(
             resource.spec.hostname,
-            "acme-prod.aether-acme-prod.aether.local"
+            "acme-prod.autharie-acme-prod.autharie.local"
         );
         assert!(resource.spec.ferriskey.is_none());
     }
@@ -711,7 +711,7 @@ mod tests {
     fn not_found_is_recognized_from_a_404_api_error() {
         let not_found = kube::Error::Api(ErrorResponse {
             status: "Failure".to_string(),
-            message: "identityinstances.aether.dev \"x\" not found".to_string(),
+            message: "identityinstances.autharie.dev \"x\" not found".to_string(),
             reason: "NotFound".to_string(),
             code: 404,
         });

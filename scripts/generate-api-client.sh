@@ -25,7 +25,7 @@ pnpm() { (cd "${CONSOLE}" && CI=true corepack pnpm "$@"); }
 echo "📜 dumping the OpenAPI document"
 # No database, no server, no port: the document is a pure function of the
 # handler annotations. SQLX_OFFLINE keeps the query cache from wanting one.
-SQLX_OFFLINE=true cargo run -q -p aether-api --example dump-openapi > "${DOCUMENT}"
+SQLX_OFFLINE=true cargo run -q -p autharie-api --example dump-openapi > "${DOCUMENT}"
 
 echo "⚙️  generating the client"
 pnpm exec typed-openapi "${DOCUMENT}" \

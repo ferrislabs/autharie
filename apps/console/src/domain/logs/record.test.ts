@@ -140,7 +140,7 @@ describe('narrow', () => {
   const records = [
     toRecord(line(TRACING)),
     toRecord(line('2026-09-16T07:34:08.155928Z  WARN tower_http::trace: probe was slow')),
-    toRecord(line('2026-09-16T07:34:09.155928Z ERROR aether::db: connection refused', 'postgres')),
+    toRecord(line('2026-09-16T07:34:09.155928Z ERROR autharie::db: connection refused', 'postgres')),
   ]
 
   it('changes nothing at the bottom of the scale with nothing searched for', () => {

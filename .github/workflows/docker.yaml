@@ -73,18 +73,18 @@ jobs:
       postgres:
         image: postgres:17
         env:
-          POSTGRES_USER: aether
-          POSTGRES_PASSWORD: aether
-          POSTGRES_DB: aether
+          POSTGRES_USER: autharie
+          POSTGRES_PASSWORD: autharie
+          POSTGRES_DB: autharie
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U aether"
+          --health-cmd "pg_isready -U autharie"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
     env:
-      DATABASE_URL: postgres://aether:aether@localhost:5432/aether
+      DATABASE_URL: postgres://autharie:autharie@localhost:5432/autharie
     steps:
       - uses: actions/checkout@v5
 
@@ -104,7 +104,7 @@ jobs:
         run: cargo install sqlx-cli --no-default-features --features postgres,rustls --locked
 
       - name: Migrate
-        run: sqlx migrate run --source libs/aether-core/migrations
+        run: sqlx migrate run --source libs/autharie-core/migrations
 
       # A stale offline cache compiles against a schema that no longer exists,
       # and the failure surfaces at runtime rather than here.
@@ -115,7 +115,7 @@ jobs:
       # the service container would put this job straight back to reporting
       # success without running anything -- the exact shape of the bug.
       - name: Repository tests
-        run: cargo test -p aether-postgres --tests
+        run: cargo test -p autharie-postgres --tests
         env:
           SQLX_OFFLINE: "true"
           REQUIRE_DATABASE_URL: "1"
@@ -133,8 +133,8 @@ jobs:
       rustfs:
         image: rustfs/rustfs:latest
         env:
-          RUSTFS_ACCESS_KEY: aether
-          RUSTFS_SECRET_KEY: aetheraether
+          RUSTFS_ACCESS_KEY: autharie
+          RUSTFS_SECRET_KEY: autharieautharie
           RUSTFS_VOLUMES: /data
           # Without a master key the store refuses every encrypted write rather
           # than quietly storing plaintext, which is the right failure and the
@@ -146,15 +146,15 @@ jobs:
       openbao:
         image: openbao/openbao:latest
         env:
-          BAO_DEV_ROOT_TOKEN_ID: aether-root
+          BAO_DEV_ROOT_TOKEN_ID: autharie-root
         ports:
           - 8200:8200
     env:
       OBJECT_STORE_ENDPOINT: http://localhost:9000
-      OBJECT_STORE_ACCESS_KEY: aether
-      OBJECT_STORE_SECRET_KEY: aetheraether
+      OBJECT_STORE_ACCESS_KEY: autharie
+      OBJECT_STORE_SECRET_KEY: autharieautharie
       KEY_MANAGER_ADDRESS: http://localhost:8200
-      KEY_MANAGER_TOKEN: aether-root
+      KEY_MANAGER_TOKEN: autharie-root
     steps:
       - uses: actions/checkout@v5
 
@@ -191,16 +191,16 @@ jobs:
       # anything.
       - name: Object store tests
         run: |
-          cargo test -p aether-s3 --test object_store
-          cargo test -p aether-api --test archive_bucket
+          cargo test -p autharie-s3 --test object_store
+          cargo test -p autharie-api --test archive_bucket
         env:
           SQLX_OFFLINE: "true"
           REQUIRE_OBJECT_STORE_ENDPOINT: "1"
 
       - name: Key manager tests
         run: |
-          cargo test -p aether-transit --test key_provider
-          cargo test -p aether-api --test wrapping_key
+          cargo test -p autharie-transit --test key_provider
+          cargo test -p autharie-api --test wrapping_key
         env:
           SQLX_OFFLINE: "true"
           REQUIRE_KEY_MANAGER_ADDRESS: "1"
@@ -220,11 +220,11 @@ jobs:
         run: |
           cargo llvm-cov \
             --workspace \
-            --exclude aether-postgres \
-            --exclude aether-control-plane \
-            --exclude aether-operator \
+            --exclude autharie-postgres \
+            --exclude autharie-control-plane \
+            --exclude autharie-operator \
             --all-features \
-            --ignore-filename-regex '(^|/)(apps/control-plane|apps/operator|libs/aether-postgres)(/|$)' \
+            --ignore-filename-regex '(^|/)(apps/control-plane|apps/operator|libs/autharie-postgres)(/|$)' \
             --fail-under-lines 50
   security-rust:
     runs-on: ubuntu-24.04
@@ -253,7 +253,7 @@ jobs:
         uses: azure/setup-helm@v4
 
       - name: lint
-        run: helm lint charts/aether-dataplane
+        run: helm lint charts/autharie-dataplane
 
       # Linting only proves the chart parses. Rendering with the values a real
       # install needs is what catches a template that is valid YAML and wrong
@@ -261,7 +261,7 @@ jobs:
       # plane with no id or no control plane.
       - name: render with required values
         run: |
-          helm template aether charts/aether-dataplane \
+          helm template autharie charts/autharie-dataplane \
             --set dataplane.id=11111111-1111-1111-1111-111111111111 \
             --set controlPlane.url=http://control-plane:3333 \
             --set controlPlane.token=ci \
@@ -270,7 +270,7 @@ jobs:
 
       - name: reject an install that cannot work
         run: |
-          if helm template aether charts/aether-dataplane >/dev/null 2>&1; then
+          if helm template autharie charts/autharie-dataplane >/dev/null 2>&1; then
             echo "::error::the chart rendered without a dataplane id or control plane URL"
             exit 1
           fi
@@ -307,10 +307,10 @@ jobs:
         run: |
           version="${GITHUB_REF_NAME#v}"
           mkdir -p /tmp/chart-dist
-          helm package charts/aether-dataplane \
+          helm package charts/autharie-dataplane \
             --version "$version" --app-version "$version" \
             -d /tmp/chart-dist
-          helm push "/tmp/chart-dist/aether-dataplane-${version}.tgz" oci://ghcr.io/nathaelb/charts
+          helm push "/tmp/chart-dist/autharie-dataplane-${version}.tgz" oci://ghcr.io/ferrislabs/charts
 
   build:
     needs:
@@ -354,7 +354,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/nathaelb/aether-${{ matrix.target }}
+          images: ghcr.io/ferrislabs/autharie-${{ matrix.target }}
 
       - name: log-in to ghcr
         if: inputs.push || startsWith(github.ref, 'refs/tags/v') || github.ref_name == github.event.repository.default_branch
@@ -371,7 +371,7 @@ jobs:
           context: .
           target: ${{ matrix.target }}
           platforms: ${{ matrix.runner.platform }}
-          tags: ghcr.io/nathaelb/aether-${{ matrix.target }}
+          tags: ghcr.io/ferrislabs/autharie-${{ matrix.target }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=local,src=${{ runner.temp }}/.buildx-cache
           cache-to: type=local,dest=${{ runner.temp }}/.buildx-cache-new,mode=max
@@ -436,7 +436,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/nathaelb/aether-${{ matrix.target }}
+          images: ghcr.io/ferrislabs/autharie-${{ matrix.target }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -448,4 +448,4 @@ jobs:
       - name: push manifest
         working-directory: ${{ runner.temp }}/digests
         run: |
-          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") $(printf 'ghcr.io/nathaelb/aether-${{ matrix.target }}@sha256:%s ' *)
+          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") $(printf 'ghcr.io/ferrislabs/autharie-${{ matrix.target }}@sha256:%s ' *)

@@ -730,7 +730,7 @@ mod tests {
                         "organisation_id": "55555555-5555-5555-5555-555555555555",
                         "name": "acme-prod",
                         "kind": "ferriskey",
-                        "namespace": "aether-acme-prod",
+                        "namespace": "autharie-acme-prod",
                         "log_shipping_enabled": true
                     }
                 ]
@@ -747,7 +747,7 @@ mod tests {
             target.kind,
             crate::domain::entities::deployment::DeploymentKind::Ferriskey
         );
-        assert_eq!(target.namespace, "aether-acme-prod");
+        assert_eq!(target.namespace, "autharie-acme-prod");
         assert!(deployments[0].log_shipping_enabled);
     }
 
@@ -807,7 +807,7 @@ mod tests {
             deployment_id: DeploymentId::new("dep-1"),
             dataplane_id: DataPlaneId::new("dp-1"),
             organisation_id: crate::domain::entities::logs::OrganisationId::new("org-1"),
-            namespace: "aether-acme".to_string(),
+            namespace: "autharie-acme".to_string(),
             kind: DeploymentKind::Ferriskey,
             session_id: LogSessionId(
                 uuid::Uuid::parse_str("33333333-3333-3333-3333-333333333333").unwrap(),

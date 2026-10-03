@@ -1,8 +1,8 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Aether API",
-    "description": "API documentation for Aether services",
+    "title": "Autharie API",
+    "description": "API documentation for Autharie services",
     "contact": {
       "name": "nathaelb",
       "email": "pro.nathaelbonnal@gmail.com"
@@ -10083,7 +10083,7 @@
       "KeyName": {
         "type": "string",
         "description": "The key inside its manager.",
-        "example": "aether-backups"
+        "example": "autharie-backups"
       },
       "KeyRef": {
         "type": "object",
@@ -10983,7 +10983,7 @@
       },
       "PlatformOperator": {
         "type": "object",
-        "description": "Somebody who operates this installation, and what they were granted.\n\nKeyed on the subject the identity provider issues, because that is the one\nthing a token carries that identifies a caller and cannot be renamed out\nfrom under a grant. It covers clients as well as people: registering a data\nplane is done by `aether-operator-cli`, which is not somebody.",
+        "description": "Somebody who operates this installation, and what they were granted.\n\nKeyed on the subject the identity provider issues, because that is the one\nthing a token carries that identifies a caller and cannot be renamed out\nfrom under a grant. It covers clients as well as people: registering a data\nplane is done by `autharie-operator-cli`, which is not somebody.",
         "required": [
           "subject",
           "rights",

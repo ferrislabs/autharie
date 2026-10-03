@@ -54,7 +54,7 @@ fi
 # and trusting it once already turned a missing realm into a reported success.
 client_secret() {
     local uuid="$1" name="$2" response status
-    response=$(curl -sS "${FERRISKEY_URL}/realms/aether/clients/${uuid}/client-secret" \
+    response=$(curl -sS "${FERRISKEY_URL}/realms/autharie/clients/${uuid}/client-secret" \
         -H "Authorization: Bearer ${TOKEN}" -w $'\n%{http_code}')
     status="${response##*$'\n'}"
     if [ "${status#2}" = "${status}" ]; then
@@ -65,26 +65,26 @@ client_secret() {
 }
 
 SECRET=$(client_secret "${HERALD_UUID}" herald-service)
-OPERATOR_SECRET=$(client_secret "${OPERATOR_UUID}" aether-operator-cli)
+OPERATOR_SECRET=$(client_secret "${OPERATOR_UUID}" autharie-operator-cli)
 
 # The role has to be granted, not declared: it lives on the service account
 # user behind the client, and the provider has no resource for that user at
 # v0.1.0. Without it the client authenticates and is refused by every endpoint
 # it exists to call.
-operator_user=$(curl -sS "${FERRISKEY_URL}/realms/aether/users" \
+operator_user=$(curl -sS "${FERRISKEY_URL}/realms/autharie/users" \
     -H "Authorization: Bearer ${TOKEN}" \
-    | jq -r '.data[]? | select(.username == "service-account-aether-operator-cli") | .id' \
+    | jq -r '.data[]? | select(.username == "service-account-autharie-operator-cli") | .id' \
     | head -1)
 
 if [ -z "${operator_user}" ]; then
-    echo "❌ the aether-operator-cli service account is missing" >&2
+    echo "❌ the autharie-operator-cli service account is missing" >&2
     exit 1
 fi
 
 # Assigning a role the account already holds answers 200, so this converges
 # rather than having to be guarded.
 curl -sS -o /dev/null -X POST \
-    "${FERRISKEY_URL}/realms/aether/users/${operator_user}/roles/${OPERATOR_ROLE}" \
+    "${FERRISKEY_URL}/realms/autharie/users/${operator_user}/roles/${OPERATOR_ROLE}" \
     -H "Authorization: Bearer ${TOKEN}"
 
 # Anybody carrying the operator realm role, so whoever calls this can hand
@@ -94,15 +94,15 @@ curl -sS -o /dev/null -X POST \
 #
 # Reported rather than acted on: what somebody may do to the control plane is
 # the control plane's to record, and this script does not talk to it.
-people=$(curl -sS "${FERRISKEY_URL}/realms/aether/users" \
+people=$(curl -sS "${FERRISKEY_URL}/realms/autharie/users" \
     -H "Authorization: Bearer ${TOKEN}" 2>/dev/null \
     | jq -r '.data[]? | select(.username | startswith("service-account-") | not) | .id' 2>/dev/null || true)
 
 OPERATOR_PEOPLE=""
 for person in ${people}; do
-    holds=$(curl -sS "${FERRISKEY_URL}/realms/aether/users/${person}/roles" \
+    holds=$(curl -sS "${FERRISKEY_URL}/realms/autharie/users/${person}/roles" \
         -H "Authorization: Bearer ${TOKEN}" 2>/dev/null \
-        | jq -r '[.data[]?.name] | index("aether-operator") // empty' 2>/dev/null || true)
+        | jq -r '[.data[]?.name] | index("autharie-operator") // empty' 2>/dev/null || true)
     [ -n "${holds}" ] && OPERATOR_PEOPLE="${OPERATOR_PEOPLE}${OPERATOR_PEOPLE:+,}${person}"
 done
 
@@ -119,7 +119,7 @@ cat <<SUMMARY
      AUTH_CLIENT_SECRET=${SECRET}
 
    Operating the installation (registering data planes, publishing releases):
-     OPERATOR_CLIENT_ID=aether-operator-cli
+     OPERATOR_CLIENT_ID=autharie-operator-cli
      OPERATOR_CLIENT_SECRET=${OPERATOR_SECRET}
      OPERATOR_SUBJECT=${operator_user}
      OPERATOR_PEOPLE=${OPERATOR_PEOPLE}
@@ -132,7 +132,7 @@ cat <<SUMMARY
    secrets, not in the working tree.
 
    Your own account needs a platform right to see the operator screens. The
-   control plane holds those, not this realm: set AETHER_BOOTSTRAP_OPERATOR to
+   control plane holds those, not this realm: set AUTHARIE_BOOTSTRAP_OPERATOR to
    your subject, or have an operator grant you:
      curl -X PUT "<control plane>/platform/operators/<your-subject>" \\
           -H "Authorization: Bearer <an operator's token>" \\

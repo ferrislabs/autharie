@@ -12,7 +12,7 @@ export type SearchLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal
 
 /**
  * Least severe first, matching the order the control plane itself defines
- * (`LogLevel` in `libs/aether-domain/src/logs/mod.rs`). `unknown` is
+ * (`LogLevel` in `libs/autharie-domain/src/logs/mod.rs`). `unknown` is
  * deliberately not one of these: it is not a floor a caller may ask for, and
  * offering it as a choice here would suggest otherwise.
  */

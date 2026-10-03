@@ -613,7 +613,7 @@ mod tests {
             ),
             name: name.to_string(),
             kind: Some(DeploymentKind::Ferriskey),
-            namespace: Some("aether-test".to_string()),
+            namespace: Some("autharie-test".to_string()),
             log_shipping_enabled: false,
         }
     }
@@ -2132,7 +2132,7 @@ mod tests {
                 "deployment_id": deployment_id,
                 "dataplane_id": "cccccccc-cccc-cccc-cccc-cccccccccccc",
                 "organisation_id": "dddddddd-dddd-dddd-dddd-dddddddddddd",
-                "namespace": "aether-acme",
+                "namespace": "autharie-acme",
                 "kind": "ferriskey",
                 "session_id": session_id,
                 "since_minutes": 10

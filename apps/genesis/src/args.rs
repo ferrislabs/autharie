@@ -40,7 +40,7 @@ pub struct AmqpArgs {
     #[arg(
         long = "amqp-url",
         env = "AMQP_URL",
-        default_value = "amqp://aether:aether@localhost:5672",
+        default_value = "amqp://autharie:autharie@localhost:5672",
         name = "AMQP URL",
         help = "The AMQP URL for connecting to RabbitMQ (e.g. amqp://user:pass@host:port)"
     )]
@@ -59,7 +59,7 @@ pub struct AmqpArgs {
 impl Default for AmqpArgs {
     fn default() -> Self {
         Self {
-            amqp_url: "amqp://aether:aether@localhost:5672".into(),
+            amqp_url: "amqp://autharie:autharie@localhost:5672".into(),
             amqp_queue: "genesis.actions".into(),
         }
     }

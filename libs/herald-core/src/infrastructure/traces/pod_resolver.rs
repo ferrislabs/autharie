@@ -10,7 +10,7 @@
 //! label selector.
 //!
 //! This trusts the TCP source address as the sending pod's own IP, which
-//! holds for ordinary pod-to-ClusterIP-Service traffic on the CNIs Aether
+//! holds for ordinary pod-to-ClusterIP-Service traffic on the CNIs Autharie
 //! targets (no SNAT between a pod and a Service in the same cluster) but is
 //! not a cryptographic guarantee -- deliberately paired with the
 //! `NetworkPolicy` restricting this port to in-cluster traffic (see the

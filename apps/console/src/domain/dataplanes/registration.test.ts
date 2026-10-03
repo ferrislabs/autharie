@@ -174,8 +174,8 @@ describe('toCreateRequest', () => {
 describe('helmCommand', () => {
   const details = {
     dataplaneId: '0192-abcd',
-    controlPlaneUrl: 'https://api.aether.example',
-    issuerUrl: 'https://id.aether.example/realms/aether',
+    controlPlaneUrl: 'https://api.autharie.example',
+    issuerUrl: 'https://id.autharie.example/realms/autharie',
     clientId: 'herald-0192-abcd',
     clientSecret: 'a-secret',
     namespace: DEFAULT_NAMESPACE,
@@ -205,10 +205,10 @@ describe('helmCommand', () => {
   it('pulls the published chart rather than a path into a checkout', () => {
     const command = helmCommand(details)
 
-    expect(command).toContain('oci://ghcr.io/nathaelb/charts/aether-dataplane')
+    expect(command).toContain('oci://ghcr.io/ferrislabs/charts/autharie-dataplane')
     // The old command named the chart directly after the release name, with
     // nothing anybody without this checkout could resolve.
-    expect(command).not.toContain('aether-dataplane charts/aether-dataplane')
+    expect(command).not.toContain('autharie-dataplane charts/autharie-dataplane')
   })
 
   /**

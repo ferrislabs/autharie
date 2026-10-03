@@ -1,0 +1,30 @@
+[package]
+name = "autharie-core"
+description = "Core library for Autharie"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+[dependencies]
+autharie-macros = { path = "../autharie-macros" }
+autharie-auth = { path = "../autharie-auth" }
+autharie-domain = { path = "../autharie-domain" }
+autharie-persistence = { path = "../autharie-persistence" }
+autharie-postgres = { path = "../autharie-postgres" }
+chrono = { version = "0.4.42", features = ["serde"] }
+uuid = { version = "1.19.0", features = ["serde", "v4"] }
+sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono", "macros", "json"] }
+utoipa = { version = "5.4.0", features = ["chrono", "uuid"] }
+serde = { version = "1.0.228", features = ["derive"] }
+# Creating a data plane's client in the realm, which is the one
+# administrative call this crate makes to the identity provider.
+reqwest = { version = "0.12.24", default-features = false, features = ["json", "rustls-tls"] }
+serde_json = "1.0.149"
+autharie-permission = { path = "../autharie-permission" }
+tokio = { version = "1", features = ["sync"] }
+tracing = "0.1.44"
+
+
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

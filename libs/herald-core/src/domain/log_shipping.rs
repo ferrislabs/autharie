@@ -165,7 +165,7 @@ mod tests {
             organisation_id: OrganisationId::new("org-1"),
             name: "acme-prod".to_string(),
             kind: Some(DeploymentKind::Ferriskey),
-            namespace: Some("aether-acme".to_string()),
+            namespace: Some("autharie-acme".to_string()),
             log_shipping_enabled: true,
         }
     }

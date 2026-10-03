@@ -18,7 +18,7 @@ import {
 } from './permissions'
 
 /**
- * The bits as `libs/aether-permission` declares them.
+ * The bits as `libs/autharie-permission` declares them.
  *
  * Written out rather than derived, because deriving them from the catalogue
  * under test would prove only that it agrees with itself. A label that moves

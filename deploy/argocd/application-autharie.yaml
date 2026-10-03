@@ -6,9 +6,9 @@ metadata:
 spec:
   project: autharie
   source:
-    repoURL: https://github.com/NathaelB/aether
+    repoURL: https://github.com/ferrislabs/autharie
     targetRevision: main
-    path: charts/aether-control-plane
+    path: charts/autharie-control-plane
     helm:
       valueFiles:
         - values-production.yaml
