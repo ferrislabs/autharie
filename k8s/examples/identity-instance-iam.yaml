@@ -1,4 +1,4 @@
-apiVersion: autharie.dev/v1alpha
+apiVersion: autharie.fr/v1alpha
 kind: IdentityInstance
 metadata:
   name: cloud-iam-branded

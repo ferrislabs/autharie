@@ -627,7 +627,7 @@ private fun DeploymentDetailScreenPreview() {
                 cluster = "iam-prod-01",
                 namespace = "keycloak",
                 version = "24.0.2",
-                endpoint = "https://iam.autharie.io",
+                endpoint = "https://iam.autharie.fr",
                 region = "eu-west-1",
                 updatedAt = "2024-08-12 10:24"
             ),

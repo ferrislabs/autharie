@@ -27,7 +27,7 @@ rules:
   - apiGroups: [""]
     resources: ["namespaces"]
     verbs: ["get", "create", "patch", "delete"]
-  - apiGroups: ["autharie.dev"]
+  - apiGroups: ["autharie.fr"]
     resources: ["identityinstances"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   # A drill (#185) reads the CloudNativePG connection secret for the
@@ -47,14 +47,14 @@ rules:
   # Genesis creates the upgrade and reads back the one already there to decide
   # whether a redelivery is a no-op or a conflict. It never writes status:
   # that is the operator's, and the two writing it would fight.
-  - apiGroups: ["autharie.dev"]
+  - apiGroups: ["autharie.fr"]
     resources: ["identityinstanceupgrades"]
     verbs: ["get", "list", "watch", "create"]
   # A data plane has one upgrade at a time, named after it. Once that upgrade
   # has finished (completed, failed or rolled back) a request for another
   # version replaces it, so Genesis is allowed to delete this one resource,
   # and only when the existing one is finished. Status stays the operator's.
-  - apiGroups: ["autharie.dev"]
+  - apiGroups: ["autharie.fr"]
     resources: ["identitydataplaneupgrades"]
     verbs: ["get", "list", "watch", "create", "delete"]
   # The recurring archive is applied beside the instance it belongs to, so it
@@ -65,7 +65,7 @@ rules:
   # resource the first created rather than making a second archive of the same
   # database. No delete: nothing Genesis does removes an archive somebody
   # asked for, and retention is the operator's.
-  - apiGroups: ["autharie.dev"]
+  - apiGroups: ["autharie.fr"]
     resources: ["identityinstancebackupschedules", "identityinstancebackups"]
     verbs: ["get", "list", "watch", "create", "update", "patch"]
 ---
@@ -107,14 +107,14 @@ metadata:
   labels:
     {{- include "autharie-dataplane.labels" . | nindent 4 }}
 rules:
-  - apiGroups: ["autharie.dev"]
+  - apiGroups: ["autharie.fr"]
     resources:
       - identityinstances
       - identityinstanceupgrades
       - identityinstancebackups
       - identityinstancebackupschedules
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["autharie.dev"]
+  - apiGroups: ["autharie.fr"]
     resources:
       - identityinstances/status
       - identityinstances/finalizers
@@ -129,10 +129,10 @@ rules:
   # A dataplane upgrade is read and its status written back, nothing else:
   # it is created by whoever asks for the upgrade, never by the operator.
   # The Deployments it moves are covered by the rule above.
-  - apiGroups: ["autharie.dev"]
+  - apiGroups: ["autharie.fr"]
     resources: ["identitydataplaneupgrades"]
     verbs: ["get", "list", "watch"]
-  - apiGroups: ["autharie.dev"]
+  - apiGroups: ["autharie.fr"]
     resources: ["identitydataplaneupgrades/status"]
     verbs: ["get", "patch"]
   # deletecollection, not just delete: migration jobs are named per version and
@@ -230,7 +230,7 @@ rules:
   # Herald is the only component holding credentials for the control plane, so
   # it is the one that says what this cluster archived. Read only: it reports
   # what the operator recorded and never writes it.
-  - apiGroups: ["autharie.dev"]
+  - apiGroups: ["autharie.fr"]
     resources: ["identityinstancebackups"]
     verbs: ["get", "list", "watch"]
   # Read-only, same as the operator's: Herald reads back the address of the

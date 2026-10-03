@@ -4,7 +4,7 @@
 # s3://<bucket>/<organisation>/<deployment>. An operator deriving it itself
 # would be a second implementation of the prefix rule, and the two would
 # disagree the first time either changed.
-apiVersion: autharie.dev/v1alpha
+apiVersion: autharie.fr/v1alpha
 kind: IdentityInstance
 metadata:
   name: archived-ferriskey
@@ -35,7 +35,7 @@ spec:
     credentialsSecret: autharie-object-store
     encryption: AES256
 ---
-apiVersion: autharie.dev/v1alpha
+apiVersion: autharie.fr/v1alpha
 kind: IdentityInstanceBackupSchedule
 metadata:
   name: archived-ferriskey-nightly

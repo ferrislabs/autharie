@@ -10,7 +10,7 @@ const DEFAULT_MAX_UNAVAILABLE: u32 = 1;
 
 #[derive(CustomResource, Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[kube(
-    group = "autharie.dev",
+    group = "autharie.fr",
     version = "v1alpha",
     kind = "IdentityDataplaneUpgrade",
     plural = "identitydataplaneupgrades",
@@ -287,7 +287,7 @@ mod tests {
     fn crd_schema_exposes_spec_and_status_properties() {
         let crd = serde_json::to_value(IdentityDataplaneUpgrade::crd()).unwrap();
 
-        assert_eq!(crd["spec"]["group"], json!("autharie.dev"));
+        assert_eq!(crd["spec"]["group"], json!("autharie.fr"));
         assert_eq!(
             crd["spec"]["names"]["kind"],
             json!("IdentityDataplaneUpgrade")

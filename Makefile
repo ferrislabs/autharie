@@ -24,7 +24,7 @@ install-crds: crds ## Générer et installer les CRDs dans le cluster
 	@kubectl apply -f k8s/crds/
 	@echo "✅ CRDs installed successfully"
 	@echo ""
-	@kubectl get crd | grep autharie.io
+	@kubectl get crd | grep autharie.fr
 
 uninstall-crds: ## Désinstaller les CRDs du cluster
 	@echo "🗑️  Uninstalling CRDs..."
@@ -33,7 +33,7 @@ uninstall-crds: ## Désinstaller les CRDs du cluster
 
 verify-crds: ## Vérifier les CRDs installées
 	@echo "🔍 Verifying CRDs..."
-	@kubectl get crd | grep autharie.io || echo "❌ No Autharie CRDs found"
+	@kubectl get crd | grep autharie.fr || echo "❌ No Autharie CRDs found"
 
 
 # === Démo complète ===

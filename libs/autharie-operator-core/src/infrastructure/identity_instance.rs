@@ -1817,7 +1817,7 @@ pub async fn run() -> Result<(), OperatorError> {
     Ok(())
 }
 
-const FINALIZER_NAME: &str = "autharie.dev/identityinstance-cleanup";
+const FINALIZER_NAME: &str = "autharie.fr/identityinstance-cleanup";
 
 async fn ensure_finalizer(
     instance: &IdentityInstance,

@@ -8,7 +8,7 @@ use crate::common::types::{Condition, Phase, ResourceRequirements};
 
 #[derive(CustomResource, Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[kube(
-    group = "autharie.dev",
+    group = "autharie.fr",
     version = "v1alpha",
     kind = "IdentityInstance",
     plural = "identityinstances",

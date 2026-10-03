@@ -63,7 +63,7 @@ class MockDeploymentRepository @Inject constructor(
             cluster = "iam-${environmentLabel.lowercase()}-01",
             namespace = request.name.lowercase().replace(" ", "-"),
             version = "1.0.0",
-            endpoint = "https://${request.name.lowercase().replace(" ", "-")}.autharie.io",
+            endpoint = "https://${request.name.lowercase().replace(" ", "-")}.autharie.fr",
             region = "us-east-1",
             updatedAt = now
         )
@@ -113,7 +113,7 @@ class MockDeploymentRepository @Inject constructor(
                 cluster = "iam-prod-01",
                 namespace = "keycloak",
                 version = "24.0.2",
-                endpoint = "https://iam.autharie.io",
+                endpoint = "https://iam.autharie.fr",
                 region = "eu-west-1",
                 updatedAt = "2024-08-12 10:24"
             ),
@@ -126,7 +126,7 @@ class MockDeploymentRepository @Inject constructor(
                 cluster = "iam-stg-02",
                 namespace = "ferriskey",
                 version = "2.3.1",
-                endpoint = "https://iam-stg.autharie.io",
+                endpoint = "https://iam-stg.autharie.fr",
                 region = "eu-west-1",
                 updatedAt = "2024-08-11 18:03"
             ),
@@ -139,7 +139,7 @@ class MockDeploymentRepository @Inject constructor(
                 cluster = "iam-prod-02",
                 namespace = "keycloak",
                 version = "24.0.1",
-                endpoint = "https://iam-portal.autharie.io",
+                endpoint = "https://iam-portal.autharie.fr",
                 region = "us-east-1",
                 updatedAt = "2024-08-12 08:41"
             ),
@@ -152,7 +152,7 @@ class MockDeploymentRepository @Inject constructor(
                 cluster = "iam-dev-01",
                 namespace = "ferriskey",
                 version = "2.3.1",
-                endpoint = "https://iam-dev.autharie.io",
+                endpoint = "https://iam-dev.autharie.fr",
                 region = "eu-central-1",
                 updatedAt = "2024-08-10 15:15"
             )

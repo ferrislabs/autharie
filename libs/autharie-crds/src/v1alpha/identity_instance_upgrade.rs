@@ -9,7 +9,7 @@ use crate::common::types::{Condition, Phase};
 
 #[derive(CustomResource, Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[kube(
-    group = "autharie.dev",
+    group = "autharie.fr",
     version = "v1alpha",
     kind = "IdentityInstanceUpgrade",
     plural = "identityinstanceupgrades",

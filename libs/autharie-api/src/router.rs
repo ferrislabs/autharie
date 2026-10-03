@@ -157,7 +157,7 @@ mod tests {
     #[tokio::test]
     async fn router_builds_with_configured_origins() {
         let state =
-            app_state_with_origins(&["http://localhost:5173", "https://console.autharie.dev"]);
+            app_state_with_origins(&["http://localhost:5173", "https://console.autharie.fr"]);
         assert!(router(state).is_ok());
     }
 

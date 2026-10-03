@@ -711,7 +711,7 @@ mod tests {
     fn not_found_is_recognized_from_a_404_api_error() {
         let not_found = kube::Error::Api(ErrorResponse {
             status: "Failure".to_string(),
-            message: "identityinstances.autharie.dev \"x\" not found".to_string(),
+            message: "identityinstances.autharie.fr \"x\" not found".to_string(),
             reason: "NotFound".to_string(),
             code: 404,
         });

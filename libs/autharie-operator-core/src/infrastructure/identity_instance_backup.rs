@@ -243,7 +243,7 @@ fn labels(instance: &str) -> BTreeMap<String, String> {
             "autharie".to_string(),
         ),
         (
-            "autharie.dev/identity-instance".to_string(),
+            "autharie.fr/identity-instance".to_string(),
             instance.to_string(),
         ),
     ])

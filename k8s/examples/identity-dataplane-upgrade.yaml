@@ -1,4 +1,4 @@
-apiVersion: autharie.dev/v1alpha
+apiVersion: autharie.fr/v1alpha
 kind: IdentityDataplaneUpgrade
 metadata:
   name: dataplane-eu-1-upgrade-050

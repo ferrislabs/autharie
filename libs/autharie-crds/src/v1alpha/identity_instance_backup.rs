@@ -51,7 +51,7 @@ impl Display for ArchiveMethod {
 
 #[derive(CustomResource, Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[kube(
-    group = "autharie.dev",
+    group = "autharie.fr",
     version = "v1alpha",
     kind = "IdentityInstanceBackup",
     plural = "identityinstancebackups",
@@ -143,7 +143,7 @@ pub struct IdentityInstanceBackupStatus {
 
 #[derive(CustomResource, Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[kube(
-    group = "autharie.dev",
+    group = "autharie.fr",
     version = "v1alpha",
     kind = "IdentityInstanceBackupSchedule",
     plural = "identityinstancebackupschedules",

@@ -1,4 +1,4 @@
-apiVersion: autharie.dev/v1alpha
+apiVersion: autharie.fr/v1alpha
 kind: IdentityInstanceUpgrade
 metadata:
   name: cloud-iam-ferriskey-upgrade-2600

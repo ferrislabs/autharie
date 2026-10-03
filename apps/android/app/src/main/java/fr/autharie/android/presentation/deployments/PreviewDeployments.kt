@@ -16,7 +16,7 @@ private val previewDeployments = listOf(
         cluster = "iam-prod-01",
         namespace = "keycloak",
         version = "24.0.2",
-        endpoint = "https://iam.autharie.io",
+        endpoint = "https://iam.autharie.fr",
         region = "eu-west-1",
         updatedAt = "2024-08-12 10:24"
     ),
@@ -29,7 +29,7 @@ private val previewDeployments = listOf(
         cluster = "iam-stg-02",
         namespace = "ferriskey",
         version = "2.3.1",
-        endpoint = "https://iam-stg.autharie.io",
+        endpoint = "https://iam-stg.autharie.fr",
         region = "eu-west-1",
         updatedAt = "2024-08-11 18:03"
     ),
@@ -42,7 +42,7 @@ private val previewDeployments = listOf(
         cluster = "iam-dev-02",
         namespace = "keycloak",
         version = "24.0.1",
-        endpoint = "https://iam-dev.autharie.io",
+        endpoint = "https://iam-dev.autharie.fr",
         region = "us-east-1",
         updatedAt = "2024-08-12 08:41"
     )

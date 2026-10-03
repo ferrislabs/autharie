@@ -1,5 +1,5 @@
 // API Group
-pub const API_GROUP: &str = "autharie.io";
+pub const API_GROUP: &str = "autharie.fr";
 
 // API Version
 pub const API_VERSION: &str = "v1alpha1";
@@ -30,7 +30,7 @@ mod tests {
 
     #[test]
     fn api_constants_are_expected() {
-        assert_eq!(API_GROUP, "autharie.io");
+        assert_eq!(API_GROUP, "autharie.fr");
         assert_eq!(API_VERSION, "v1alpha1");
     }
 

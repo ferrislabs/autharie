@@ -1,9 +1,9 @@
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
-  name: identityinstances.autharie.dev
+  name: identityinstances.autharie.fr
 spec:
-  group: autharie.dev
+  group: autharie.fr
   names:
     categories: []
     kind: IdentityInstance
