@@ -7,7 +7,12 @@ edition.workspace = true
 
 [dependencies]
 autharie-api = { path = "../../libs/autharie-api" }
+autharie-core = { path = "../../libs/autharie-core" }
+autharie-transit = { path = "../../libs/autharie-transit" }
 clap = { version = "4.5.54", features = ["derive", "env"] }
 dotenvy = "0.15.7"
-tokio = { version = "1.49.0", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1.49.0", features = ["macros", "rt-multi-thread", "time"] }
 tracing = "0.1.44"
+
+[dev-dependencies]
+sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "postgres"] }

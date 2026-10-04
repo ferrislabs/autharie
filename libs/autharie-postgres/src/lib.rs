@@ -79,6 +79,7 @@ pub mod registry {
         pub struct Backup;
         pub struct BackupSchedule;
         pub struct CloudCredential;
+        pub struct ClusterClaims;
         pub struct ClusterInventory;
         pub struct DataPlane;
         pub struct FleetAudit;
@@ -150,6 +151,7 @@ mod registry_completeness {
         assert_registered::<domain::User>();
         assert_registered::<domain::ReachabilityCheck>();
         assert_registered::<domain::CloudCredential>();
+        assert_registered::<domain::ClusterClaims>();
         assert_registered::<domain::ClusterInventory>();
         assert_registered::<domain::SealedSecret>();
     }

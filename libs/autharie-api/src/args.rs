@@ -1,9 +1,10 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
 use clap::Parser;
 
 use autharie_core::{
-    AuthConfig, AutharieConfig, DataPlaneConfig, DatabaseConfig, version::Version,
+    AuthConfig, AutharieConfig, DataPlaneConfig, DatabaseConfig, HelmConfig, ScalewayConfig,
+    customer_clusters::WorkerSettings, version::Version,
 };
 use url::Url;
 
@@ -47,6 +48,32 @@ pub struct Args {
 
     #[command(flatten)]
     pub quickwit: QuickwitArgs,
+
+    #[command(flatten)]
+    pub customer_cloud: CustomerCloudArgs,
+}
+
+impl Args {
+    pub fn customer_cloud_blocker(&self) -> Option<&'static str> {
+        if self.key_manager.config().is_none() {
+            return Some("no key manager key is configured, so no credential can be opened");
+        }
+        if self.customer_cloud.control_plane_url.trim().is_empty() {
+            return Some(
+                "--customer-cloud-control-plane-url is empty, so no cluster could reach this control plane",
+            );
+        }
+        if self.realm.admin().is_none() {
+            return Some(
+                "no realm administrator is configured, so no Herald identity can be minted",
+            );
+        }
+        None
+    }
+
+    pub fn customer_cloud_active(&self) -> bool {
+        self.customer_cloud.enabled && self.customer_cloud_blocker().is_none()
+    }
 }
 
 /// How the control plane administers the realm.
@@ -110,6 +137,154 @@ pub struct PlatformArgs {
     /// the only authority, which is where this is headed.
     #[arg(long, env = "AUTHARIE_BOOTSTRAP_OPERATOR", default_value = "")]
     pub bootstrap_operator: String,
+}
+
+/// Creating clusters in a customer's own cloud account.
+///
+/// Off by default: with it off no catalog or verifier is composed, the worker
+/// that builds clusters is not started, and creating a customer cloud
+/// deployment is refused with a readable error. Turning it on also needs the
+/// key manager (credentials are opened with it) and a realm administrator
+/// (each cluster's Herald gets an identity of its own).
+#[derive(clap::Args, Debug, Clone)]
+pub struct CustomerCloudArgs {
+    #[arg(
+        long = "customer-cloud-enabled",
+        env = "CUSTOMER_CLOUD_ENABLED",
+        long_help = "Whether this installation builds clusters in customers' cloud accounts"
+    )]
+    pub enabled: bool,
+
+    #[arg(
+        long = "customer-cloud-scaleway-url",
+        env = "CUSTOMER_CLOUD_SCALEWAY_URL",
+        default_value = "https://api.scaleway.com",
+        long_help = "Where the Scaleway API answers"
+    )]
+    pub scaleway_url: String,
+
+    #[arg(
+        long = "customer-cloud-worker-interval-seconds",
+        env = "CUSTOMER_CLOUD_WORKER_INTERVAL_SECONDS",
+        default_value_t = 15,
+        long_help = "How often the worker looks for clusters to build and to release"
+    )]
+    pub worker_interval_seconds: u64,
+
+    #[arg(
+        long = "customer-cloud-claim-lease-seconds",
+        env = "CUSTOMER_CLOUD_CLAIM_LEASE_SECONDS",
+        default_value_t = 2700,
+        long_help = "How long a claimed cluster belongs to one worker before another may take it over. \
+                     Must exceed the time a cluster takes to build"
+    )]
+    pub claim_lease_seconds: u64,
+
+    #[arg(
+        long = "customer-cloud-control-plane-url",
+        env = "CUSTOMER_CLOUD_CONTROL_PLANE_URL",
+        default_value = "",
+        long_help = "The public URL of this control plane, which each cluster's Herald calls"
+    )]
+    pub control_plane_url: String,
+
+    #[arg(
+        long = "customer-cloud-herald-issuer",
+        env = "CUSTOMER_CLOUD_HERALD_ISSUER",
+        long_help = "The issuer each cluster's Herald authenticates against. Defaults to --auth-issuer"
+    )]
+    pub herald_issuer: Option<String>,
+
+    #[arg(
+        long = "customer-cloud-chart",
+        env = "CUSTOMER_CLOUD_CHART",
+        default_value = "oci://ghcr.io/ferrislabs/charts/autharie-dataplane",
+        long_help = "The data plane chart installed in each new cluster"
+    )]
+    pub chart: String,
+
+    #[arg(
+        long = "customer-cloud-chart-version",
+        env = "CUSTOMER_CLOUD_CHART_VERSION",
+        long_help = "The chart version to install. Latest when unset"
+    )]
+    pub chart_version: Option<String>,
+
+    #[arg(
+        long = "customer-cloud-helm-binary",
+        env = "CUSTOMER_CLOUD_HELM_BINARY",
+        default_value = "helm",
+        long_help = "The helm executable used to bootstrap a cluster"
+    )]
+    pub helm_binary: PathBuf,
+
+    #[arg(
+        long = "customer-cloud-poll-interval-seconds",
+        env = "CUSTOMER_CLOUD_POLL_INTERVAL_SECONDS",
+        default_value_t = 15,
+        long_help = "How often the provider is asked whether a cluster is ready"
+    )]
+    pub poll_interval_seconds: u64,
+
+    #[arg(
+        long = "customer-cloud-poll-attempts",
+        env = "CUSTOMER_CLOUD_POLL_ATTEMPTS",
+        default_value_t = 80,
+        long_help = "How many times the provider is asked before the node pool is declared never converged"
+    )]
+    pub poll_attempts: u32,
+}
+
+impl Default for CustomerCloudArgs {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            scaleway_url: "https://api.scaleway.com".to_string(),
+            worker_interval_seconds: 15,
+            claim_lease_seconds: 2700,
+            control_plane_url: String::new(),
+            herald_issuer: None,
+            chart: "oci://ghcr.io/ferrislabs/charts/autharie-dataplane".to_string(),
+            chart_version: None,
+            helm_binary: PathBuf::from("helm"),
+            poll_interval_seconds: 15,
+            poll_attempts: 80,
+        }
+    }
+}
+
+impl CustomerCloudArgs {
+    pub fn scaleway_config(&self) -> ScalewayConfig {
+        ScalewayConfig {
+            base_url: self.scaleway_url.clone(),
+            poll_interval: Duration::from_secs(self.poll_interval_seconds),
+            poll_attempts: self.poll_attempts,
+            ..ScalewayConfig::default()
+        }
+    }
+
+    pub fn helm_config(&self, auth: &AuthArgs) -> HelmConfig {
+        HelmConfig {
+            chart: self.chart.clone(),
+            chart_version: self.chart_version.clone(),
+            helm_binary: self.helm_binary.clone(),
+            ..HelmConfig::new(
+                self.control_plane_url.trim(),
+                self.herald_issuer.as_deref().unwrap_or(&auth.issuer),
+            )
+        }
+    }
+
+    pub fn worker_interval(&self) -> Duration {
+        Duration::from_secs(self.worker_interval_seconds.max(1))
+    }
+
+    pub fn worker_settings(&self) -> WorkerSettings {
+        WorkerSettings {
+            claim_lease: Duration::from_secs(self.claim_lease_seconds),
+            ..WorkerSettings::default()
+        }
+    }
 }
 
 impl From<Args> for AutharieConfig {
@@ -732,6 +907,84 @@ mod tests {
         assert_eq!(server.host, "0.0.0.0");
         assert_eq!(server.port, 3333);
         assert!(server.allowed_origins.is_empty());
+    }
+
+    #[test]
+    fn customer_cloud_is_off_by_default_and_defaults_match_the_flags() {
+        let parsed = Args::try_parse_from(["autharie"]).expect("no arguments parse");
+        let defaults = CustomerCloudArgs::default();
+
+        assert!(!parsed.customer_cloud.enabled);
+        assert!(!parsed.customer_cloud_active());
+        assert_eq!(
+            parsed.customer_cloud.scaleway_url,
+            "https://api.scaleway.com"
+        );
+        assert_eq!(parsed.customer_cloud.scaleway_url, defaults.scaleway_url);
+        assert_eq!(parsed.customer_cloud.worker_interval_seconds, 15);
+        assert_eq!(parsed.customer_cloud.claim_lease_seconds, 2700);
+        assert_eq!(parsed.customer_cloud.chart, defaults.chart);
+        assert_eq!(parsed.customer_cloud.chart_version, None);
+        assert_eq!(parsed.customer_cloud.helm_binary, PathBuf::from("helm"));
+        assert_eq!(parsed.customer_cloud.poll_interval_seconds, 15);
+        assert_eq!(parsed.customer_cloud.poll_attempts, 80);
+        assert_eq!(parsed.customer_cloud.herald_issuer, None);
+    }
+
+    #[test]
+    fn the_herald_issuer_defaults_to_the_auth_issuer() {
+        let args = CustomerCloudArgs {
+            control_plane_url: " https://autharie.example ".to_string(),
+            ..CustomerCloudArgs::default()
+        };
+        let auth = AuthArgs {
+            issuer: "http://issuer.test".to_string(),
+        };
+
+        let config = args.helm_config(&auth);
+        assert_eq!(config.herald_issuer, "http://issuer.test");
+        assert_eq!(config.control_plane_url, "https://autharie.example");
+
+        let own = CustomerCloudArgs {
+            herald_issuer: Some("http://herald.test".to_string()),
+            ..args
+        };
+        assert_eq!(own.helm_config(&auth).herald_issuer, "http://herald.test");
+    }
+
+    #[test]
+    fn enabling_customer_cloud_without_what_it_needs_says_what_is_missing() {
+        let enabled = |control_plane_url: &str, admin: &str, key: &str| Args {
+            customer_cloud: CustomerCloudArgs {
+                enabled: true,
+                control_plane_url: control_plane_url.to_string(),
+                ..CustomerCloudArgs::default()
+            },
+            realm: RealmArgs {
+                admin_url: "http://realm.test".to_string(),
+                admin_username: admin.to_string(),
+                ..RealmArgs::default()
+            },
+            key_manager: KeyManagerArgs {
+                key: key.to_string(),
+                ..KeyManagerArgs::default()
+            },
+            ..Args::default()
+        };
+
+        assert!(enabled("", "admin", "k").customer_cloud_blocker().is_some());
+        assert!(
+            enabled("https://cp", "", "k")
+                .customer_cloud_blocker()
+                .is_some()
+        );
+        assert!(
+            enabled("https://cp", "admin", " ")
+                .customer_cloud_blocker()
+                .is_some()
+        );
+        assert!(!enabled("", "admin", "k").customer_cloud_active());
+        assert!(enabled("https://cp", "admin", "k").customer_cloud_active());
     }
 
     #[test]

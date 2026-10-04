@@ -1,9 +1,14 @@
+use std::{fmt, sync::Arc};
+
 use autharie_domain::dataplane::{
     cloud_provider::{CatalogError, CredentialVerifier, Provider, ProviderCatalog, ProviderOffers},
     credential::{CloudCredentialId, CredentialError, ScopeCheck, SecretString},
     value_objects::Region,
 };
+use autharie_scaleway::{ScalewayCatalog, ScalewayConfig, ScalewayError, ScalewayVerifier};
 use chrono::Utc;
+
+use crate::infrastructure::pooled::PooledCredentialStore;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FixedVerdict {
@@ -19,11 +24,46 @@ pub struct FixedCloudProvider {
     pub verdict: FixedVerdict,
 }
 
+#[derive(Clone)]
+pub struct ScalewayProviders {
+    catalog: Arc<ScalewayCatalog<PooledCredentialStore>>,
+    verifier: Arc<ScalewayVerifier>,
+}
+
+impl fmt::Debug for ScalewayProviders {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ScalewayProviders")
+            .finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for ScalewayProviders {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.catalog, &other.catalog) && Arc::ptr_eq(&self.verifier, &other.verifier)
+    }
+}
+
+impl Eq for ScalewayProviders {}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum CloudProviders {
     #[default]
     Unconfigured,
     Fixed(FixedCloudProvider),
+    Scaleway(ScalewayProviders),
+}
+
+impl CloudProviders {
+    pub fn scaleway(
+        config: &ScalewayConfig,
+        credentials: PooledCredentialStore,
+    ) -> Result<Self, ScalewayError> {
+        Ok(Self::Scaleway(ScalewayProviders {
+            catalog: Arc::new(ScalewayCatalog::new(config.clone(), credentials)?),
+            verifier: Arc::new(ScalewayVerifier::new(config)?),
+        }))
+    }
 }
 
 const UNCONFIGURED: &str = "no cloud provider is configured on this installation";
@@ -31,13 +71,19 @@ const UNCONFIGURED: &str = "no cloud provider is configured on this installation
 impl ProviderCatalog for CloudProviders {
     async fn offers(
         &self,
-        _provider: Provider,
-        _credential_id: &CloudCredentialId,
-        _region: &Region,
+        provider: Provider,
+        credential_id: &CloudCredentialId,
+        region: &Region,
     ) -> Result<ProviderOffers, CatalogError> {
         match self {
             Self::Unconfigured => Err(CatalogError::Unavailable(UNCONFIGURED.to_string())),
             Self::Fixed(fixed) => Ok(fixed.offers.clone()),
+            Self::Scaleway(scaleway) => {
+                scaleway
+                    .catalog
+                    .offers(provider, credential_id, region)
+                    .await
+            }
         }
     }
 }
@@ -45,11 +91,12 @@ impl ProviderCatalog for CloudProviders {
 impl CredentialVerifier for CloudProviders {
     async fn verify(
         &self,
-        _provider: Provider,
-        _secret: &SecretString,
+        provider: Provider,
+        secret: &SecretString,
     ) -> Result<ScopeCheck, CredentialError> {
         match self {
             Self::Unconfigured => Err(CredentialError::Store(UNCONFIGURED.to_string())),
+            Self::Scaleway(scaleway) => scaleway.verifier.verify(provider, secret).await,
             Self::Fixed(fixed) => match &fixed.verdict {
                 FixedVerdict::Accept => Ok(ScopeCheck {
                     checked_at: Utc::now(),

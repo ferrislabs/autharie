@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+mod customer_cloud;
+
 use autharie_api::{
     action_stuck_signal::run_action_stuck_signal_probe,
     args::Args,
@@ -20,7 +22,8 @@ use autharie_api::{
     state::state,
 };
 use clap::Parser;
-use tracing::info;
+use customer_cloud::run_customer_cluster_worker;
+use tracing::{error, info};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -50,6 +53,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::spawn(run_action_stuck_signal_probe(app_state.clone()));
     tokio::spawn(run_backup_signal_probe(app_state.clone()));
     tokio::spawn(run_drill_signal_probe(app_state.clone()));
+
+    if args.customer_cloud_active() {
+        tokio::spawn(run_customer_cluster_worker(args.clone(), app_state.clone()));
+    } else if args.customer_cloud.enabled {
+        error!("customer cloud is enabled but cannot run: no cluster will be built");
+    }
 
     let router = router(app_state)?;
 

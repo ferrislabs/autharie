@@ -6,5 +6,6 @@ pub mod herald_identity;
 // through the registry now, so the re-exports were dead. `role` stays because
 // the permission provider needs a second repository built by hand.
 pub mod logs;
+pub mod pooled;
 pub mod provisioner;
 pub mod role;

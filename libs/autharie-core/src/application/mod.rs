@@ -20,6 +20,7 @@ mod auth;
 mod backup;
 mod catalog;
 pub mod cloud_credentials;
+pub mod customer_clusters;
 mod dataplane;
 pub mod dataplane_upgrade;
 pub mod dataplane_upgrade_request;
