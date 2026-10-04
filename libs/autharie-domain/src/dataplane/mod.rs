@@ -3,6 +3,7 @@ pub mod cluster_profile;
 pub mod credential;
 pub mod entities;
 pub mod herald_identity;
+pub mod inventory;
 pub mod ports;
 pub mod provisioner;
 pub mod service;

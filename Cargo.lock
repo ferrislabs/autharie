@@ -25,276 +25,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "autharie-amqp"
-version = "0.1.0"
-dependencies = [
- "lapin",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "autharie-api"
-version = "0.1.0"
-dependencies = [
- "autharie-auth",
- "autharie-core",
- "autharie-ovh",
- "autharie-s3",
- "autharie-transit",
- "axum",
- "axum-extra",
- "axum-server",
- "chrono",
- "chrono-tz",
- "clap",
- "futures",
- "httpmock",
- "k8s-openapi",
- "kube",
- "reqwest",
- "serde",
- "serde_json",
- "sqlx",
- "thiserror 2.0.20",
- "tokio",
- "tower",
- "tower-http",
- "tracing",
- "tracing-subscriber",
- "url",
- "utoipa",
- "utoipa-scalar",
- "utoipa-swagger-ui",
- "uuid",
-]
-
-[[package]]
-name = "autharie-auth"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "chrono",
- "httpmock",
- "jsonwebtoken",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror 2.0.20",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "autharie-control-plane"
-version = "0.1.0"
-dependencies = [
- "autharie-api",
- "clap",
- "dotenvy",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "autharie-core"
-version = "0.1.0"
-dependencies = [
- "autharie-auth",
- "autharie-domain",
- "autharie-macros",
- "autharie-permission",
- "autharie-persistence",
- "autharie-postgres",
- "chrono",
- "reqwest",
- "serde",
- "serde_json",
- "sqlx",
- "tokio",
- "tracing",
- "utoipa",
- "uuid",
-]
-
-[[package]]
-name = "autharie-crds"
-version = "0.1.0"
-dependencies = [
- "k8s-openapi",
- "kube",
- "schemars",
- "serde",
- "serde_json",
- "serde_yaml",
- "thiserror 2.0.20",
- "tokio",
-]
-
-[[package]]
-name = "autharie-domain"
-version = "0.1.0"
-dependencies = [
- "autharie-auth",
- "autharie-permission",
- "chrono",
- "chrono-tz",
- "mockall",
- "rand 0.9.5",
- "semver",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "thiserror 2.0.20",
- "tokio",
- "tracing",
- "utoipa",
- "uuid",
- "zeroize",
-]
-
-[[package]]
-name = "autharie-e2e"
-version = "0.1.0"
-dependencies = [
- "autharie-auth",
- "autharie-core",
- "autharie-crds",
- "autharie-domain",
- "autharie-operator-core",
- "chrono",
- "cucumber",
- "genesis-core",
- "herald-core",
- "proptest",
- "serde_json",
- "tokio",
- "uuid",
-]
-
-[[package]]
-name = "autharie-macros"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
-name = "autharie-operator"
-version = "0.1.0"
-dependencies = [
- "autharie-operator-core",
- "rustls",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "autharie-operator-core"
-version = "0.1.0"
-dependencies = [
- "autharie-crds",
- "async-trait",
- "aws-config",
- "aws-credential-types",
- "aws-sdk-s3",
- "chrono",
- "chrono-tz",
- "futures",
- "http 1.5.0",
- "k8s-openapi",
- "kube",
- "mockall",
- "rand 0.8.8",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror 2.0.20",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "autharie-ovh"
-version = "0.1.0"
-dependencies = [
- "autharie-domain",
- "httpmock",
- "reqwest",
- "serde",
- "serde_json",
- "sha1 0.10.7",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "autharie-permission"
-version = "0.1.0"
-dependencies = [
- "bitflags 2.13.1",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "autharie-persistence"
-version = "0.1.0"
-dependencies = [
- "sqlx",
- "tokio",
-]
-
-[[package]]
-name = "autharie-postgres"
-version = "0.1.0"
-dependencies = [
- "autharie-auth",
- "autharie-domain",
- "autharie-macros",
- "autharie-persistence",
- "chrono",
- "chrono-tz",
- "serde_json",
- "sqlx",
- "testcontainers",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "autharie-s3"
-version = "0.1.0"
-dependencies = [
- "autharie-domain",
- "aws-config",
- "aws-credential-types",
- "aws-sdk-s3",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "autharie-transit"
-version = "0.1.0"
-dependencies = [
- "autharie-domain",
- "base64 0.22.1",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "uuid",
- "zeroize",
-]
-
-[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -806,6 +536,290 @@ name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
+
+[[package]]
+name = "autharie-amqp"
+version = "0.1.0"
+dependencies = [
+ "lapin",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "autharie-api"
+version = "0.1.0"
+dependencies = [
+ "autharie-auth",
+ "autharie-core",
+ "autharie-ovh",
+ "autharie-s3",
+ "autharie-transit",
+ "axum",
+ "axum-extra",
+ "axum-server",
+ "chrono",
+ "chrono-tz",
+ "clap",
+ "futures",
+ "httpmock",
+ "k8s-openapi",
+ "kube",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 2.0.20",
+ "tokio",
+ "tower",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "utoipa",
+ "utoipa-scalar",
+ "utoipa-swagger-ui",
+ "uuid",
+]
+
+[[package]]
+name = "autharie-auth"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "httpmock",
+ "jsonwebtoken",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "autharie-control-plane"
+version = "0.1.0"
+dependencies = [
+ "autharie-api",
+ "clap",
+ "dotenvy",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "autharie-core"
+version = "0.1.0"
+dependencies = [
+ "autharie-auth",
+ "autharie-domain",
+ "autharie-macros",
+ "autharie-permission",
+ "autharie-persistence",
+ "autharie-postgres",
+ "chrono",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "utoipa",
+ "uuid",
+]
+
+[[package]]
+name = "autharie-crds"
+version = "0.1.0"
+dependencies = [
+ "k8s-openapi",
+ "kube",
+ "schemars",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "thiserror 2.0.20",
+ "tokio",
+]
+
+[[package]]
+name = "autharie-domain"
+version = "0.1.0"
+dependencies = [
+ "autharie-auth",
+ "autharie-permission",
+ "chrono",
+ "chrono-tz",
+ "mockall",
+ "rand 0.9.5",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+ "utoipa",
+ "uuid",
+ "zeroize",
+]
+
+[[package]]
+name = "autharie-e2e"
+version = "0.1.0"
+dependencies = [
+ "autharie-auth",
+ "autharie-core",
+ "autharie-crds",
+ "autharie-domain",
+ "autharie-operator-core",
+ "chrono",
+ "cucumber",
+ "genesis-core",
+ "herald-core",
+ "proptest",
+ "serde_json",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "autharie-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "autharie-operator"
+version = "0.1.0"
+dependencies = [
+ "autharie-operator-core",
+ "rustls",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "autharie-operator-core"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "autharie-crds",
+ "aws-config",
+ "aws-credential-types",
+ "aws-sdk-s3",
+ "chrono",
+ "chrono-tz",
+ "futures",
+ "http 1.5.0",
+ "k8s-openapi",
+ "kube",
+ "mockall",
+ "rand 0.8.8",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "autharie-ovh"
+version = "0.1.0"
+dependencies = [
+ "autharie-domain",
+ "httpmock",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha1 0.10.7",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "autharie-permission"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.13.1",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "autharie-persistence"
+version = "0.1.0"
+dependencies = [
+ "sqlx",
+ "tokio",
+]
+
+[[package]]
+name = "autharie-postgres"
+version = "0.1.0"
+dependencies = [
+ "autharie-auth",
+ "autharie-domain",
+ "autharie-macros",
+ "autharie-persistence",
+ "chrono",
+ "chrono-tz",
+ "serde_json",
+ "sqlx",
+ "testcontainers",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "autharie-s3"
+version = "0.1.0"
+dependencies = [
+ "autharie-domain",
+ "aws-config",
+ "aws-credential-types",
+ "aws-sdk-s3",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "autharie-scaleway"
+version = "0.1.0"
+dependencies = [
+ "autharie-domain",
+ "httpmock",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "autharie-transit"
+version = "0.1.0"
+dependencies = [
+ "autharie-domain",
+ "base64 0.22.1",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uuid",
+ "zeroize",
+]
 
 [[package]]
 name = "autocfg"
@@ -2594,9 +2608,9 @@ dependencies = [
 name = "genesis-core"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "autharie-amqp",
  "autharie-crds",
- "async-trait",
  "chrono",
  "k8s-openapi",
  "kube",
