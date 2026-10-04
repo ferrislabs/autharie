@@ -1,52 +1,43 @@
 import type { Schemas } from '@/api/api.client'
 import { ApiRequestError } from '@/api/api.fetch'
+import { providerById } from './providers'
 import type { CloudCredential, Provider } from './types/cloud-provider'
 
-export const SCALEWAY_SECRET_HELP =
-  'Paste the JSON {"access_key": "...", "secret_key": "...", "project_id": "..."} of a Scaleway API key. It is sent once and never shown again.'
-
-const SCALEWAY_SECRET_KEYS = ['access_key', 'secret_key', 'project_id'] as const
-
 export interface CredentialDraft {
-  label: string
   provider: Provider
-  secret: string
+  values: Record<string, string>
 }
 
-export const EMPTY_CREDENTIAL_DRAFT: CredentialDraft = { label: '', provider: 'scaleway', secret: '' }
-
-export function secretProblem(secret: string): string | null {
-  if (secret.trim() === '') return null
-
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(secret)
-  } catch {
-    return 'This is not valid JSON.'
-  }
-
-  if (typeof parsed !== 'object' || parsed === null) return 'This is not a JSON object.'
-
-  const record = parsed as Record<string, unknown>
-  const missing = SCALEWAY_SECRET_KEYS.filter(
-    (key) => typeof record[key] !== 'string' || record[key] === '',
-  )
-
-  return missing.length === 0 ? null : `Missing: ${missing.join(', ')}.`
+export function emptyDraft(provider: Provider): CredentialDraft {
+  return { provider, values: {} }
 }
 
 export function canRegister(draft: CredentialDraft): boolean {
-  return (
-    draft.label.trim() !== '' && draft.secret.trim() !== '' && secretProblem(draft.secret) === null
+  return providerById(draft.provider).fields.every(
+    (field) => (draft.values[field.id] ?? '').trim() !== ''
   )
 }
 
 export function toRegisterRequest(draft: CredentialDraft): Schemas.RegisterCloudCredentialRequest {
-  return { label: draft.label.trim(), provider: draft.provider, secret: draft.secret }
+  const provider = providerById(draft.provider)
+  const secret = Object.fromEntries(
+    provider.secretKeys.map((key) => [key, (draft.values[key] ?? '').trim()])
+  )
+  return {
+    provider: provider.id,
+    label: (draft.values.name ?? '').trim(),
+    secret: JSON.stringify(secret),
+  }
 }
 
-export function afterSubmit(): CredentialDraft {
-  return EMPTY_CREDENTIAL_DRAFT
+export function afterSubmit(draft: CredentialDraft): CredentialDraft {
+  const masked = providerById(draft.provider)
+    .fields.filter((field) => field.masked)
+    .map((field) => field.id)
+  return {
+    provider: draft.provider,
+    values: Object.fromEntries(Object.entries(draft.values).filter(([id]) => !masked.includes(id))),
+  }
 }
 
 export const CREDENTIAL_IN_USE =

@@ -22,20 +22,20 @@ export default function PageCloudCredentialsFeature() {
       isSaving={register.isPending || remove.isPending}
       registerRefusal={registerRefusal}
       deleteRefusal={deletionRefusal(remove.error)}
-      onRegister={(label, secret, onRegistered) => {
+      onRegister={(request, onRegistered) => {
         if (!organisationId || register.isPending) return
         remove.reset()
         setRegisterRefusal(undefined)
         register.mutate(
           {
             path: { organisation_id: organisationId },
-            body: { label, provider: 'scaleway', secret },
+            body: request,
           },
           {
             onSuccess: onRegistered,
             onError: (error) => setRegisterRefusal(error.message),
             onSettled: () => register.reset(),
-          },
+          }
         )
       }}
       onDelete={(credential) => {

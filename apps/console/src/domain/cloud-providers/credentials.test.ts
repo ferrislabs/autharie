@@ -2,57 +2,77 @@ import { describe, expect, it } from 'vitest'
 import { ApiRequestError } from '@/api/api.fetch'
 import {
   CREDENTIAL_IN_USE,
-  EMPTY_CREDENTIAL_DRAFT,
   afterSubmit,
   canRegister,
   deletionRefusal,
-  secretProblem,
+  emptyDraft,
   toRegisterRequest,
 } from './credentials'
+import { PROVIDERS, providerById } from './providers'
 
-const SECRET = '{"access_key":"SCWXXX","secret_key":"s3cret-value","project_id":"p1"}'
+const FILLED = {
+  provider: 'scaleway' as const,
+  values: {
+    name: ' prod ',
+    access_key: ' SCWXXX ',
+    secret_key: 's3cret-value',
+    organization_id: 'org-1',
+    project_id: 'p1',
+  },
+}
 
-describe('the secret a customer pastes', () => {
-  it('accepts the three Scaleway fields', () => {
-    expect(secretProblem(SECRET)).toBeNull()
+describe('the providers a credential can be created for', () => {
+  it('lists Scaleway only', () => {
+    expect(PROVIDERS.map((provider) => provider.id)).toEqual(['scaleway'])
+    expect(PROVIDERS[0].label).toBe('Scaleway')
   })
 
-  it('says what is wrong rather than refusing silently', () => {
-    expect(secretProblem('nope')).toBe('This is not valid JSON.')
-    expect(secretProblem('[]')).toBe('Missing: access_key, secret_key, project_id.')
-    expect(secretProblem('{"access_key":"a","secret_key":"b"}')).toBe('Missing: project_id.')
-  })
-
-  it('stays quiet while the field is empty', () => {
-    expect(secretProblem('')).toBeNull()
+  it('asks for the five Scaleway fields, the secret one masked', () => {
+    const fields = providerById('scaleway').fields
+    expect(fields.map((field) => field.label)).toEqual([
+      'Name',
+      'Access key',
+      'Secret access key',
+      'Organization id',
+      'Project id',
+    ])
+    expect(fields.filter((field) => field.masked).map((field) => field.id)).toEqual(['secret_key'])
   })
 })
 
 describe('adding an account', () => {
-  it('needs a label and a valid secret', () => {
-    expect(canRegister({ label: 'prod', provider: 'scaleway', secret: SECRET })).toBe(true)
-    expect(canRegister({ label: '', provider: 'scaleway', secret: SECRET })).toBe(false)
-    expect(canRegister({ label: 'prod', provider: 'scaleway', secret: 'x' })).toBe(false)
+  it('needs all five fields', () => {
+    expect(canRegister(FILLED)).toBe(true)
+    for (const id of Object.keys(FILLED.values)) {
+      expect(canRegister({ ...FILLED, values: { ...FILLED.values, [id]: '' } })).toBe(false)
+      expect(canRegister({ ...FILLED, values: { ...FILLED.values, [id]: '   ' } })).toBe(false)
+    }
+    expect(canRegister(emptyDraft('scaleway'))).toBe(false)
   })
 
-  it('sends the secret as typed, with the label trimmed', () => {
-    expect(toRegisterRequest({ label: ' prod ', provider: 'scaleway', secret: SECRET })).toEqual({
-      label: 'prod',
+  it('builds the secret JSON itself, with the label trimmed', () => {
+    expect(toRegisterRequest(FILLED)).toEqual({
       provider: 'scaleway',
-      secret: SECRET,
+      label: 'prod',
+      secret:
+        '{"access_key":"SCWXXX","secret_key":"s3cret-value","project_id":"p1","organization_id":"org-1"}',
     })
   })
 
-  it('leaves no secret behind once submitted', () => {
-    expect(afterSubmit().secret).toBe('')
-    expect(afterSubmit()).toEqual(EMPTY_CREDENTIAL_DRAFT)
+  it('leaves no secret behind once submitted, and keeps the rest', () => {
+    const after = afterSubmit(FILLED)
+    expect(after.values.secret_key).toBeUndefined()
+    expect(JSON.stringify(after)).not.toContain('s3cret-value')
+    expect(after.values.name).toBe(' prod ')
+    expect(after.values.project_id).toBe('p1')
+    expect(canRegister(after)).toBe(false)
   })
 })
 
 describe('deleting an account', () => {
   it('shows what the platform said on a 409', () => {
     expect(deletionRefusal(new ApiRequestError(409, 'credential in use by deployment auth'))).toBe(
-      'credential in use by deployment auth',
+      'credential in use by deployment auth'
     )
   })
 

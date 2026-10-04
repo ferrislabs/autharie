@@ -1,13 +1,23 @@
 import { useState } from 'react'
-import { Cloud, Plus, Trash2 } from 'lucide-react'
+import { Cloud, Trash2 } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import { EmptyState, Page, PageTitle } from '@/components/layout/page'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
 import { byLabel } from '../../credentials'
 import type { CloudCredential } from '../../types/cloud-provider'
-import { AddCredentialDialog } from './add-credential-dialog'
+import type { Schemas } from '@/api/api.client'
+import type { Provider } from '../../types/cloud-provider'
+import { CreateCredentialDialog } from './create-credential-dialog'
+import { NewCredentialMenu } from './new-credential-menu'
 
 interface Props {
   credentials: CloudCredential[]
@@ -15,7 +25,7 @@ interface Props {
   isSaving: boolean
   registerRefusal?: string
   deleteRefusal?: string
-  onRegister: (label: string, secret: string, onRegistered: () => void) => void
+  onRegister: (request: Schemas.RegisterCloudCredentialRequest, onRegistered: () => void) => void
   onDelete: (credential: CloudCredential) => void
   onDialogClosed: () => void
 }
@@ -30,7 +40,7 @@ export function PageCloudCredentials({
   onDelete,
   onDialogClosed,
 }: Props) {
-  const [adding, setAdding] = useState(false)
+  const [adding, setAdding] = useState<Provider | null>(null)
 
   if (isLoading) {
     return (
@@ -40,12 +50,7 @@ export function PageCloudCredentials({
     )
   }
 
-  const add = (
-    <Button size='sm' onClick={() => setAdding(true)} disabled={isSaving}>
-      <Plus className='h-4 w-4' />
-      Add a cloud account
-    </Button>
-  )
+  const add = <NewCredentialMenu disabled={isSaving} onSelect={setAdding} />
 
   return (
     <Page>
@@ -115,15 +120,15 @@ export function PageCloudCredentials({
         )}
       </div>
 
-      <AddCredentialDialog
-        open={adding}
-        onOpenChange={(next) => {
-          setAdding(next)
-          if (!next) onDialogClosed()
+      <CreateCredentialDialog
+        provider={adding}
+        onClose={() => {
+          setAdding(null)
+          onDialogClosed()
         }}
         isSaving={isSaving}
         refusal={registerRefusal}
-        onSubmit={(label, secret) => onRegister(label, secret, () => setAdding(false))}
+        onSubmit={(request) => onRegister(request, () => setAdding(null))}
       />
     </Page>
   )
