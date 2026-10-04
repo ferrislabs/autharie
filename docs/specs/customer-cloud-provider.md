@@ -50,7 +50,7 @@ Design
     - Provisioner and catalog: Scaleway (Kapsule), extends issue #29.
     - Verifier: Scaleway IAM policy inspection.
   Errors:
-    - `ProfileError`: `NodeRangeInvalid`, `BelowModeFloor`, `ReplicationExceedsNodes`, `NodeTypeUnavailable`, `ControlPlaneUnavailable`, `ControlPlaneNotAllowedForMode`.
+    - `ProfileError`: `NodeRangeInvalid`, `BelowModeFloor`, `AboveModeCeiling`, `ReplicationExceedsNodes`, `NodeTypeUnavailable`, `ControlPlaneUnavailable`, `ControlPlaneNotAllowedForMode`.
     - `CredentialError`: `Invalid`, `MissingPermissions { missing }`, `ExcessPermissions { extra }`, `InUse`.
     - `ProvisionError`: `QuotaExceeded`, `RegionUnavailable`, `NodePoolNeverConverged`, `CredentialRejected`. Each is a readable `Failed` reason on the data plane.
 
@@ -143,3 +143,4 @@ Amended: 2026-10-04 control plane offer added to the profile, taken from the pro
 Amended: 2026-10-04 `standard` floor fixed at 2 nodes.
 Amended: 2026-10-04 provisioning is asynchronous: creating a `CustomerCloud` deployment records the data plane in `Provisioning` and the deployment in `Pending`, and a background worker builds the cluster. @spec-ccp-10 and @spec-ccp-11 are observed on the data plane's status and failure reason, not on the create call.
 Amended: 2026-10-04 deleting the deployment is also observed on the data plane: the worker releases the cluster from the inventory, revokes the Herald identity and marks the data plane `Disabled` (@spec-ccp-13, @spec-ccp-14). A `Failed` data plane keeps its status and reason after its resources are released. See ADR 0004.
+Amended: 2026-10-05 `ProfileError::AboveModeCeiling` added to the error list: it carries the rule that `dev` allows one node at most.
