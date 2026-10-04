@@ -1,4 +1,5 @@
-import { Server, type LucideIcon } from 'lucide-react'
+import type { ComponentType, SVGProps } from 'react'
+import { ScalewayLogo } from './pages/ui/provider-logos'
 import type { Provider } from './types/cloud-provider'
 
 export interface CredentialField {
@@ -11,7 +12,7 @@ export interface CredentialField {
 export interface ProviderDefinition {
   id: Provider
   label: string
-  icon: LucideIcon
+  icon: ComponentType<SVGProps<SVGSVGElement>>
   fields: CredentialField[]
   secretKeys: string[]
   permissionSets: string[]
@@ -21,7 +22,7 @@ export const PROVIDERS: ProviderDefinition[] = [
   {
     id: 'scaleway',
     label: 'Scaleway',
-    icon: Server,
+    icon: ScalewayLogo,
     fields: [
       { id: 'name', label: 'Name', placeholder: 'Scaleway production' },
       { id: 'access_key', label: 'Access key', placeholder: 'SCWXXXXXXXXXXXXXXXXX' },
