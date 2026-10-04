@@ -241,7 +241,7 @@ mod tests {
             deployment_id: DeploymentId::new(Uuid::nil().to_string()),
             dataplane_id: DataPlaneId::new(Uuid::nil().to_string()),
             organisation_id: OrganisationId::new(Uuid::nil().to_string()),
-            namespace: "aether-acme".to_string(),
+            namespace: "autharie-acme".to_string(),
             kind: DeploymentKind::Ferriskey,
             session_id: LogSessionId(Uuid::nil()),
             since_minutes: 5,
@@ -365,7 +365,7 @@ mod tests {
         source.expect_follow().returning(|_| {
             Box::pin(async {
                 Err(HeraldError::Internal {
-                    message: "no pods in aether-acme".to_string(),
+                    message: "no pods in autharie-acme".to_string(),
                 })
             })
         });

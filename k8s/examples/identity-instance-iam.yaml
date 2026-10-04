@@ -1,16 +1,16 @@
-apiVersion: aether.dev/v1alpha
+apiVersion: autharie.fr/v1alpha
 kind: IdentityInstance
 metadata:
   name: cloud-iam-branded
-  namespace: test-aether
+  namespace: test-autharie
 spec:
   organisationId: org-123
   provider: ferriskey
   version: "0.5.0"
-  hostname: ferriskey.aether.local
+  hostname: ferriskey.autharie.local
   ferriskey:
-    webappUrl: "https://ferriskey.aether.local"
-    apiBaseUrl: "https://ferriskey.aether.local/api"
+    webappUrl: "https://ferriskey.autharie.local"
+    apiBaseUrl: "https://ferriskey.autharie.local/api"
   # Served through an HTTPRoute on the data plane's Gateway. Drop this block
   # entirely to be exposed, which is the default; set enabled: false for an
   # instance that should only be reachable from inside the cluster.

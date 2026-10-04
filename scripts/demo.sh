@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Brings the whole of Aether up locally and leaves you able to create a
+# Brings the whole of Autharie up locally and leaves you able to create a
 # deployment from the console.
 #
 # There are two runtimes and the split is the architecture, not an accident:
@@ -16,8 +16,8 @@ cd "${REPO_ROOT}"
 
 # Ports are overridable because a developer machine already has things on the
 # usual ones. Every default here has collided with something real at least once.
-export AETHER_POSTGRES_PORT="${AETHER_POSTGRES_PORT:-55435}"
-export AETHER_API_PORT="${AETHER_API_PORT:-7777}"
+export AUTHARIE_POSTGRES_PORT="${AUTHARIE_POSTGRES_PORT:-55435}"
+export AUTHARIE_API_PORT="${AUTHARIE_API_PORT:-7777}"
 export FERRISKEY_API_PORT="${FERRISKEY_API_PORT:-3334}"
 export FERRISKEY_WEBAPP_PORT="${FERRISKEY_WEBAPP_PORT:-5556}"
 # The published port, because the data plane reaches RustFS from outside the
@@ -32,15 +32,15 @@ QUICKWIT_PORT="${QUICKWIT_PORT:-7280}"
 # maps to the Gateway's HTTPS listener, since a container cannot bind the
 # real 443. Every provisioned instance's webapp/API URLs need to know it, or
 # a browser redirect assumes 443 and cannot connect.
-export AETHER_HTTPS_PORT="${AETHER_HTTPS_PORT:-8444}"
+export AUTHARIE_HTTPS_PORT="${AUTHARIE_HTTPS_PORT:-8444}"
 
 CONSOLE_PORT="${CONSOLE_PORT:-5173}"
-CONTROL_PLANE="http://localhost:${AETHER_API_PORT}"
+CONTROL_PLANE="http://localhost:${AUTHARIE_API_PORT}"
 FERRISKEY_URL="http://localhost:${FERRISKEY_API_PORT}"
-REGION="${AETHER_REGION:-local}"
-CLUSTER="${AETHER_CLUSTER:-aether-local}"
-RELEASE="${AETHER_RELEASE:-aether-dataplane}"
-NAMESPACE="${AETHER_DATAPLANE_NAMESPACE:-aether-system}"
+REGION="${AUTHARIE_REGION:-local}"
+CLUSTER="${AUTHARIE_CLUSTER:-autharie-local}"
+RELEASE="${AUTHARIE_RELEASE:-autharie-dataplane}"
+NAMESPACE="${AUTHARIE_DATAPLANE_NAMESPACE:-autharie-system}"
 
 step() { printf '\n\033[1;35m▸ %s\033[0m\n' "$1"; }
 note() { printf '  %s\n' "$1"; }
@@ -58,7 +58,7 @@ if [ "${1:-up}" = "down" ]; then
     ./scripts/local-cluster.sh down || true
     note "the terraform state in deploy/ferriskey/terraform is left alone:"
     note "it describes a realm whose database has just been deleted, so run"
-    note "  terraform -chdir=deploy/ferriskey/terraform state rm ferriskey_realm.aether"
+    note "  terraform -chdir=deploy/ferriskey/terraform state rm ferriskey_realm.autharie"
     note "if the next run complains that the realm already exists."
     exit 0
 fi
@@ -78,7 +78,7 @@ fi
 # Resolved below, from the realm, once the realm exists -- so the first Compose
 # start of a fresh checkout comes up with nobody, says so in its logs, and is
 # granted on the second pass a few lines later.
-export AETHER_BOOTSTRAP_OPERATOR="${AETHER_BOOTSTRAP_OPERATOR:-}"
+export AUTHARIE_BOOTSTRAP_OPERATOR="${AUTHARIE_BOOTSTRAP_OPERATOR:-}"
 
 step "control plane (docker compose)"
 docker compose --profile ferriskey up -d --build --wait 2>&1 | tail -3 \
@@ -122,7 +122,7 @@ token() {
     # rejected it.
     local client="$1" secret="$2" response status
     response=$(curl -sS -X POST \
-        "${FERRISKEY_URL}/realms/aether/protocol/openid-connect/token" \
+        "${FERRISKEY_URL}/realms/autharie/protocol/openid-connect/token" \
         -d grant_type=client_credentials \
         -d "client_id=${client}" \
         -d "client_secret=${secret}" \
@@ -139,8 +139,8 @@ token herald-service "${HERALD_SECRET_SHARED}" >/dev/null
 # Registering a data plane is an operator's act, not a data plane's. Herald's
 # token is refused by those endpoints, and rightly: a data plane that could
 # register another one could point work at a cluster nobody chose.
-OPERATOR_TOKEN=$(token aether-operator-cli "${OPERATOR_SECRET}")
-note "herald-service and aether-operator-cli can authenticate"
+OPERATOR_TOKEN=$(token autharie-operator-cli "${OPERATOR_SECRET}")
+note "herald-service and autharie-operator-cli can authenticate"
 
 # ------------------------------------------------------------ platform rights
 
@@ -148,11 +148,11 @@ step "granting the platform rights"
 # The control plane holds these, not the realm. A run before this existed left
 # an installation whose operator screens refused everybody, which reads as a
 # broken console rather than as an empty table.
-if [ -n "${OPERATOR_SUBJECT}" ] && [ "${AETHER_BOOTSTRAP_OPERATOR}" != "${OPERATOR_SUBJECT}" ]; then
-    export AETHER_BOOTSTRAP_OPERATOR="${OPERATOR_SUBJECT}"
+if [ -n "${OPERATOR_SUBJECT}" ] && [ "${AUTHARIE_BOOTSTRAP_OPERATOR}" != "${OPERATOR_SUBJECT}" ]; then
+    export AUTHARIE_BOOTSTRAP_OPERATOR="${OPERATOR_SUBJECT}"
     # Recreated rather than restarted: the subject is read from the
     # environment at startup, and a restart keeps the environment it had.
-    docker compose --profile ferriskey up -d --force-recreate --no-deps aether >/dev/null 2>&1 \
+    docker compose --profile ferriskey up -d --force-recreate --no-deps autharie >/dev/null 2>&1 \
         || die "could not restart the control plane with a bootstrap operator"
     for _ in $(seq 30); do
         status=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 2 \
@@ -160,16 +160,16 @@ if [ -n "${OPERATOR_SUBJECT}" ] && [ "${AETHER_BOOTSTRAP_OPERATOR}" != "${OPERAT
         [ "${status}" != "000" ] && break
         sleep 2
     done
-    OPERATOR_TOKEN=$(token aether-operator-cli "${OPERATOR_SECRET}")
+    OPERATOR_TOKEN=$(token autharie-operator-cli "${OPERATOR_SECRET}")
 fi
-note "aether-operator-cli operates this installation"
+note "autharie-operator-cli operates this installation"
 
 # Anybody still carrying the old realm role gets the rights it used to imply.
 # That role was the authority until the control plane took it over; seeding
 # from it is what stops this run locking out the account that could already see
 # these screens.
 if [ -z "${OPERATOR_PEOPLE}" ]; then
-    note "nobody carries the aether-operator realm role yet"
+    note "nobody carries the autharie-operator realm role yet"
     note "grant yourself once you have logged in:"
     note "  curl -X PUT ${CONTROL_PLANE}/platform/operators/<your-subject> \\"
     note "       -H 'Authorization: Bearer <the operator cli token>' \\"
@@ -222,13 +222,13 @@ step "building the data plane images"
 #
 # The layers are shared with the control-plane build above, so this is much
 # cheaper than three Rust builds after the first run.
-IMAGE_REGISTRY="aether.local"
+IMAGE_REGISTRY="autharie.local"
 IMAGE_REPO="demo"
 IMAGE_TAG="dev"
 
-BUILD_LOG="$(mktemp -t aether-demo-build)"
+BUILD_LOG="$(mktemp -t autharie-demo-build)"
 for component in herald genesis operator; do
-    image="${IMAGE_REGISTRY}/${IMAGE_REPO}/aether-${component}:${IMAGE_TAG}"
+    image="${IMAGE_REGISTRY}/${IMAGE_REPO}/autharie-${component}:${IMAGE_TAG}"
     note "building ${component}"
     # BuildKit writes its progress to stderr, so `>/dev/null` alone leaves a
     # thousand lines of cargo output in whatever is capturing this. Kept in a
@@ -320,9 +320,9 @@ fi
 # saying this data plane has no object store credentials -- which is true, and
 # is the whole difference between a demo that backs up and one that does not.
 kubectl create namespace "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-kubectl -n "${NAMESPACE}" create secret generic aether-object-store \
-    --from-literal=ACCESS_KEY_ID=aether \
-    --from-literal=ACCESS_SECRET_KEY=aetheraether \
+kubectl -n "${NAMESPACE}" create secret generic autharie-object-store \
+    --from-literal=ACCESS_KEY_ID=autharie \
+    --from-literal=ACCESS_SECRET_KEY=autharieautharie \
     --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 note "object store credentials in place"
 
@@ -337,16 +337,16 @@ command -v mkcert >/dev/null 2>&1 || die "mkcert is required (brew install mkcer
 mkcert -install >/dev/null 2>&1
 CERT_DIR="$(mktemp -d)"
 mkcert -cert-file "${CERT_DIR}/tls.crt" -key-file "${CERT_DIR}/tls.key" \
-    "aether.local" "*.aether.local" >/dev/null 2>&1 \
-    || die "mkcert could not issue a certificate for *.aether.local"
+    "autharie.local" "*.autharie.local" >/dev/null 2>&1 \
+    || die "mkcert could not issue a certificate for *.autharie.local"
 kubectl create namespace "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-kubectl -n "${NAMESPACE}" create secret tls aether-gateway-tls \
+kubectl -n "${NAMESPACE}" create secret tls autharie-gateway-tls \
     --cert="${CERT_DIR}/tls.crt" --key="${CERT_DIR}/tls.key" \
     --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 rm -rf "${CERT_DIR}"
-note "local CA trusted, *.aether.local certificate installed"
+note "local CA trusted, *.autharie.local certificate installed"
 
-helm upgrade --install "${RELEASE}" charts/aether-dataplane \
+helm upgrade --install "${RELEASE}" charts/autharie-dataplane \
     --namespace "${NAMESPACE}" --create-namespace \
     --set "objectStore.enabled=true" \
     --set "objectStore.endpoint=http://host.k3d.internal:${RUSTFS_PORT}" \
@@ -355,14 +355,14 @@ helm upgrade --install "${RELEASE}" charts/aether-dataplane \
     --set "image.tag=${IMAGE_TAG}" \
     --set "image.pullPolicy=Never" \
     --set "dataplane.id=${DATAPLANE_ID}" \
-    --set "controlPlane.url=http://host.k3d.internal:${AETHER_API_PORT}" \
-    --set "controlPlane.auth.issuer=http://host.k3d.internal:${FERRISKEY_API_PORT}/realms/aether" \
+    --set "controlPlane.url=http://host.k3d.internal:${AUTHARIE_API_PORT}" \
+    --set "controlPlane.auth.issuer=http://host.k3d.internal:${FERRISKEY_API_PORT}/realms/autharie" \
     --set "controlPlane.auth.clientId=${HERALD_CLIENT_ID}" \
     --set "controlPlane.auth.clientSecret=${HERALD_SECRET}" \
     --set "herald.logIndex.url=http://host.k3d.internal:${QUICKWIT_PORT}" \
     --set "herald.otlp.enabled=true" \
-    --set "gateway.tls.secretName=aether-gateway-tls" \
-    --set "gateway.publicHttpsPort=${AETHER_HTTPS_PORT}" \
+    --set "gateway.tls.secretName=autharie-gateway-tls" \
+    --set "gateway.publicHttpsPort=${AUTHARIE_HTTPS_PORT}" \
     --wait --timeout 5m 2>&1 | tail -4 || die "helm install failed"
 
 # ------------------------------------------------------------------- new images
@@ -370,9 +370,9 @@ helm upgrade --install "${RELEASE}" charts/aether-dataplane \
 if [ "${RESTART_AFTER_INSTALL:-0}" = "1" ]; then
     step "restarting the data plane onto the images just built"
     kubectl -n "${NAMESPACE}" rollout restart deployment \
-        -l app.kubernetes.io/part-of=aether >/dev/null
+        -l app.kubernetes.io/part-of=autharie >/dev/null
     kubectl -n "${NAMESPACE}" rollout status deployment \
-        -l app.kubernetes.io/part-of=aether --timeout=3m >/dev/null \
+        -l app.kubernetes.io/part-of=autharie --timeout=3m >/dev/null \
         || note "some pods are still coming up; see kubectl -n ${NAMESPACE} get pods"
     note "running the code in this working tree"
 fi
@@ -384,7 +384,7 @@ step "waiting for the data plane to report"
 # by now, and reading `.status` off a 401 body printed "the data plane is still
 # 401" over a stack that was working -- a false alarm at the exact moment
 # somebody trusts this script.
-OPERATOR_TOKEN=$(token aether-operator-cli "${OPERATOR_SECRET}")
+OPERATOR_TOKEN=$(token autharie-operator-cli "${OPERATOR_SECRET}")
 
 # The heartbeat is what promotes it out of Provisioning: it is the only evidence
 # the control plane gets that Herald is running inside the cluster.

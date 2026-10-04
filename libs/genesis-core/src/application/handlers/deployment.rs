@@ -243,7 +243,7 @@ mod tests {
                 "name": "acme-prod",
                 "kind": kind,
                 "version": version,
-                "namespace": "aether-acme-prod",
+                "namespace": "autharie-acme-prod",
                 "created_by": CREATED_BY,
             }),
             occurred_at: Utc::now(),
@@ -300,7 +300,7 @@ mod tests {
             calls[0].reference.name,
             "deployment-b6a1c2d3-e4f5-4a6b-8c9d-0e1f2a3b4c5d"
         );
-        assert_eq!(calls[0].reference.namespace, "aether-acme-prod");
+        assert_eq!(calls[0].reference.namespace, "autharie-acme-prod");
         assert_eq!(calls[0].provider, IdentityInstanceProvider::Keycloak);
         assert_eq!(calls[0].version, "25.0.0");
         assert!(port.delete_calls.lock().unwrap().is_empty());

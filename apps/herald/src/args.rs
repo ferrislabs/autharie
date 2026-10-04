@@ -130,14 +130,14 @@ pub struct OtlpArgs {
 pub struct GatewayArgs {
     #[arg(
         long = "gateway-name",
-        env = "AETHER_GATEWAY_NAME",
+        env = "AUTHARIE_GATEWAY_NAME",
         help = "Name of this data plane's own Gateway, read back for its address"
     )]
     pub gateway_name: Option<String>,
 
     #[arg(
         long = "gateway-namespace",
-        env = "AETHER_GATEWAY_NAMESPACE",
+        env = "AUTHARIE_GATEWAY_NAMESPACE",
         help = "Namespace of this data plane's own Gateway"
     )]
     pub gateway_namespace: Option<String>,
@@ -222,7 +222,7 @@ pub struct ControlPlaneArgs {
     #[arg(
         long = "auth-issuer",
         env = "AUTH_ISSUER",
-        help = "OIDC issuer to obtain a token from, e.g. https://id.example/realms/aether. \
+        help = "OIDC issuer to obtain a token from, e.g. https://id.example/realms/autharie. \
                 Required unless --control-plane-token is set."
     )]
     pub auth_issuer: Option<String>,
@@ -272,7 +272,7 @@ pub struct AmqpArgs {
     #[arg(
         long = "amqp-exchange",
         env = "AMQP_EXCHANGE",
-        default_value = "aether.actions",
+        default_value = "autharie.actions",
         help = "Durable topic exchange actions are published to"
     )]
     pub amqp_exchange: String,

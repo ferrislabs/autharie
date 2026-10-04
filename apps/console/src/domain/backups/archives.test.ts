@@ -21,7 +21,7 @@ function archive(overrides: Partial<Backup> = {}): Backup {
     postgres_major: 17,
     method: 'physical',
     protection: { kind: 'store_managed' },
-    location: 'o1/d1/aether/nightly.json',
+    location: 'o1/d1/autharie/nightly.json',
     size_bytes: 4096,
     started_at: '2026-09-13T02:30:00Z',
     finished_at: '2026-09-13T02:34:00Z',
@@ -151,7 +151,7 @@ describe('what protects an archive', () => {
           protection: {
             kind: 'envelope',
             provider: 'platform',
-            name: 'aether-backups',
+            name: 'autharie-backups',
             version: 1,
           },
         } as Partial<Backup>),

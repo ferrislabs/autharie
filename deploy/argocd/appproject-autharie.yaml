@@ -8,9 +8,9 @@ metadata:
   name: autharie
   namespace: argocd
 spec:
-  description: Autharie (the Aether control plane) and its dedicated Ferriskey.
+  description: Autharie (the Autharie control plane) and its dedicated Ferriskey.
   sourceRepos:
-    - https://github.com/NathaelB/aether
+    - https://github.com/ferrislabs/autharie
     - ghcr.io/ferriskey/charts
   destinations:
     - namespace: autharie

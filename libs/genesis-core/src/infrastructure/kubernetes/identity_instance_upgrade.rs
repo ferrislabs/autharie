@@ -1,4 +1,4 @@
-use aether_crds::v1alpha::identity_instance_upgrade::{
+use autharie_crds::v1alpha::identity_instance_upgrade::{
     IdentityInstanceRef as CrdInstanceRef, IdentityInstanceUpgrade, IdentityInstanceUpgradeSpec,
     UpgradeStrategy,
 };

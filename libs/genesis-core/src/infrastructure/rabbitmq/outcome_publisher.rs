@@ -35,7 +35,7 @@ impl RabbitMqOutcomePublisher {
     ) -> Result<Self, GenesisError> {
         let exchange = exchange.into();
 
-        let connection = aether_amqp::connect_with_retry(amqp_url, aether_amqp::DEFAULT_BUDGET)
+        let connection = autharie_amqp::connect_with_retry(amqp_url, autharie_amqp::DEFAULT_BUDGET)
             .await
             .map_err(|e| GenesisError::MessageBus {
                 message: format!("failed to connect to RabbitMQ: {e}"),

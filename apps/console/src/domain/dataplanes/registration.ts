@@ -121,7 +121,7 @@ export interface InstallDetails {
 }
 
 /** Where a data plane's components live unless somebody says otherwise. */
-export const DEFAULT_NAMESPACE = 'aether-system'
+export const DEFAULT_NAMESPACE = 'autharie-system'
 
 /**
  * The chart version this command pins. Bumped by hand alongside a release --
@@ -141,7 +141,7 @@ export const DATA_PLANE_CHART_VERSION = '0.1.0'
  */
 export function helmCommand(details: InstallDetails): string {
   return [
-    'helm upgrade --install aether-dataplane oci://ghcr.io/nathaelb/charts/aether-dataplane',
+    'helm upgrade --install autharie-dataplane oci://ghcr.io/ferrislabs/charts/autharie-dataplane',
     `  --version ${DATA_PLANE_CHART_VERSION}`,
     `  --namespace ${details.namespace} --create-namespace`,
     `  --set dataplane.id=${details.dataplaneId}`,

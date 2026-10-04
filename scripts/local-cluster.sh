@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Creates a k3d cluster dedicated to Aether and installs what the operator
+# Creates a k3d cluster dedicated to Autharie and installs what the operator
 # needs to reconcile an IdentityInstance.
 #
 # It never touches the current kubectl context: every command targets the
@@ -8,7 +8,7 @@
 # until later.
 set -euo pipefail
 
-CLUSTER_NAME="${AETHER_CLUSTER_NAME:-aether-local}"
+CLUSTER_NAME="${AUTHARIE_CLUSTER_NAME:-autharie-local}"
 CONTEXT="k3d-${CLUSTER_NAME}"
 CNPG_VERSION="${CNPG_VERSION:-1.25.1}"
 # Envoy Gateway's chart brings the Gateway API CRDs with it, so this one
@@ -21,8 +21,8 @@ KEDA_VERSION="${KEDA_VERSION:-2.21.0}"
 # Not 8080: a developer machine usually already has something on it, and k3d
 # fails the whole cluster creation on a port collision rather than picking
 # another one.
-HTTP_PORT="${AETHER_HTTP_PORT:-8081}"
-HTTPS_PORT="${AETHER_HTTPS_PORT:-8444}"
+HTTP_PORT="${AUTHARIE_HTTP_PORT:-8081}"
+HTTPS_PORT="${AUTHARIE_HTTPS_PORT:-8444}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 require() {
@@ -41,9 +41,9 @@ usage: $(basename "$0") <up|down|status>
   status  show what is installed
 
 Environment:
-  AETHER_CLUSTER_NAME   cluster name (default: aether-local)
-  AETHER_HTTP_PORT      host port mapped to the ingress (default: ${HTTP_PORT})
-  AETHER_HTTPS_PORT     host port mapped to TLS (default: ${HTTPS_PORT})
+  AUTHARIE_CLUSTER_NAME   cluster name (default: autharie-local)
+  AUTHARIE_HTTP_PORT      host port mapped to the ingress (default: ${HTTP_PORT})
+  AUTHARIE_HTTPS_PORT     host port mapped to TLS (default: ${HTTPS_PORT})
   CNPG_VERSION          CloudNativePG version (default: ${CNPG_VERSION})
   ENVOY_GATEWAY_VERSION Envoy Gateway version (default: ${ENVOY_GATEWAY_VERSION})
   KEDA_VERSION          KEDA chart version (default: ${KEDA_VERSION})
@@ -58,7 +58,7 @@ up() {
     for port in "${HTTP_PORT}" "${HTTPS_PORT}"; do
         if lsof -nP -iTCP:"${port}" -sTCP:LISTEN >/dev/null 2>&1; then
             echo "❌ port ${port} is already in use." >&2
-            echo "   Override it: AETHER_HTTP_PORT=... AETHER_HTTPS_PORT=... make local-up" >&2
+            echo "   Override it: AUTHARIE_HTTP_PORT=... AUTHARIE_HTTPS_PORT=... make local-up" >&2
             exit 1
         fi
     done
@@ -130,12 +130,12 @@ up() {
         --wait --timeout 5m
 
     # The examples deploy into this namespace; creating it here keeps the
-    # first run from failing on something unrelated to Aether.
-    echo "📁 creating the test-aether namespace"
-    kubectl --context "${CONTEXT}" create namespace test-aether \
+    # first run from failing on something unrelated to Autharie.
+    echo "📁 creating the test-autharie namespace"
+    kubectl --context "${CONTEXT}" create namespace test-autharie \
         --dry-run=client -o yaml | kubectl --context "${CONTEXT}" apply -f - >/dev/null
 
-    echo "📄 installing Aether CRDs"
+    echo "📄 installing Autharie CRDs"
     "${REPO_ROOT}/scripts/generate-crds.sh" >/dev/null
     kubectl --context "${CONTEXT}" apply -f "${REPO_ROOT}/k8s/crds/"
 
@@ -146,7 +146,7 @@ up() {
     echo "     kubectl --context ${CONTEXT} get identityinstances -A"
     echo
     echo "   Run the operator against it:"
-    echo "     KUBECONFIG=\$(k3d kubeconfig write ${CLUSTER_NAME}) cargo run -p aether-operator"
+    echo "     KUBECONFIG=\$(k3d kubeconfig write ${CLUSTER_NAME}) cargo run -p autharie-operator"
     echo
     echo "   Then apply an example:"
     echo "     kubectl --context ${CONTEXT} apply -f k8s/examples/identity-instance-ferriskey.yaml"
@@ -171,8 +171,8 @@ status() {
     kubectl --context "${CONTEXT}" -n cnpg-system get deployment cnpg-controller-manager \
         --no-headers 2>/dev/null || echo "  not installed"
     echo
-    echo "Aether CRDs:"
-    kubectl --context "${CONTEXT}" get crd -o name 2>/dev/null | grep aether || echo "  none"
+    echo "Autharie CRDs:"
+    kubectl --context "${CONTEXT}" get crd -o name 2>/dev/null | grep autharie || echo "  none"
     echo
     echo "Envoy Gateway:"
     kubectl --context "${CONTEXT}" -n envoy-gateway-system get deployment envoy-gateway \

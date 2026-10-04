@@ -1,4 +1,4 @@
-# Running Aether locally
+# Running Autharie locally
 
 ## The short version
 
@@ -17,7 +17,7 @@ any one piece by hand when something goes wrong.
 
 ## The split
 
-Aether splits across two runtimes, and running it locally mirrors that split
+Autharie splits across two runtimes, and running it locally mirrors that split
 rather than fighting it:
 
 | | runs where | how |
@@ -35,7 +35,7 @@ Putting Genesis in Compose would not work, and not only for tidiness: it applies
 
 The operator reconciles an `IdentityInstance` into a CloudNativePG `Cluster`, a
 `Deployment` and an `Ingress`. To watch that happen you need a cluster with
-CloudNativePG and the Aether CRDs installed.
+CloudNativePG and the Autharie CRDs installed.
 
 ## One command
 
@@ -43,8 +43,8 @@ CloudNativePG and the Aether CRDs installed.
 make local-up
 ```
 
-It creates a k3d cluster named `aether-local`, installs CloudNativePG and the
-Aether CRDs, and creates the `test-aether` namespace the examples use.
+It creates a k3d cluster named `autharie-local`, installs CloudNativePG and the
+Autharie CRDs, and creates the `test-autharie` namespace the examples use.
 
 **It does not switch your kubectl context.** `k3d cluster create` does that by
 default, which would silently repoint every `kubectl` in your shell at a cluster
@@ -61,7 +61,7 @@ script says so before creating anything, rather than letting k3d roll back a
 half-built cluster twenty seconds later:
 
 ```bash
-AETHER_HTTP_PORT=9081 AETHER_HTTPS_PORT=9444 make local-up
+AUTHARIE_HTTP_PORT=9081 AUTHARIE_HTTPS_PORT=9444 make local-up
 ```
 
 ## Running the operator against it
@@ -70,17 +70,17 @@ The operator uses the ambient kubeconfig, so point it at the cluster explicitly
 rather than switching context:
 
 ```bash
-KUBECONFIG=$(k3d kubeconfig write aether-local) RUST_LOG=info cargo run -p aether-operator
+KUBECONFIG=$(k3d kubeconfig write autharie-local) RUST_LOG=info cargo run -p autharie-operator
 ```
 
 Then, in another shell:
 
 ```bash
-kubectl --context k3d-aether-local apply -f k8s/examples/identity-instance-ferriskey.yaml
-kubectl --context k3d-aether-local -n test-aether get identityinstance -w
+kubectl --context k3d-autharie-local apply -f k8s/examples/identity-instance-ferriskey.yaml
+kubectl --context k3d-autharie-local -n test-autharie get identityinstance -w
 ```
 
-The status walks through its phases, and `kubectl -n test-aether get all` shows
+The status walks through its phases, and `kubectl -n test-autharie get all` shows
 the CNPG cluster, its services and the IAM deployment appear as it goes.
 
 ## What a successful run looks like
@@ -93,7 +93,7 @@ pod/cloud-iam-ferriskey-db-1            Running     the CloudNativePG database
 pod/cloud-iam-ferriskey-migrate-...     Completed   schema migration
 deployment/cloud-iam-ferriskey-api      1/1
 deployment/cloud-iam-ferriskey-webapp   1/1
-httproute/cloud-iam-ferriskey                       ferriskey.aether.local
+httproute/cloud-iam-ferriskey                       ferriskey.autharie.local
 ```
 
 ## Reaching a deployment
@@ -103,7 +103,7 @@ Gateway, and k3d publishes the node's port 80 on **8081**. So the traffic path
 already works:
 
 ```bash
-curl -H "Host: ferriskey.aether.local" http://localhost:8081/
+curl -H "Host: ferriskey.autharie.local" http://localhost:8081/
 ```
 
 What does not work is a browser, because nothing resolves that name. `/etc/hosts`
@@ -121,7 +121,7 @@ resolving instead of pointing at nothing for ever. Lines outside the markers are
 never touched, and a name you already resolve yourself is reported and left
 alone. `sudo make local-hosts-remove` takes the block back out.
 
-Then open `http://ferriskey.aether.local:8081`.
+Then open `http://ferriskey.autharie.local:8081`.
 
 ### There is no HTTPS locally
 
@@ -165,7 +165,7 @@ with scoped roles, rather than the admin account.
 Every published port in `docker-compose.yaml` can be moved:
 
 ```bash
-FERRISKEY_API_PORT=4334 AETHER_POSTGRES_PORT=5434 docker compose --profile ferriskey up -d
+FERRISKEY_API_PORT=4334 AUTHARIE_POSTGRES_PORT=5434 docker compose --profile ferriskey up -d
 FERRISKEY_URL=http://localhost:4334 make bootstrap-auth
 ```
 
@@ -207,7 +207,7 @@ OBJECT_STORE_ENDPOINT=https://s3.fr-par.scw.cloud \
 OBJECT_STORE_REGION=fr-par \
 OBJECT_STORE_ACCESS_KEY=... \
 OBJECT_STORE_SECRET_KEY=... \
-  cargo run -p aether-control-plane
+  cargo run -p autharie-control-plane
 ```
 
 `OBJECT_STORE_PATH_STYLE` is true by default, which is what every self hosted
@@ -244,7 +244,7 @@ docker compose up -d quickwit
 ```
 
 Quickwit, on the same RustFS as above, in its own bucket
-(`aether-logs`). Reachable at `localhost:7280`, or `quickwit:7280` from
+(`autharie-logs`). Reachable at `localhost:7280`, or `quickwit:7280` from
 inside the Compose network. Nothing writes to it yet -- Herald's own side of
 that is V1 of the logs chantier (#294) -- but the index naming convention,
 the doc mapping and how to try the acceptance criterion for it by hand are
@@ -253,6 +253,6 @@ all on [their own page](./log-search-index.md).
 ## What is not covered yet
 
 This gets the **operator** and the identity stack running against a real
-cluster. Installing Herald and Genesis alongside them is `charts/aether-dataplane`;
+cluster. Installing Herald and Genesis alongside them is `charts/autharie-dataplane`;
 until a deployment created through the API has been driven end to end, a local
 data plane is still exercised by applying `IdentityInstance` resources by hand.

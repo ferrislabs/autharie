@@ -6,7 +6,7 @@ authors.workspace = true
 edition.workspace = true
 
 [dependencies]
-aether-crds = { path = "../aether-crds" }
+autharie-crds = { path = "../autharie-crds" }
 # Only to tell a version from a branch name before reporting it: an unparseable
 # tag is not a claim about a version and is dropped rather than sent.
 semver = "1.0"
@@ -17,7 +17,7 @@ thiserror = "2.0.17"
 uuid = { version = "1.19.0", features = ["serde", "v4"] }
 reqwest = { version = "0.12.24", features = ["json"] }
 lapin = "2"
-aether-amqp = { path = "../aether-amqp" }
+autharie-amqp = { path = "../autharie-amqp" }
 tokio = { version = "1.49.0", features = ["sync", "rt", "time", "macros", "net"] }
 tracing = "0.1"
 futures = "0.3"

@@ -1,0 +1,124 @@
+# Production values for Autharie, deployed via the `autharie` ArgoCD
+# Application. No secret ever belongs in this file -- see
+# docs/production-deployment.md for how each `existingSecret` below is
+# created directly on the cluster.
+
+# Short, predictable resource names (`autharie`, `autharie-console`, ...)
+# rather than `<release>-autharie-control-plane-...` -- every hardcoded
+# in-cluster hostname below assumes this.
+fullnameOverride: autharie
+
+image:
+  # No release has been tagged yet; CI pushes `latest` on every merge to
+  # main. Switch this to a semver tag once the project starts cutting
+  # releases -- tracking `latest` in production is a version nobody can
+  # state.
+  controlPlaneTag: latest
+  consoleTag: latest
+
+controlPlane:
+  server:
+    # Same-origin with the console (one hostname, split by path), but set
+    # regardless: a fixed origin is what stops any other site from being
+    # able to call the API with a browser session, not just the console's own.
+    allowedOrigins:
+      - https://app.autharie.fr
+
+# The realm autharie's own users and data planes' Heralds live in, on the
+# dedicated Ferriskey instance (see deploy/autharie/ferriskey-values-production.yaml).
+#
+# /api, not the bare realm path: the dedicated Ferriskey's own HTTPRoute
+# splits by path, and only /api forwards to its API -- the bare path would
+# hit the webapp's nginx instead. Ferriskey's api.server.rootPath is what
+# puts every one of its own routes under /api in the first place.
+oidc:
+  issuerUrl: https://id.autharie.fr/api/realms/autharie
+  # Created once in Ferriskey as a public (SPA) client -- see the runbook.
+  clientId: autharie-console
+
+auth:
+  issuer: https://id.autharie.fr/api/realms/autharie
+
+log:
+  json: true
+
+database:
+  name: autharie
+  user: autharie
+
+postgresql:
+  enabled: true
+  instances: 1
+  storage:
+    size: 10Gi
+
+objectStore:
+  bucket: autharie-backups
+  encryption: managed
+  # Created directly on the cluster: access-key, secret-key, sse-master-key.
+  existingSecret: autharie-rustfs
+
+quickwit:
+  bucket: autharie-logs
+
+rustfs:
+  enabled: true
+  storage:
+    size: 20Gi
+
+keyManager:
+  # OpenBao, deployed separately (deploy/argocd/application-openbao.yaml),
+  # reachable in-cluster.
+  address: http://openbao.openbao.svc.cluster.local:8200
+  mount: transit
+  key: autharie-backups
+  # Created after OpenBao is initialised, unsealed and its transit engine
+  # configured -- see the runbook. A token scoped to that engine, not root.
+  existingSecret: autharie-key-manager
+
+realm:
+  # The dedicated Ferriskey's admin API, reached in-cluster -- never through
+  # the public hostname, so this keeps working even if the public route or
+  # its certificate has a bad day.
+  #
+  # /api at the end: autharie-core builds every request as
+  # "{base_url}/realms/{realm}/..." (libs/autharie-core/src/infrastructure/herald_identity/mod.rs),
+  # and Ferriskey's api.server.rootPath mounts its own routes under /api even
+  # reached directly, in-cluster, on its own port -- the prefix is the app's,
+  # not the Gateway's.
+  adminUrl: http://autharie-ferriskey-api.autharie-ferriskey.svc.cluster.local:3333/api
+  name: autharie
+  adminRealm: master
+  adminClientId: admin-cli
+  # The admin credentials Ferriskey's own chart auto-generates, copied into
+  # this namespace once -- see the runbook. Ferriskey cannot hand them out
+  # cross-namespace on its own.
+  existingSecret: autharie-realm-admin
+
+platform:
+  # nathaelb, the only account in the autharie realm -- id.autharie.fr's
+  # users.id doubles as the OIDC subject. Set once to grant the first
+  # operator, then remove it once platform rights are confirmed to work
+  # through the console: it is a way back in, not a standing instruction.
+  bootstrapOperator: "01a0ac2a-e358-7d43-8d65-6cba4727f915"
+
+dataplane:
+  defaultRegion: fr-par
+
+gatewayApi:
+  enabled: true
+  hostname: app.autharie.fr
+  apiPathPrefix: /api
+  parentRefs:
+    - name: autharie-gateway
+      namespace: default
+      sectionName: autharie-https
+  # A data plane on a network of its own writes its backups directly here --
+  # there is no proxy through the API for that traffic.
+  rustfs:
+    enabled: true
+    hostname: s3.autharie.fr
+    parentRefs:
+      - name: autharie-gateway
+        namespace: default
+        sectionName: autharie-https

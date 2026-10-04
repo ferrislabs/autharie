@@ -159,7 +159,7 @@ mod tests {
             "deployment_id": "22222222-2222-2222-2222-222222222222",
             "dataplane_id": "11111111-1111-1111-1111-111111111111",
             "organisation_id": "55555555-5555-5555-5555-555555555555",
-            "namespace": "aether-acme-prod",
+            "namespace": "autharie-acme-prod",
             "kind": "ferriskey",
             "session_id": "33333333-3333-3333-3333-333333333333",
             "since_minutes": 15
@@ -178,7 +178,7 @@ mod tests {
             request.organisation_id,
             OrganisationId::new("55555555-5555-5555-5555-555555555555")
         );
-        assert_eq!(request.namespace, "aether-acme-prod");
+        assert_eq!(request.namespace, "autharie-acme-prod");
         assert_eq!(request.kind, DeploymentKind::Ferriskey);
         assert_eq!(request.since_minutes, 15);
     }

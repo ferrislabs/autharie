@@ -1,7 +1,7 @@
 //! Wire types for the control plane HTTP API (see `GET
 //! /dataplanes/{dataplane_id}/deployments`, `POST .../actions:claim` and
 //! `POST .../actions:ack`). These mirror the JSON produced by
-//! `aether-domain`'s `Action`/`Deployment` types without depending on that
+//! `autharie-domain`'s `Action`/`Deployment` types without depending on that
 //! crate; conversions into Herald's own domain types happen exclusively via
 //! the `TryFrom`/`From` impls below, never inline in the repository.
 

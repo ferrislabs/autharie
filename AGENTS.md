@@ -15,7 +15,7 @@
   - `make build` → `cargo build --workspace`
   - `make test` → runs Rust tests via `cargo nextest run`
   - `make test-integration` → the tests that need a real Postgres
-  - `cargo test -p aether-crds` → CRD-specific tests
+  - `cargo test -p autharie-crds` → CRD-specific tests
 - Web console (`apps/console/`) — pnpm, not npm
   - `pnpm dev` → Vite dev server
   - `pnpm build` → TypeScript + Vite build
@@ -29,7 +29,7 @@
 
 ## Testing Guidelines
 - Rust: use `cargo nextest run` (workspace-wide); unit tests live alongside modules.
-- Rules that live in SQL are tested against a real Postgres, in `libs/aether-postgres/tests/`.
+- Rules that live in SQL are tested against a real Postgres, in `libs/autharie-postgres/tests/`.
   They skip themselves when `DATABASE_URL` is unset, so run `make test-integration`
   rather than assuming `make test` covered them. Set `REQUIRE_DATABASE_URL=1` to
   turn that skip into a failure, as CI does.

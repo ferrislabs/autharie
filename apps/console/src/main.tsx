@@ -39,7 +39,7 @@ declare global {
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <ThemeProvider defaultTheme='dark' storageKey='aether-ui-theme'>
+      <ThemeProvider defaultTheme='dark' storageKey='autharie-ui-theme'>
         <RouterProvider router={router} />
       </ThemeProvider>
     </QueryClientProvider>

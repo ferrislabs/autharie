@@ -1,12 +1,12 @@
 //! Reading what the cluster archived, through the resources the operator
 //! keeps.
 //!
-//! Herald reads the Aether kind rather than CloudNativePG's own. Both exist on
+//! Herald reads the Autharie kind rather than CloudNativePG's own. Both exist on
 //! these clusters, and only one of them says which deployment an archive
 //! belonged to -- which is the single fact the control plane cannot look up
 //! for itself.
 
-use aether_crds::v1alpha::identity_instance_backup::{
+use autharie_crds::v1alpha::identity_instance_backup::{
     IdentityInstanceBackup, IdentityInstanceBackupStatus,
 };
 use kube::{Api, Client, ResourceExt, api::ListParams};
@@ -135,7 +135,7 @@ mod tests {
 
     fn finished() -> IdentityInstanceBackupStatus {
         IdentityInstanceBackupStatus {
-            manifest_key: Some("aether/nightly-20260913.json".to_string()),
+            manifest_key: Some("autharie/nightly-20260913.json".to_string()),
             postgres_major: Some("17".to_string()),
             size_bytes: Some("4096".to_string()),
             started_at: Some(Time(Utc.with_ymd_and_hms(2026, 9, 13, 2, 30, 0).unwrap())),
@@ -150,7 +150,7 @@ mod tests {
             panic!("a finished archive was not reported");
         };
 
-        assert_eq!(taken.object_key, "aether/nightly-20260913.json");
+        assert_eq!(taken.object_key, "autharie/nightly-20260913.json");
         assert_eq!(taken.postgres_major, 17);
         assert_eq!(taken.size_bytes, "4096");
         assert_eq!(

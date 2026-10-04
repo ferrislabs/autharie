@@ -1,6 +1,6 @@
 output "issuer" {
   description = "AUTH_ISSUER for the control plane and for Herald."
-  value       = "${var.ferriskey_url}/realms/${ferriskey_realm.aether.name}"
+  value       = "${var.ferriskey_url}/realms/${ferriskey_realm.autharie.name}"
 }
 
 output "herald_client_id" {

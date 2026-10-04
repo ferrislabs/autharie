@@ -2,9 +2,9 @@
 /// control plane over a heartbeat and written into this cluster's own
 /// Gateway TLS Secret.
 ///
-/// The shape is duplicated from `aether-domain`'s own `Certificate`,
+/// The shape is duplicated from `autharie-domain`'s own `Certificate`,
 /// deliberately and visibly: this crate does not depend on it, the same way
-/// `DeploymentPayloadV1` in `genesis-core` does not depend on `aether-core`.
+/// `DeploymentPayloadV1` in `genesis-core` does not depend on `autharie-core`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReceivedCertificate {
     pub certificate_pem: String,

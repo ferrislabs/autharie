@@ -425,7 +425,7 @@ mod tests {
                 "memory_mib": 1024,
                 "storage_gib": 5,
                 "source": {
-                    "destination_path": "s3://aether-backups/an-org/a-deployment",
+                    "destination_path": "s3://autharie-backups/an-org/a-deployment",
                     "server_name": "deployment-1-db",
                     "backup_id": "an-archive",
                 },

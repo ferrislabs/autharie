@@ -27,8 +27,8 @@ impl IdentityInstanceRef {
 /// none at either end.
 ///
 /// Deployment names are free text (a customer can call one "Acme Prod"), and
-/// this is what keeps the local `.aether.local` hostname fallback below a
-/// valid one. Duplicated from the equivalent helper in `aether-domain` rather
+/// this is what keeps the local `.autharie.local` hostname fallback below a
+/// valid one. Duplicated from the equivalent helper in `autharie-domain` rather
 /// than depending on that crate: genesis-core consumes JSON action-event
 /// payloads over AMQP and deliberately shares no Rust types with the control
 /// plane.
@@ -98,7 +98,7 @@ impl DesiredDatabase {
 }
 
 /// The desired state of an `IdentityInstance`, in domain terms. The adapter maps this to
-/// the actual `aether_crds::v1alpha::identity_instance::IdentityInstance` custom resource.
+/// the actual `autharie_crds::v1alpha::identity_instance::IdentityInstance` custom resource.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DesiredIdentityInstance {
     pub reference: IdentityInstanceRef,
@@ -153,7 +153,7 @@ impl DesiredIdentityInstance {
         // The control plane decides this now -- slug(name) under whichever
         // domain it publishes DNS records into, scoped by organisation so two
         // of them naming a deployment alike do not collide. Falling back to
-        // `slug(name).aether.local` is only for a payload with no domain
+        // `slug(name).autharie.local` is only for a payload with no domain
         // configured, or one recorded before the control plane sent this at
         // all -- both look the same here. Local dev only, so no organisation
         // segment: a laptop is one person, not the multi-tenant estate the
@@ -161,7 +161,7 @@ impl DesiredIdentityInstance {
         let hostname = payload
             .hostname
             .clone()
-            .unwrap_or_else(|| format!("{}.aether.local", slug(&payload.name)));
+            .unwrap_or_else(|| format!("{}.autharie.local", slug(&payload.name)));
 
         Ok(Self {
             reference,
@@ -205,7 +205,7 @@ mod tests {
             name: "acme-prod".to_string(),
             kind: "keycloak".to_string(),
             version: "25.0.0".to_string(),
-            namespace: "aether-acme-prod".to_string(),
+            namespace: "autharie-acme-prod".to_string(),
             created_by: Uuid::nil(),
             cpu_millis: None,
             memory_mib: None,
@@ -247,7 +247,7 @@ mod tests {
     fn desired_state_is_built_from_payload() {
         let desired = DesiredIdentityInstance::from_payload(&payload()).unwrap();
 
-        assert_eq!(desired.reference.namespace, "aether-acme-prod");
+        assert_eq!(desired.reference.namespace, "autharie-acme-prod");
         assert_eq!(desired.provider, IdentityInstanceProvider::Keycloak);
         assert_eq!(desired.version, "25.0.0");
         assert_eq!(
@@ -259,13 +259,13 @@ mod tests {
     /// No domain configured, or an action recorded before the control plane
     /// carried this at all -- both look like `hostname: None` here, and both
     /// keep exactly what genesis has always invented: the deployment's own
-    /// name, slugged, under `.aether.local` -- no organisation or namespace
+    /// name, slugged, under `.autharie.local` -- no organisation or namespace
     /// segment, since this fallback only ever fires on a single-user laptop.
     #[test]
     fn a_payload_with_no_hostname_falls_back_to_the_invented_one() {
         let desired = DesiredIdentityInstance::from_payload(&payload()).unwrap();
 
-        assert_eq!(desired.hostname, "acme-prod.aether.local");
+        assert_eq!(desired.hostname, "acme-prod.autharie.local");
     }
 
     /// Deployment names are free text -- this is what keeps the invented
@@ -277,7 +277,7 @@ mod tests {
 
         let desired = DesiredIdentityInstance::from_payload(&untidy).unwrap();
 
-        assert_eq!(desired.hostname, "acme-prod.aether.local");
+        assert_eq!(desired.hostname, "acme-prod.autharie.local");
     }
 
     /// The point of #282: once the control plane decides a hostname, genesis

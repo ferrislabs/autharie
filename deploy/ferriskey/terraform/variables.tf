@@ -5,9 +5,9 @@ variable "ferriskey_url" {
 }
 
 variable "realm" {
-  description = "Realm to create for Aether."
+  description = "Realm to create for Autharie."
   type        = string
-  default     = "aether"
+  default     = "autharie"
 }
 
 variable "admin_username" {
@@ -53,7 +53,7 @@ variable "allow_self_registration" {
 
     True by default because this configuration targets a local stack, where it
     is the only way to obtain a usable account -- see the comment on
-    `ferriskey_realm_settings.aether`. Set it to false for anything shared.
+    `ferriskey_realm_settings.autharie`. Set it to false for anything shared.
   DESC
   type        = bool
   default     = true

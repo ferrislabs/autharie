@@ -62,7 +62,7 @@ mod tests {
         UsageTarget {
             deployment_id: DeploymentId::new("dep-1"),
             kind,
-            namespace: "aether-acme".to_string(),
+            namespace: "autharie-acme".to_string(),
         }
     }
 

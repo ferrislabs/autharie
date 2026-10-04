@@ -130,7 +130,7 @@ axum_http_requests_total{endpoint="/api/health",method="GET",status="200"} 400
         UsageTarget {
             deployment_id: DeploymentId::new("22222222-2222-2222-2222-222222222222"),
             kind: DeploymentKind::Ferriskey,
-            namespace: "aether-acme".to_string(),
+            namespace: "autharie-acme".to_string(),
         }
     }
 
@@ -250,7 +250,7 @@ axum_http_requests_total{endpoint="/api/health",method="GET",status="200"} 400
 
         assert_eq!(
             source.url_for(&target()),
-            "http://deployment-22222222-2222-2222-2222-222222222222-api.aether-acme.svc.cluster.local:3333/api/metrics"
+            "http://deployment-22222222-2222-2222-2222-222222222222-api.autharie-acme.svc.cluster.local:3333/api/metrics"
         );
     }
 }

@@ -1,4 +1,4 @@
-use aether_crds::v1alpha::identity_dataplane_upgrade::{
+use autharie_crds::v1alpha::identity_dataplane_upgrade::{
     DataplaneComponent, DataplaneUpgradePhase, DataplaneUpgradeStrategy, IdentityDataplaneUpgrade,
     IdentityDataplaneUpgradeSpec,
 };

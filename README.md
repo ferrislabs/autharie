@@ -1,6 +1,6 @@
 <div align="center">
 
-# ⚡ Aether
+# ⚡ Autharie
 
 **The Modern IAM-as-a-Service Platform**
 
@@ -19,9 +19,9 @@ Deploy, manage, and scale identity and access management instances with ease.
 
 ## 🎯 Overview
 
-Aether is a production-ready platform that simplifies the deployment and management of Identity and Access Management (IAM) solutions. Whether you're running Keycloak, Ferriskey, Authentik, or other IAM providers, Aether provides a unified interface to manage multiple instances across different environments.
+Autharie is a production-ready platform that simplifies the deployment and management of Identity and Access Management (IAM) solutions. Whether you're running Keycloak, Ferriskey, Authentik, or other IAM providers, Autharie provides a unified interface to manage multiple instances across different environments.
 
-### Why Aether?
+### Why Autharie?
 
 - **🚀 Deploy in Minutes** - Launch IAM instances with a single click
 - **📊 Centralized Management** - Monitor and control all your IAM instances from one dashboard
@@ -58,10 +58,10 @@ Aether is a production-ready platform that simplifies the deployment and managem
 
 ## 🏗️ Architecture
 
-Aether follows a modern monorepo architecture with clear separation of concerns:
+Autharie follows a modern monorepo architecture with clear separation of concerns:
 
 ```
-aether/
+autharie/
 ├── apps/
 │   └── console/          # React 19 frontend application
 │       ├── src/
@@ -71,14 +71,14 @@ aether/
 │       └── package.json
 │
 ├── libs/
-│   ├── aether-core/      # Core domain library (Rust)
+│   ├── autharie-core/      # Core domain library (Rust)
 │   │   ├── src/
 │   │   │   ├── domain/       # Business logic and entities
 │   │   │   └── infrastructure/ # PostgreSQL repositories
 │   │   ├── migrations/    # Database migrations
 │   │   └── Cargo.toml
 │   │
-│   └── aether-api/       # API server (Rust)
+│   └── autharie-api/       # API server (Rust)
 │       └── Cargo.toml
 │
 └── Cargo.toml            # Workspace configuration
@@ -127,21 +127,21 @@ aether/
 1. **Clone the repository**
 
 ```bash
-git clone https://github.com/yourusername/aether.git
-cd aether
+git clone https://github.com/yourusername/autharie.git
+cd autharie
 ```
 
 2. **Setup the database**
 
 ```bash
 # Create database
-createdb aether
+createdb autharie
 
 # Set database URL
-export DATABASE_URL="postgres://username:password@localhost/aether"
+export DATABASE_URL="postgres://username:password@localhost/autharie"
 
 # Run migrations
-cd libs/aether-core
+cd libs/autharie-core
 sqlx migrate run
 cd ../..
 ```
@@ -150,7 +150,7 @@ cd ../..
 
 ```bash
 # Build and run the API server
-cargo run -p aether-api
+cargo run -p autharie-api
 ```
 
 4. **Start the frontend**
@@ -174,9 +174,9 @@ Navigate to [http://localhost:5173](http://localhost:5173)
 
 ### Core Library
 
-- [aether-core Documentation](./libs/aether-core/README.md) - Core domain library
-- [Architecture Guide](./libs/aether-core/ARCHITECTURE.md) - DDD/Hexagonal architecture
-- [Migration Guide](./libs/aether-core/migrations/README.md) - Database migrations
+- [autharie-core Documentation](./libs/autharie-core/README.md) - Core domain library
+- [Architecture Guide](./libs/autharie-core/ARCHITECTURE.md) - DDD/Hexagonal architecture
+- [Migration Guide](./libs/autharie-core/migrations/README.md) - Database migrations
 
 ### For Developers
 
@@ -188,7 +188,7 @@ Navigate to [http://localhost:5173](http://localhost:5173)
 
 #### Organizations
 
-Organizations are the top-level entity in Aether. Each user can own up to 10 active organizations:
+Organizations are the top-level entity in Autharie. Each user can own up to 10 active organizations:
 
 ```rust
 // Create an organization
@@ -229,7 +229,7 @@ Deploy and manage IAM instances across multiple environments:
 cargo test
 
 # Run core library tests
-cargo test -p aether-core
+cargo test -p autharie-core
 
 # Run with coverage
 cargo test --all-features
@@ -265,7 +265,7 @@ cd apps/console && pnpm typecheck
 
 ## 📊 Project Status
 
-Aether is currently in **active development**. The core features are functional, but the project is not yet production-ready.
+Autharie is currently in **active development**. The core features are functional, but the project is not yet production-ready.
 
 ### Completed ✅
 
@@ -337,7 +337,7 @@ Built with:
 
 <div align="center">
 
-**[⬆ back to top](#-aether)**
+**[⬆ back to top](#-autharie)**
 
 Made with ❤️ by [nathaelb](https://github.com/nathaelb)
 

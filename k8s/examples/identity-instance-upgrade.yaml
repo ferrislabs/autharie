@@ -1,8 +1,8 @@
-apiVersion: aether.dev/v1alpha
+apiVersion: autharie.fr/v1alpha
 kind: IdentityInstanceUpgrade
 metadata:
   name: cloud-iam-ferriskey-upgrade-2600
-  namespace: test-aether
+  namespace: test-autharie
 spec:
   identityInstanceRef:
     name: cloud-iam-ferriskey

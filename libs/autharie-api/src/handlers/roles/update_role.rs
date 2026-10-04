@@ -1,0 +1,110 @@
+use autharie_auth::Identity;
+use autharie_core::role::{Role, commands::UpdateRoleCommand, ports::RoleService};
+use axum::{
+    Json,
+    extract::{Extension, State},
+};
+use axum_extra::routing::TypedPath;
+use serde::{Deserialize, Serialize};
+use utoipa::{IntoParams, ToSchema};
+use uuid::Uuid;
+
+use crate::{errors::ApiError, response::Response, state::AppState};
+
+#[derive(Deserialize, ToSchema)]
+pub struct UpdateRoleRequest {
+    pub name: Option<String>,
+    pub permissions: Option<u64>,
+    pub color: Option<String>,
+}
+
+#[derive(Serialize, ToSchema, PartialEq)]
+pub struct UpdateRoleResponse {
+    data: Role,
+}
+
+#[derive(TypedPath, IntoParams, Deserialize)]
+#[typed_path("/organisations/{organisation_id}/roles/{role_id}")]
+pub struct UpdateRoleRoute {
+    pub organisation_id: Uuid,
+    pub role_id: Uuid,
+}
+
+#[utoipa::path(
+    patch,
+    path = "/{organisation_id}/roles/{role_id}",
+    summary = "update role",
+    tag = "roles",
+    description = "Update a role within the specified organisation.",
+    request_body = UpdateRoleRequest,
+    params(UpdateRoleRoute),
+    responses(
+        (status = 200, description = "Role updated successfully", body = UpdateRoleResponse),
+        (status = 400, description = "Invalid request data", body = ApiError),
+        (status = 401, description = "Unauthorized", body = ApiError),
+        (status = 500, description = "Internal Server Error", body = ApiError)
+    ),
+    security(
+        ("bearer_auth" = [])
+    )
+)]
+pub async fn update_role_handler(
+    UpdateRoleRoute {
+        organisation_id,
+        role_id,
+    }: UpdateRoleRoute,
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Json(request): Json<UpdateRoleRequest>,
+) -> Result<Response<UpdateRoleResponse>, ApiError> {
+    let organisation_id = organisation_id.into();
+    let role_id = role_id.into();
+
+    let mut command = UpdateRoleCommand::new();
+    if let Some(name) = request.name {
+        command = command.with_name(name);
+    }
+    if let Some(permissions) = request.permissions {
+        command = command.with_permissions(permissions);
+    }
+    if let Some(color) = request.color {
+        command = command.with_color(color);
+    }
+
+    let role = state
+        .service
+        .update_role(identity, organisation_id, role_id, command)
+        .await?;
+
+    Ok(Response::OK(UpdateRoleResponse { data: role }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_helpers::{app_state, user_identity};
+
+    #[tokio::test]
+    async fn update_role_maps_service_error() {
+        let state = app_state();
+        let identity = user_identity("user-123");
+        let request = UpdateRoleRequest {
+            name: None,
+            permissions: None,
+            color: None,
+        };
+
+        let result = update_role_handler(
+            UpdateRoleRoute {
+                organisation_id: Uuid::new_v4(),
+                role_id: Uuid::new_v4(),
+            },
+            State(state),
+            Extension(identity),
+            Json(request),
+        )
+        .await;
+
+        assert!(matches!(result, Err(ApiError::Unknown { .. })));
+    }
+}

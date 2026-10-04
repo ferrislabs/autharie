@@ -308,7 +308,7 @@ mod tests {
             deployment_id: DeploymentId::new("22222222-2222-2222-2222-222222222222"),
             dataplane_id: DataPlaneId::new(Uuid::nil().to_string()),
             organisation_id: OrganisationId::new(Uuid::nil().to_string()),
-            namespace: "aether-acme".to_string(),
+            namespace: "autharie-acme".to_string(),
             kind,
             session_id: LogSessionId(Uuid::nil()),
             since_minutes: 5,

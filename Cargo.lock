@@ -25,7 +25,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "aether-amqp"
+name = "autharie-amqp"
 version = "0.1.0"
 dependencies = [
  "lapin",
@@ -34,14 +34,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "aether-api"
+name = "autharie-api"
 version = "0.1.0"
 dependencies = [
- "aether-auth",
- "aether-core",
- "aether-ovh",
- "aether-s3",
- "aether-transit",
+ "autharie-auth",
+ "autharie-core",
+ "autharie-ovh",
+ "autharie-s3",
+ "autharie-transit",
  "axum",
  "axum-extra",
  "axum-server",
@@ -70,7 +70,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "aether-auth"
+name = "autharie-auth"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
@@ -86,10 +86,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "aether-control-plane"
+name = "autharie-control-plane"
 version = "0.1.0"
 dependencies = [
- "aether-api",
+ "autharie-api",
  "clap",
  "dotenvy",
  "tokio",
@@ -97,15 +97,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "aether-core"
+name = "autharie-core"
 version = "0.1.0"
 dependencies = [
- "aether-auth",
- "aether-domain",
- "aether-macros",
- "aether-permission",
- "aether-persistence",
- "aether-postgres",
+ "autharie-auth",
+ "autharie-domain",
+ "autharie-macros",
+ "autharie-permission",
+ "autharie-persistence",
+ "autharie-postgres",
  "chrono",
  "reqwest",
  "serde",
@@ -118,7 +118,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "aether-crds"
+name = "autharie-crds"
 version = "0.1.0"
 dependencies = [
  "k8s-openapi",
@@ -132,11 +132,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "aether-domain"
+name = "autharie-domain"
 version = "0.1.0"
 dependencies = [
- "aether-auth",
- "aether-permission",
+ "autharie-auth",
+ "autharie-permission",
  "chrono",
  "chrono-tz",
  "mockall",
@@ -154,14 +154,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "aether-e2e"
+name = "autharie-e2e"
 version = "0.1.0"
 dependencies = [
- "aether-auth",
- "aether-core",
- "aether-crds",
- "aether-domain",
- "aether-operator-core",
+ "autharie-auth",
+ "autharie-core",
+ "autharie-crds",
+ "autharie-domain",
+ "autharie-operator-core",
  "chrono",
  "cucumber",
  "genesis-core",
@@ -173,7 +173,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "aether-macros"
+name = "autharie-macros"
 version = "0.1.0"
 dependencies = [
  "proc-macro2",
@@ -182,10 +182,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "aether-operator"
+name = "autharie-operator"
 version = "0.1.0"
 dependencies = [
- "aether-operator-core",
+ "autharie-operator-core",
  "rustls",
  "tokio",
  "tracing",
@@ -193,10 +193,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "aether-operator-core"
+name = "autharie-operator-core"
 version = "0.1.0"
 dependencies = [
- "aether-crds",
+ "autharie-crds",
  "async-trait",
  "aws-config",
  "aws-credential-types",
@@ -218,10 +218,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "aether-ovh"
+name = "autharie-ovh"
 version = "0.1.0"
 dependencies = [
- "aether-domain",
+ "autharie-domain",
  "httpmock",
  "reqwest",
  "serde",
@@ -232,7 +232,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "aether-permission"
+name = "autharie-permission"
 version = "0.1.0"
 dependencies = [
  "bitflags 2.13.1",
@@ -241,7 +241,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "aether-persistence"
+name = "autharie-persistence"
 version = "0.1.0"
 dependencies = [
  "sqlx",
@@ -249,13 +249,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "aether-postgres"
+name = "autharie-postgres"
 version = "0.1.0"
 dependencies = [
- "aether-auth",
- "aether-domain",
- "aether-macros",
- "aether-persistence",
+ "autharie-auth",
+ "autharie-domain",
+ "autharie-macros",
+ "autharie-persistence",
  "chrono",
  "chrono-tz",
  "serde_json",
@@ -267,10 +267,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "aether-s3"
+name = "autharie-s3"
 version = "0.1.0"
 dependencies = [
- "aether-domain",
+ "autharie-domain",
  "aws-config",
  "aws-credential-types",
  "aws-sdk-s3",
@@ -280,10 +280,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "aether-transit"
+name = "autharie-transit"
 version = "0.1.0"
 dependencies = [
- "aether-domain",
+ "autharie-domain",
  "base64 0.22.1",
  "reqwest",
  "serde",
@@ -2594,8 +2594,8 @@ dependencies = [
 name = "genesis-core"
 version = "0.1.0"
 dependencies = [
- "aether-amqp",
- "aether-crds",
+ "autharie-amqp",
+ "autharie-crds",
  "async-trait",
  "chrono",
  "k8s-openapi",
@@ -2778,8 +2778,8 @@ dependencies = [
 name = "herald-core"
 version = "0.1.0"
 dependencies = [
- "aether-amqp",
- "aether-crds",
+ "autharie-amqp",
+ "autharie-crds",
  "axum",
  "chrono",
  "futures",

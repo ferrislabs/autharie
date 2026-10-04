@@ -22,11 +22,11 @@
       "type": "string"
     },
     "issuer": {
-      "value": "http://localhost:3334/realms/aether",
+      "value": "http://localhost:3334/realms/autharie",
       "type": "string"
     },
     "operator_client_id": {
-      "value": "aether-operator-cli",
+      "value": "autharie-operator-cli",
       "type": "string"
     },
     "operator_client_uuid": {
@@ -42,15 +42,15 @@
     {
       "mode": "managed",
       "type": "ferriskey_realm",
-      "name": "aether",
+      "name": "autharie",
       "provider": "provider[\"registry.terraform.io/ferriskey/ferriskey\"]",
       "instances": [
         {
           "schema_version": 0,
           "attributes": {
             "created_at": "2026-09-09T23:58:38.604308Z",
-            "id": "aether",
-            "name": "aether",
+            "id": "autharie",
+            "name": "autharie",
             "realm_id": "01a0889b-f7b0-733a-a9e1-6b297e7a3a41",
             "settings": {
               "access_token_lifetime": 300,

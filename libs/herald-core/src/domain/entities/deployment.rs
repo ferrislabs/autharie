@@ -110,12 +110,12 @@ mod tests {
 
     #[test]
     fn a_deployment_that_says_what_it_runs_and_where_has_a_usage_target() {
-        let target = deployment(Some(DeploymentKind::Ferriskey), Some("aether-acme"))
+        let target = deployment(Some(DeploymentKind::Ferriskey), Some("autharie-acme"))
             .usage_target()
             .expect("a target");
 
         assert_eq!(target.kind, DeploymentKind::Ferriskey);
-        assert_eq!(target.namespace, "aether-acme");
+        assert_eq!(target.namespace, "autharie-acme");
     }
 
     #[test]
@@ -130,7 +130,7 @@ mod tests {
     #[test]
     fn a_deployment_with_no_kind_has_nowhere_to_be_read() {
         assert!(
-            deployment(None, Some("aether-acme"))
+            deployment(None, Some("autharie-acme"))
                 .usage_target()
                 .is_none()
         );
@@ -138,11 +138,11 @@ mod tests {
 
     #[test]
     fn a_deployment_that_can_be_found_has_a_log_stream_request() {
-        let request = deployment(Some(DeploymentKind::Ferriskey), Some("aether-acme"))
+        let request = deployment(Some(DeploymentKind::Ferriskey), Some("autharie-acme"))
             .log_stream_request(6)
             .expect("a request");
 
-        assert_eq!(request.namespace, "aether-acme");
+        assert_eq!(request.namespace, "autharie-acme");
         assert_eq!(request.kind, DeploymentKind::Ferriskey);
         assert_eq!(request.since_minutes, 6);
     }
@@ -159,7 +159,7 @@ mod tests {
     #[test]
     fn a_deployment_with_no_kind_has_no_log_stream_request() {
         assert!(
-            deployment(None, Some("aether-acme"))
+            deployment(None, Some("autharie-acme"))
                 .log_stream_request(6)
                 .is_none()
         );

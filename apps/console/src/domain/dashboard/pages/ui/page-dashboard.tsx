@@ -165,7 +165,7 @@ export const PageDashboard = ({ organisationName, deployments, isLoading }: Prop
           <LinkRow
             icon={<BookOpen className='h-3.5 w-3.5 text-muted-foreground' />}
             label='Documentation'
-            href='https://github.com/NathaelB/aether'
+            href='https://github.com/ferrislabs/autharie'
           />
           <LinkRow
             icon={<Boxes className='h-3.5 w-3.5 text-muted-foreground' />}

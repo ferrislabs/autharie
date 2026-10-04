@@ -1,8 +1,8 @@
 # Deploying Autharie to production
 
-Autharie is the Aether control plane, deployed to the `ferriskey-vps` cluster
+Autharie is the Autharie control plane, deployed to the `ferriskey-vps` cluster
 (context `ferriskey-vps`) via ArgoCD. What's in this repo —
-`charts/aether-control-plane/`, `deploy/argocd/`, `deploy/autharie/`,
+`charts/autharie-control-plane/`, `deploy/argocd/`, `deploy/autharie/`,
 `deploy/openbao/` — is everything ArgoCD can sync on its own. This document
 is the rest: the one-time, imperative steps that stand up what those
 manifests only *reference* (`existingSecret: ...`).
@@ -84,7 +84,7 @@ Sign in at `https://id.autharie.ferrislabs.fr` as `admin` with that
 password, then:
 
 1. Create a realm named **autharie** (matches `realm.name` in
-   `charts/aether-control-plane/values-production.yaml`).
+   `charts/autharie-control-plane/values-production.yaml`).
 2. Inside it, create a public (SPA) client `autharie-console` with a redirect
    URI of `https://autharie.ferrislabs.fr/*` — this is `oidc.clientId` in the
    same file.
@@ -137,7 +137,7 @@ logs who it could not authorise, with their subject) or decode the id token
 your browser received. Set it:
 
 ```bash
-# in charts/aether-control-plane/values-production.yaml
+# in charts/autharie-control-plane/values-production.yaml
 platform:
   bootstrapOperator: "<your subject>"
 ```

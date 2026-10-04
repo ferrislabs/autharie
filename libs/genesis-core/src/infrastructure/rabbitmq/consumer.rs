@@ -20,7 +20,7 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 /// Durable topic exchange Herald publishes `ActionEvent`s to.
-pub const ACTIONS_EXCHANGE: &str = "aether.actions";
+pub const ACTIONS_EXCHANGE: &str = "autharie.actions";
 
 /// The routing keys Genesis binds its queue to: deployment lifecycle events,
 /// and the actions that target a whole data plane. A key a handler claims that
@@ -90,7 +90,7 @@ impl RabbitMqConsumer {
     }
 
     async fn connect(&self) -> Result<Channel, GenesisError> {
-        let conn = aether_amqp::connect_with_retry(&self.amqp_url, aether_amqp::DEFAULT_BUDGET)
+        let conn = autharie_amqp::connect_with_retry(&self.amqp_url, autharie_amqp::DEFAULT_BUDGET)
             .await
             .map_err(|e| GenesisError::MessageBus {
                 message: format!("failed to connect to RabbitMQ: {e}"),

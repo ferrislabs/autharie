@@ -1,13 +1,13 @@
 [package]
-name = "aether-operator"
-description = "Aether Operator"
+name = "autharie-operator"
+description = "Autharie Operator"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
 
 [dependencies]
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
-aether-operator-core = { path = "../../libs/aether-operator-core" }
+autharie-operator-core = { path = "../../libs/autharie-operator-core" }
 tokio = { version = "1.49.0", features = ["macros", "rt-multi-thread"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", features = ["fmt", "env-filter"] }

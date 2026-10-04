@@ -4,19 +4,19 @@
 # s3://<bucket>/<organisation>/<deployment>. An operator deriving it itself
 # would be a second implementation of the prefix rule, and the two would
 # disagree the first time either changed.
-apiVersion: aether.dev/v1alpha
+apiVersion: autharie.fr/v1alpha
 kind: IdentityInstance
 metadata:
   name: archived-ferriskey
-  namespace: test-aether
+  namespace: test-autharie
 spec:
   organisationId: org-123
   provider: ferriskey
   version: "0.5.0"
-  hostname: archived.aether.local
+  hostname: archived.autharie.local
   ferriskey:
-    webappUrl: "https://archived.aether.local"
-    apiBaseUrl: "https://archived.aether.local/api"
+    webappUrl: "https://archived.autharie.local"
+    apiBaseUrl: "https://archived.autharie.local/api"
   ingress:
     enabled: true
   database:
@@ -30,16 +30,16 @@ spec:
           cpu: "100m"
           memory: "256Mi"
   backup:
-    destinationPath: s3://aether-backups/org-123/archived-ferriskey
+    destinationPath: s3://autharie-backups/org-123/archived-ferriskey
     endpointUrl: http://host.k3d.internal:9800
-    credentialsSecret: aether-object-store
+    credentialsSecret: autharie-object-store
     encryption: AES256
 ---
-apiVersion: aether.dev/v1alpha
+apiVersion: autharie.fr/v1alpha
 kind: IdentityInstanceBackupSchedule
 metadata:
   name: archived-ferriskey-nightly
-  namespace: test-aether
+  namespace: test-autharie
 spec:
   identityInstanceRef:
     name: archived-ferriskey

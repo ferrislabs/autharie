@@ -1,0 +1,249 @@
+use std::future::Future;
+
+use autharie_auth::Identity;
+use chrono::{DateTime, Duration, Utc};
+
+use crate::{
+    CoreError,
+    dataplane::value_objects::DataPlaneId,
+    deployments::{
+        Deployment, DeploymentId, DeploymentKind,
+        commands::{CreateDeploymentCommand, UpdateDeploymentCommand},
+        network::NetworkAccess,
+    },
+    organisation::OrganisationId,
+    version::Version,
+};
+
+/// Who may do what to the instances of an organisation.
+///
+/// Four rights rather than one. Seeing that an instance exists, creating one,
+/// changing it, and tearing it down are different acts with different costs,
+/// and the bits for them were reserved before anything used them.
+///
+/// This service went without a policy while every other one had one, so the
+/// deployment endpoints answered anybody who asked -- member or not. See the
+/// issue this port was added for.
+pub trait DeploymentPolicy: Send + Sync {
+    fn can_view_deployments(
+        &self,
+        identity: Identity,
+        organisation_id: OrganisationId,
+    ) -> impl Future<Output = Result<(), CoreError>> + Send;
+
+    fn can_create_deployments(
+        &self,
+        identity: Identity,
+        organisation_id: OrganisationId,
+    ) -> impl Future<Output = Result<(), CoreError>> + Send;
+
+    fn can_manage_deployments(
+        &self,
+        identity: Identity,
+        organisation_id: OrganisationId,
+    ) -> impl Future<Output = Result<(), CoreError>> + Send;
+
+    /// Its own bit, the same reason it has one everywhere else: a resize can
+    /// be resized back, and a tear-down cannot be untorn.
+    fn can_delete_deployments(
+        &self,
+        identity: Identity,
+        organisation_id: OrganisationId,
+    ) -> impl Future<Output = Result<(), CoreError>> + Send;
+}
+
+/// Service trait for deployment business logic
+pub trait DeploymentService: Send + Sync {
+    /// Creates a new deployment
+    fn create_deployment(
+        &self,
+        identity: Identity,
+        command: CreateDeploymentCommand,
+    ) -> impl Future<Output = Result<Deployment, CoreError>> + Send;
+
+    /// Fetches a deployment by ID
+    fn get_deployment(
+        &self,
+        deployment_id: DeploymentId,
+    ) -> impl Future<Output = Result<Option<Deployment>, CoreError>> + Send;
+
+    /// Fetches a deployment by ID scoped to an organisation
+    fn get_deployment_for_organisation(
+        &self,
+        identity: Identity,
+        organisation_id: OrganisationId,
+        deployment_id: DeploymentId,
+    ) -> impl Future<Output = Result<Deployment, CoreError>> + Send;
+
+    /// Lists deployments for an organisation
+    fn list_deployments_by_organisation(
+        &self,
+        identity: Identity,
+        organisation_id: OrganisationId,
+    ) -> impl Future<Output = Result<Vec<Deployment>, CoreError>> + Send;
+
+    /// All live deployments, for background system probes.
+    ///
+    /// Takes no `Identity` for the same reason background jobs like
+    /// `purge_deleted_deployments` do not: nobody is the caller, the
+    /// installation's own upkeep is. This is the unchecked read; callers who
+    /// need authorization should use `list_deployments_by_organisation(identity)` instead.
+    ///
+    /// Only includes deployments with a status that indicates they are actively
+    /// serving requests (not pending, scheduling, failed, deleting, or deleted).
+    fn list_all_live_deployments(
+        &self,
+    ) -> impl Future<Output = Result<Vec<Deployment>, CoreError>> + Send;
+
+    /// Updates an existing deployment
+    fn update_deployment(
+        &self,
+        deployment_id: DeploymentId,
+        command: UpdateDeploymentCommand,
+    ) -> impl Future<Output = Result<Deployment, CoreError>> + Send;
+
+    /// Updates an existing deployment scoped to an organisation
+    fn update_deployment_for_organisation(
+        &self,
+        identity: Identity,
+        organisation_id: OrganisationId,
+        deployment_id: DeploymentId,
+        command: UpdateDeploymentCommand,
+    ) -> impl Future<Output = Result<Deployment, CoreError>> + Send;
+
+    /// Removes deployments whose tear-down was confirmed longer ago than the
+    /// retention window. Returns how many.
+    fn purge_deleted_deployments(
+        &self,
+        retention: Duration,
+    ) -> impl Future<Output = Result<u64, CoreError>> + Send;
+
+    /// Deletes a deployment, and returns what was deleted.
+    ///
+    /// Returning it is not a convenience: deletion is a soft delete in the
+    /// control plane, and the data plane only learns about it through a
+    /// `deployment.delete` action carrying the namespace and the data plane
+    /// the resources actually live on. The caller cannot record that action
+    /// without the deployment, and a deletion that records nothing leaves the
+    /// row in `deleting` for ever with the Kubernetes resources still running.
+    fn delete_deployment(
+        &self,
+        deployment_id: DeploymentId,
+    ) -> impl Future<Output = Result<Deployment, CoreError>> + Send;
+
+    /// Deletes a deployment scoped to an organisation, and returns what was
+    /// deleted. See [`DeploymentService::delete_deployment`].
+    fn delete_deployment_for_organisation(
+        &self,
+        identity: Identity,
+        organisation_id: OrganisationId,
+        deployment_id: DeploymentId,
+    ) -> impl Future<Output = Result<Deployment, CoreError>> + Send;
+}
+
+/// Repository trait for managing Deployment entities.
+/// This trait defines the necessary methods for inserting, retrieving,
+/// listing, updating, and deleting Deployment records in a data store.
+/// Implementors of this trait must ensure thread safety by being Send and Sync.
+#[cfg_attr(test, mockall::automock)]
+pub trait DeploymentRepository: Send + Sync {
+    /// Removes deployments whose tear-down was confirmed before `before`.
+    ///
+    /// Only `deleted`, never `deleting`: a deployment still waiting for its
+    /// tear-down to be confirmed is one that needs attention, and dropping it
+    /// would erase the evidence that something is stuck.
+    ///
+    /// Returns how many were removed. The `actions` rows go with them, which
+    /// is why this waits rather than running at confirmation time -- the
+    /// history is worth keeping for a while.
+    fn purge_deleted(
+        &self,
+        before: DateTime<Utc>,
+    ) -> impl Future<Output = Result<u64, CoreError>> + Send;
+    fn insert(&self, deployment: Deployment) -> impl Future<Output = Result<(), CoreError>> + Send;
+    fn get_by_id(
+        &self,
+        deployment_id: DeploymentId,
+    ) -> impl Future<Output = Result<Option<Deployment>, CoreError>> + Send;
+
+    fn list_by_organisation(
+        &self,
+        organisation_id: OrganisationId,
+    ) -> impl Future<Output = Result<Vec<Deployment>, CoreError>> + Send;
+
+    fn update(&self, deployment: Deployment) -> impl Future<Output = Result<(), CoreError>> + Send;
+    fn delete(
+        &self,
+        deployment_id: DeploymentId,
+    ) -> impl Future<Output = Result<(), CoreError>> + Send;
+    fn list_by_dataplane(
+        &self,
+        dataplane_id: &DataPlaneId,
+    ) -> impl Future<Output = Result<Vec<Deployment>, CoreError>> + Send;
+
+    /// All deployments with a live status, for background system probes.
+    ///
+    /// Takes no identity: nobody is the caller, the installation's own upkeep
+    /// is. Only includes deployments with a status indicating active serving
+    /// (successful, maintenance, upgrading, or upgrade_required).
+    fn list_all_live(&self) -> impl Future<Output = Result<Vec<Deployment>, CoreError>> + Send;
+
+    /// How many live deployments run each version of a product.
+    ///
+    /// Counted in SQL rather than by listing and grouping: this crosses every
+    /// organisation, and loading them all to count them would be the one query
+    /// that grows with the whole customer base.
+    ///
+    /// A deployment being torn down is not counted. It stops being a reason to
+    /// keep a version alive the moment its removal is asked for.
+    fn count_by_version(
+        &self,
+        kind: &DeploymentKind,
+    ) -> impl Future<Output = Result<Vec<(Version, u64)>, CoreError>> + Send;
+}
+
+/// Who may read, and who may change, the ranges a deployment answers.
+///
+/// Two rights rather than one. Seeing which addresses reach a deployment is
+/// something an operator on call needs; changing them is how a deployment
+/// gets taken off the air, and the people who should be able to do the first
+/// are not the same set as the second.
+pub trait NetworkAccessPolicy: Send + Sync {
+    fn can_view_network_access(
+        &self,
+        identity: Identity,
+        organisation_id: OrganisationId,
+    ) -> impl Future<Output = Result<(), CoreError>> + Send;
+
+    fn can_change_network_access(
+        &self,
+        identity: Identity,
+        organisation_id: OrganisationId,
+    ) -> impl Future<Output = Result<(), CoreError>> + Send;
+}
+
+/// Reading and replacing who may reach a deployment.
+pub trait NetworkAccessService: Send + Sync {
+    fn network_access(
+        &self,
+        identity: Identity,
+        organisation_id: OrganisationId,
+        deployment_id: DeploymentId,
+    ) -> impl Future<Output = Result<NetworkAccess, CoreError>> + Send;
+
+    /// Replaces the whole rule, rather than adding or removing one range.
+    ///
+    /// Two people editing through add and remove calls converge on a set
+    /// neither of them wrote. Sending the whole list makes the last writer's
+    /// intent the one that holds, which is at least a state somebody chose.
+    ///
+    /// Returns the deployment, because the caller wants to see what now
+    /// applies rather than what it asked for.
+    fn set_network_access(
+        &self,
+        identity: Identity,
+        organisation_id: OrganisationId,
+        deployment_id: DeploymentId,
+        access: NetworkAccess,
+    ) -> impl Future<Output = Result<Deployment, CoreError>> + Send;
+}

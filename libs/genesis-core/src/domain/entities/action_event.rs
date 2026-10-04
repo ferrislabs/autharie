@@ -72,7 +72,7 @@ mod tests {
                 "name": "acme-prod",
                 "kind": "keycloak",
                 "version": "25.0.0",
-                "namespace": "aether-acme-prod",
+                "namespace": "autharie-acme-prod",
                 "created_by": "11111111-2222-3333-4444-555555555555"
             },
             "occurred_at": "2026-01-15T10:30:00Z"

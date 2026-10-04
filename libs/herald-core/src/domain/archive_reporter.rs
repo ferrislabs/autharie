@@ -116,7 +116,7 @@ mod tests {
         Archive::Taken(TakenArchive {
             server_name: Some("deployment-filed-under-db".to_string()),
             deployment_id: deployment(n),
-            object_key: format!("aether/nightly-{n}.json"),
+            object_key: format!("autharie/nightly-{n}.json"),
             postgres_major: 17,
             size_bytes: "4096".to_string(),
             started_at: Utc::now(),
