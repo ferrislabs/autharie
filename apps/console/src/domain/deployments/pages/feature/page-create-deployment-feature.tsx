@@ -1,4 +1,8 @@
+import { useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
+import type { Schemas } from '@/api/api.client'
+import { CustomerCloudSectionFeature } from '@/domain/cloud-providers/pages/feature/customer-cloud-section-feature'
+import { useGetCloudCredentials } from '@/domain/cloud-providers/hooks/use-cloud-credentials'
 import PageCreateDeployment from '../ui/page-create-deployment'
 import { useOrganisationPath } from '@/domain/organisations/hooks/use-organisation-path'
 import { useCreateDeployment } from '@/api/deployment.api'
@@ -16,6 +20,8 @@ export default function PageCreateDeploymentFeature() {
   const organisationId = useResolvedOrganisationId()
   const createDeployment = useCreateDeployment()
   const offers = useGetOffers(organisationId ?? null)
+  const credentials = useGetCloudCredentials()
+  const [distribution, setDistribution] = useState<Schemas.DistributionRequest | null>(null)
 
   // Both products, because the form lets the choice change and a version list
   // that arrives after the click is a list nobody saw.
@@ -48,6 +54,15 @@ export default function PageCreateDeploymentFeature() {
         keycloak: keycloak.data?.data ?? [],
       }}
       releasesLoading={ferriskey.isLoading || keycloak.isLoading}
+      credentials={credentials.data ?? []}
+      credentialsLoading={credentials.isLoading}
+      distribution={distribution}
+      customerCloud={
+        <CustomerCloudSectionFeature
+          credentials={credentials.data ?? []}
+          onChange={setDistribution}
+        />
+      }
     />
   )
 }

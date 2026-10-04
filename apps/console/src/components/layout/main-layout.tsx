@@ -1,5 +1,5 @@
 import { Outlet } from '@tanstack/react-router'
-import { Boxes, LayoutGrid, ShieldCheck, Users } from 'lucide-react'
+import { Boxes, Cloud, LayoutGrid, ShieldCheck, Users } from 'lucide-react'
 import { useMyPermissions } from '@/domain/organisations/hooks/use-my-permissions'
 import { CAN } from '@/domain/organisations/permissions'
 import { useOrganisationPath } from '@/domain/organisations/hooks/use-organisation-path'
@@ -25,6 +25,9 @@ export function AppLayout() {
     { label: 'Overview', to: organisationPath(), icon: LayoutGrid, exact: true },
     ...(can(CAN.viewInstances)
       ? [{ label: 'Deployments', to: organisationPath('/deployments'), icon: Boxes }]
+      : []),
+    ...(can(CAN.viewInstances)
+      ? [{ label: 'Cloud accounts', to: organisationPath('/cloud-accounts'), icon: Cloud }]
       : []),
     ...(can(CAN.viewMembers)
       ? [{ label: 'Members', to: organisationPath('/members'), icon: Users }]

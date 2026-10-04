@@ -14,6 +14,7 @@ export interface CreateDeploymentForm {
   environment: Environment
   /** What they are buying. The size and the isolation come with it. */
   offer: Offer
+  distribution?: Schemas.DistributionRequest
 }
 
 export function toCreateDeploymentRequest(
@@ -25,5 +26,6 @@ export function toCreateDeploymentRequest(
     version: form.version,
     environment: form.environment,
     offer: form.offer,
+    ...(form.distribution ? { distribution: form.distribution } : {}),
   }
 }

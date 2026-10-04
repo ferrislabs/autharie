@@ -2,6 +2,8 @@ import { useParams } from '@tanstack/react-router'
 import { useGetDeployment, useGetDeploymentActions } from '@/api/deployment.api'
 import { useGetDeploymentUptime } from '@/api/deployment-uptime.api'
 import { useHoldsPlatformRight } from '@/domain/organisations/hooks/use-is-operator'
+import { useGetClusterPlane } from '@/domain/cloud-providers/hooks/use-cluster-planning'
+import { isCustomerCloud } from '@/domain/cloud-providers/provisioning'
 import { availabilityView } from '../../availability'
 import { PageDeploymentDetail } from '../ui/page-deployment-detail'
 
@@ -9,6 +11,12 @@ export default function PageDeploymentDetailFeature() {
   const { deploymentId } = useParams({ strict: false }) as { deploymentId?: string }
 
   const deployment = useGetDeployment(deploymentId ?? null)
+  const customerDeployment = deployment.data?.data
+  const plane = useGetClusterPlane(
+    customerDeployment && isCustomerCloud(customerDeployment.distribution)
+      ? customerDeployment.dataplane_id
+      : null,
+  )
   const actions = useGetDeploymentActions(deploymentId ?? null)
 
   const canViewEstate = useHoldsPlatformRight('view_estate')
@@ -40,6 +48,7 @@ export default function PageDeploymentDetailFeature() {
       deployment={deployment.data?.data}
       actions={filteredActions}
       availability={availability}
+      dataplane={plane.data?.data}
       isLoading={deployment.isLoading}
     />
   )

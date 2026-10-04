@@ -13,8 +13,8 @@ import {
 } from '@/components/ui/select'
 import { Page, PageTitle, Section } from '@/components/layout/page'
 import { useOrganisationPath } from '@/domain/organisations/hooks/use-organisation-path'
-import { useNavigate } from '@tanstack/react-router'
-import { useState } from 'react'
+import { Link, useNavigate } from '@tanstack/react-router'
+import { useState, type ReactNode } from 'react'
 import { KIND_LABELS, type DeploymentKind, type Environment } from '../../types/deployment'
 import {
   OFFER_COPY,
@@ -24,6 +24,7 @@ import {
   type Offer,
   type OfferAvailability,
 } from '../../offers'
+import { customerCloudAvailability } from '@/domain/cloud-providers/distribution'
 import { OptionCard } from './components/option-card'
 
 interface Props {
@@ -33,6 +34,7 @@ interface Props {
     version: string
     environment: Environment
     offer: Offer
+    distribution?: Schemas.DistributionRequest
   }) => void
   isSubmitting?: boolean
   /** What the platform said when the last attempt failed. */
@@ -41,6 +43,10 @@ interface Props {
   offersLoading: boolean
   releases: Record<DeploymentKind, Schemas.Release[]>
   releasesLoading: boolean
+  credentials: Schemas.CloudCredentialResponse[]
+  credentialsLoading: boolean
+  customerCloud: ReactNode
+  distribution: Schemas.DistributionRequest | null
 }
 
 export default function PageCreateDeployment({
@@ -51,6 +57,10 @@ export default function PageCreateDeployment({
   offersLoading,
   releases,
   releasesLoading,
+  credentials,
+  credentialsLoading,
+  customerCloud,
+  distribution,
 }: Props) {
   const navigate = useNavigate()
   const organisationPath = useOrganisationPath()
@@ -59,6 +69,7 @@ export default function PageCreateDeployment({
   const [kind, setKind] = useState<DeploymentKind>('ferriskey')
   const [environment, setEnvironment] = useState<Environment>('development')
   const [offer, setOffer] = useState<Offer | undefined>(undefined)
+  const [wantsCustomerCloud, setWantsCustomerCloud] = useState(false)
   const chosen = offer ?? firstOpen(offers)
 
   // Not a choice. A new instance starts on the newest version the catalogue
@@ -67,7 +78,16 @@ export default function PageCreateDeployment({
   // behind, for no reason they could name.
   const version = newestInstallable(releases[kind]) ?? ''
 
-  const canSubmit = !!chosen && name.trim() !== '' && version !== '' && !isSubmitting
+  const availability = customerCloudAvailability(kind, credentials)
+  const onCustomerCloud = wantsCustomerCloud && availability !== 'hidden'
+  const placement = onCustomerCloud ? (distribution ?? undefined) : undefined
+
+  const canSubmit =
+    !!chosen &&
+    name.trim() !== '' &&
+    version !== '' &&
+    !isSubmitting &&
+    (!onCustomerCloud || (availability === 'available' && !!placement))
 
   return (
     <Page className='max-w-3xl'>
@@ -78,7 +98,14 @@ export default function PageCreateDeployment({
         onSubmit={(e) => {
           e.preventDefault()
           if (chosen) {
-            onSubmit({ name, kind, version, environment, offer: chosen })
+            onSubmit({
+              name,
+              kind,
+              version,
+              environment,
+              offer: chosen,
+              ...(placement ? { distribution: placement } : {}),
+            })
           }
         }}
       >
@@ -179,6 +206,43 @@ export default function PageCreateDeployment({
             </div>
           )}
         </Section>
+
+        {availability !== 'hidden' && (
+          <Section title='Where it runs'>
+            <div className='grid gap-3 sm:grid-cols-2'>
+              <OptionCard
+                selected={!onCustomerCloud}
+                onSelect={() => setWantsCustomerCloud(false)}
+                label='Shared platform'
+                description='Runs on the platform operated for you.'
+              />
+              <OptionCard
+                selected={onCustomerCloud}
+                onSelect={() => setWantsCustomerCloud(true)}
+                label='Your cloud'
+                description='A cluster created in your own cloud account, billed by your provider.'
+              />
+            </div>
+
+            {onCustomerCloud &&
+              (credentialsLoading ? (
+                <Skeleton className='h-24 w-full' />
+              ) : availability === 'needs_credentials' ? (
+                <p className='rounded-md border bg-muted/30 px-3 py-3 text-sm text-muted-foreground'>
+                  No cloud account is registered yet.{' '}
+                  <Link
+                    to={organisationPath('/cloud-accounts')}
+                    className='font-medium text-foreground underline'
+                  >
+                    Add one on the Cloud accounts page
+                  </Link>{' '}
+                  to run a deployment in your own cloud.
+                </p>
+              ) : (
+                customerCloud
+              ))}
+          </Section>
+        )}
 
         {/* Where a deployment lands is the platform's decision, so the
             reasons it cannot land anywhere are the platform's to explain --

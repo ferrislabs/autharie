@@ -14,6 +14,7 @@ import PageDeploymentDetailFeature from './domain/deployments/pages/feature/page
 import PageDeploymentGeneralFeature from './domain/deployments/pages/feature/page-deployment-general-feature'
 import PageDeploymentResourcesFeature from './domain/deployments/pages/feature/page-deployment-resources-feature'
 import PageDeploymentDangerFeature from './domain/deployments/pages/feature/page-deployment-danger-feature'
+import PageCloudCredentialsFeature from './domain/cloud-providers/pages/feature/page-cloud-credentials-feature'
 import PageCreateOrganisationFeature from './domain/organisations/pages/feature/page-create-organisation-feature'
 import PageDataPlanesFeature from './domain/dataplanes/pages/feature/page-dataplanes-feature'
 import PageDataPlaneDetailFeature from './domain/dataplanes/pages/feature/page-dataplane-detail-feature'
@@ -73,6 +74,12 @@ const rolesRoute = createRoute({
   getParentRoute: () => appLayoutRoute,
   path: '/roles',
   component: PageRolesFeature,
+})
+
+const cloudAccountsRoute = createRoute({
+  getParentRoute: () => appLayoutRoute,
+  path: '/cloud-accounts',
+  component: PageCloudCredentialsFeature,
 })
 
 const createDeploymentRoute = createRoute({
@@ -295,6 +302,7 @@ const routeTree = rootRoute.addChildren([
     indexRoute,
     deploymentsRoute,
     createDeploymentRoute,
+    cloudAccountsRoute,
     membersRoute,
     rolesRoute,
   ]),
