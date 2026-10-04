@@ -10,6 +10,7 @@ use autharie_api::{
         cloud_credentials::cloud_credential_router,
         deployments::{
             create_deployment::create_deployment_handler, get_deployment::get_deployment_handler,
+            resize_cluster::resize_cluster_handler,
         },
     },
     state::AppState,
@@ -17,6 +18,7 @@ use autharie_api::{
 use autharie_auth::{Identity, User};
 use autharie_core::{
     AutharieService, CloudProviders, FixedCloudProvider, FixedVerdict,
+    cloud_credentials::{ClusterResizers, RecordingResizer},
     dataplane::cloud_provider::{
         ControlPlaneKind, ControlPlaneOffer, ControlPlaneOfferId, Money, NodeOffer, NodeType,
         ProviderOffers,
@@ -117,7 +119,17 @@ fn transit(server: &MockServer) -> TransitKeyProvider {
 }
 
 fn state(pool: PgPool, verdict: FixedVerdict, keys: TransitKeyProvider) -> AppState {
+    resizing_state(pool, verdict, keys, ClusterResizers::Unconfigured)
+}
+
+fn resizing_state(
+    pool: PgPool,
+    verdict: FixedVerdict,
+    keys: TransitKeyProvider,
+    resizers: ClusterResizers,
+) -> AppState {
     let service = AutharieService::new(pool)
+        .with_cluster_resizers(resizers)
         .with_cloud_providers(CloudProviders::Fixed(FixedCloudProvider {
             offers: offers(),
             verdict,
@@ -205,6 +217,7 @@ fn app(state: AppState, sub: Uuid) -> Router {
     cloud_credential_router()
         .typed_post(create_deployment_handler)
         .typed_get(get_deployment_handler)
+        .typed_put(resize_cluster_handler)
         .layer(Extension(identity(sub)))
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state)
@@ -742,4 +755,180 @@ async fn the_owner_of_a_customer_cluster_reads_why_it_is_not_ready_without_opera
     assert!(!failed.to_string().contains(SECRET));
 
     forget(&pool, &tenant).await;
+}
+
+fn profile_body(mode: &str, min: u8, max: u8, replication: u8) -> Value {
+    json!({
+        "mode": mode, "control_plane_id": "mutualized", "node_type": "small",
+        "min_nodes": min, "max_nodes": max, "replication": replication
+    })
+}
+
+#[tokio::test]
+async fn a_customer_cluster_is_resized_through_the_api_spec_ccp_15_and_ccp_16() {
+    let Some(pool) = pool().await else { return };
+    let _ = captured_logs();
+    let server = MockServer::start_async().await;
+    let tenant = tenant(&pool).await;
+    let recording = Arc::new(RecordingResizer::new());
+    let app = app(
+        resizing_state(
+            pool.clone(),
+            FixedVerdict::Accept,
+            transit(&server),
+            ClusterResizers::Recording(recording.clone()),
+        ),
+        tenant.owner,
+    );
+    sqlx::query("UPDATE organisations SET plan = 'enterprise' WHERE id = $1")
+        .bind(tenant.organisation)
+        .execute(&pool)
+        .await
+        .expect("a plan");
+    let base = format!("/organisations/{}", tenant.organisation);
+    let (_, created) = call(
+        &app,
+        Method::POST,
+        &format!("{base}/cloud-credentials"),
+        Some(register_body()),
+    )
+    .await;
+    let (status, deployment) = call(
+        &app,
+        Method::POST,
+        &format!("{base}/deployments"),
+        Some(json!({
+            "name": "app", "kind": "ferriskey", "version": "1.0.0",
+            "environment": "production", "offer": "standard",
+            "distribution": {
+                "type": "customer_cloud",
+                "credential_id": created["id"],
+                "region": "fr-par",
+                "profile": profile_body("dev", 1, 1, 1)
+            }
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{deployment}");
+    let id = deployment["data"]["id"]
+        .as_str()
+        .or_else(|| deployment["id"].as_str())
+        .expect("an id")
+        .to_string();
+    let uri = format!("{base}/deployments/{id}/cluster-profile");
+
+    let (building, building_body) = call(
+        &app,
+        Method::PUT,
+        &uri,
+        Some(profile_body("standard", 2, 4, 2)),
+    )
+    .await;
+    assert_eq!(building, StatusCode::CONFLICT, "{building_body}");
+    assert!(recording.calls().is_empty());
+
+    sqlx::query("UPDATE data_planes SET status = 'active' WHERE organisation_id = $1")
+        .bind(tenant.organisation)
+        .execute(&pool)
+        .await
+        .expect("active");
+
+    let (ok, resized) = call(
+        &app,
+        Method::PUT,
+        &uri,
+        Some(profile_body("standard", 2, 4, 2)),
+    )
+    .await;
+    let (again, _) = call(
+        &app,
+        Method::PUT,
+        &uri,
+        Some(profile_body("standard", 2, 4, 2)),
+    )
+    .await;
+    let (_, read) = call(&app, Method::GET, &format!("{base}/deployments/{id}"), None).await;
+
+    assert_eq!(ok, StatusCode::OK, "{resized}");
+    assert_eq!(resized["data"]["mode"], "standard");
+    assert_eq!(resized["data"]["min_nodes"], 2);
+    assert_eq!(resized["data"]["replication"], 2);
+    assert_eq!(again, StatusCode::OK);
+    assert_eq!(recording.calls().len(), 2);
+    let stored = &read["data"]["distribution"]["customer_cloud"]["profile"];
+    assert_eq!(stored["mode"], "standard");
+    assert_eq!(stored["max_nodes"], 4);
+
+    let (refused, refused_body) =
+        call(&app, Method::PUT, &uri, Some(profile_body("dev", 1, 1, 1))).await;
+    let (_, after) = call(&app, Method::GET, &format!("{base}/deployments/{id}"), None).await;
+
+    assert_eq!(refused, StatusCode::UNPROCESSABLE_ENTITY, "{refused_body}");
+    assert!(
+        refused_body["message"]
+            .as_str()
+            .expect("a message")
+            .contains("replicas")
+    );
+    assert_eq!(recording.calls().len(), 2);
+    assert_eq!(
+        after["data"]["distribution"]["customer_cloud"]["profile"]["mode"],
+        "standard"
+    );
+
+    let (unknown, _) = call(
+        &app,
+        Method::PUT,
+        &format!("{base}/deployments/{}/cluster-profile", Uuid::new_v4()),
+        Some(profile_body("standard", 2, 4, 2)),
+    )
+    .await;
+    let (bad, _) = call(
+        &app,
+        Method::PUT,
+        &uri,
+        Some(profile_body("standard", 2, 4, 0)),
+    )
+    .await;
+    assert_eq!(unknown, StatusCode::NOT_FOUND);
+    assert_eq!(bad, StatusCode::BAD_REQUEST);
+
+    forget(&pool, &tenant).await;
+}
+
+#[tokio::test]
+async fn a_stranger_cannot_resize_a_cluster() {
+    let Some(pool) = pool().await else { return };
+    let _ = captured_logs();
+    let server = MockServer::start_async().await;
+    let mine = tenant(&pool).await;
+    let theirs = tenant(&pool).await;
+    let recording = Arc::new(RecordingResizer::new());
+    let stranger = app(
+        resizing_state(
+            pool.clone(),
+            FixedVerdict::Accept,
+            transit(&server),
+            ClusterResizers::Recording(recording.clone()),
+        ),
+        theirs.owner,
+    );
+
+    let (status, _) = call(
+        &stranger,
+        Method::PUT,
+        &format!(
+            "/organisations/{}/deployments/{}/cluster-profile",
+            mine.organisation,
+            Uuid::new_v4()
+        ),
+        Some(profile_body("standard", 2, 4, 2)),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(recording.calls().is_empty());
+
+    forget(&pool, &mine).await;
+    forget(&pool, &theirs).await;
 }

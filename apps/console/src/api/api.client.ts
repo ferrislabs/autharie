@@ -705,6 +705,7 @@ export namespace Schemas {
     dataplane_id: DataPlaneId
   }
   export type RequestedUpgradesResponse = { data: Array<RequestedUpgradeItem> }
+  export type ResizeClusterResponse = { data: ClusterProfile }
   export type RestoreBackupRequest = { name: string; region?: (string | null) | undefined }
   export type RestoreBackupResponse = { data: Deployment }
   export type ReviseReleaseRequest = {
@@ -1163,6 +1164,17 @@ export namespace Endpoints {
       body: Schemas.RestoreBackupRequest
     }
     response: Schemas.RestoreBackupResponse
+  }
+  export type put_Resize_cluster_handler = {
+    method: 'PUT'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/cluster-profile'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string }
+
+      body: Schemas.ClusterProfileRequest
+    }
+    response: Schemas.ResizeClusterResponse
   }
   export type post_Cutover_handler = {
     method: 'POST'
@@ -1793,6 +1805,7 @@ export type EndpointByMethod = {
   put: {
     '/dataplanes/{dataplane_id}/service': Endpoints.put_Set_service_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/backup-schedule': Endpoints.put_Set_backup_schedule_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/cluster-profile': Endpoints.put_Resize_cluster_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/iam-settings': Endpoints.put_Set_iam_settings_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/network-access': Endpoints.put_Set_network_access_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/upgrade-settings': Endpoints.put_Set_upgrade_settings_handler

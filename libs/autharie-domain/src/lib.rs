@@ -242,6 +242,14 @@ pub enum CoreError {
     #[error(transparent)]
     Profile(#[from] crate::dataplane::cluster_profile::ProfileError),
 
+    #[error("the cluster of deployment {deployment} is {state} and cannot be resized")]
+    ClusterNotReady { deployment: Uuid, state: String },
+
+    #[error(
+        "the provider resized the cluster of deployment {deployment} but the record was not updated: repeat the request to bring them back in line"
+    )]
+    ClusterResizeNotRecorded { deployment: Uuid },
+
     #[error(transparent)]
     Resize(#[from] crate::dataplane::cluster_profile::ResizeError),
 

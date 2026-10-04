@@ -291,6 +291,12 @@ impl From<CoreError> for ApiError {
                 reason: value.to_string(),
             },
 
+            CoreError::ClusterNotReady { .. } => ApiError::Conflict {
+                reason: value.to_string(),
+            },
+            CoreError::ClusterResizeNotRecorded { .. } => ApiError::InternalServerError {
+                reason: value.to_string(),
+            },
             CoreError::Profile(_) | CoreError::Distribution(_) | CoreError::Resize(_) => {
                 ApiError::Unprocessable {
                     reason: value.to_string(),
@@ -440,6 +446,28 @@ mod tests {
             (
                 CoreError::Provision(ProvisionError::QuotaExceeded),
                 StatusCode::BAD_GATEWAY,
+            ),
+            (
+                CoreError::ClusterNotReady {
+                    deployment: uuid::Uuid::nil(),
+                    state: "provisioning".to_string(),
+                },
+                StatusCode::CONFLICT,
+            ),
+            (
+                CoreError::ClusterResizeNotRecorded {
+                    deployment: uuid::Uuid::nil(),
+                },
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+            (
+                CoreError::Resize(
+                    autharie_core::dataplane::cluster_profile::ResizeError::NodeTypeChange {
+                        current: "a".to_string(),
+                        requested: "b".to_string(),
+                    },
+                ),
+                StatusCode::UNPROCESSABLE_ENTITY,
             ),
         ] {
             assert_eq!(ApiError::from(refused).into_response().status(), expected);

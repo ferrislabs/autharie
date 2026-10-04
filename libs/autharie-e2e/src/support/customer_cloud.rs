@@ -18,6 +18,11 @@ use autharie_core::{
 };
 use autharie_domain::{
     CoreError,
+    audit::{
+        AuditBatch, AuditEntry, AuditEntryId,
+        commands::{ListAuditEntriesCommand, RecordAuditEntryCommand},
+        ports::AuditService,
+    },
     backups::{
         keys::{DataKey, Dek, KeyError, KeyName, KeyRef, KeyVersion, ProviderName, WrappedDek},
         ports::{KeyProvider, KeyProviderAdmin},
@@ -832,6 +837,55 @@ impl ClusterProvisioner for NeverProvisions {
         self.calls.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct Audit {
+    entries: Arc<Mutex<Vec<RecordAuditEntryCommand>>>,
+}
+
+impl Audit {
+    pub fn entries(&self) -> Vec<RecordAuditEntryCommand> {
+        self.entries.lock().expect("not poisoned").clone()
+    }
+}
+
+impl AuditService for Audit {
+    async fn record(&self, command: RecordAuditEntryCommand) -> Result<AuditEntry, CoreError> {
+        self.entries
+            .lock()
+            .expect("not poisoned")
+            .push(command.clone());
+        Ok(AuditEntry::record(
+            AuditEntryId(Uuid::new_v4()),
+            command.organisation_id,
+            command.actor,
+            command.action,
+            command.target,
+            command.change,
+            Utc::now(),
+        ))
+    }
+
+    async fn list_entries(
+        &self,
+        _: Identity,
+        _: ListAuditEntriesCommand,
+    ) -> Result<AuditBatch, CoreError> {
+        Err(CoreError::InternalError(
+            "this double only records".to_string(),
+        ))
+    }
+}
+
+pub fn member() -> Identity {
+    Identity::User(autharie_auth::User {
+        id: Uuid::from_u128(7).to_string(),
+        username: "member".to_string(),
+        email: None,
+        name: None,
+        roles: vec![],
+    })
 }
 
 #[derive(Debug, Clone, Copy)]

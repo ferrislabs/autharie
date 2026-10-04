@@ -10,7 +10,7 @@ use autharie_transit::TransitKeyProvider;
 
 use crate::{
     AutharieConfig, CoreError,
-    application::auth::set_auth_issuer,
+    application::{auth::set_auth_issuer, cloud_credentials::ClusterResizers},
     infrastructure::{credentials::CloudProviders, logs::InProcessLogRelay},
 };
 
@@ -77,6 +77,8 @@ pub struct AutharieService {
 
     cloud: CloudProviders,
 
+    resizers: ClusterResizers,
+
     credential_keys: Option<Arc<TransitKeyProvider>>,
 }
 
@@ -120,6 +122,7 @@ impl AutharieService {
             log_relay: InProcessLogRelay::new(),
             domain: None,
             cloud: CloudProviders::default(),
+            resizers: ClusterResizers::default(),
             credential_keys: None,
         }
     }
@@ -148,6 +151,15 @@ impl AutharieService {
     pub fn with_credential_keys(mut self, keys: Option<TransitKeyProvider>) -> Self {
         self.credential_keys = keys.map(Arc::new);
         self
+    }
+
+    pub fn with_cluster_resizers(mut self, resizers: ClusterResizers) -> Self {
+        self.resizers = resizers;
+        self
+    }
+
+    pub(crate) fn cluster_resizers(&self) -> &ClusterResizers {
+        &self.resizers
     }
 
     pub(crate) fn cloud_providers(&self) -> &CloudProviders {

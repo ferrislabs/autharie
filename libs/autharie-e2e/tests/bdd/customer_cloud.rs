@@ -4,7 +4,7 @@ use autharie_core::{
     FixedVerdict,
     cloud_credentials::{
         DeleteCloudCredential, EstimateClusterCost, ListCloudCredentials, ProfileSpec,
-        RegisterCloudCredential, ResolveCustomerCloud,
+        RegisterCloudCredential, ResizeCustomerCluster, ResolveCustomerCloud,
     },
     customer_clusters::{ProvisionReport, TeardownReport},
 };
@@ -37,8 +37,9 @@ use autharie_domain::{
 };
 use autharie_e2e::support::{
     customer_cloud::{
-        AllowAll, Grants, Identities, Keys, MEDIUM, MUTUALIZED, NeverProvisions, Platform, REGION,
-        Runner, SMALL, Users, capture, catalog, credential_json, providers, provisioner, worker,
+        AllowAll, Audit, Grants, Identities, Keys, MEDIUM, MUTUALIZED, NeverProvisions, Platform,
+        REGION, Runner, SMALL, Users, capture, credential_json, member, providers, provisioner,
+        worker,
     },
     iam::OneOrganisation,
     platform::caller,
@@ -93,7 +94,6 @@ pub struct CustomerCloudWorld {
     distribution: Option<Result<Distribution, CoreError>>,
     estimate: Option<Result<CostEstimate, CoreError>>,
     profile: Option<ClusterProfile>,
-    resized: Option<Result<ClusterProfile, ResizeError>>,
     request: Option<Result<CreateDeploymentCommand, DistributionError>>,
     deployment: Option<Deployment>,
     provision_reports: Vec<ProvisionReport>,
@@ -105,7 +105,8 @@ pub struct CustomerCloudWorld {
     direct_hits: Option<TeardownHits>,
     plane_before_resize: Option<DataPlane>,
     patches: usize,
-    resize_outcome: Option<Result<(), CoreError>>,
+    resize_outcome: Option<Result<ClusterProfile, CoreError>>,
+    audit: Audit,
 }
 
 impl CustomerCloudWorld {
@@ -129,7 +130,6 @@ impl CustomerCloudWorld {
             distribution: None,
             estimate: None,
             profile: None,
-            resized: None,
             request: None,
             deployment: None,
             provision_reports: Vec::new(),
@@ -142,6 +142,7 @@ impl CustomerCloudWorld {
             plane_before_resize: None,
             patches: 0,
             resize_outcome: None,
+            audit: Audit::default(),
         }
     }
 
@@ -636,40 +637,47 @@ async fn the_cluster_is_deprovisioned_directly(world: &mut CustomerCloudWorld) {
     world.direct_hits = Some(hits);
 }
 
-#[when(expr = "the cluster profile is resized to {string} with {int} replicas in use")]
-fn the_profile_is_resized(world: &mut CustomerCloudWorld, mode: String, in_use: u8) {
-    let profile = world.profile.as_ref().expect("a profile");
-    world.resized = Some(profile.resized_to(mode_named(&mode), in_use, &catalog()));
-}
-
-#[when("the provisioner applies the resized profile")]
-async fn the_provisioner_applies(world: &mut CustomerCloudWorld) {
-    let resized = world
-        .resized
-        .as_ref()
-        .expect("a resize")
-        .as_ref()
-        .expect("an accepted resize")
-        .clone();
-    let id = world.deployment().dataplane_id;
+#[when(
+    expr = "the customer resizes the cluster to {string} with {int} to {int} nodes and {int} replicas"
+)]
+async fn the_customer_resizes(
+    world: &mut CustomerCloudWorld,
+    mode: String,
+    min: u8,
+    max: u8,
+    replicas: u8,
+) {
+    let deployment_id = world.deployment().id;
     world.plane_before_resize = Some(world.plane());
+    let target = spec(mode_named(&mode), MUTUALIZED, SMALL, min, max, replicas);
     let server = world.server.get().await;
     let resizing = scaleway_api::resizing(
         server,
         SMALL,
         MUTUALIZED,
-        1,
-        &json!({"autoscaling": true, "size": 2, "min_size": 2, "max_size": 2}),
+        u32::from(world.profile.as_ref().expect("a profile").min_nodes()),
+        &json!({"autoscaling": mode != "dev", "size": min, "min_size": min, "max_size": max}),
     )
     .await;
-    let outcome = provisioner(
+    let provisioner = provisioner(
         &server.base_url(),
         &world.platform,
         &world.keys,
         &world.identities,
         &world.runner,
+    );
+    let catalog = providers(FixedVerdict::Accept);
+    let outcome = ResizeCustomerCluster::new(
+        &catalog,
+        &provisioner,
+        world.platform.clone(),
+        world.platform.clone(),
+        world.platform.clone(),
+        AllowAll,
+        world.audit.clone(),
+        Users,
     )
-    .resize(&id, &resized)
+    .execute(member(), world.organisation, deployment_id, target)
     .await;
     let patches = resizing.patches().await;
     resizing.remove().await;
@@ -1169,17 +1177,15 @@ fn the_direct_calls_removed_nothing(world: &mut CustomerCloudWorld) {
 }
 
 #[then(
-    expr = "the resized profile has {int} nodes at least, {int} replicas and the same node type and control plane"
+    expr = "the resize is accepted with the profile {string}, {int} nodes at least and {int} replicas"
 )]
-fn the_resized_profile_grew(world: &mut CustomerCloudWorld, nodes: u8, replicas: u8) {
+fn the_resize_is_accepted(world: &mut CustomerCloudWorld, mode: String, nodes: u8, replicas: u8) {
+    let after = match world.resize_outcome.as_ref().expect("a resize") {
+        Ok(profile) => profile,
+        Err(error) => panic!("expected an accepted resize, got {error:?}"),
+    };
     let before = world.profile.as_ref().expect("a profile");
-    let after = world
-        .resized
-        .as_ref()
-        .expect("a resize")
-        .as_ref()
-        .expect("an accepted resize");
-    assert_eq!(after.mode(), ClusterMode::Standard);
+    assert_eq!(after.mode(), mode_named(&mode));
     assert_eq!(after.min_nodes(), nodes);
     assert_eq!(after.min_nodes(), before.min_nodes() + 1);
     assert_eq!(after.replication().get(), replicas);
@@ -1191,11 +1197,16 @@ fn the_resized_profile_grew(world: &mut CustomerCloudWorld, nodes: u8, replicas:
 #[then("Scaleway received exactly one node pool patch moving the pool to 2 nodes with autoscaling")]
 fn one_pool_patch(world: &mut CustomerCloudWorld) {
     assert!(
-        matches!(world.resize_outcome, Some(Ok(()))),
+        matches!(world.resize_outcome, Some(Ok(_))),
         "{:?}",
         world.resize_outcome
     );
     assert_eq!(world.patches, 1);
+}
+
+#[then("Scaleway received no node pool patch")]
+fn no_pool_patch(world: &mut CustomerCloudWorld) {
+    assert_eq!(world.patches, 0);
 }
 
 #[then("the data plane is the same one, still active, with the same Herald binding")]
@@ -1205,16 +1216,24 @@ fn same_data_plane(world: &mut CustomerCloudWorld) {
     assert_eq!(before.status, DataPlaneStatus::Active);
     assert_eq!(&after, before);
     assert_eq!(world.platform.planes().len(), 1);
+    assert_eq!(
+        world
+            .platform
+            .deployment(world.deployment().id)
+            .expect("stored")
+            .dataplane_id,
+        before.id
+    );
 }
 
 #[then(expr = "the resize is refused with {int} replicas in use and {int} allowed")]
 fn the_resize_is_refused(world: &mut CustomerCloudWorld, in_use: u8, allowed: u8) {
-    match world.resized.as_ref().expect("a resize") {
-        Err(ResizeError::ReplicasExceedTarget {
+    match world.resize_outcome.as_ref().expect("a resize") {
+        Err(CoreError::Resize(ResizeError::ReplicasExceedTarget {
             target,
             in_use: seen,
             allowed: limit,
-        }) => {
+        })) => {
             assert_eq!(*target, ClusterMode::Dev);
             assert_eq!(*seen, in_use);
             assert_eq!(*limit, allowed);
@@ -1223,15 +1242,36 @@ fn the_resize_is_refused(world: &mut CustomerCloudWorld, in_use: u8, allowed: u8
     }
 }
 
-#[then(expr = "the resized profile has {int} nodes at most and {int} replicas")]
-fn the_resized_profile_shrank(world: &mut CustomerCloudWorld, nodes: u8, replicas: u8) {
-    let after = world
-        .resized
-        .as_ref()
-        .expect("a resize")
-        .as_ref()
-        .expect("an accepted resize");
-    assert_eq!(after.mode(), ClusterMode::Dev);
-    assert_eq!(after.max_nodes(), nodes);
-    assert_eq!(after.replication().get(), replicas);
+#[then(expr = "the persisted profile is {string} with {int} to {int} nodes and {int} replicas")]
+fn the_persisted_profile(
+    world: &mut CustomerCloudWorld,
+    mode: String,
+    min: u8,
+    max: u8,
+    replicas: u8,
+) {
+    let stored = world
+        .platform
+        .deployment(world.deployment().id)
+        .expect("stored");
+    let Distribution::CustomerCloud { profile, .. } = stored.distribution else {
+        panic!("not a customer cloud deployment");
+    };
+    assert_eq!(profile.mode(), mode_named(&mode));
+    assert_eq!(profile.min_nodes(), min);
+    assert_eq!(profile.max_nodes(), max);
+    assert_eq!(profile.replication().get(), replicas);
+}
+
+#[then("one audit entry records the change of profile")]
+fn one_audit_entry(world: &mut CustomerCloudWorld) {
+    let entries = world.audit.entries();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].action.0, "deployment.cluster_profile.updated");
+    assert!(entries[0].change.is_some());
+}
+
+#[then("no audit entry was recorded")]
+fn no_audit_entry(world: &mut CustomerCloudWorld) {
+    assert!(world.audit.entries().is_empty());
 }

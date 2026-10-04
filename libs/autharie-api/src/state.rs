@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use autharie_core::{
-    AutharieConfig, AutharieService, CloudProviders, PooledCredentialStore, create_service,
+    AutharieConfig, AutharieService, CloudProviders, PooledCredentialStore,
+    cloud_credentials::ClusterResizers, create_service,
 };
 use autharie_transit::TransitKeyProvider;
 use tracing::{error, warn};
@@ -74,6 +75,30 @@ pub fn customer_cloud_providers(
     }
 }
 
+pub fn customer_cluster_resizers(
+    args: &Args,
+    service: &AutharieService,
+    keys: Option<&TransitKeyProvider>,
+) -> ClusterResizers {
+    if !args.customer_cloud_active() {
+        return ClusterResizers::Unconfigured;
+    }
+
+    let Some(keys) = keys else {
+        return ClusterResizers::Unconfigured;
+    };
+
+    let pool = service.pool().clone();
+    let credentials = PooledCredentialStore::new(pool.clone(), Arc::new(keys.clone()));
+    match ClusterResizers::scaleway(args.customer_cloud.scaleway_config(), credentials, pool) {
+        Ok(resizers) => resizers,
+        Err(error) => {
+            error!(%error, "the Scaleway client could not be built: customer clusters cannot be resized");
+            ClusterResizers::Unconfigured
+        }
+    }
+}
+
 pub async fn state(args: Arc<Args>) -> Result<AppState, ApiError> {
     let config: AutharieConfig = AutharieConfig::from(args.as_ref().clone());
     let keys = args
@@ -93,7 +118,10 @@ pub async fn state(args: Arc<Args>) -> Result<AppState, ApiError> {
         .with_domain(args.ovh.domain())
         .with_credential_keys(keys.clone());
     let cloud = customer_cloud_providers(&args, &service, keys.as_ref());
-    let service = service.with_cloud_providers(cloud);
+    let resizers = customer_cluster_resizers(&args, &service, keys.as_ref());
+    let service = service
+        .with_cloud_providers(cloud)
+        .with_cluster_resizers(resizers);
 
     // Best-effort, like every other optional integration here: a cluster
     // this pod cannot reach, or a Secret that never turns up, means no
@@ -214,6 +242,26 @@ mod tests {
 
         assert!(matches!(providers, CloudProviders::Scaleway(_)));
         assert!(args.customer_cloud_active());
+    }
+
+    #[tokio::test]
+    async fn the_resizer_follows_customer_cloud_the_same_way() {
+        let off = Args::default();
+        let incomplete = {
+            let mut args = enabled_args();
+            args.customer_cloud.control_plane_url = String::new();
+            args
+        };
+        let on = enabled_args();
+
+        let resizers = |args: &Args, keys: Option<&TransitKeyProvider>| {
+            customer_cluster_resizers(args, &lazy_service(), keys)
+        };
+
+        assert!(!resizers(&off, Some(&keys())).is_configured());
+        assert!(!resizers(&incomplete, Some(&keys())).is_configured());
+        assert!(!resizers(&on, None).is_configured());
+        assert!(resizers(&on, Some(&keys())).is_configured());
     }
 
     #[tokio::test]

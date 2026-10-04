@@ -130,6 +130,9 @@ pub enum ResizeError {
         allowed: u8,
     },
 
+    #[error("the node type cannot change from '{current}' to '{requested}' on a running cluster")]
+    NodeTypeChange { current: String, requested: String },
+
     #[error(transparent)]
     Profile(#[from] ProfileError),
 }

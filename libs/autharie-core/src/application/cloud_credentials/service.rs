@@ -73,7 +73,7 @@ async fn require<P: PermissionProvider>(
     PolicyContext::new(granted).require_permission(needed)
 }
 
-async fn owned_credential<R: CloudCredentialRepository>(
+pub(super) async fn owned_credential<R: CloudCredentialRepository>(
     repository: &R,
     id: &CloudCredentialId,
     organisation_id: OrganisationId,
@@ -95,7 +95,7 @@ fn catalog_failure(error: CatalogError) -> CoreError {
     }
 }
 
-async fn offers_for<C: ProviderCatalog>(
+pub(super) async fn offers_for<C: ProviderCatalog>(
     catalog: &C,
     credential: &CloudCredential,
     region: &Region,

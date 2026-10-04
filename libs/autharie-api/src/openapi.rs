@@ -180,6 +180,7 @@ fn served_paths() -> Vec<&'static str> {
         <deployments::backups::BackupsRoute as TypedPath>::PATH,
         <deployments::backups::BackupScheduleRoute as TypedPath>::PATH,
         <deployments::cutover::CutoverRoute as TypedPath>::PATH,
+        <deployments::resize_cluster::ClusterProfileRoute as TypedPath>::PATH,
         <cloud_credentials::register_credential::CloudCredentialsRoute as TypedPath>::PATH,
         <cloud_credentials::delete_credential::CloudCredentialRoute as TypedPath>::PATH,
         <cloud_credentials::list_offers::ProviderOffersRoute as TypedPath>::PATH,

@@ -151,20 +151,22 @@ Feature: A deployment runs on a cluster created in the customer's own cloud acco
   Scenario: resizing `dev` to `standard` keeps the data plane and adds a node and a replica
     Given a registered credential
     And a customer cloud deployment on a "dev" cluster whose cluster is provisioned and active
-    When the cluster profile is resized to "standard" with 1 replicas in use
-    Then the resized profile has 2 nodes at least, 2 replicas and the same node type and control plane
-    When the provisioner applies the resized profile
-    Then Scaleway received exactly one node pool patch moving the pool to 2 nodes with autoscaling
+    When the customer resizes the cluster to "standard" with 2 to 4 nodes and 2 replicas
+    Then the resize is accepted with the profile "standard", 2 nodes at least and 2 replicas
+    And Scaleway received exactly one node pool patch moving the pool to 2 nodes with autoscaling
     And the data plane is the same one, still active, with the same Herald binding
+    And the persisted profile is "standard" with 2 to 4 nodes and 2 replicas
+    And one audit entry records the change of profile
 
   @spec-ccp-16
   Scenario: resizing `ha` to `dev` is refused while replicas exceed the target
     Given a registered credential
-    When the customer asks for a "ha" profile on control plane "kapsule" and node type "PRO2-S" with 3 to 5 nodes and 2 replicas
-    And the cluster profile is resized to "dev" with 2 replicas in use
+    And a customer cloud deployment on a "ha" cluster whose cluster is provisioned and active
+    When the customer resizes the cluster to "dev" with 1 to 1 nodes and 1 replicas
     Then the resize is refused with 2 replicas in use and 1 allowed
-    When the cluster profile is resized to "dev" with 1 replicas in use
-    Then the resized profile has 1 nodes at most and 1 replicas
+    And Scaleway received no node pool patch
+    And the persisted profile is "ha" with 3 to 10 nodes and 2 replicas
+    And no audit entry was recorded
 
   @spec-ccp-17
   Scenario: a control plane offer absent from the region catalog is refused

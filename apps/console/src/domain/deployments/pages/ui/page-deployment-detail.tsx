@@ -16,6 +16,7 @@ interface Props {
   actions: Schemas.Action[]
   availability: AvailabilityView
   provisioning?: Schemas.Provisioning | null
+  clusterPanel?: React.ReactNode
   isLoading: boolean
 }
 
@@ -32,7 +33,7 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   )
 }
 
-export function PageDeploymentDetail({ deployment, actions, availability, provisioning, isLoading }: Props) {
+export function PageDeploymentDetail({ deployment, actions, availability, provisioning, clusterPanel, isLoading }: Props) {
   if (isLoading || !deployment) {
     return (
       <Page>
@@ -72,6 +73,8 @@ export function PageDeploymentDetail({ deployment, actions, availability, provis
         </div>
 
         <AvailabilityCard view={availability} />
+
+        {clusterPanel}
 
         <Section title='Activity'>
           {actions.length === 0 ? (

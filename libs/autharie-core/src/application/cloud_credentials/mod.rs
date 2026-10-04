@@ -1,19 +1,24 @@
+mod resize;
+mod resizer;
 mod service;
 
 use autharie_auth::Identity;
+use autharie_domain::audit::service::AuditServiceImpl;
 use autharie_domain::{
     CoreError,
     dataplane::{
         cloud_provider::{Provider, ProviderOffers},
-        cluster_profile::CostEstimate,
+        cluster_profile::{ClusterProfile, CostEstimate},
         credential::{CloudCredential, CloudCredentialId, CredentialError, SecretString},
         value_objects::Region,
     },
-    deployments::distribution::Distribution,
+    deployments::{DeploymentId, distribution::Distribution},
     organisation::OrganisationId,
 };
 use autharie_macros::transactional;
 
+pub use resize::ResizeCustomerCluster;
+pub use resizer::{ClusterResizers, RecordingResizer, ResizeOnly};
 pub use service::{
     DeleteCloudCredential, EstimateClusterCost, ListCloudCredentials, ListProviderOffers,
     ProfileSpec, RegisterCloudCredential, ResolveCustomerCloud,
@@ -22,6 +27,7 @@ pub use service::{
 use crate::{
     AutharieService,
     infrastructure::{credentials::EnvelopeCredentialStore, role::permissions_in},
+    policy::AuthariePolicy,
 };
 
 pub trait CloudProviderService: Send + Sync {
@@ -72,6 +78,14 @@ pub trait CloudProviderService: Send + Sync {
         region: Region,
         spec: ProfileSpec,
     ) -> impl Future<Output = Result<Distribution, CoreError>> + Send;
+
+    fn resize_customer_cluster(
+        &self,
+        identity: Identity,
+        organisation_id: OrganisationId,
+        deployment_id: DeploymentId,
+        spec: ProfileSpec,
+    ) -> impl Future<Output = Result<ClusterProfile, CoreError>> + Send;
 }
 
 impl CloudProviderService for AutharieService {
@@ -179,6 +193,28 @@ impl CloudProviderService for AutharieService {
             permissions_in(&tx),
         )
         .execute(identity, organisation_id, id, &region, spec)
+        .await
+    }
+
+    #[transactional(cloud_credential, deployment, data_plane, audit, user)]
+    async fn resize_customer_cluster(
+        &self,
+        identity: Identity,
+        organisation_id: OrganisationId,
+        deployment_id: DeploymentId,
+        spec: ProfileSpec,
+    ) -> Result<ClusterProfile, CoreError> {
+        ResizeCustomerCluster::new(
+            self.cloud_providers(),
+            self.cluster_resizers(),
+            deployment_repository,
+            data_plane_repository,
+            cloud_credential_repository,
+            AuthariePolicy::new(permissions_in(&tx)),
+            AuditServiceImpl::new(audit_repository, permissions_in(&tx)),
+            user_repository,
+        )
+        .execute(identity, organisation_id, deployment_id, spec)
         .await
     }
 }
