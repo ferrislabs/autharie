@@ -27,7 +27,8 @@ export function ClusterPanelFeature({ deploymentId, credentialId, profile }: Pro
 
   const offers = useGetProviderOffers(credentialId, region)
   const catalogue = offers.data
-  const draft = edited ?? draftFromProfile(profile)
+  const initial = useMemo(() => draftFromProfile(profile), [profile])
+  const draft = edited ?? initial
   const applicable = !!catalogue && canApply(draft, profile, catalogue)
 
   const request = useMemo(

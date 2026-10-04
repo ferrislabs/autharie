@@ -33,7 +33,8 @@ export function CustomerCloudSectionFeature({ credentials, onChange }: Props) {
 
   const offers = useGetProviderOffers(credential.id, region)
   const catalogue = offers.data
-  const draft = edited ?? (catalogue ? initialDraft(catalogue) : null)
+  const initial = useMemo(() => (catalogue ? initialDraft(catalogue) : null), [catalogue])
+  const draft = edited ?? initial
   const complete = !!catalogue && !!draft && isComplete(draft, catalogue)
 
   const request = useMemo(
@@ -46,9 +47,17 @@ export function CustomerCloudSectionFeature({ credentials, onChange }: Props) {
   const settled = useDebouncedValue(request, ESTIMATE_DEBOUNCE_MS)
   const estimate = useEstimateClusterProfile(settled)
 
+  const distribution = useMemo(
+    () =>
+      complete && draft
+        ? toDistributionRequest({ credentialId: credential.id, region, profile: draft })
+        : null,
+    [complete, draft, credential.id, region],
+  )
+
   useEffect(() => {
-    onChange(complete && draft ? toDistributionRequest({ credentialId: credential.id, region, profile: draft }) : null)
-  }, [complete, draft, credential.id, region, onChange])
+    onChange(distribution)
+  }, [distribution, onChange])
 
   const refusal = estimateRefusal(estimate.error)
 
