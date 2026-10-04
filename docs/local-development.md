@@ -250,6 +250,29 @@ that is V1 of the logs chantier (#294) -- but the index naming convention,
 the doc mapping and how to try the acceptance criterion for it by hand are
 all on [their own page](./log-search-index.md).
 
+## Creating a cluster in a customer cloud account
+
+Registering a cloud account needs `CUSTOMER_CLOUD_ENABLED=true`. Creating a
+cluster in it needs more: the Herald that is installed there pulls its work
+from the control plane and gets its token from the realm, so both must be
+reachable from the internet, and `localhost` is not.
+
+```bash
+make expose                     # a public URL for both, through a Cloudflare quick tunnel
+eval "$(scripts/expose.sh env)" # the three variables it prints
+make demo                       # starts the control plane with them
+make expose-down                # when you are done
+```
+
+One host serves both. A small proxy in front lets through the token route of
+the `autharie` realm and nothing else of the realm, so the `admin` account of
+the master realm is never exposed; everything else goes to the control plane,
+which wants a bearer token on all of it. The URL of a quick tunnel changes each
+time it starts, which is why `make demo` has to run again after `make expose`.
+
+`EXPOSE_WITH=ngrok` uses ngrok instead. A cluster created this way is a real
+cluster in the account whose key you registered, and it is billed there.
+
 ## What is not covered yet
 
 This gets the **operator** and the identity stack running against a real
