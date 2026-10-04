@@ -708,13 +708,16 @@ dependencies = [
  "autharie-crds",
  "autharie-domain",
  "autharie-operator-core",
+ "autharie-permission",
  "chrono",
  "cucumber",
  "genesis-core",
  "herald-core",
+ "httpmock",
  "proptest",
  "serde_json",
  "tokio",
+ "tracing-subscriber",
  "uuid",
 ]
 

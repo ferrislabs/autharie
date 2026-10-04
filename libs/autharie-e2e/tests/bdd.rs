@@ -1,4 +1,5 @@
 mod bdd {
+    pub mod customer_cloud;
     pub mod iam_settings;
     pub mod plan_features;
     pub mod reachability;
@@ -7,6 +8,7 @@ mod bdd {
     pub mod upgrade_request;
 }
 
+use bdd::customer_cloud::CustomerCloudWorld;
 use bdd::iam_settings::IamSettingsWorld;
 use bdd::plan_features::PlanFeaturesWorld;
 use bdd::reachability::ReachabilityWorld;
@@ -84,6 +86,17 @@ async fn the_iam_settings_scenarios_pass() {
         .with_default_cli()
         .fail_on_skipped()
         .filter_run("tests/features/iam_settings", not_wip)
+        .await;
+
+    assert!(!summary.execution_has_failed(), "{summary:?}");
+}
+
+#[tokio::test]
+async fn the_customer_cloud_scenarios_pass() {
+    let summary = CustomerCloudWorld::cucumber()
+        .with_default_cli()
+        .fail_on_skipped()
+        .filter_run("tests/features/customer_cloud", not_wip)
         .await;
 
     assert!(!summary.execution_has_failed(), "{summary:?}");
