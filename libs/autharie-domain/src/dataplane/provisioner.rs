@@ -3,8 +3,8 @@ use crate::{
     dataplane::{
         cluster_profile::ClusterProfile,
         credential::CloudCredentialId,
-        entities::DataPlane,
-        value_objects::{DataPlaneId, DeploymentResources, Region},
+        herald_identity::HeraldBinding,
+        value_objects::{Capacity, DataPlaneId, DeploymentResources, Region},
     },
     deployments::DeploymentId,
     organisation::OrganisationId,
@@ -21,7 +21,7 @@ pub trait ClusterProvisioner: Send + Sync {
     fn provision(
         &self,
         request: ProvisionRequest,
-    ) -> impl Future<Output = Result<DataPlane, CoreError>> + Send;
+    ) -> impl Future<Output = Result<ProvisionedCluster, CoreError>> + Send;
 
     /// Releases the infrastructure. Must be idempotent: it is called on
     /// cleanup paths that cannot know whether a previous attempt got through.
@@ -36,12 +36,19 @@ pub trait ClusterProvisioner: Send + Sync {
 }
 
 pub struct ProvisionRequest {
+    pub data_plane_id: DataPlaneId,
     pub organisation_id: OrganisationId,
     pub region: Region,
     /// What the first deployment needs. A provisioner sizes the cluster to at
     /// least this, and is free to size it larger.
     pub minimum: DeploymentResources,
     pub target: ProvisionTarget,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProvisionedCluster {
+    pub herald: HeraldBinding,
+    pub capacity: Capacity,
 }
 
 /// Whose infrastructure the cluster is made in.

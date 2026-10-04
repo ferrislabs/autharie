@@ -4,8 +4,7 @@ use crate::domain::{
     CoreError,
     dataplane::{
         cluster_profile::ClusterProfile,
-        entities::DataPlane,
-        provisioner::{ClusterProvisioner, ProvisionRequest},
+        provisioner::{ClusterProvisioner, ProvisionRequest, ProvisionedCluster},
         value_objects::DataPlaneId,
     },
 };
@@ -32,7 +31,7 @@ use crate::domain::{
 pub struct LocalClusterProvisioner;
 
 impl ClusterProvisioner for LocalClusterProvisioner {
-    async fn provision(&self, request: ProvisionRequest) -> Result<DataPlane, CoreError> {
+    async fn provision(&self, request: ProvisionRequest) -> Result<ProvisionedCluster, CoreError> {
         warn!(
             organisation_id = %request.organisation_id.0,
             region = %request.region.as_str(),
@@ -85,6 +84,7 @@ mod tests {
 
     fn request() -> ProvisionRequest {
         ProvisionRequest {
+            data_plane_id: DataPlaneId(Uuid::new_v4()),
             organisation_id: OrganisationId(Uuid::new_v4()),
             region: Region::new("local"),
             minimum: DeploymentResources::DEFAULT,

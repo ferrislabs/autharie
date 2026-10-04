@@ -41,6 +41,15 @@ impl FakeInventory {
             .collect()
     }
 
+    pub(crate) fn data_plane_ids(&self) -> Vec<DataPlaneId> {
+        self.entries
+            .lock()
+            .expect("inventory lock")
+            .iter()
+            .map(|(id, _, _)| *id)
+            .collect()
+    }
+
     pub(crate) fn recorded(&self) -> usize {
         self.entries.lock().expect("inventory lock").len()
     }

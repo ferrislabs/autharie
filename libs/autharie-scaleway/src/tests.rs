@@ -21,10 +21,7 @@ use autharie_domain::{
         herald_identity::HeraldBinding,
         inventory::{ProvisionedResource, ResourceKind},
         provisioner::{ClusterProvisioner, ProvisionError, ProvisionRequest, ProvisionTarget},
-        value_objects::{
-            Capacity, DataPlaneAllocation, DataPlaneId, DataPlaneStatus, DeploymentResources,
-            Region,
-        },
+        value_objects::{Capacity, DataPlaneAllocation, DataPlaneId, DeploymentResources, Region},
     },
     deployments::DeploymentId,
     organisation::OrganisationId,
@@ -108,6 +105,7 @@ struct Harness {
     bootstrapper: FakeBootstrapper,
     credential_id: CloudCredentialId,
     organisation_id: OrganisationId,
+    data_plane_id: DataPlaneId,
 }
 
 fn harness(server: &MockServer, data_plane: Option<DataPlane>) -> Harness {
@@ -130,12 +128,14 @@ fn harness(server: &MockServer, data_plane: Option<DataPlane>) -> Harness {
         bootstrapper,
         credential_id: CloudCredentialId(Uuid::new_v4()),
         organisation_id: OrganisationId(Uuid::new_v4()),
+        data_plane_id: DataPlaneId(Uuid::new_v4()),
     }
 }
 
 impl Harness {
     fn request(&self, profile: ClusterProfile) -> ProvisionRequest {
         ProvisionRequest {
+            data_plane_id: self.data_plane_id,
             organisation_id: self.organisation_id,
             region: Region::new("fr-par"),
             minimum: DeploymentResources::DEFAULT,
@@ -284,25 +284,22 @@ async fn provision_records_every_resource_then_bootstraps() {
     mock_ready(&server);
     let harness = harness(&server, None);
 
-    let data_plane = harness
+    let cluster = harness
         .provisioner
         .provision(harness.request(profile("kapsule-dedicated-4", "PRO2-S")))
         .await
         .expect("provision");
 
-    assert_eq!(data_plane.status, DataPlaneStatus::Provisioning);
-    let client_id = format!("herald-{}", data_plane.id);
+    let client_id = format!("herald-{}", harness.data_plane_id);
     assert_eq!(
-        data_plane.herald,
-        Some(HeraldBinding {
+        cluster.herald,
+        HeraldBinding {
             subject: format!("sa-{client_id}"),
             client_id,
-        })
+        }
     );
-    assert!(matches!(
-        data_plane.allocation,
-        DataPlaneAllocation::Customer { credential_id, .. } if credential_id == harness.credential_id
-    ));
+    assert_eq!(cluster.capacity.cpu_millis(), 8000);
+    assert_eq!(cluster.capacity.memory_mib(), 32768);
     let recorded: Vec<_> = harness.inventory.all();
     assert_eq!(
         recorded,
@@ -314,7 +311,7 @@ async fn provision_records_every_resource_then_bootstraps() {
     );
     let calls = harness.bootstrapper.calls();
     assert_eq!(calls.len(), 1);
-    assert_eq!(calls[0].0, data_plane.id);
+    assert_eq!(calls[0].0, harness.data_plane_id);
     assert_eq!(calls[0].1, KUBECONFIG);
     assert_eq!(calls[0].2, 3);
 }
@@ -367,6 +364,25 @@ async fn quota_failure_is_a_readable_reason_and_rolls_back() {
         vec![(resource(ResourceKind::PrivateNetwork, "pn-1"), true)]
     );
     assert!(harness.bootstrapper.calls().is_empty());
+}
+
+#[tokio::test]
+async fn inventory_records_use_the_supplied_data_plane_id() {
+    let server = MockServer::start_async().await;
+    mock_creation(&server);
+    mock_pool_creation(&server);
+    mock_ready(&server);
+    let harness = harness(&server, None);
+
+    harness
+        .provisioner
+        .provision(harness.request(profile("kapsule-dedicated-4", "PRO2-S")))
+        .await
+        .expect("provision");
+
+    let ids = harness.inventory.data_plane_ids();
+    assert_eq!(ids.len(), 3);
+    assert!(ids.iter().all(|id| *id == harness.data_plane_id));
 }
 
 static POOL_DELETED: AtomicBool = AtomicBool::new(false);

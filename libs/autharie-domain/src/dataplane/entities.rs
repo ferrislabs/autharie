@@ -5,6 +5,7 @@ use chrono::{DateTime, Duration, Utc};
 
 use crate::{
     CoreError,
+    dataplane::provisioner::ProvisionedCluster,
     dataplane::value_objects::{
         Capacity, DataPlaneAllocation, DataPlaneId, DataPlaneLiveness, DataPlaneStatus, Region,
     },
@@ -139,6 +140,19 @@ impl DataPlane {
     /// any way to be set.
     pub fn disable(&mut self) {
         self.status = DataPlaneStatus::Disabled;
+    }
+
+    /// Records what the provisioner built. Status stays `Provisioning`: only
+    /// the first heartbeat promotes it. Returns `false`, touching nothing, when
+    /// the plane is no longer provisioning, so a `Failed` plane keeps its reason.
+    pub fn provisioned(&mut self, cluster: ProvisionedCluster) -> bool {
+        if self.status != DataPlaneStatus::Provisioning {
+            return false;
+        }
+
+        self.herald = Some(cluster.herald);
+        self.capacity = cluster.capacity;
+        true
     }
 
     pub fn fail(&mut self, reason: impl Into<String>) {
@@ -290,6 +304,46 @@ mod tests {
             plane.failure_reason.as_deref(),
             Some("the provider quota in this account does not allow this cluster")
         );
+    }
+
+    fn built() -> ProvisionedCluster {
+        ProvisionedCluster {
+            herald: crate::dataplane::herald_identity::HeraldBinding {
+                client_id: "herald-x".to_string(),
+                subject: "sub-x".to_string(),
+            },
+            capacity: Capacity::new(8000, 32768, 20).expect("capacity"),
+        }
+    }
+
+    #[test]
+    fn a_provisioned_plane_gets_its_binding_and_capacity_but_stays_provisioning() {
+        let mut plane = dataplane(None, DataPlaneStatus::Provisioning);
+        let cluster = built();
+
+        assert!(plane.provisioned(cluster.clone()));
+
+        assert_eq!(plane.status, DataPlaneStatus::Provisioning);
+        assert_eq!(plane.herald, Some(cluster.herald));
+        assert_eq!(plane.capacity, cluster.capacity);
+        assert_eq!(plane.last_seen_at, None);
+    }
+
+    #[test]
+    fn a_failed_plane_cannot_be_marked_provisioned_and_keeps_its_reason() {
+        let mut plane = dataplane(None, DataPlaneStatus::Provisioning);
+        let before = plane.capacity;
+        plane.fail("the node pool never became ready");
+
+        assert!(!plane.provisioned(built()));
+
+        assert_eq!(plane.status, DataPlaneStatus::Failed);
+        assert_eq!(
+            plane.failure_reason.as_deref(),
+            Some("the node pool never became ready")
+        );
+        assert_eq!(plane.herald, None);
+        assert_eq!(plane.capacity, before);
     }
 
     fn window() -> Duration {

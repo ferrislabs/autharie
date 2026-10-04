@@ -4,11 +4,13 @@ use autharie_domain::{
         bootstrap::{BootstrapRequest, ClusterBootstrapper},
         cluster_profile::{ClusterProfile, ProfileError},
         credential::{CloudCredentialId, CloudCredentialStore, SecretString},
-        entities::DataPlane,
         herald_identity::HeraldBinding,
         inventory::{ClusterInventory, ProvisionedResource, ResourceKind},
         ports::DataPlaneRepository,
-        provisioner::{ClusterProvisioner, ProvisionError, ProvisionRequest, ProvisionTarget},
+        provisioner::{
+            ClusterProvisioner, ProvisionError, ProvisionRequest, ProvisionTarget,
+            ProvisionedCluster,
+        },
         value_objects::{Capacity, DataPlaneAllocation, DataPlaneId, Region},
     },
     organisation::OrganisationId,
@@ -136,11 +138,11 @@ where
         &self,
         session: &Session<'_>,
         layout: &Layout,
-        data_plane: &DataPlane,
+        id: &DataPlaneId,
+        region: &Region,
         organisation_id: OrganisationId,
         profile: &ClusterProfile,
     ) -> Result<HeraldBinding, CoreError> {
-        let id = &data_plane.id;
         let name = format!("autharie-{id}");
         let tags = ["autharie".to_string(), format!("data-plane-{id}")];
 
@@ -242,7 +244,7 @@ where
             .bootstrap(BootstrapRequest {
                 data_plane_id: *id,
                 organisation_id,
-                region: data_plane.region.clone(),
+                region: region.clone(),
                 kubeconfig: SecretString::new(kubeconfig),
             })
             .await?;
@@ -387,8 +389,9 @@ where
     R: DataPlaneRepository,
     B: ClusterBootstrapper,
 {
-    async fn provision(&self, request: ProvisionRequest) -> Result<DataPlane, CoreError> {
+    async fn provision(&self, request: ProvisionRequest) -> Result<ProvisionedCluster, CoreError> {
         let ProvisionRequest {
+            data_plane_id,
             organisation_id,
             region,
             minimum,
@@ -397,7 +400,7 @@ where
         let ProvisionTarget::Customer {
             credential_id,
             profile,
-            deployment_id,
+            ..
         } = target
         else {
             return Err(CoreError::InternalError(
@@ -410,27 +413,22 @@ where
         let capacity = self
             .capacity(&session, &layout, &profile, minimum.storage_gib)
             .await?;
-        let mut data_plane = DataPlane::new(
-            DataPlaneAllocation::Customer {
-                organisation_id,
-                deployment_id,
-                credential_id,
-            },
-            region,
-            capacity,
-        );
 
         match self
-            .build(&session, &layout, &data_plane, organisation_id, &profile)
+            .build(
+                &session,
+                &layout,
+                &data_plane_id,
+                &region,
+                organisation_id,
+                &profile,
+            )
             .await
         {
-            Ok(binding) => {
-                data_plane.herald = Some(binding);
-                Ok(data_plane)
-            }
+            Ok(herald) => Ok(ProvisionedCluster { herald, capacity }),
             Err(error) => {
-                warn!(data_plane_id = %data_plane.id, %error, "provisioning failed, rolling back");
-                self.rollback(&session, &layout, &data_plane.id).await;
+                warn!(data_plane_id = %data_plane_id, %error, "provisioning failed, rolling back");
+                self.rollback(&session, &layout, &data_plane_id).await;
                 Err(error)
             }
         }

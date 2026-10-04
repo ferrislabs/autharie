@@ -1,14 +1,13 @@
 use crate::{
     CoreError,
     dataplane::{
-        cluster_profile::ClusterProfile,
         credential::CloudCredentialId,
         entities::DataPlane,
         ports::DataPlaneRepository,
         provisioner::{ClusterProvisioner, ProvisionRequest, ProvisionTarget},
         value_objects::{
-            DataPlaneMode, DataPlaneStatus, DeploymentResources, PlacementPolicy, PlacementRequest,
-            PlacementWindows, Region,
+            Capacity, DataPlaneAllocation, DataPlaneMode, DataPlaneStatus, DeploymentResources,
+            PlacementPolicy, PlacementRequest, PlacementWindows, Region,
         },
     },
     deployments::{
@@ -273,31 +272,45 @@ where
             return Ok(dataplane);
         }
 
-        let dataplane = self
+        let mut dataplane = DataPlane::new(
+            DataPlaneAllocation::Dedicated { organisation_id },
+            region.clone(),
+            Self::minimum_capacity(resources)?,
+        );
+
+        let cluster = self
             .provisioner
             .provision(ProvisionRequest {
+                data_plane_id: dataplane.id,
                 organisation_id,
                 region: region.clone(),
                 minimum: resources,
                 target: ProvisionTarget::Platform,
             })
             .await?;
+        dataplane.provisioned(cluster);
 
         self.dataplane_repository.save(&dataplane).await?;
 
         Ok(dataplane)
     }
 
-    /// Placement for `Distribution::CustomerCloud`: a cluster of its own,
-    /// made in the customer's account for this one deployment.
+    fn minimum_capacity(resources: DeploymentResources) -> Result<Capacity, CoreError> {
+        Capacity::new(
+            resources.cpu_millis.max(1),
+            resources.memory_mib.max(1),
+            resources.storage_gib.max(1),
+        )
+    }
+
+    /// Placement for `Distribution::CustomerCloud`: a data plane of its own,
+    /// registered in `Provisioning` for this one deployment.
     ///
-    /// Nothing is looked up first. The cluster belongs to a deployment that
-    /// does not exist yet, so there is never one to reuse, and sharing one
-    /// between two deployments is what this distribution rules out.
-    ///
-    /// A cluster that was created and could not be recorded is released
-    /// before the error is returned: it bills the customer and nothing
-    /// points at it.
+    /// Nothing is looked up first: the plane belongs to a deployment that does
+    /// not exist yet, so there is never one to reuse. The cluster itself is not
+    /// created here -- that takes minutes and is claimed by a provisioner, so
+    /// the request only records the intent. The deployment waits in `Pending`
+    /// like one on a dedicated plane that has not reported yet.
     async fn place_on_customer_cloud(
         &self,
         organisation_id: OrganisationId,
@@ -305,36 +318,29 @@ where
         region: &Region,
         resources: DeploymentResources,
         credential_id: CloudCredentialId,
-        profile: &ClusterProfile,
     ) -> Result<DataPlane, CoreError> {
-        let dataplane = self
-            .provisioner
-            .provision(ProvisionRequest {
+        let dataplane = DataPlane::new(
+            DataPlaneAllocation::Customer {
                 organisation_id,
-                region: region.clone(),
-                minimum: resources,
-                target: ProvisionTarget::Customer {
-                    credential_id,
-                    profile: profile.clone(),
-                    deployment_id,
-                },
-            })
-            .await?;
+                deployment_id,
+                credential_id,
+            },
+            region.clone(),
+            Self::minimum_capacity(resources)?,
+        );
 
-        if let Err(error) = self.dataplane_repository.save(&dataplane).await {
-            self.release_unrecorded(&dataplane).await;
-            return Err(error);
-        }
+        self.dataplane_repository.save(&dataplane).await?;
 
         Ok(dataplane)
     }
 
-    async fn release_unrecorded(&self, dataplane: &DataPlane) {
-        if let Err(error) = self.provisioner.deprovision(&dataplane.id).await {
+    async fn abandon_unrecorded(&self, dataplane: &mut DataPlane) {
+        dataplane.fail("the deployment this cluster was for could not be recorded");
+        if let Err(error) = self.dataplane_repository.save(dataplane).await {
             error!(
                 dataplane = %dataplane.id,
                 %error,
-                "could not release a customer cluster that was never recorded"
+                "could not mark a customer data plane failed after its deployment was refused"
             );
         }
     }
@@ -389,21 +395,14 @@ where
 
         let id = DeploymentId(uuid::Uuid::new_v4());
 
-        let dataplane = match (command.distribution(), mode) {
-            (
-                Distribution::CustomerCloud {
-                    credential_id,
-                    profile,
-                },
-                _,
-            ) => {
+        let mut dataplane = match (command.distribution(), mode) {
+            (Distribution::CustomerCloud { credential_id, .. }, _) => {
                 self.place_on_customer_cloud(
                     command.organisation_id,
                     id,
                     &command.region,
                     resources,
                     *credential_id,
-                    profile,
                 )
                 .await?
             }
@@ -469,7 +468,7 @@ where
 
         if let Err(error) = inserted {
             if matches!(deployment.distribution, Distribution::CustomerCloud { .. }) {
-                self.release_unrecorded(&dataplane).await;
+                self.abandon_unrecorded(&mut dataplane).await;
             }
             return Err(error);
         }
@@ -770,6 +769,7 @@ mod tests {
 
     use super::*;
     use crate::dataplane::value_objects::DeploymentResources;
+    use crate::dataplane::{herald_identity::HeraldBinding, provisioner::ProvisionedCluster};
     use crate::{
         dataplane::{
             entities::DataPlane,
@@ -1536,27 +1536,16 @@ mod tests {
             .expect("ferriskey may use the customer cloud")
     }
 
-    fn customer_dataplane() -> DataPlane {
-        DataPlane {
-            allocation: DataPlaneAllocation::Customer {
-                organisation_id: OrganisationId(Uuid::new_v4()),
-                deployment_id: DeploymentId(Uuid::new_v4()),
-                credential_id: CloudCredentialId(Uuid::new_v4()),
-            },
-            status: DataPlaneStatus::Provisioning,
-            last_seen_at: None,
-            ..sample_dataplane()
-        }
-    }
-
     #[tokio::test]
-    async fn a_customer_cloud_deployment_provisions_one_cluster_in_the_customers_account() {
+    async fn a_customer_cloud_deployment_saves_a_provisioning_plane_and_never_calls_the_provisioner()
+     {
         let mut mock_repo = MockDeploymentRepository::new();
         mock_repo
             .expect_insert()
             .times(1)
             .withf(|deployment| {
                 matches!(deployment.distribution, Distribution::CustomerCloud { .. })
+                    && deployment.status == DeploymentStatus::Pending
             })
             .returning(|_| Box::pin(async { Ok(()) }));
 
@@ -1568,25 +1557,19 @@ mod tests {
         mock_dataplane_repo
             .expect_save()
             .times(1)
+            .withf(|dataplane| {
+                dataplane.status == DataPlaneStatus::Provisioning
+                    && dataplane.herald.is_none()
+                    && matches!(dataplane.allocation, DataPlaneAllocation::Customer { .. })
+            })
             .returning(|_| Box::pin(async { Ok(()) }));
-
-        let mut mock_provisioner = MockClusterProvisioner::new();
-        mock_provisioner
-            .expect_provision()
-            .times(1)
-            .withf(|request| matches!(request.target, ProvisionTarget::Customer { .. }))
-            .returning(|_| {
-                let dataplane = customer_dataplane();
-                Box::pin(async move { Ok(dataplane) })
-            });
-        mock_provisioner.expect_deprovision().times(0);
 
         let service = DeploymentServiceImpl::new(
             mock_repo,
             StubUserRepository,
             mock_dataplane_repo,
             organisations_on(crate::organisation::value_objects::Plan::Enterprise),
-            mock_provisioner,
+            MockClusterProvisioner::new(),
             windows(),
             Allowed,
         );
@@ -1603,7 +1586,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_cluster_whose_deployment_could_not_be_recorded_is_released() {
+    async fn a_plane_whose_deployment_could_not_be_recorded_is_marked_failed_with_a_reason() {
         let mut mock_repo = MockDeploymentRepository::new();
         mock_repo.expect_insert().times(1).returning(|_| {
             Box::pin(async {
@@ -1614,18 +1597,24 @@ mod tests {
         });
 
         let mut mock_dataplane_repo = MockDataPlaneRepository::new();
+        let mut saves = mockall::Sequence::new();
         mock_dataplane_repo
             .expect_save()
-            .returning(|_| Box::pin(async { Ok(()) }));
-
-        let mut mock_provisioner = MockClusterProvisioner::new();
-        mock_provisioner.expect_provision().returning(|_| {
-            let dataplane = customer_dataplane();
-            Box::pin(async move { Ok(dataplane) })
-        });
-        mock_provisioner
-            .expect_deprovision()
             .times(1)
+            .in_sequence(&mut saves)
+            .withf(|dataplane| dataplane.status == DataPlaneStatus::Provisioning)
+            .returning(|_| Box::pin(async { Ok(()) }));
+        mock_dataplane_repo
+            .expect_save()
+            .times(1)
+            .in_sequence(&mut saves)
+            .withf(|dataplane| {
+                dataplane.status == DataPlaneStatus::Failed
+                    && dataplane
+                        .failure_reason
+                        .as_deref()
+                        .is_some_and(|reason| !reason.is_empty())
+            })
             .returning(|_| Box::pin(async { Ok(()) }));
 
         let service = DeploymentServiceImpl::new(
@@ -1633,7 +1622,7 @@ mod tests {
             StubUserRepository,
             mock_dataplane_repo,
             organisations_on(crate::organisation::value_objects::Plan::Enterprise),
-            mock_provisioner,
+            MockClusterProvisioner::new(),
             windows(),
             Allowed,
         );
@@ -1646,9 +1635,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_cluster_that_could_not_be_saved_is_released() {
+    async fn a_plane_that_could_not_be_saved_stops_the_creation() {
         let mut mock_dataplane_repo = MockDataPlaneRepository::new();
-        mock_dataplane_repo.expect_save().returning(|_| {
+        mock_dataplane_repo.expect_save().times(1).returning(|_| {
             Box::pin(async {
                 Err(CoreError::DatabaseError {
                     message: "down".to_string(),
@@ -1656,22 +1645,12 @@ mod tests {
             })
         });
 
-        let mut mock_provisioner = MockClusterProvisioner::new();
-        mock_provisioner.expect_provision().returning(|_| {
-            let dataplane = customer_dataplane();
-            Box::pin(async move { Ok(dataplane) })
-        });
-        mock_provisioner
-            .expect_deprovision()
-            .times(1)
-            .returning(|_| Box::pin(async { Ok(()) }));
-
         let service = DeploymentServiceImpl::new(
             MockDeploymentRepository::new(),
             StubUserRepository,
             mock_dataplane_repo,
             organisations_on(crate::organisation::value_objects::Plan::Enterprise),
-            mock_provisioner,
+            MockClusterProvisioner::new(),
             windows(),
             Allowed,
         );
@@ -1710,15 +1689,16 @@ mod tests {
         mock_provisioner
             .expect_provision()
             .times(1)
-            .returning(move |request| {
-                let dataplane = DataPlane::new(
-                    DataPlaneAllocation::Dedicated {
-                        organisation_id: request.organisation_id,
+            .withf(|request| matches!(request.target, ProvisionTarget::Platform))
+            .returning(|_| {
+                let cluster = ProvisionedCluster {
+                    herald: HeraldBinding {
+                        client_id: "herald-x".to_string(),
+                        subject: "sub-x".to_string(),
                     },
-                    request.region,
-                    Capacity::new(4_000, 8_192, 100).unwrap(),
-                );
-                Box::pin(async move { Ok(dataplane) })
+                    capacity: Capacity::new(4_000, 8_192, 100).unwrap(),
+                };
+                Box::pin(async move { Ok(cluster) })
             });
 
         let service = DeploymentServiceImpl::new(
