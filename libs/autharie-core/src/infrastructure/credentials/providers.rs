@@ -95,7 +95,7 @@ impl CredentialVerifier for CloudProviders {
         secret: &SecretString,
     ) -> Result<ScopeCheck, CredentialError> {
         match self {
-            Self::Unconfigured => Err(CredentialError::Store(UNCONFIGURED.to_string())),
+            Self::Unconfigured => Err(CredentialError::NotEnabled),
             Self::Scaleway(scaleway) => scaleway.verifier.verify(provider, secret).await,
             Self::Fixed(fixed) => match &fixed.verdict {
                 FixedVerdict::Accept => Ok(ScopeCheck {
@@ -145,7 +145,7 @@ mod tests {
             .verify(Provider::Scaleway, &SecretString::new("key"))
             .await;
 
-        assert!(matches!(result, Err(CredentialError::Store(_))));
+        assert!(matches!(result, Err(CredentialError::NotEnabled)));
     }
 
     #[tokio::test]

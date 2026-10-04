@@ -79,6 +79,9 @@ pub enum CredentialError {
 
     #[error("the credential store failed: {0}")]
     Store(String),
+
+    #[error("customer cloud is not enabled on this installation")]
+    NotEnabled,
 }
 
 /// Holds provider secrets. The adapter wraps them with the transit key; a

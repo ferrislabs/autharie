@@ -93,6 +93,11 @@ services:
       # Compose by hand says in its logs that nobody can operate it, rather
       # than silently granting a subject nobody chose.
       AUTHARIE_BOOTSTRAP_OPERATOR: ${AUTHARIE_BOOTSTRAP_OPERATOR:-}
+      # Off unless asked for. Registering a cloud account and creating a
+      # cluster in it both need this, and the control plane URL is the one a
+      # cluster in somebody else's cloud can reach: localhost is not.
+      CUSTOMER_CLOUD_ENABLED: ${CUSTOMER_CLOUD_ENABLED:-false}
+      CUSTOMER_CLOUD_CONTROL_PLANE_URL: ${CUSTOMER_CLOUD_CONTROL_PLANE_URL:-}
       # The oldest version a data plane may report and still be sent an
       # upgrade: the control plane refuses one for a Herald older than this,
       # which could not read the action. Set to what the local chart reports

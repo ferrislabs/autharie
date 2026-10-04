@@ -36,6 +36,9 @@ pub enum ApiError {
 
     #[error("{reason}")]
     BadGateway { reason: String },
+
+    #[error("{reason}")]
+    ServiceUnavailable { reason: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -135,6 +138,15 @@ impl IntoResponse for ApiError {
                 Json(ApiErrorResponse::new(
                     "E_BAD_GATEWAY",
                     StatusCode::BAD_GATEWAY,
+                    reason,
+                )),
+            )
+                .into_response(),
+            ApiError::ServiceUnavailable { reason } => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ApiErrorResponse::new(
+                    "E_SERVICE_UNAVAILABLE",
+                    StatusCode::SERVICE_UNAVAILABLE,
                     reason,
                 )),
             )
@@ -315,6 +327,9 @@ impl From<CoreError> for ApiError {
             ) => ApiError::Unprocessable {
                 reason: value.to_string(),
             },
+            CoreError::Credential(CredentialError::NotEnabled) => ApiError::ServiceUnavailable {
+                reason: value.to_string(),
+            },
             CoreError::Credential(CredentialError::Store(_)) => {
                 tracing::error!(error = %value, "the credential store failed");
 
@@ -442,6 +457,10 @@ mod tests {
             (
                 CoreError::Credential(CredentialError::Store("vault down".to_string())),
                 StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+            (
+                CoreError::Credential(CredentialError::NotEnabled),
+                StatusCode::SERVICE_UNAVAILABLE,
             ),
             (
                 CoreError::Provision(ProvisionError::QuotaExceeded),

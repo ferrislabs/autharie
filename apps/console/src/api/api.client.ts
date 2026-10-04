@@ -87,6 +87,7 @@ export namespace Schemas {
     | { NotFound: { reason: string } }
     | { Unprocessable: { reason: string } }
     | { BadGateway: { reason: string } }
+    | { ServiceUnavailable: { reason: string } }
   export type KeyName = string
   export type ProviderName = string
   export type KeyVersion = number

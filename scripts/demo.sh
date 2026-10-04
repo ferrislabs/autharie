@@ -79,6 +79,8 @@ fi
 # start of a fresh checkout comes up with nobody, says so in its logs, and is
 # granted on the second pass a few lines later.
 export AUTHARIE_BOOTSTRAP_OPERATOR="${AUTHARIE_BOOTSTRAP_OPERATOR:-}"
+export CUSTOMER_CLOUD_ENABLED="${CUSTOMER_CLOUD_ENABLED:-false}"
+export CUSTOMER_CLOUD_CONTROL_PLANE_URL="${CUSTOMER_CLOUD_CONTROL_PLANE_URL:-}"
 
 step "control plane (docker compose)"
 docker compose --profile ferriskey up -d --build --wait 2>&1 | tail -3 \

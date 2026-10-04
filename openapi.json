@@ -8602,6 +8602,25 @@
                 }
               }
             }
+          },
+          {
+            "type": "object",
+            "required": [
+              "ServiceUnavailable"
+            ],
+            "properties": {
+              "ServiceUnavailable": {
+                "type": "object",
+                "required": [
+                  "reason"
+                ],
+                "properties": {
+                  "reason": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
           }
         ]
       },
