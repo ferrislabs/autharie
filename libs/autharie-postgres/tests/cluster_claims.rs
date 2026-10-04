@@ -230,24 +230,38 @@ async fn seed_customer_plane(pool: &PgPool, account: &Seeded) -> (DataPlaneId, D
     .expect("the plane was seeded")
 }
 
+async fn mine(pool: &PgPool, ids: Vec<DataPlaneId>) -> Vec<DataPlaneId> {
+    let raw: Vec<Uuid> = ids.iter().map(|id| id.0).collect();
+    let owned: Vec<Uuid> =
+        sqlx::query_scalar("SELECT id FROM data_planes WHERE id = ANY($1) AND region = $2")
+            .bind(&raw)
+            .bind(REGION)
+            .fetch_all(pool)
+            .await
+            .expect("the ownership read ran");
+    ids.into_iter().filter(|id| owned.contains(&id.0)).collect()
+}
+
 async fn claim(pool: &PgPool, lease_seconds: f64, limit: i64) -> Vec<DataPlaneId> {
-    with_tx(pool, db_error, async |tx: SharedTx<'_>| {
+    let claimed = with_tx(pool, db_error, async |tx: SharedTx<'_>| {
         PostgresClusterClaims::new(&tx)
             .claim_provisioning(lease_seconds, limit)
             .await
     })
     .await
-    .expect("the claim ran")
+    .expect("the claim ran");
+    mine(pool, claimed).await
 }
 
 async fn candidates(pool: &PgPool) -> Vec<DataPlaneId> {
-    with_tx(pool, db_error, async |tx: SharedTx<'_>| {
+    let listed = with_tx(pool, db_error, async |tx: SharedTx<'_>| {
         PostgresClusterClaims::new(&tx)
-            .teardown_candidates(100)
+            .teardown_candidates(1000)
             .await
     })
     .await
-    .expect("the listing ran")
+    .expect("the listing ran");
+    mine(pool, listed).await
 }
 
 async fn read(pool: &PgPool, id: DataPlaneId) -> DataPlane {
@@ -271,8 +285,8 @@ fn built(plane: &DataPlane) -> DataPlane {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_workers_never_claim_the_same_plane() {
-    let Some(pool) = pool().await else { return };
     let _serial = COMMITTED.lock().await;
+    let Some(pool) = pool().await else { return };
     let account = seed_account(&pool).await;
     let mut seeded = HashSet::new();
     for _ in 0..24 {
@@ -283,11 +297,15 @@ async fn concurrent_workers_never_claim_the_same_plane() {
         .map(|_| {
             let pool = pool.clone();
             tokio::spawn(async move {
-                let mut mine = Vec::new();
-                for _ in 0..6 {
-                    mine.extend(claim(&pool, 3600.0, 3).await);
+                let mut taken = Vec::new();
+                loop {
+                    let batch = claim(&pool, 3600.0, 3).await;
+                    if batch.is_empty() {
+                        break;
+                    }
+                    taken.extend(batch);
                 }
-                mine
+                taken
             })
         })
         .collect();
@@ -306,8 +324,8 @@ async fn concurrent_workers_never_claim_the_same_plane() {
 
 #[tokio::test]
 async fn a_stale_claim_is_taken_over_by_the_next_worker() {
-    let Some(pool) = pool().await else { return };
     let _serial = COMMITTED.lock().await;
+    let Some(pool) = pool().await else { return };
     let account = seed_account(&pool).await;
     let (plane, _) = seed_customer_plane(&pool, &account).await;
 
@@ -319,8 +337,8 @@ async fn a_stale_claim_is_taken_over_by_the_next_worker() {
 
 #[tokio::test]
 async fn only_a_live_provisioning_customer_plane_is_claimed() {
-    let Some(pool) = pool().await else { return };
     let _serial = COMMITTED.lock().await;
+    let Some(pool) = pool().await else { return };
     let account = seed_account(&pool).await;
     let (bound, _) = seed_customer_plane(&pool, &account).await;
     let (failed, _) = seed_customer_plane(&pool, &account).await;
@@ -359,8 +377,8 @@ async fn read_in(tx: &SharedTx<'_>, id: DataPlaneId) -> Result<DataPlane, CoreEr
 
 #[tokio::test]
 async fn completing_applies_the_binding_and_capacity_and_stays_provisioning() {
-    let Some(pool) = pool().await else { return };
     let _serial = COMMITTED.lock().await;
+    let Some(pool) = pool().await else { return };
     let account = seed_account(&pool).await;
     let (id, _) = seed_customer_plane(&pool, &account).await;
     let target = built(&read(&pool, id).await);
@@ -385,8 +403,8 @@ async fn completing_applies_the_binding_and_capacity_and_stays_provisioning() {
 
 #[tokio::test]
 async fn completing_never_overwrites_a_plane_that_failed_or_was_disabled() {
-    let Some(pool) = pool().await else { return };
     let _serial = COMMITTED.lock().await;
+    let Some(pool) = pool().await else { return };
     let account = seed_account(&pool).await;
     let (failed, _) = seed_customer_plane(&pool, &account).await;
     let (disabled, _) = seed_customer_plane(&pool, &account).await;
@@ -445,8 +463,8 @@ async fn record(pool: &PgPool, plane: DataPlaneId, provider_id: &str) -> Provisi
 
 #[tokio::test]
 async fn teardown_lists_deleted_deployments_and_failed_planes_with_something_left() {
-    let Some(pool) = pool().await else { return };
     let _serial = COMMITTED.lock().await;
+    let Some(pool) = pool().await else { return };
     let account = seed_account(&pool).await;
     let (live, _) = seed_customer_plane(&pool, &account).await;
     let (deleted, deleted_deployment) = seed_customer_plane(&pool, &account).await;
@@ -476,8 +494,8 @@ async fn teardown_lists_deleted_deployments_and_failed_planes_with_something_lef
 
 #[tokio::test]
 async fn a_plane_being_provisioned_is_not_torn_down_and_a_disabled_one_is_left_alone() {
-    let Some(pool) = pool().await else { return };
     let _serial = COMMITTED.lock().await;
+    let Some(pool) = pool().await else { return };
     let account = seed_account(&pool).await;
     let (plane, deployment) = seed_customer_plane(&pool, &account).await;
     assert_eq!(claim(&pool, 3600.0, 10).await, vec![plane]);
@@ -512,17 +530,20 @@ async fn a_plane_being_provisioned_is_not_torn_down_and_a_disabled_one_is_left_a
 }
 
 async fn awaiting(pool: &PgPool) -> Vec<DataPlaneId> {
-    with_tx(pool, db_error, async |tx: SharedTx<'_>| {
-        PostgresClusterClaims::new(&tx).awaiting_deletion(100).await
+    let listed = with_tx(pool, db_error, async |tx: SharedTx<'_>| {
+        PostgresClusterClaims::new(&tx)
+            .awaiting_deletion(1000)
+            .await
     })
     .await
-    .expect("the listing ran")
+    .expect("the listing ran");
+    mine(pool, listed).await
 }
 
 #[tokio::test]
 async fn a_released_plane_of_a_deleting_deployment_awaits_its_deleted_status_until_it_is_set() {
-    let Some(pool) = pool().await else { return };
     let _serial = COMMITTED.lock().await;
+    let Some(pool) = pool().await else { return };
     let account = seed_account(&pool).await;
     let (live, _) = seed_customer_plane(&pool, &account).await;
     let (released, released_deployment) = seed_customer_plane(&pool, &account).await;
