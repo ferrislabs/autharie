@@ -253,6 +253,9 @@ RESTART_AFTER_INSTALL=1
 # --------------------------------------------------------------- register the DP
 
 step "registering the shared data plane"
+# The token from the rights step has outlived its five minutes by now: building
+# and importing the images takes longer than that on a cold cache.
+OPERATOR_TOKEN=$(token autharie-operator-cli "${OPERATOR_SECRET}")
 # Idempotent by lookup rather than by an upsert the API does not offer: running
 # this twice must not leave two data planes competing for the same cluster.
 existing=$(curl -sS "${CONTROL_PLANE}/dataplanes" -H "Authorization: Bearer ${OPERATOR_TOKEN}" \
