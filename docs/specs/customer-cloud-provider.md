@@ -62,6 +62,8 @@ Design
   | standard | 2 or more | 2 | 1 instance | yes, up to the profile max | mutualized or dedicated |
   | ha | 3 or more | 2 | 3 instances | yes, up to the profile max | mutualized or dedicated |
 
+  Decided: `standard` floors at 2 nodes, `ha` at 3, to keep the entry price low.
+
   Rules: `min_nodes <= max_nodes`; `min_nodes` is at least the mode floor; replication never exceeds `min_nodes`; the node type and the control plane offer must appear in the provider catalog for the region; `dev` accepts the mutualized control plane only, because a dedicated one costs more than the rest of a `dev` cluster. A mode change `dev -> standard -> ha` goes through `ResizeCluster` and keeps the data plane. The reverse is refused when it would drop below the replicas in use.
 
 Acceptance (Gherkin)
@@ -127,8 +129,7 @@ Risks / open questions
   4. Hostnames and domains for provisioned deployments: the payload carries no hostname today (epic #21). Owner: Nathael.
   5. Exact Scaleway permissions to require, and whether a project-scoped key is enough. Owner: Nathael, settled in W2 by reading the provider IAM documentation.
   6. Cost estimate accuracy: node prices only, or storage and egress too. Proposal: node prices and storage, with egress stated as not included.
-  7. Whether `standard` should floor at 3 nodes like `ha` (the Scaleway example used min 3, max 10). Proposal: keep 2 for `standard`, to keep the entry price low. Owner: Nathael.
-  8. Control plane tier names and sizes are read from the catalog at runtime; no value is hardcoded. Owner: W3.
+  7. Control plane tier names and sizes are read from the catalog at runtime; no value is hardcoded. Owner: W3.
 
 Verify (exit)
   cargo fmt --all -- --check
@@ -139,3 +140,4 @@ Verify (exit)
   pnpm --dir apps/console lint
 
 Amended: 2026-10-04 control plane offer added to the profile, taken from the provider catalog, after the Scaleway options were described (mutualized or dedicated, instance type, autoscaling range).
+Amended: 2026-10-04 `standard` floor fixed at 2 nodes.
