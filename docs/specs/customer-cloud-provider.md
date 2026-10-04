@@ -36,33 +36,33 @@ Design
     - `CloudCredential { id, organisation_id, provider, label, scope_check, created_at }`: no secret in the entity. The secret is held by the credential store port.
     - `Provider` enum: `Scaleway`.
     - `ClusterMode` enum: `Dev | Standard | Ha`, with `limits()` returning the table below.
-    - `ClusterProfile { mode, node_type, min_nodes, max_nodes, replication }`, built only through `ClusterProfile::new(mode, node_type, min_nodes, max_nodes, replication, offers) -> Result<_, ProfileError>`.
+    - `ClusterProfile { mode, control_plane, node_type, min_nodes, max_nodes, replication }`, built only through `ClusterProfile::new(mode, control_plane, node_type, min_nodes, max_nodes, replication, catalog) -> Result<_, ProfileError>`. `control_plane` is an offer id from the provider catalog (on Scaleway: mutualized or a dedicated size), not an enum we maintain.
     - `Distribution` enum: `Shared | SelfHosted | CustomerCloud { credential_id, profile }`.
     - `DataPlaneAllocation` gains `Customer { organisation_id, deployment_id, credential_id }`.
     - Use cases: `RegisterCloudCredential`, `DeleteCloudCredential`, `EstimateClusterCost`, `CreateDeploymentOnCustomerCloud`, `ResizeCluster` (mode change inside the profile rules).
   Ports:
     - `CloudCredentialStore` (generic): `put`, `get_for_provisioning`, `delete`. Adapter wraps the secret with the transit key provider that backups already use. Not `dyn`.
     - `ClusterProvisioner` (existing, generic): `provision` takes the resolved credential and the profile, `deprovision` takes the data plane id and resolves its credential through the store, `resize` is added.
-    - `ProviderCatalog` (generic): `node_offers(provider, credential, region)` returns node types with prices, used to validate a profile and to estimate cost.
+    - `ProviderCatalog` (generic): `offers(provider, credential, region)` returns control plane offers and node types with prices, used to validate a profile and to estimate cost.
     - `CredentialVerifier` (generic): checks that a credential has the permissions we require and no more than needed.
   Adapters:
     - Credential store: OpenBao transit wrapping, ciphertext in PostgreSQL.
     - Provisioner and catalog: Scaleway (Kapsule), extends issue #29.
     - Verifier: Scaleway IAM policy inspection.
   Errors:
-    - `ProfileError`: `NodeRangeInvalid`, `BelowModeFloor`, `ReplicationExceedsNodes`, `NodeTypeUnavailable`.
+    - `ProfileError`: `NodeRangeInvalid`, `BelowModeFloor`, `ReplicationExceedsNodes`, `NodeTypeUnavailable`, `ControlPlaneUnavailable`, `ControlPlaneNotAllowedForMode`.
     - `CredentialError`: `Invalid`, `MissingPermissions { missing }`, `ExcessPermissions { extra }`, `InUse`.
     - `ProvisionError`: `QuotaExceeded`, `RegionUnavailable`, `NodePoolNeverConverged`, `CredentialRejected`. Each is a readable `Failed` reason on the data plane.
 
   Cluster modes (limits):
 
-  | Mode | min nodes | FerrisKey replicas | Database | Autoscaling |
-  |---|---|---|---|---|
-  | dev | 1, max 1 | 1 | 1 instance | no |
-  | standard | 2 or more | 2 | 1 instance | yes, up to the profile max |
-  | ha | 3 or more | 2 | 3 instances | yes, up to the profile max |
+  | Mode | min nodes | FerrisKey replicas | Database | Autoscaling | Control plane |
+  |---|---|---|---|---|---|
+  | dev | 1, max 1 | 1 | 1 instance | no | mutualized only |
+  | standard | 2 or more | 2 | 1 instance | yes, up to the profile max | mutualized or dedicated |
+  | ha | 3 or more | 2 | 3 instances | yes, up to the profile max | mutualized or dedicated |
 
-  Rules: `min_nodes <= max_nodes`; `min_nodes` is at least the mode floor; replication never exceeds `min_nodes`; the node type must appear in the provider catalog for the region. A mode change `dev -> standard -> ha` goes through `ResizeCluster` and keeps the data plane. The reverse is refused when it would drop below the replicas in use.
+  Rules: `min_nodes <= max_nodes`; `min_nodes` is at least the mode floor; replication never exceeds `min_nodes`; the node type and the control plane offer must appear in the provider catalog for the region; `dev` accepts the mutualized control plane only, because a dedicated one costs more than the rest of a `dev` cluster. A mode change `dev -> standard -> ha` goes through `ResizeCluster` and keeps the data plane. The reverse is refused when it would drop below the replicas in use.
 
 Acceptance (Gherkin)
   @spec-ccp-1  Scenario: a customer registers a credential with the required permissions
@@ -81,6 +81,9 @@ Acceptance (Gherkin)
   @spec-ccp-14 Scenario: deprovision called twice succeeds and removes nothing the second time
   @spec-ccp-15 Scenario: resizing `dev` to `standard` keeps the data plane and adds a node and a replica
   @spec-ccp-16 Scenario: resizing `ha` to `dev` is refused while replicas exceed the target
+  @spec-ccp-17 Scenario: a control plane offer absent from the region catalog is refused
+  @spec-ccp-18 Scenario: a `dev` profile with a dedicated control plane is refused
+  @spec-ccp-19 Scenario: a `ha` profile with min 3 and max 10 nodes of a catalog instance type is accepted
 
 Simulation
   No. The provisioning steps are sequential and idempotent, and the failure shapes are covered by adapter tests against a recorded Scaleway API. Revisit if teardown after a mid-creation crash proves flaky: that is the one place a deterministic simulation would earn its cost.
@@ -98,8 +101,9 @@ Frozen contracts
   pub enum ClusterMode { Dev, Standard, Ha }
   pub struct ClusterProfile { /* private fields */ }
   impl ClusterProfile {
-      pub fn new(mode: ClusterMode, node_type: NodeType, min_nodes: u8, max_nodes: u8,
-                 replication: Replication, offers: &[NodeOffer]) -> Result<Self, ProfileError>;
+      pub fn new(mode: ClusterMode, control_plane: ControlPlaneOffer, node_type: NodeType,
+                 min_nodes: u8, max_nodes: u8, replication: Replication,
+                 catalog: &ProviderOffers) -> Result<Self, ProfileError>;
   }
   pub enum Distribution {
       Shared,
@@ -123,6 +127,8 @@ Risks / open questions
   4. Hostnames and domains for provisioned deployments: the payload carries no hostname today (epic #21). Owner: Nathael.
   5. Exact Scaleway permissions to require, and whether a project-scoped key is enough. Owner: Nathael, settled in W2 by reading the provider IAM documentation.
   6. Cost estimate accuracy: node prices only, or storage and egress too. Proposal: node prices and storage, with egress stated as not included.
+  7. Whether `standard` should floor at 3 nodes like `ha` (the Scaleway example used min 3, max 10). Proposal: keep 2 for `standard`, to keep the entry price low. Owner: Nathael.
+  8. Control plane tier names and sizes are read from the catalog at runtime; no value is hardcoded. Owner: W3.
 
 Verify (exit)
   cargo fmt --all -- --check
@@ -131,3 +137,5 @@ Verify (exit)
   make test-integration
   pnpm --dir apps/console test
   pnpm --dir apps/console lint
+
+Amended: 2026-10-04 control plane offer added to the profile, taken from the provider catalog, after the Scaleway options were described (mutualized or dedicated, instance type, autoscaling range).
