@@ -1,5 +1,6 @@
 pub mod actions;
 pub mod audit;
+pub mod cloud_credentials;
 pub mod dataplanes;
 pub mod deployments;
 pub mod invitations;

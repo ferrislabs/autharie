@@ -158,39 +158,7 @@ impl ClusterProfile {
         replication: Replication,
         catalog: &ProviderOffers,
     ) -> Result<Self, ProfileError> {
-        let limits = mode.limits();
-
-        if min_nodes > max_nodes {
-            return Err(ProfileError::NodeRangeInvalid {
-                min_nodes,
-                max_nodes,
-            });
-        }
-
-        if min_nodes < limits.min_nodes {
-            return Err(ProfileError::BelowModeFloor {
-                mode,
-                floor: limits.min_nodes,
-                min_nodes,
-            });
-        }
-
-        if let Some(ceiling) = limits.max_nodes
-            && max_nodes > ceiling
-        {
-            return Err(ProfileError::AboveModeCeiling {
-                mode,
-                ceiling,
-                max_nodes,
-            });
-        }
-
-        if replication.get() > min_nodes {
-            return Err(ProfileError::ReplicationExceedsNodes {
-                replication: replication.get(),
-                min_nodes,
-            });
-        }
+        check_mode_rules(mode, min_nodes, max_nodes, replication)?;
 
         if catalog.node_offer(&node_type).is_none() {
             return Err(ProfileError::NodeTypeUnavailable {
@@ -204,18 +172,32 @@ impl ClusterProfile {
             }
         })?;
 
-        if limits.control_plane == ControlPlaneAccess::MutualizedOnly
-            && offered.kind != ControlPlaneKind::Mutualized
-        {
-            return Err(ProfileError::ControlPlaneNotAllowedForMode {
-                mode,
-                id: offered.id.as_str().to_string(),
-            });
-        }
+        check_control_plane_access(mode, offered)?;
 
         Ok(Self {
             mode,
             control_plane: offered.clone(),
+            node_type,
+            min_nodes,
+            max_nodes,
+            replication,
+        })
+    }
+
+    pub fn restore(
+        mode: ClusterMode,
+        control_plane: ControlPlaneOffer,
+        node_type: NodeType,
+        min_nodes: u8,
+        max_nodes: u8,
+        replication: Replication,
+    ) -> Result<Self, ProfileError> {
+        check_mode_rules(mode, min_nodes, max_nodes, replication)?;
+        check_control_plane_access(mode, &control_plane)?;
+
+        Ok(Self {
+            mode,
+            control_plane,
             node_type,
             min_nodes,
             max_nodes,
@@ -285,6 +267,65 @@ impl ClusterProfile {
             catalog,
         )?)
     }
+}
+
+fn check_mode_rules(
+    mode: ClusterMode,
+    min_nodes: u8,
+    max_nodes: u8,
+    replication: Replication,
+) -> Result<(), ProfileError> {
+    let limits = mode.limits();
+
+    if min_nodes > max_nodes {
+        return Err(ProfileError::NodeRangeInvalid {
+            min_nodes,
+            max_nodes,
+        });
+    }
+
+    if min_nodes < limits.min_nodes {
+        return Err(ProfileError::BelowModeFloor {
+            mode,
+            floor: limits.min_nodes,
+            min_nodes,
+        });
+    }
+
+    if let Some(ceiling) = limits.max_nodes
+        && max_nodes > ceiling
+    {
+        return Err(ProfileError::AboveModeCeiling {
+            mode,
+            ceiling,
+            max_nodes,
+        });
+    }
+
+    if replication.get() > min_nodes {
+        return Err(ProfileError::ReplicationExceedsNodes {
+            replication: replication.get(),
+            min_nodes,
+        });
+    }
+
+    Ok(())
+}
+
+fn check_control_plane_access(
+    mode: ClusterMode,
+    control_plane: &ControlPlaneOffer,
+) -> Result<(), ProfileError> {
+    if mode.limits().control_plane == ControlPlaneAccess::MutualizedOnly
+        && control_plane.kind != ControlPlaneKind::Mutualized
+    {
+        return Err(ProfileError::ControlPlaneNotAllowedForMode {
+            mode,
+            id: control_plane.id.as_str().to_string(),
+        });
+    }
+
+    Ok(())
 }
 
 /// What a profile costs per month: the nodes at the bottom of the range and
@@ -602,6 +643,86 @@ mod tests {
             Err(ResizeError::Profile(
                 ProfileError::ControlPlaneNotAllowedForMode { .. }
             ))
+        ));
+    }
+
+    #[test]
+    fn a_profile_is_restored_without_asking_the_catalog() {
+        let dedicated = offer("retired-offer", ControlPlaneKind::Dedicated);
+
+        let restored = ClusterProfile::restore(
+            ClusterMode::Ha,
+            dedicated.clone(),
+            NodeType::new("no-longer-sold"),
+            3,
+            6,
+            Replication::new(2).expect("replicas"),
+        )
+        .expect("restored");
+
+        assert_eq!(restored.control_plane(), &dedicated);
+        assert_eq!(restored.node_type().as_str(), "no-longer-sold");
+        assert_eq!((restored.min_nodes(), restored.max_nodes()), (3, 6));
+    }
+
+    #[test]
+    fn a_restored_profile_still_obeys_its_mode() {
+        let replication = Replication::new(1).expect("replicas");
+
+        assert!(matches!(
+            ClusterProfile::restore(
+                ClusterMode::Dev,
+                mutualized(),
+                NodeType::new("small"),
+                1,
+                2,
+                replication
+            ),
+            Err(ProfileError::AboveModeCeiling { .. })
+        ));
+        assert!(matches!(
+            ClusterProfile::restore(
+                ClusterMode::Ha,
+                mutualized(),
+                NodeType::new("small"),
+                2,
+                4,
+                replication
+            ),
+            Err(ProfileError::BelowModeFloor { .. })
+        ));
+        assert!(matches!(
+            ClusterProfile::restore(
+                ClusterMode::Standard,
+                mutualized(),
+                NodeType::new("small"),
+                4,
+                3,
+                replication
+            ),
+            Err(ProfileError::NodeRangeInvalid { .. })
+        ));
+        assert!(matches!(
+            ClusterProfile::restore(
+                ClusterMode::Standard,
+                mutualized(),
+                NodeType::new("small"),
+                2,
+                3,
+                Replication::new(3).expect("replicas")
+            ),
+            Err(ProfileError::ReplicationExceedsNodes { .. })
+        ));
+        assert!(matches!(
+            ClusterProfile::restore(
+                ClusterMode::Dev,
+                offer("dedicated-4", ControlPlaneKind::Dedicated),
+                NodeType::new("small"),
+                1,
+                1,
+                replication
+            ),
+            Err(ProfileError::ControlPlaneNotAllowedForMode { .. })
         ));
     }
 }

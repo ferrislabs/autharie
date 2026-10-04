@@ -9,7 +9,6 @@ use autharie_domain::{
     dataplane::value_objects::DataPlaneId,
     deployments::{
         Deployment, DeploymentId, DeploymentKind, DeploymentName, DeploymentStatus,
-        distribution::Distribution,
         network::{Cidr, NetworkAccess},
         ports::DeploymentRepository,
     },
@@ -21,6 +20,8 @@ use autharie_domain::{
 };
 use autharie_macros::repository;
 use autharie_persistence::SharedTx;
+
+use super::distribution_columns;
 
 #[derive(FromRow)]
 struct DeploymentRow {
@@ -56,6 +57,9 @@ struct DeploymentRow {
     last_restore_drill_seconds: Option<i32>,
     log_shipping_enabled: bool,
     iam_settings: Option<serde_json::Value>,
+    distribution: String,
+    credential_id: Option<Uuid>,
+    cluster_profile: Option<serde_json::Value>,
 }
 
 impl DeploymentRow {
@@ -117,7 +121,12 @@ impl DeploymentRow {
             last_restore_drill_seconds: self.last_restore_drill_seconds,
             log_shipping_enabled: self.log_shipping_enabled,
             iam_settings: parse_iam_settings(self.iam_settings, self.id)?,
-            distribution: Distribution::Shared,
+            distribution: distribution_columns::from_columns(
+                &self.distribution,
+                self.credential_id,
+                self.cluster_profile,
+                self.id,
+            )?,
         })
     }
 }
@@ -295,11 +304,7 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
     }
 
     async fn insert(&self, deployment: Deployment) -> Result<(), CoreError> {
-        if deployment.distribution != Distribution::Shared {
-            return Err(CoreError::InternalError(
-                "a deployment distribution other than shared is not persisted yet".to_string(),
-            ));
-        }
+        let distribution = distribution_columns::to_columns(&deployment.distribution)?;
 
         // Bound before the query rather than inline: the slice is borrowed for
         // the whole call, and a temporary built in the argument list is gone
@@ -340,11 +345,14 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                 last_verified_restore_at,
                 last_restore_drill_seconds,
                 log_shipping_enabled,
-                iam_settings
+                iam_settings,
+                distribution,
+                credential_id,
+                cluster_profile
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
                     $17, $18, $19, $20, $21, $22, $23, $24, $25::TEXT[]::CIDR[], $26, $27, $28, $29,
-                    $30)
+                    $30, $31, $32, $33)
             "#,
                 deployment.id.0,
                 deployment.organisation_id.0,
@@ -385,6 +393,9 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                 deployment.last_restore_drill_seconds,
                 deployment.log_shipping_enabled,
                 iam_settings,
+                distribution.distribution,
+                distribution.credential_id,
+                distribution.cluster_profile,
             )
             .execute(&mut ***tx)
             .await
@@ -433,7 +444,10 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                    last_verified_restore_at,
                    last_restore_drill_seconds,
                    log_shipping_enabled,
-                   iam_settings
+                   iam_settings,
+                   distribution,
+                   credential_id,
+                   cluster_profile
             FROM deployments
             WHERE id = $1
             "#,
@@ -486,7 +500,10 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                    last_verified_restore_at,
                    last_restore_drill_seconds,
                    log_shipping_enabled,
-                   iam_settings
+                   iam_settings,
+                   distribution,
+                   credential_id,
+                   cluster_profile
             FROM deployments
             WHERE organisation_id = $1
               AND status <> 'deleted'
@@ -507,6 +524,7 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
     async fn update(&self, deployment: Deployment) -> Result<(), CoreError> {
         let allowed_cidrs = network_access_to_row(&deployment.network_access);
         let iam_settings = iam_settings_to_row(&deployment.iam_settings)?;
+        let distribution = distribution_columns::to_columns(&deployment.distribution)?;
         {
             let mut tx = self.tx.lock().await;
             sqlx::query!(
@@ -542,7 +560,10 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                 last_verified_restore_at = $19,
                 last_restore_drill_seconds = $20,
                 log_shipping_enabled = $21,
-                iam_settings = $22
+                iam_settings = $22,
+                distribution = $23,
+                credential_id = $24,
+                cluster_profile = $25
             WHERE id = $1
             "#,
                 deployment.id.0,
@@ -576,6 +597,9 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                 deployment.last_restore_drill_seconds,
                 deployment.log_shipping_enabled,
                 iam_settings,
+                distribution.distribution,
+                distribution.credential_id,
+                distribution.cluster_profile,
             )
             .execute(&mut ***tx)
             .await
@@ -686,7 +710,10 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                    last_verified_restore_at,
                    last_restore_drill_seconds,
                    log_shipping_enabled,
-                   iam_settings
+                   iam_settings,
+                   distribution,
+                   credential_id,
+                   cluster_profile
             FROM deployments
             WHERE dataplane_id = $1
               -- A deployment the data plane has finished tearing down is not
@@ -746,7 +773,10 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                    last_verified_restore_at,
                    last_restore_drill_seconds,
                    log_shipping_enabled,
-                   iam_settings
+                   iam_settings,
+                   distribution,
+                   credential_id,
+                   cluster_profile
             FROM deployments
             WHERE status IN ('successful', 'maintenance', 'upgrading', 'upgrade_required')
             ORDER BY created_at DESC
@@ -805,6 +835,9 @@ mod tests {
             last_restore_drill_seconds: None,
             log_shipping_enabled: true,
             iam_settings: None,
+            distribution: "shared".to_string(),
+            credential_id: None,
+            cluster_profile: None,
         }
     }
 

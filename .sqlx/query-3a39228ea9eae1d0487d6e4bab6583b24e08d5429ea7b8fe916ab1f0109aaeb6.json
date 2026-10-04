@@ -1,0 +1,70 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT id,\n                   organisation_id,\n                   provider,\n                   ciphertext,\n                   nonce,\n                   wrapped_dek,\n                   key_provider,\n                   key_name,\n                   key_version\n            FROM cloud_credential_secrets\n            WHERE id = $1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "organisation_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "provider",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "ciphertext",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 4,
+        "name": "nonce",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 5,
+        "name": "wrapped_dek",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "key_provider",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "key_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "key_version",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "3a39228ea9eae1d0487d6e4bab6583b24e08d5429ea7b8fe916ab1f0109aaeb6"
+}

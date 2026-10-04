@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use autharie_core::{AutharieConfig, AutharieService, create_service};
+use autharie_transit::TransitKeyProvider;
 use tracing::warn;
 
 use crate::{
@@ -49,7 +50,12 @@ pub async fn state(args: Arc<Args>) -> Result<AppState, ApiError> {
         // realm. Given here rather than read from the environment deeper in,
         // so an installation that has none is visible in the wiring.
         .administering(args.realm.admin())
-        .with_domain(args.ovh.domain());
+        .with_domain(args.ovh.domain())
+        .with_credential_keys(
+            args.key_manager
+                .config()
+                .and_then(|(config, _)| TransitKeyProvider::new(config).ok()),
+        );
 
     // Best-effort, like every other optional integration here: a cluster
     // this pod cannot reach, or a Secret that never turns up, means no

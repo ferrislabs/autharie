@@ -6,6 +6,8 @@ use autharie_domain::dataplane::herald_identity::HeraldBinding;
 use autharie_domain::{
     CoreError,
     dataplane::{
+        credential::CloudCredentialId,
+        credential_repository::DataPlaneFailures,
         entities::DataPlane,
         ports::DataPlaneRepository,
         value_objects::{
@@ -13,6 +15,7 @@ use autharie_domain::{
             DeploymentResources, PlacementPolicy, PlacementRequest, Region,
         },
     },
+    deployments::DeploymentId,
     organisation::OrganisationId,
     version::Version,
 };
@@ -36,11 +39,19 @@ struct DataPlaneRow {
     herald_client_id: Option<String>,
     herald_subject: Option<String>,
     gateway_address: Option<String>,
+    deployment_id: Option<Uuid>,
+    credential_id: Option<Uuid>,
+    failure_reason: Option<String>,
 }
 
 impl DataPlaneRow {
     fn into_dataplane(self) -> Result<DataPlane, CoreError> {
-        let allocation = parse_allocation(&self.mode, self.organisation_id)?;
+        let allocation = parse_allocation(
+            &self.mode,
+            self.organisation_id,
+            self.deployment_id,
+            self.credential_id,
+        )?;
         let status = parse_status(&self.status)?;
         let capacity = Capacity::new(
             self.capacity_cpu_millis as u32,
@@ -80,6 +91,7 @@ impl DataPlaneRow {
                 .map(|(client_id, subject)| HeraldBinding { client_id, subject }),
             operator_version,
             gateway_address: self.gateway_address,
+            failure_reason: self.failure_reason,
         })
     }
 }
@@ -119,7 +131,10 @@ impl DataPlaneRepository for PostgresDataPlaneRepository<'_> {
                    operator_version,
                    herald_client_id,
                    herald_subject,
-                   gateway_address
+                   gateway_address,
+                   deployment_id,
+                   credential_id,
+                   failure_reason
             FROM data_planes
             WHERE id = $1
             "#,
@@ -155,7 +170,10 @@ impl DataPlaneRepository for PostgresDataPlaneRepository<'_> {
                    operator_version,
                    herald_client_id,
                    herald_subject,
-                   gateway_address
+                   gateway_address,
+                   deployment_id,
+                   credential_id,
+                   failure_reason
             FROM data_planes
             WHERE herald_subject = $1
             "#,
@@ -194,7 +212,10 @@ impl DataPlaneRepository for PostgresDataPlaneRepository<'_> {
                    operator_version,
                    herald_client_id,
                    herald_subject,
-                   gateway_address
+                   gateway_address,
+                   deployment_id,
+                   credential_id,
+                   failure_reason
             FROM data_planes
             WHERE region = $1
               AND mode = 'shared'
@@ -255,7 +276,10 @@ impl DataPlaneRepository for PostgresDataPlaneRepository<'_> {
                            dp.operator_version,
                            dp.herald_client_id,
                            dp.herald_subject,
-                           dp.gateway_address
+                           dp.gateway_address,
+                           dp.deployment_id,
+                           dp.credential_id,
+                           dp.failure_reason
                     FROM data_planes dp
                     LEFT JOIN deployments d
                       ON d.dataplane_id = dp.id
@@ -307,7 +331,10 @@ impl DataPlaneRepository for PostgresDataPlaneRepository<'_> {
                            dp.operator_version,
                            dp.herald_client_id,
                            dp.herald_subject,
-                           dp.gateway_address
+                           dp.gateway_address,
+                           dp.deployment_id,
+                           dp.credential_id,
+                           dp.failure_reason
                     FROM data_planes dp
                     LEFT JOIN deployments d
                       ON d.dataplane_id = dp.id
@@ -367,7 +394,10 @@ impl DataPlaneRepository for PostgresDataPlaneRepository<'_> {
                    operator_version,
                    herald_client_id,
                    herald_subject,
-                   gateway_address
+                   gateway_address,
+                   deployment_id,
+                   credential_id,
+                   failure_reason
             FROM data_planes
             ORDER BY region ASC, id ASC
             "#
@@ -407,12 +437,7 @@ impl DataPlaneRepository for PostgresDataPlaneRepository<'_> {
     }
 
     async fn save(&self, dataplane: &DataPlane) -> Result<(), CoreError> {
-        if matches!(dataplane.allocation, DataPlaneAllocation::Customer { .. }) {
-            return Err(CoreError::InternalError(
-                "a customer cloud data plane is not persisted yet".to_string(),
-            ));
-        }
-
+        let (mode, deployment_id, credential_id) = allocation_to_row(&dataplane.allocation);
         let now = Utc::now();
         {
             let mut tx = self.tx.lock().await;
@@ -432,9 +457,12 @@ impl DataPlaneRepository for PostgresDataPlaneRepository<'_> {
                 updated_at,
                 herald_client_id,
                 herald_subject,
-                gateway_address
+                gateway_address,
+                deployment_id,
+                credential_id,
+                failure_reason
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
             ON CONFLICT (id)
             DO UPDATE SET
                 mode = $2,
@@ -448,10 +476,13 @@ impl DataPlaneRepository for PostgresDataPlaneRepository<'_> {
                 updated_at = $11,
                 herald_client_id = $12,
                 herald_subject = $13,
-                gateway_address = $14
+                gateway_address = $14,
+                deployment_id = $15,
+                credential_id = $16,
+                failure_reason = $17
             "#,
                 dataplane.id.0,
-                mode_to_string(dataplane.allocation.mode()),
+                mode,
                 dataplane.region.as_str(),
                 status_to_string(dataplane.status),
                 dataplane.allocation.owner().map(|id| id.0),
@@ -464,6 +495,9 @@ impl DataPlaneRepository for PostgresDataPlaneRepository<'_> {
                 dataplane.herald.as_ref().map(|herald| &herald.client_id),
                 dataplane.herald.as_ref().map(|herald| &herald.subject),
                 dataplane.gateway_address.as_deref(),
+                deployment_id,
+                credential_id,
+                dataplane.failure_reason.as_deref(),
             )
             .execute(&mut ***tx)
             .await
@@ -537,7 +571,7 @@ impl DataPlaneRepository for PostgresDataPlaneRepository<'_> {
         let exists = sqlx::query_scalar!(
             r#"
             SELECT EXISTS (
-                SELECT 1 FROM data_planes WHERE region = $1
+                SELECT 1 FROM data_planes WHERE region = $1 AND mode <> 'customer'
             ) AS "exists!"
             "#,
             region.as_str()
@@ -632,7 +666,10 @@ impl DataPlaneRepository for PostgresDataPlaneRepository<'_> {
                    operator_version,
                    herald_client_id,
                    herald_subject,
-                   gateway_address
+                   gateway_address,
+                   deployment_id,
+                   credential_id,
+                   failure_reason
             FROM data_planes
             WHERE region = $1
               AND mode = 'dedicated'
@@ -655,10 +692,31 @@ impl DataPlaneRepository for PostgresDataPlaneRepository<'_> {
     }
 }
 
-fn mode_to_string(mode: DataPlaneMode) -> &'static str {
-    match mode {
-        DataPlaneMode::Shared => "shared",
-        DataPlaneMode::Dedicated => "dedicated",
+#[cfg_attr(coverage_nightly, coverage(off))]
+impl DataPlaneFailures for PostgresDataPlaneRepository<'_> {
+    async fn mark_failed(&self, id: &DataPlaneId, reason: &str) -> Result<bool, CoreError> {
+        let mut tx = self.tx.lock().await;
+
+        let affected = sqlx::query!(
+            r#"
+            UPDATE data_planes
+            SET status = 'failed',
+                failure_reason = $2,
+                updated_at = $3
+            WHERE id = $1
+            "#,
+            id.0,
+            reason,
+            Utc::now()
+        )
+        .execute(&mut ***tx)
+        .await
+        .map_err(|e| CoreError::DatabaseError {
+            message: format!("Failed to mark the data plane failed: {}", e),
+        })?
+        .rows_affected();
+
+        Ok(affected > 0)
     }
 }
 
@@ -681,28 +739,53 @@ fn mode_to_row(mode: DataPlaneMode) -> &'static str {
     }
 }
 
-/// Rebuilds the allocation from the two columns that carry it.
-///
-/// A dedicated row without an owner is rejected rather than defaulted. The
-/// database has a CHECK preventing one, so reaching that arm means the schema
-/// and the code disagree -- and guessing would put someone else's deployment
-/// on a reserved cluster.
+fn allocation_to_row(
+    allocation: &DataPlaneAllocation,
+) -> (&'static str, Option<Uuid>, Option<Uuid>) {
+    match allocation {
+        DataPlaneAllocation::Shared => ("shared", None, None),
+        DataPlaneAllocation::Dedicated { .. } => ("dedicated", None, None),
+        DataPlaneAllocation::Customer {
+            deployment_id,
+            credential_id,
+            ..
+        } => ("customer", Some(deployment_id.0), Some(credential_id.0)),
+    }
+}
+
 fn parse_allocation(
     raw: &str,
     organisation_id: Option<Uuid>,
+    deployment_id: Option<Uuid>,
+    credential_id: Option<Uuid>,
 ) -> Result<DataPlaneAllocation, CoreError> {
-    match (raw.to_ascii_lowercase().as_str(), organisation_id) {
-        ("shared", None) => Ok(DataPlaneAllocation::Shared),
-        ("shared", Some(_)) => Err(CoreError::InternalError(
-            "shared data plane carries an organisation".to_string(),
+    match (
+        raw.to_ascii_lowercase().as_str(),
+        organisation_id,
+        deployment_id,
+        credential_id,
+    ) {
+        ("shared", None, None, None) => Ok(DataPlaneAllocation::Shared),
+        ("shared", ..) => Err(CoreError::InternalError(
+            "shared data plane carries an owner".to_string(),
         )),
-        ("dedicated", Some(id)) => Ok(DataPlaneAllocation::Dedicated {
+        ("dedicated", Some(id), None, None) => Ok(DataPlaneAllocation::Dedicated {
             organisation_id: OrganisationId(id),
         }),
-        ("dedicated", None) => Err(CoreError::InternalError(
-            "dedicated data plane has no organisation".to_string(),
+        ("dedicated", ..) => Err(CoreError::InternalError(
+            "dedicated data plane has no organisation or carries a customer cluster".to_string(),
         )),
-        (other, _) => Err(CoreError::InternalError(format!(
+        ("customer", Some(organisation), Some(deployment), Some(credential)) => {
+            Ok(DataPlaneAllocation::Customer {
+                organisation_id: OrganisationId(organisation),
+                deployment_id: DeploymentId(deployment),
+                credential_id: CloudCredentialId(credential),
+            })
+        }
+        ("customer", ..) => Err(CoreError::InternalError(
+            "customer data plane lacks its organisation, deployment or credential".to_string(),
+        )),
+        (other, ..) => Err(CoreError::InternalError(format!(
             "Invalid data plane mode: {}",
             other
         ))),

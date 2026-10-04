@@ -1492,6 +1492,496 @@
         ]
       }
     },
+    "/organisations/{organisation_id}/cloud-credentials": {
+      "get": {
+        "tags": [
+          "cloud-credentials"
+        ],
+        "summary": "list cloud credentials",
+        "description": "Lists the organisation's registered provider keys, without the keys.",
+        "operationId": "list_cloud_credentials_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CloudCredentialResponse"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "cloud-credentials"
+        ],
+        "summary": "register a cloud credential",
+        "description": "Registers a provider key for the organisation. The key is checked for the permissions it needs and no more, then stored encrypted. It is never returned.",
+        "operationId": "register_cloud_credential_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterCloudCredentialRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Credential registered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudCredentialResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The key is invalid or has missing or excess permissions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/organisations/{organisation_id}/cloud-credentials/{credential_id}": {
+      "delete": {
+        "tags": [
+          "cloud-credentials"
+        ],
+        "summary": "delete a cloud credential",
+        "description": "Deletes a registered provider key. Refused while a deployment or a cluster still uses it.",
+        "operationId": "delete_cloud_credential_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "credential_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Credential deleted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Credential not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Credential in use",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/organisations/{organisation_id}/cloud-credentials/{credential_id}/offers": {
+      "get": {
+        "tags": [
+          "cloud-credentials"
+        ],
+        "summary": "list what the provider sells in a region",
+        "description": "Reads the provider's catalog for a region with the credential: control planes and node types, with monthly prices in minor units.",
+        "operationId": "list_provider_offers_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "credential_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "region",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The offers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderOffers"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Credential not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The provider refused or could not serve the request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/organisations/{organisation_id}/cluster-profiles/estimate": {
+      "post": {
+        "tags": [
+          "cloud-credentials"
+        ],
+        "summary": "estimate the monthly cost of a cluster profile",
+        "description": "Checks the profile against the provider's catalog and prices it: the nodes at the bottom and at the top of the range, each plus the control plane. Amounts are in minor units. Egress is not included.",
+        "operationId": "estimate_cluster_profile_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EstimateClusterProfileRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The estimate",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CostEstimate"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Credential not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The profile is refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The provider refused or could not serve the request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/organisations/{organisation_id}/deployments": {
       "get": {
         "tags": [
@@ -1603,8 +2093,28 @@
               }
             }
           },
+          "422": {
+            "description": "The distribution or the cluster profile is refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
           "500": {
             "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The provider refused or could not serve the request",
             "content": {
               "application/json": {
                 "schema": {
@@ -7917,6 +8427,44 @@
                 }
               }
             }
+          },
+          {
+            "type": "object",
+            "required": [
+              "Unprocessable"
+            ],
+            "properties": {
+              "Unprocessable": {
+                "type": "object",
+                "required": [
+                  "reason"
+                ],
+                "properties": {
+                  "reason": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "BadGateway"
+            ],
+            "properties": {
+              "BadGateway": {
+                "type": "object",
+                "required": [
+                  "reason"
+                ],
+                "properties": {
+                  "reason": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
           }
         ]
       },
@@ -8607,6 +9155,121 @@
           }
         }
       },
+      "CloudCredentialId": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "CloudCredentialResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "provider",
+          "label",
+          "scope_checked_at",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "label": {
+            "type": "string"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/Provider"
+          },
+          "scope_checked_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ClusterMode": {
+        "type": "string",
+        "enum": [
+          "dev",
+          "standard",
+          "ha"
+        ]
+      },
+      "ClusterProfile": {
+        "type": "object",
+        "description": "A mode and the adjustments made inside its limits.\n\nFields are private and `new` is the only way in, so a value of this type\nhas already been checked against its mode and the region's catalog.",
+        "required": [
+          "mode",
+          "control_plane",
+          "node_type",
+          "min_nodes",
+          "max_nodes",
+          "replication"
+        ],
+        "properties": {
+          "control_plane": {
+            "$ref": "#/components/schemas/ControlPlaneOffer"
+          },
+          "max_nodes": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "min_nodes": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "mode": {
+            "$ref": "#/components/schemas/ClusterMode"
+          },
+          "node_type": {
+            "$ref": "#/components/schemas/NodeType"
+          },
+          "replication": {
+            "$ref": "#/components/schemas/Replication"
+          }
+        }
+      },
+      "ClusterProfileRequest": {
+        "type": "object",
+        "required": [
+          "mode",
+          "control_plane_id",
+          "node_type",
+          "min_nodes",
+          "max_nodes",
+          "replication"
+        ],
+        "properties": {
+          "control_plane_id": {
+            "type": "string"
+          },
+          "max_nodes": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "min_nodes": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "mode": {
+            "$ref": "#/components/schemas/ClusterMode"
+          },
+          "node_type": {
+            "type": "string"
+          },
+          "replication": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
       "ComponentSelection": {
         "oneOf": [
           {
@@ -8619,6 +9282,52 @@
             }
           }
         ]
+      },
+      "ControlPlaneKind": {
+        "type": "string",
+        "enum": [
+          "mutualized",
+          "dedicated"
+        ]
+      },
+      "ControlPlaneOffer": {
+        "type": "object",
+        "description": "A control plane the provider sells in a region, as the catalog described\nit. Its id and size are the provider's, never an enum kept here.",
+        "required": [
+          "id",
+          "kind",
+          "monthly_price"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/ControlPlaneOfferId"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ControlPlaneKind"
+          },
+          "monthly_price": {
+            "$ref": "#/components/schemas/Money"
+          }
+        }
+      },
+      "ControlPlaneOfferId": {
+        "type": "string"
+      },
+      "CostEstimate": {
+        "type": "object",
+        "description": "What a profile costs per month: the nodes at the bottom of the range and\nat the top, each plus the control plane. Egress is not included.",
+        "required": [
+          "min",
+          "max"
+        ],
+        "properties": {
+          "max": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "min": {
+            "$ref": "#/components/schemas/Money"
+          }
+        }
       },
       "CreateDataPlaneRequest": {
         "type": "object",
@@ -8660,6 +9369,16 @@
           "offer"
         ],
         "properties": {
+          "distribution": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DistributionRequest"
+              }
+            ]
+          },
           "environment": {
             "type": "string",
             "description": "`production`, `staging` or `development`."
@@ -8814,6 +9533,12 @@
             "format": "date-time",
             "description": "When this data plane was registered. What `Provisioning` is measured\nagainst: without it, a plane that never came up is indistinguishable\nfrom one created a second ago."
           },
+          "failure_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "gateway_address": {
             "type": [
               "string",
@@ -8885,6 +9610,35 @@
                   "organisation_id"
                 ],
                 "properties": {
+                  "organisation_id": {
+                    "$ref": "#/components/schemas/OrganisationId"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A cluster created in the customer's own cloud account for one\ndeployment, and deleted with it.",
+            "required": [
+              "customer"
+            ],
+            "properties": {
+              "customer": {
+                "type": "object",
+                "description": "A cluster created in the customer's own cloud account for one\ndeployment, and deleted with it.",
+                "required": [
+                  "organisation_id",
+                  "deployment_id",
+                  "credential_id"
+                ],
+                "properties": {
+                  "credential_id": {
+                    "$ref": "#/components/schemas/CloudCredentialId"
+                  },
+                  "deployment_id": {
+                    "$ref": "#/components/schemas/DeploymentId"
+                  },
                   "organisation_id": {
                     "$ref": "#/components/schemas/OrganisationId"
                   }
@@ -9015,7 +9769,8 @@
           "auto_upgrade",
           "network_access",
           "log_shipping_enabled",
-          "iam_settings"
+          "iam_settings",
+          "distribution"
         ],
         "properties": {
           "auto_upgrade": {
@@ -9045,6 +9800,10 @@
               "null"
             ],
             "format": "date-time"
+          },
+          "distribution": {
+            "$ref": "#/components/schemas/Distribution",
+            "description": "How it is hosted. `Shared` for every deployment created before\ncustomer clusters existed."
           },
           "environment": {
             "$ref": "#/components/schemas/Environment",
@@ -9266,6 +10025,105 @@
           }
         }
       },
+      "Distribution": {
+        "oneOf": [
+          {
+            "type": "string",
+            "enum": [
+              "shared"
+            ]
+          },
+          {
+            "type": "string",
+            "enum": [
+              "self_hosted"
+            ]
+          },
+          {
+            "type": "object",
+            "required": [
+              "customer_cloud"
+            ],
+            "properties": {
+              "customer_cloud": {
+                "type": "object",
+                "required": [
+                  "credential_id",
+                  "profile"
+                ],
+                "properties": {
+                  "credential_id": {
+                    "$ref": "#/components/schemas/CloudCredentialId"
+                  },
+                  "profile": {
+                    "$ref": "#/components/schemas/ClusterProfile"
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "description": "How a deployment is hosted.\n\n`CustomerCloud` carries its credential and its profile, so a deployment\nthat is in the customer's cloud cannot exist without saying whose account\nand how big."
+      },
+      "DistributionRequest": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "shared"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "self_hosted"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "credential_id",
+              "region",
+              "profile",
+              "type"
+            ],
+            "properties": {
+              "credential_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "profile": {
+                "$ref": "#/components/schemas/ClusterProfileRequest"
+              },
+              "region": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "customer_cloud"
+                ]
+              }
+            }
+          }
+        ]
+      },
       "DowntimeInterval": {
         "type": "object",
         "description": "A maximal run of consecutive failed reachability checks.\n\n`started_at` is the time of the first failed check and `ended_at` the time\nof the first successful check after it. The gap between the last good check\nand the first failed one is not counted as downtime, so an interval never\noverstates the outage; it can understate it by up to one probe tick.\n`ended_at` is `None` while the deployment is still failing.",
@@ -9368,6 +10226,52 @@
           },
           "name": {
             "type": "string"
+          }
+        }
+      },
+      "EstimateClusterProfileRequest": {
+        "type": "object",
+        "required": [
+          "credential_id",
+          "region",
+          "mode",
+          "control_plane_id",
+          "node_type",
+          "min_nodes",
+          "max_nodes",
+          "replication"
+        ],
+        "properties": {
+          "control_plane_id": {
+            "type": "string"
+          },
+          "credential_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "max_nodes": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "min_nodes": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "mode": {
+            "$ref": "#/components/schemas/ClusterMode"
+          },
+          "node_type": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
+          "replication": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           }
         }
       },
@@ -10670,6 +11574,12 @@
           }
         }
       },
+      "Money": {
+        "type": "integer",
+        "format": "int64",
+        "description": "An amount per month in the minor unit of the provider's currency.\n\nIntegers on purpose: an estimate summed from floats shows a different\ntotal depending on the order it was added in.",
+        "minimum": 0
+      },
       "MoveReleaseRequest": {
         "type": "object",
         "required": [
@@ -10778,6 +11688,24 @@
             "$ref": "#/components/schemas/NetworkAccess"
           }
         }
+      },
+      "NodeOffer": {
+        "type": "object",
+        "required": [
+          "node_type",
+          "monthly_price"
+        ],
+        "properties": {
+          "monthly_price": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "node_type": {
+            "$ref": "#/components/schemas/NodeType"
+          }
+        }
+      },
+      "NodeType": {
+        "type": "string"
       },
       "ObjectLocation": {
         "type": "string"
@@ -11032,10 +11960,37 @@
         "description": "The Postgres major an archive was taken from.\n\nCarried because a physical backup cannot be restored onto a different one,\nand because discovering that at restore time means discovering it during an\noutage. A logical dump does not care, which is why the constraint belongs\nto the method rather than to every backup.",
         "minimum": 0
       },
+      "Provider": {
+        "type": "string",
+        "enum": [
+          "scaleway"
+        ]
+      },
       "ProviderName": {
         "type": "string",
         "description": "Which configured key manager a key lives in.\n\nA name rather than an enum of the providers this platform happens to\nsupport today. Adding a customer's own manager is then a line of\nconfiguration and an adapter, not a variant every match in the codebase has\nto learn about.",
         "example": "platform"
+      },
+      "ProviderOffers": {
+        "type": "object",
+        "required": [
+          "control_planes",
+          "node_types"
+        ],
+        "properties": {
+          "control_planes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ControlPlaneOffer"
+            }
+          },
+          "node_types": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NodeOffer"
+            }
+          }
+        }
       },
       "PublishReleaseRequest": {
         "type": "object",
@@ -11129,6 +12084,26 @@
       },
       "Region": {
         "type": "string"
+      },
+      "RegisterCloudCredentialRequest": {
+        "type": "object",
+        "required": [
+          "provider",
+          "label",
+          "secret"
+        ],
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/Provider"
+          },
+          "secret": {
+            "type": "string",
+            "writeOnly": true
+          }
+        }
       },
       "RegisteredDataPlaneResponse": {
         "allOf": [
@@ -11333,6 +12308,12 @@
           "deprecated",
           "withdrawn"
         ]
+      },
+      "Replication": {
+        "type": "integer",
+        "format": "int32",
+        "description": "How many replicas of FerrisKey run. At least one: a deployment with none\nserves nothing.",
+        "minimum": 0
       },
       "ReportArchiveRequest": {
         "type": "object",
@@ -12640,6 +13621,10 @@
     {
       "name": "deployments",
       "description": "Deployment management endpoints scoped to organisations."
+    },
+    {
+      "name": "cloud-credentials",
+      "description": "Customer cloud provider credentials and cluster profiles scoped to organisations."
     },
     {
       "name": "actions",

@@ -551,6 +551,7 @@ mod tests {
             herald: None,
             operator_version: None,
             gateway_address: None,
+            failure_reason: None,
         }
     }
 
@@ -1077,6 +1078,7 @@ mod tests {
             created_at: Utc::now(),
             operator_version: None,
             gateway_address: None,
+            failure_reason: None,
         }
     }
 

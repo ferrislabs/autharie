@@ -18,6 +18,9 @@ pub mod backups;
 pub mod catalog;
 
 #[cfg_attr(coverage_nightly, coverage(off))]
+pub mod credentials;
+
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub mod deployments;
 
 #[cfg_attr(coverage_nightly, coverage(off))]
@@ -75,6 +78,8 @@ pub mod registry {
         pub struct Audit;
         pub struct Backup;
         pub struct BackupSchedule;
+        pub struct CloudCredential;
+        pub struct ClusterInventory;
         pub struct DataPlane;
         pub struct FleetAudit;
         pub struct Deployment;
@@ -88,6 +93,7 @@ pub mod registry {
         pub struct Role;
         pub struct User;
         pub struct ReachabilityCheck;
+        pub struct SealedSecret;
     }
 
     pub mod backend {
@@ -143,5 +149,8 @@ mod registry_completeness {
         assert_registered::<domain::Role>();
         assert_registered::<domain::User>();
         assert_registered::<domain::ReachabilityCheck>();
+        assert_registered::<domain::CloudCredential>();
+        assert_registered::<domain::ClusterInventory>();
+        assert_registered::<domain::SealedSecret>();
     }
 }

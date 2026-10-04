@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE data_planes\n            SET status = 'failed',\n                failure_reason = $2,\n                updated_at = $3\n            WHERE id = $1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "57605a3e7a331dea604c295cf19a816a5f3a184fbf5bb9d11440e115e3443178"
+}

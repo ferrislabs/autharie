@@ -4,9 +4,14 @@ use autharie_domain::backups::StoreEncryption;
 use autharie_domain::dataplane::value_objects::PlacementWindows;
 use autharie_domain::{ArchiveConfig, DataPlaneConfig};
 
+use std::sync::Arc;
+
+use autharie_transit::TransitKeyProvider;
+
 use crate::{
-    AutharieConfig, CoreError, application::auth::set_auth_issuer,
-    infrastructure::logs::InProcessLogRelay,
+    AutharieConfig, CoreError,
+    application::auth::set_auth_issuer,
+    infrastructure::{credentials::CloudProviders, logs::InProcessLogRelay},
 };
 
 mod action;
@@ -14,6 +19,7 @@ mod audit;
 mod auth;
 mod backup;
 mod catalog;
+pub mod cloud_credentials;
 mod dataplane;
 pub mod dataplane_upgrade;
 pub mod dataplane_upgrade_request;
@@ -67,6 +73,10 @@ pub struct AutharieService {
     /// questions, decided by the same zone but not required to travel
     /// together.
     domain: Option<String>,
+
+    cloud: CloudProviders,
+
+    credential_keys: Option<Arc<TransitKeyProvider>>,
 }
 
 /// How long a data plane may go without reporting before placement stops
@@ -108,6 +118,8 @@ impl AutharieService {
             realm: None,
             log_relay: InProcessLogRelay::new(),
             domain: None,
+            cloud: CloudProviders::default(),
+            credential_keys: None,
         }
     }
 
@@ -125,6 +137,24 @@ impl AutharieService {
     pub fn with_domain(mut self, domain: Option<String>) -> Self {
         self.domain = domain;
         self
+    }
+
+    pub fn with_cloud_providers(mut self, cloud: CloudProviders) -> Self {
+        self.cloud = cloud;
+        self
+    }
+
+    pub fn with_credential_keys(mut self, keys: Option<TransitKeyProvider>) -> Self {
+        self.credential_keys = keys.map(Arc::new);
+        self
+    }
+
+    pub(crate) fn cloud_providers(&self) -> &CloudProviders {
+        &self.cloud
+    }
+
+    pub(crate) fn credential_keys(&self) -> Option<&TransitKeyProvider> {
+        self.credential_keys.as_deref()
     }
 
     /// Which data plane a caller speaks for, refusing anybody who is not one.

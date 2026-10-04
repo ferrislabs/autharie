@@ -1,9 +1,14 @@
 use autharie_auth::Identity;
 use autharie_core::{
-    dataplane::value_objects::Region,
+    CoreError,
+    cloud_credentials::{CloudProviderService, ProfileSpec},
+    dataplane::{credential::CloudCredentialId, value_objects::Region},
     deployments::{
-        Deployment, DeploymentKind, DeploymentName, commands::CreateDeploymentCommand,
-        environment::Environment, ports::DeploymentService,
+        Deployment, DeploymentKind, DeploymentName,
+        commands::CreateDeploymentCommand,
+        distribution::{Distribution, DistributionError},
+        environment::Environment,
+        ports::DeploymentService,
     },
     offers::Offer,
     user::UserId,
@@ -15,7 +20,10 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
-use crate::{errors::ApiError, response::Response, state::AppState};
+use crate::{
+    errors::ApiError, handlers::cloud_credentials::profile::ClusterProfileRequest,
+    response::Response, state::AppState,
+};
 
 #[derive(Deserialize, ToSchema)]
 pub struct CreateDeploymentRequest {
@@ -46,6 +54,31 @@ pub struct CreateDeploymentRequest {
     /// could send both could contradict the offer it named, and nothing would
     /// be able to say which half was meant.
     pub offer: String,
+
+    #[serde(default)]
+    pub distribution: Option<DistributionRequest>,
+}
+
+#[derive(Deserialize, ToSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum DistributionRequest {
+    Shared,
+    SelfHosted,
+    CustomerCloud {
+        credential_id: Uuid,
+        region: String,
+        profile: ClusterProfileRequest,
+    },
+}
+
+enum RequestedDistribution {
+    Shared,
+    SelfHosted,
+    CustomerCloud {
+        credential_id: CloudCredentialId,
+        region: Region,
+        spec: ProfileSpec,
+    },
 }
 
 #[derive(Serialize, ToSchema, PartialEq)]
@@ -60,6 +93,7 @@ struct ParsedCreateDeploymentRequest {
     environment: Environment,
     region: Region,
     offer: Offer,
+    distribution: RequestedDistribution,
 }
 
 /// What a request naming a region is told.
@@ -90,13 +124,50 @@ impl ParsedCreateDeploymentRequest {
             return Err(refused(REGION_IS_NOT_YOURS.to_string()));
         }
 
+        let (distribution, region) = match request.distribution {
+            None | Some(DistributionRequest::Shared) => (
+                RequestedDistribution::Shared,
+                Region::new(default_region.to_string()),
+            ),
+            Some(DistributionRequest::SelfHosted) => (
+                RequestedDistribution::SelfHosted,
+                Region::new(default_region.to_string()),
+            ),
+            Some(DistributionRequest::CustomerCloud {
+                credential_id,
+                region,
+                profile,
+            }) => {
+                if kind != DeploymentKind::Ferriskey {
+                    return Err(ApiError::from(CoreError::from(
+                        DistributionError::NotAllowedForKind { kind },
+                    )));
+                }
+
+                if region.trim().is_empty() {
+                    return Err(refused("a customer cloud region is required".to_string()));
+                }
+
+                let region = Region::new(region);
+                (
+                    RequestedDistribution::CustomerCloud {
+                        credential_id: CloudCredentialId(credential_id),
+                        region: region.clone(),
+                        spec: profile.into_spec()?,
+                    },
+                    region,
+                )
+            }
+        };
+
         Ok(Self {
             name: request.name,
             kind,
             version,
             environment,
-            region: Region::new(default_region.to_string()),
+            region,
             offer,
+            distribution,
         })
     }
 }
@@ -121,6 +192,8 @@ pub struct CreateDeploymentRoute {
         (status = 201, description = "Deployment created successfully", body = CreateDeploymentResponse),
         (status = 400, description = "Invalid request data", body = ApiError),
         (status = 401, description = "Unauthorized", body = ApiError),
+        (status = 422, description = "The distribution or the cluster profile is refused", body = ApiError),
+        (status = 502, description = "The provider refused or could not serve the request", body = ApiError),
         (status = 500, description = "Internal Server Error", body = ApiError)
     ),
     security(
@@ -144,6 +217,27 @@ pub async fn create_deployment_handler(
     let parsed =
         ParsedCreateDeploymentRequest::parse(request, &state.args.dataplane.default_region)?;
 
+    let distribution = match parsed.distribution {
+        RequestedDistribution::Shared => Distribution::Shared,
+        RequestedDistribution::SelfHosted => Distribution::SelfHosted,
+        RequestedDistribution::CustomerCloud {
+            credential_id,
+            region,
+            spec,
+        } => {
+            state
+                .service
+                .resolve_customer_cloud(
+                    identity.clone(),
+                    organisation_id,
+                    credential_id,
+                    region,
+                    spec,
+                )
+                .await?
+        }
+    };
+
     let command = CreateDeploymentCommand::new(
         organisation_id,
         DeploymentName(parsed.name),
@@ -153,7 +247,9 @@ pub async fn create_deployment_handler(
         parsed.environment,
         parsed.region,
         parsed.offer,
-    );
+    )
+    .with_distribution(distribution)
+    .map_err(CoreError::from)?;
 
     let deployment = state.service.create_deployment(identity, command).await?;
 
@@ -250,6 +346,74 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn a_keycloak_deployment_cannot_ask_for_the_customer_cloud_spec_ccp_9() {
+        let Err(refused) = parse(CreateDeploymentRequest {
+            kind: "keycloak".to_string(),
+            distribution: customer_cloud("fr-par"),
+            ..a_request()
+        }) else {
+            panic!("a keycloak deployment was placed in the customer's cloud");
+        };
+
+        assert!(
+            matches!(refused, ApiError::Unprocessable { .. }),
+            "{refused:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_ferriskey_deployment_runs_in_the_region_of_its_cluster() {
+        let parsed = parse(CreateDeploymentRequest {
+            kind: "ferriskey".to_string(),
+            distribution: customer_cloud("fr-par"),
+            ..a_request()
+        })
+        .expect("a valid request");
+
+        assert_eq!(parsed.region.as_str(), "fr-par");
+        assert!(matches!(
+            parsed.distribution,
+            RequestedDistribution::CustomerCloud { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_request_without_a_distribution_is_shared() {
+        let parsed = parse(a_request()).expect("a valid request");
+
+        assert!(matches!(parsed.distribution, RequestedDistribution::Shared));
+    }
+
+    #[test]
+    fn the_distribution_wire_shape_is_tagged() {
+        let shared: DistributionRequest =
+            serde_json::from_str(r#"{"type":"shared"}"#).expect("shared");
+        let hosted: DistributionRequest =
+            serde_json::from_str(r#"{"type":"self_hosted"}"#).expect("self hosted");
+        let cloud: DistributionRequest = serde_json::from_str(
+            r#"{"type":"customer_cloud","credential_id":"00000000-0000-0000-0000-000000000000","region":"fr-par","profile":{"mode":"dev","control_plane_id":"c","node_type":"n","min_nodes":1,"max_nodes":1,"replication":1}}"#,
+        )
+        .expect("customer cloud");
+
+        assert!(matches!(shared, DistributionRequest::Shared));
+        assert!(matches!(hosted, DistributionRequest::SelfHosted));
+        assert!(matches!(cloud, DistributionRequest::CustomerCloud { .. }));
+    }
+
+    #[tokio::test]
+    async fn a_customer_cloud_without_a_region_is_a_bad_request() {
+        let Err(refused) = parse(CreateDeploymentRequest {
+            kind: "ferriskey".to_string(),
+            distribution: customer_cloud("  "),
+            ..a_request()
+        }) else {
+            panic!("accepted");
+        };
+
+        assert!(matches!(refused, ApiError::BadRequest { .. }));
+    }
+
     fn a_request() -> CreateDeploymentRequest {
         CreateDeploymentRequest {
             name: "deployment".to_string(),
@@ -258,7 +422,23 @@ mod tests {
             environment: "production".to_string(),
             region: None,
             offer: "standard".to_string(),
+            distribution: None,
         }
+    }
+
+    fn customer_cloud(region: &str) -> Option<DistributionRequest> {
+        Some(DistributionRequest::CustomerCloud {
+            credential_id: Uuid::new_v4(),
+            region: region.to_string(),
+            profile: ClusterProfileRequest {
+                mode: autharie_core::dataplane::cluster_profile::ClusterMode::Dev,
+                control_plane_id: "mutualized".to_string(),
+                node_type: "small".to_string(),
+                min_nodes: 1,
+                max_nodes: 1,
+                replication: 1,
+            },
+        })
     }
 
     fn parse(request: CreateDeploymentRequest) -> Result<ParsedCreateDeploymentRequest, ApiError> {

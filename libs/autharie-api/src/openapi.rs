@@ -3,6 +3,7 @@ use utoipa::OpenApi;
 use crate::handlers::{
     actions::ActionApiDoc,
     audit::AuditApiDoc,
+    cloud_credentials::CloudCredentialApiDoc,
     dataplanes::DataPlaneApiDoc,
     deployments::DeploymentApiDoc,
     invitations::{InvitationApiDoc, accept::__path_accept_invitation_handler},
@@ -37,6 +38,7 @@ use crate::handlers::{
         (path = "/organisations", api = InvitationApiDoc),
         (path = "/organisations", api = PermissionsApiDoc),
         (path = "/organisations", api = DeploymentApiDoc),
+        (path = "/organisations", api = CloudCredentialApiDoc),
         (path = "/organisations", api = ActionApiDoc),
         (path = "/organisations", api = AuditApiDoc),
         (path = "/organisations", api = LogsApiDoc),
@@ -136,8 +138,8 @@ fn served_paths() -> Vec<&'static str> {
     use axum_extra::routing::TypedPath;
 
     use crate::handlers::{
-        actions, audit, dataplanes, deployments, invitations, logs, members, metrics,
-        organisations, permissions, platform, releases, roles, traces, users,
+        actions, audit, cloud_credentials, dataplanes, deployments, invitations, logs, members,
+        metrics, organisations, permissions, platform, releases, roles, traces, users,
     };
 
     vec![
@@ -157,6 +159,10 @@ fn served_paths() -> Vec<&'static str> {
         <deployments::backups::BackupsRoute as TypedPath>::PATH,
         <deployments::backups::BackupScheduleRoute as TypedPath>::PATH,
         <deployments::cutover::CutoverRoute as TypedPath>::PATH,
+        <cloud_credentials::register_credential::CloudCredentialsRoute as TypedPath>::PATH,
+        <cloud_credentials::delete_credential::CloudCredentialRoute as TypedPath>::PATH,
+        <cloud_credentials::list_offers::ProviderOffersRoute as TypedPath>::PATH,
+        <cloud_credentials::estimate_cluster_cost::EstimateClusterProfileRoute as TypedPath>::PATH,
         <members::list_members::ListMembersRoute as TypedPath>::PATH,
         <members::get_member::MemberRoute as TypedPath>::PATH,
         <members::set_member_roles::MemberRolesRoute as TypedPath>::PATH,

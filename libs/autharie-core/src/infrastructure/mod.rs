@@ -1,3 +1,5 @@
+pub mod bootstrap;
+pub mod credentials;
 pub mod herald_identity;
 // Only `role` survives here. Every other module re-exported a repository the
 // application layer used to name explicitly; `#[transactional]` resolves those

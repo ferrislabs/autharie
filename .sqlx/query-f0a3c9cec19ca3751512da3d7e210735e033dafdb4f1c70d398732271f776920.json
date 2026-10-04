@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO cluster_inventory (data_plane_id, kind, provider_id, recorded_at)\n            VALUES ($1, $2, $3, $4)\n            ON CONFLICT (data_plane_id, kind, provider_id) DO NOTHING\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f0a3c9cec19ca3751512da3d7e210735e033dafdb4f1c70d398732271f776920"
+}

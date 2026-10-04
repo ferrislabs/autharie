@@ -9,3 +9,7 @@ pub use domain::*;
 // creating a client for a data plane is an act on the identity provider, and
 // the credentials for it come from the same place every other one does.
 pub use infrastructure::herald_identity::RealmAdmin;
+
+pub use infrastructure::credentials::{
+    CREDENTIALS_KEY, CloudProviders, EnvelopeCredentialStore, FixedCloudProvider, FixedVerdict,
+};

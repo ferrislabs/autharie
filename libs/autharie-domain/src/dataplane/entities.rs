@@ -52,6 +52,8 @@ pub struct DataPlane {
     /// address a DNS record for `<deployment>.autharie.fr` would point at,
     /// not anything the control plane invents.
     pub gateway_address: Option<String>,
+
+    pub failure_reason: Option<String>,
 }
 
 impl DataPlane {
@@ -75,6 +77,7 @@ impl DataPlane {
             herald: None,
             operator_version: None,
             gateway_address: None,
+            failure_reason: None,
         }
     }
 
@@ -138,6 +141,11 @@ impl DataPlane {
         self.status = DataPlaneStatus::Disabled;
     }
 
+    pub fn fail(&mut self, reason: impl Into<String>) {
+        self.status = DataPlaneStatus::Failed;
+        self.failure_reason = Some(reason.into());
+    }
+
     /// Puts it back on the path it was on.
     ///
     /// Not "back to active": a plane that never reported has no business
@@ -187,6 +195,7 @@ mod tests {
             created_at: Utc::now(),
             operator_version: None,
             gateway_address: None,
+            failure_reason: None,
         }
     }
 
@@ -268,6 +277,19 @@ mod tests {
             CoreError::DataPlaneCannotReturnToService { .. }
         ));
         assert_eq!(plane.status, DataPlaneStatus::Failed, "and it did not move");
+    }
+
+    #[test]
+    fn a_failed_plane_says_why_spec_ccp_11() {
+        let mut plane = dataplane(None, DataPlaneStatus::Provisioning);
+
+        plane.fail(crate::dataplane::provisioner::ProvisionError::QuotaExceeded.to_string());
+
+        assert_eq!(plane.status, DataPlaneStatus::Failed);
+        assert_eq!(
+            plane.failure_reason.as_deref(),
+            Some("the provider quota in this account does not allow this cluster")
+        );
     }
 
     fn window() -> Duration {
