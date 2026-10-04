@@ -33,7 +33,7 @@ impl ScalewayVerifier {
         })
     }
 
-    async fn granted(&self, session: &Session<'_>) -> Result<BTreeSet<String>, ApiError> {
+    async fn granted(&self, session: &Session<'_>) -> Result<Option<BTreeSet<String>>, ApiError> {
         let key: ApiKey = session
             .get(
                 &format!("/iam/v1alpha1/api-keys/{}", session.access_key),
@@ -44,10 +44,18 @@ impl ScalewayVerifier {
             .get(&format!("/account/v3/projects/{}", session.project_id), &[])
             .await?;
 
+        if session
+            .organization_id
+            .as_deref()
+            .is_some_and(|supplied| supplied != project.organization_id)
+        {
+            return Ok(None);
+        }
+
         let (principal_filter, principal_id) = match (key.application_id, key.user_id) {
             (Some(application_id), _) => ("application_ids", application_id),
             (None, Some(user_id)) => ("user_ids", user_id),
-            (None, None) => return Ok(BTreeSet::new()),
+            (None, None) => return Ok(Some(BTreeSet::new())),
         };
 
         let policies: PolicyList = session
@@ -76,7 +84,7 @@ impl ScalewayVerifier {
                     .flat_map(|rule| rule.permission_set_names),
             );
         }
-        Ok(granted)
+        Ok(Some(granted))
     }
 }
 
@@ -89,7 +97,8 @@ impl CredentialVerifier for ScalewayVerifier {
         let session = Session::open(&self.http, secret)?;
 
         let granted = match self.granted(&session).await {
-            Ok(granted) => granted,
+            Ok(Some(granted)) => granted,
+            Ok(None) => return Err(CredentialError::Invalid),
             Err(error) if error.is_denied() && error.has_kind("permissions_denied") => {
                 return Err(CredentialError::MissingPermissions {
                     missing: vec![INSPECTION_PERMISSION_SET.to_string()],

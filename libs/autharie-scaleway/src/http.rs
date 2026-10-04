@@ -37,6 +37,8 @@ struct RawCredential {
     access_key: String,
     secret_key: String,
     project_id: String,
+    #[serde(default)]
+    organization_id: Option<String>,
 }
 
 pub(crate) struct Session<'a> {
@@ -44,6 +46,7 @@ pub(crate) struct Session<'a> {
     token: HeaderValue,
     pub(crate) access_key: String,
     pub(crate) project_id: String,
+    pub(crate) organization_id: Option<String>,
 }
 
 impl<'a> Session<'a> {
@@ -64,6 +67,7 @@ impl<'a> Session<'a> {
             token,
             access_key: raw.access_key,
             project_id: raw.project_id,
+            organization_id: raw.organization_id.filter(|id| !id.is_empty()),
         })
     }
 

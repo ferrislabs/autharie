@@ -1028,6 +1028,54 @@ async fn verifier_accepts_the_minimal_permission_sets() {
     verify(&server).await.expect("accepted");
 }
 
+async fn verify_with_organization(
+    server: &MockServer,
+    organization_id: &str,
+) -> Result<(), CredentialError> {
+    let secret = format!(
+        r#"{{"access_key":"SCWACCESSKEY","secret_key":"{SECRET_KEY}","project_id":"proj-1","organization_id":"{organization_id}"}}"#
+    );
+    ScalewayVerifier::new(&config(server))
+        .expect("verifier")
+        .verify(Provider::Scaleway, &SecretString::new(secret))
+        .await
+        .map(|_| ())
+}
+
+#[tokio::test]
+async fn verifier_accepts_the_organization_of_the_project() {
+    let server = MockServer::start_async().await;
+    mock_iam(&server, &MINIMAL);
+
+    verify_with_organization(&server, "org-1")
+        .await
+        .expect("accepted");
+}
+
+#[tokio::test]
+async fn verifier_refuses_an_organization_the_project_does_not_belong_to() {
+    let server = MockServer::start_async().await;
+    mock_iam(&server, &MINIMAL);
+
+    let error = verify_with_organization(&server, "org-other")
+        .await
+        .expect_err("refused");
+
+    assert!(matches!(error, CredentialError::Invalid));
+    let shown = format!("{error} {error:?}");
+    assert!(!shown.contains("org-other"));
+    assert!(!shown.contains("org-1"));
+    assert!(!shown.contains(SECRET_KEY));
+}
+
+#[tokio::test]
+async fn verifier_without_an_organization_behaves_as_before() {
+    let server = MockServer::start_async().await;
+    mock_iam(&server, &MINIMAL);
+
+    verify(&server).await.expect("accepted");
+}
+
 #[tokio::test]
 async fn verifier_lists_what_is_missing() {
     let server = MockServer::start_async().await;
