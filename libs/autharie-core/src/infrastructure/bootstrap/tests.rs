@@ -386,3 +386,33 @@ async fn the_chart_renders_with_exactly_the_values_the_adapter_builds() {
 
     assert!(outcome.succeeded(), "{outcome:?}");
 }
+
+#[tokio::test]
+async fn helm_keeps_its_cache_and_config_inside_the_working_directory() {
+    let workdir = std::env::temp_dir().join(format!("helm-home-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&workdir).unwrap();
+    let runner = TokioHelmRunner::new(PathBuf::from("sh"), Duration::from_secs(30));
+
+    let mut seen = Vec::new();
+    for variable in [
+        "HOME",
+        "HELM_CACHE_HOME",
+        "HELM_CONFIG_HOME",
+        "HELM_DATA_HOME",
+    ] {
+        let args = vec!["-c".to_string(), format!("echo \"${variable}\" >&2")];
+        seen.push(runner.run(&args, &workdir).await.unwrap().last_line);
+    }
+
+    let root = workdir.to_string_lossy().into_owned();
+    std::fs::remove_dir_all(&workdir).unwrap();
+    assert_eq!(
+        seen,
+        vec![
+            root.clone(),
+            format!("{root}/helm-cache"),
+            format!("{root}/helm-config"),
+            format!("{root}/helm-data"),
+        ]
+    );
+}
