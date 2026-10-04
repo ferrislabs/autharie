@@ -240,6 +240,21 @@ pub enum CoreError {
     Version(#[from] crate::version::VersionError),
 
     #[error(transparent)]
+    Profile(#[from] crate::dataplane::cluster_profile::ProfileError),
+
+    #[error(transparent)]
+    Resize(#[from] crate::dataplane::cluster_profile::ResizeError),
+
+    #[error(transparent)]
+    Distribution(#[from] crate::deployments::distribution::DistributionError),
+
+    #[error(transparent)]
+    Credential(#[from] crate::dataplane::credential::CredentialError),
+
+    #[error(transparent)]
+    Provision(#[from] crate::dataplane::provisioner::ProvisionError),
+
+    #[error(transparent)]
     ObjectStore(#[from] crate::backups::ObjectStoreError),
 
     #[error(transparent)]

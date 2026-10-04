@@ -3,6 +3,7 @@ use tracing::{info, warn};
 use crate::domain::{
     CoreError,
     dataplane::{
+        cluster_profile::ClusterProfile,
         entities::DataPlane,
         provisioner::{ClusterProvisioner, ProvisionRequest},
         value_objects::DataPlaneId,
@@ -59,13 +60,25 @@ impl ClusterProvisioner for LocalClusterProvisioner {
         info!(dataplane_id = %id, "local provisioner has nothing to deprovision");
         Ok(())
     }
+
+    async fn resize(&self, id: &DataPlaneId, _profile: &ClusterProfile) -> Result<(), CoreError> {
+        warn!(dataplane_id = %id, "refusing to resize: no cluster provisioner is configured");
+
+        Err(CoreError::ProvisioningUnavailable {
+            reason: "This installation cannot create clusters, so it cannot resize one."
+                .to_string(),
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::domain::{
-        dataplane::value_objects::{DeploymentResources, Region},
+        dataplane::{
+            provisioner::ProvisionTarget,
+            value_objects::{DeploymentResources, Region},
+        },
         organisation::OrganisationId,
     };
     use uuid::Uuid;
@@ -75,6 +88,7 @@ mod tests {
             organisation_id: OrganisationId(Uuid::new_v4()),
             region: Region::new("local"),
             minimum: DeploymentResources::DEFAULT,
+            target: ProvisionTarget::Platform,
         }
     }
 

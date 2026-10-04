@@ -1,9 +1,11 @@
 use crate::{
     CoreError,
     dataplane::{
+        cluster_profile::ClusterProfile,
+        credential::CloudCredentialId,
         entities::DataPlane,
         ports::DataPlaneRepository,
-        provisioner::{ClusterProvisioner, ProvisionRequest},
+        provisioner::{ClusterProvisioner, ProvisionRequest, ProvisionTarget},
         value_objects::{
             DataPlaneMode, DataPlaneStatus, DeploymentResources, PlacementPolicy, PlacementRequest,
             PlacementWindows, Region,
@@ -12,6 +14,7 @@ use crate::{
     deployments::{
         Deployment, DeploymentId, DeploymentStatus,
         commands::{CreateDeploymentCommand, UpdateDeploymentCommand},
+        distribution::Distribution,
         environment::namespace_for,
         network::NetworkAccess,
         ports::{DeploymentPolicy, DeploymentRepository, DeploymentService},
@@ -276,12 +279,64 @@ where
                 organisation_id,
                 region: region.clone(),
                 minimum: resources,
+                target: ProvisionTarget::Platform,
             })
             .await?;
 
         self.dataplane_repository.save(&dataplane).await?;
 
         Ok(dataplane)
+    }
+
+    /// Placement for `Distribution::CustomerCloud`: a cluster of its own,
+    /// made in the customer's account for this one deployment.
+    ///
+    /// Nothing is looked up first. The cluster belongs to a deployment that
+    /// does not exist yet, so there is never one to reuse, and sharing one
+    /// between two deployments is what this distribution rules out.
+    ///
+    /// A cluster that was created and could not be recorded is released
+    /// before the error is returned: it bills the customer and nothing
+    /// points at it.
+    async fn place_on_customer_cloud(
+        &self,
+        organisation_id: OrganisationId,
+        deployment_id: DeploymentId,
+        region: &Region,
+        resources: DeploymentResources,
+        credential_id: CloudCredentialId,
+        profile: &ClusterProfile,
+    ) -> Result<DataPlane, CoreError> {
+        let dataplane = self
+            .provisioner
+            .provision(ProvisionRequest {
+                organisation_id,
+                region: region.clone(),
+                minimum: resources,
+                target: ProvisionTarget::Customer {
+                    credential_id,
+                    profile: profile.clone(),
+                    deployment_id,
+                },
+            })
+            .await?;
+
+        if let Err(error) = self.dataplane_repository.save(&dataplane).await {
+            self.release_unrecorded(&dataplane).await;
+            return Err(error);
+        }
+
+        Ok(dataplane)
+    }
+
+    async fn release_unrecorded(&self, dataplane: &DataPlane) {
+        if let Err(error) = self.provisioner.deprovision(&dataplane.id).await {
+            error!(
+                dataplane = %dataplane.id,
+                %error,
+                "could not release a customer cluster that was never recorded"
+            );
+        }
     }
 
     /// Places a deployment, with no question about who asked.
@@ -332,19 +387,38 @@ where
             None => command.offer.resources(),
         };
 
-        let dataplane = match mode {
-            DataPlaneMode::Shared => {
+        let id = DeploymentId(uuid::Uuid::new_v4());
+
+        let dataplane = match (command.distribution(), mode) {
+            (
+                Distribution::CustomerCloud {
+                    credential_id,
+                    profile,
+                },
+                _,
+            ) => {
+                self.place_on_customer_cloud(
+                    command.organisation_id,
+                    id,
+                    &command.region,
+                    resources,
+                    *credential_id,
+                    profile,
+                )
+                .await?
+            }
+            (_, DataPlaneMode::Shared) => {
                 self.place_on_shared(command.organisation_id, &command.region, mode, resources)
                     .await?
             }
-            DataPlaneMode::Dedicated => {
+            (_, DataPlaneMode::Dedicated) => {
                 self.place_on_dedicated(command.organisation_id, &command.region, resources)
                     .await?
             }
         };
 
+        let distribution = command.distribution().clone();
         let now = chrono::Utc::now();
-        let id = DeploymentId(uuid::Uuid::new_v4());
         let deployment = Deployment {
             id,
             organisation_id: command.organisation_id,
@@ -376,6 +450,7 @@ where
             last_restore_drill_seconds: None,
             log_shipping_enabled: false,
             iam_settings: Default::default(),
+            distribution,
         };
 
         info!(
@@ -383,13 +458,22 @@ where
             deployment.name, deployment.kind
         );
 
-        self.deployment_repository
+        let inserted = self
+            .deployment_repository
             .insert(deployment.clone())
             .await
             .map_err(|e| {
                 error!("failed to create deployment: {}", e);
                 e
-            })?;
+            });
+
+        if let Err(error) = inserted {
+            if matches!(deployment.distribution, Distribution::CustomerCloud { .. }) {
+                self.release_unrecorded(&dataplane).await;
+            }
+            return Err(error);
+        }
+
         Ok(deployment)
     }
 }
@@ -825,6 +909,7 @@ mod tests {
             last_restore_drill_seconds: None,
             log_shipping_enabled: false,
             iam_settings: Default::default(),
+            distribution: Default::default(),
         }
     }
 
@@ -1439,6 +1524,161 @@ mod tests {
             .await;
 
         assert!(result.is_ok());
+    }
+
+    fn customer_cloud_command() -> CreateDeploymentCommand {
+        let mut command = command_for("fr-par", DataPlaneMode::Shared);
+        command.kind = DeploymentKind::Ferriskey;
+        command
+            .with_distribution(crate::deployments::distribution::tests::customer_cloud())
+            .expect("ferriskey may use the customer cloud")
+    }
+
+    fn customer_dataplane() -> DataPlane {
+        DataPlane {
+            allocation: DataPlaneAllocation::Customer {
+                organisation_id: OrganisationId(Uuid::new_v4()),
+                deployment_id: DeploymentId(Uuid::new_v4()),
+                credential_id: CloudCredentialId(Uuid::new_v4()),
+            },
+            status: DataPlaneStatus::Provisioning,
+            last_seen_at: None,
+            ..sample_dataplane()
+        }
+    }
+
+    #[tokio::test]
+    async fn a_customer_cloud_deployment_provisions_one_cluster_in_the_customers_account() {
+        let mut mock_repo = MockDeploymentRepository::new();
+        mock_repo
+            .expect_insert()
+            .times(1)
+            .withf(|deployment| {
+                matches!(deployment.distribution, Distribution::CustomerCloud { .. })
+            })
+            .returning(|_| Box::pin(async { Ok(()) }));
+
+        let mut mock_dataplane_repo = MockDataPlaneRepository::new();
+        mock_dataplane_repo.expect_find_available().times(0);
+        mock_dataplane_repo
+            .expect_find_dedicated_for_organisation()
+            .times(0);
+        mock_dataplane_repo
+            .expect_save()
+            .times(1)
+            .returning(|_| Box::pin(async { Ok(()) }));
+
+        let mut mock_provisioner = MockClusterProvisioner::new();
+        mock_provisioner
+            .expect_provision()
+            .times(1)
+            .withf(|request| matches!(request.target, ProvisionTarget::Customer { .. }))
+            .returning(|_| {
+                let dataplane = customer_dataplane();
+                Box::pin(async move { Ok(dataplane) })
+            });
+        mock_provisioner.expect_deprovision().times(0);
+
+        let service = DeploymentServiceImpl::new(
+            mock_repo,
+            StubUserRepository,
+            mock_dataplane_repo,
+            organisations_on(crate::organisation::value_objects::Plan::Enterprise),
+            mock_provisioner,
+            windows(),
+            Allowed,
+        );
+
+        let deployment = service
+            .create_deployment(caller(), customer_cloud_command())
+            .await
+            .expect("placed");
+
+        assert!(matches!(
+            deployment.distribution,
+            Distribution::CustomerCloud { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_cluster_whose_deployment_could_not_be_recorded_is_released() {
+        let mut mock_repo = MockDeploymentRepository::new();
+        mock_repo.expect_insert().times(1).returning(|_| {
+            Box::pin(async {
+                Err(CoreError::DatabaseError {
+                    message: "down".to_string(),
+                })
+            })
+        });
+
+        let mut mock_dataplane_repo = MockDataPlaneRepository::new();
+        mock_dataplane_repo
+            .expect_save()
+            .returning(|_| Box::pin(async { Ok(()) }));
+
+        let mut mock_provisioner = MockClusterProvisioner::new();
+        mock_provisioner.expect_provision().returning(|_| {
+            let dataplane = customer_dataplane();
+            Box::pin(async move { Ok(dataplane) })
+        });
+        mock_provisioner
+            .expect_deprovision()
+            .times(1)
+            .returning(|_| Box::pin(async { Ok(()) }));
+
+        let service = DeploymentServiceImpl::new(
+            mock_repo,
+            StubUserRepository,
+            mock_dataplane_repo,
+            organisations_on(crate::organisation::value_objects::Plan::Enterprise),
+            mock_provisioner,
+            windows(),
+            Allowed,
+        );
+
+        let result = service
+            .create_deployment(caller(), customer_cloud_command())
+            .await;
+
+        assert!(matches!(result, Err(CoreError::DatabaseError { .. })));
+    }
+
+    #[tokio::test]
+    async fn a_cluster_that_could_not_be_saved_is_released() {
+        let mut mock_dataplane_repo = MockDataPlaneRepository::new();
+        mock_dataplane_repo.expect_save().returning(|_| {
+            Box::pin(async {
+                Err(CoreError::DatabaseError {
+                    message: "down".to_string(),
+                })
+            })
+        });
+
+        let mut mock_provisioner = MockClusterProvisioner::new();
+        mock_provisioner.expect_provision().returning(|_| {
+            let dataplane = customer_dataplane();
+            Box::pin(async move { Ok(dataplane) })
+        });
+        mock_provisioner
+            .expect_deprovision()
+            .times(1)
+            .returning(|_| Box::pin(async { Ok(()) }));
+
+        let service = DeploymentServiceImpl::new(
+            MockDeploymentRepository::new(),
+            StubUserRepository,
+            mock_dataplane_repo,
+            organisations_on(crate::organisation::value_objects::Plan::Enterprise),
+            mock_provisioner,
+            windows(),
+            Allowed,
+        );
+
+        let result = service
+            .create_deployment(caller(), customer_cloud_command())
+            .await;
+
+        assert!(matches!(result, Err(CoreError::DatabaseError { .. })));
     }
 
     /// The reason `find_dedicated_for_organisation` is asked before

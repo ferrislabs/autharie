@@ -9,6 +9,7 @@ use autharie_domain::{
     dataplane::value_objects::DataPlaneId,
     deployments::{
         Deployment, DeploymentId, DeploymentKind, DeploymentName, DeploymentStatus,
+        distribution::Distribution,
         network::{Cidr, NetworkAccess},
         ports::DeploymentRepository,
     },
@@ -116,6 +117,7 @@ impl DeploymentRow {
             last_restore_drill_seconds: self.last_restore_drill_seconds,
             log_shipping_enabled: self.log_shipping_enabled,
             iam_settings: parse_iam_settings(self.iam_settings, self.id)?,
+            distribution: Distribution::Shared,
         })
     }
 }
@@ -293,6 +295,12 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
     }
 
     async fn insert(&self, deployment: Deployment) -> Result<(), CoreError> {
+        if deployment.distribution != Distribution::Shared {
+            return Err(CoreError::InternalError(
+                "a deployment distribution other than shared is not persisted yet".to_string(),
+            ));
+        }
+
         // Bound before the query rather than inline: the slice is borrowed for
         // the whole call, and a temporary built in the argument list is gone
         // before it is read.

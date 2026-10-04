@@ -6,7 +6,10 @@ use crate::{
     user::UserId,
 };
 
-use super::{DeploymentKind, DeploymentName, DeploymentStatus};
+use super::{
+    DeploymentKind, DeploymentName, DeploymentStatus,
+    distribution::{Distribution, DistributionError},
+};
 use crate::version::Version;
 
 /// Command to create a new deployment
@@ -37,6 +40,10 @@ pub struct CreateDeploymentCommand {
 
     /// Present when this deployment exists to hold somebody's data back.
     pub recovery: Option<Recovery>,
+
+    /// Private so the only way to ask for the customer's cloud is
+    /// [`CreateDeploymentCommand::with_distribution`], which checks the kind.
+    distribution: Distribution,
 }
 
 /// What a recovery deployment is coming back from.
@@ -73,7 +80,21 @@ impl CreateDeploymentCommand {
             region,
             offer,
             recovery: None,
+            distribution: Distribution::Shared,
         }
+    }
+
+    /// Where it is hosted, refused when this kind cannot be hosted there.
+    pub fn with_distribution(
+        mut self,
+        distribution: Distribution,
+    ) -> Result<Self, DistributionError> {
+        self.distribution = distribution.checked_for(&self.kind)?;
+        Ok(self)
+    }
+
+    pub fn distribution(&self) -> &Distribution {
+        &self.distribution
     }
 
     /// The same deployment, brought back from an archive.
@@ -190,6 +211,51 @@ mod tests {
             Offer::Standard.resources(),
             crate::dataplane::value_objects::DeploymentResources::DEFAULT,
             "the standard offer stopped matching the platform default"
+        );
+    }
+
+    fn a_command(kind: DeploymentKind) -> CreateDeploymentCommand {
+        CreateDeploymentCommand::new(
+            OrganisationId(Uuid::new_v4()),
+            DeploymentName("app".to_string()),
+            kind,
+            Version::new(1, 0, 0),
+            UserId(Uuid::new_v4()),
+            Environment::Production,
+            Region::new("fr-par"),
+            Offer::Standard,
+        )
+    }
+
+    /// @spec-ccp-9
+    #[test]
+    fn a_keycloak_command_cannot_ask_for_the_customer_cloud() {
+        let customer_cloud = crate::deployments::distribution::tests::customer_cloud();
+
+        let result = a_command(DeploymentKind::Keycloak).with_distribution(customer_cloud);
+
+        assert!(matches!(
+            result,
+            Err(DistributionError::NotAllowedForKind { .. })
+        ));
+    }
+
+    #[test]
+    fn a_ferriskey_command_can_ask_for_the_customer_cloud() {
+        let customer_cloud = crate::deployments::distribution::tests::customer_cloud();
+
+        let command = a_command(DeploymentKind::Ferriskey)
+            .with_distribution(customer_cloud.clone())
+            .expect("allowed");
+
+        assert_eq!(command.distribution(), &customer_cloud);
+    }
+
+    #[test]
+    fn a_command_is_shared_by_default() {
+        assert_eq!(
+            a_command(DeploymentKind::Keycloak).distribution(),
+            &Distribution::Shared
         );
     }
 

@@ -407,6 +407,12 @@ impl DataPlaneRepository for PostgresDataPlaneRepository<'_> {
     }
 
     async fn save(&self, dataplane: &DataPlane) -> Result<(), CoreError> {
+        if matches!(dataplane.allocation, DataPlaneAllocation::Customer { .. }) {
+            return Err(CoreError::InternalError(
+                "a customer cloud data plane is not persisted yet".to_string(),
+            ));
+        }
+
         let now = Utc::now();
         {
             let mut tx = self.tx.lock().await;

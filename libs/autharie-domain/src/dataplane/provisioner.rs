@@ -1,9 +1,12 @@
 use crate::{
     CoreError,
     dataplane::{
+        cluster_profile::ClusterProfile,
+        credential::CloudCredentialId,
         entities::DataPlane,
         value_objects::{DataPlaneId, DeploymentResources, Region},
     },
+    deployments::DeploymentId,
     organisation::OrganisationId,
 };
 
@@ -23,6 +26,13 @@ pub trait ClusterProvisioner: Send + Sync {
     /// Releases the infrastructure. Must be idempotent: it is called on
     /// cleanup paths that cannot know whether a previous attempt got through.
     fn deprovision(&self, id: &DataPlaneId) -> impl Future<Output = Result<(), CoreError>> + Send;
+
+    /// Moves an existing cluster to another profile, keeping the data plane.
+    fn resize(
+        &self,
+        id: &DataPlaneId,
+        profile: &ClusterProfile,
+    ) -> impl Future<Output = Result<(), CoreError>> + Send;
 }
 
 pub struct ProvisionRequest {
@@ -31,4 +41,36 @@ pub struct ProvisionRequest {
     /// What the first deployment needs. A provisioner sizes the cluster to at
     /// least this, and is free to size it larger.
     pub minimum: DeploymentResources,
+    pub target: ProvisionTarget,
+}
+
+/// Whose infrastructure the cluster is made in.
+pub enum ProvisionTarget {
+    /// The platform's own account, as every provisioner did before customers
+    /// brought their own.
+    Platform,
+    /// The customer's account. The adapter resolves the credential itself, so
+    /// the secret never travels through the request.
+    Customer {
+        credential_id: CloudCredentialId,
+        profile: ClusterProfile,
+        deployment_id: DeploymentId,
+    },
+}
+
+/// Why a cluster could not be created. Each one is the readable reason a
+/// data plane shows when it ends `Failed`.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ProvisionError {
+    #[error("the provider quota in this account does not allow this cluster")]
+    QuotaExceeded,
+
+    #[error("the provider cannot create clusters in this region")]
+    RegionUnavailable,
+
+    #[error("the node pool never became ready")]
+    NodePoolNeverConverged,
+
+    #[error("the provider rejected the credential")]
+    CredentialRejected,
 }

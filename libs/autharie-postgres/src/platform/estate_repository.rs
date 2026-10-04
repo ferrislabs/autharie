@@ -112,6 +112,7 @@ impl EstateRow {
                 // this row never carries the real switch either.
                 log_shipping_enabled: false,
                 iam_settings: Default::default(),
+                distribution: Default::default(),
             },
         })
     }
