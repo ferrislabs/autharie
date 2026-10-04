@@ -270,7 +270,11 @@ impl CustomerCloudArgs {
             helm_binary: self.helm_binary.clone(),
             ..HelmConfig::new(
                 self.control_plane_url.trim(),
-                self.herald_issuer.as_deref().unwrap_or(&auth.issuer),
+                self.herald_issuer
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|issuer| !issuer.is_empty())
+                    .unwrap_or(&auth.issuer),
             )
         }
     }
@@ -950,6 +954,12 @@ mod tests {
             ..args
         };
         assert_eq!(own.helm_config(&auth).herald_issuer, "http://herald.test");
+
+        let blank = CustomerCloudArgs {
+            herald_issuer: Some("  ".to_string()),
+            ..own
+        };
+        assert_eq!(blank.helm_config(&auth).herald_issuer, "http://issuer.test");
     }
 
     #[test]

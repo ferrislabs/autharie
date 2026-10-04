@@ -98,6 +98,7 @@ services:
       # cluster in somebody else's cloud can reach: localhost is not.
       CUSTOMER_CLOUD_ENABLED: ${CUSTOMER_CLOUD_ENABLED:-false}
       CUSTOMER_CLOUD_CONTROL_PLANE_URL: ${CUSTOMER_CLOUD_CONTROL_PLANE_URL:-}
+      CUSTOMER_CLOUD_HERALD_ISSUER: ${CUSTOMER_CLOUD_HERALD_ISSUER:-}
       # The oldest version a data plane may report and still be sent an
       # upgrade: the control plane refuses one for a Herald older than this,
       # which could not read the action. Set to what the local chart reports

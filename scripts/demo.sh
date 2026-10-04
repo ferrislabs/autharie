@@ -81,6 +81,7 @@ fi
 export AUTHARIE_BOOTSTRAP_OPERATOR="${AUTHARIE_BOOTSTRAP_OPERATOR:-}"
 export CUSTOMER_CLOUD_ENABLED="${CUSTOMER_CLOUD_ENABLED:-false}"
 export CUSTOMER_CLOUD_CONTROL_PLANE_URL="${CUSTOMER_CLOUD_CONTROL_PLANE_URL:-}"
+export CUSTOMER_CLOUD_HERALD_ISSUER="${CUSTOMER_CLOUD_HERALD_ISSUER:-}"
 
 step "control plane (docker compose)"
 docker compose --profile ferriskey up -d --build --wait 2>&1 | tail -3 \
