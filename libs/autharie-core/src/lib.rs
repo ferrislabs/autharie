@@ -15,7 +15,9 @@ pub use infrastructure::credentials::{
 };
 
 pub use infrastructure::{
-    bootstrap::{HelmBootstrapper, HelmConfig, HelmOutcome, HelmRunner, TokioHelmRunner},
+    bootstrap::{
+        HelmBootstrapper, HelmConfig, HelmOutcome, HelmRelease, HelmRunner, TokioHelmRunner,
+    },
     pooled::{PooledCredentialStore, PooledDataPlanes, PooledInventory, PostgresClusterQueue},
 };
 

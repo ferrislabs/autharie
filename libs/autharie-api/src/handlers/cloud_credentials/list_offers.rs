@@ -24,6 +24,7 @@ pub struct ProviderOffersRoute {
 }
 
 #[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct ProviderOffersQuery {
     pub region: String,
 }

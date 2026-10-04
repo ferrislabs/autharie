@@ -196,4 +196,37 @@ impl<'tx> PostgresClusterClaims<'tx> {
 
         Ok(affected > 0)
     }
+
+    pub async fn awaiting_deletion(&self, limit: i64) -> Result<Vec<DataPlaneId>, CoreError> {
+        let mut tx = self.tx.lock().await;
+        let ids = sqlx::query_scalar!(
+            r#"
+            SELECT dp.id AS "id!"
+            FROM data_planes dp
+            JOIN deployments d ON d.id = dp.deployment_id
+            WHERE dp.mode = 'customer'
+              AND dp.status IN ('disabled', 'failed')
+              AND d.status = 'deleting'
+              AND d.deleted_at IS NOT NULL
+              AND (dp.provisioning_claimed_until IS NULL
+                   OR dp.provisioning_claimed_until < now())
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM cluster_inventory ci
+                  WHERE ci.data_plane_id = dp.id
+                    AND ci.released_at IS NULL
+              )
+            ORDER BY dp.created_at
+            LIMIT $1
+            "#,
+            limit
+        )
+        .fetch_all(&mut ***tx)
+        .await
+        .map_err(database_error(
+            "list released customer data planes whose deployment is still deleting",
+        ))?;
+
+        Ok(ids.into_iter().map(DataPlaneId).collect())
+    }
 }

@@ -44,4 +44,14 @@ pub trait CustomerClusterQueue: Send + Sync {
     ) -> impl Future<Output = Result<Vec<DataPlane>, CoreError>> + Send;
 
     fn disable(&self, id: &DataPlaneId) -> impl Future<Output = Result<bool, CoreError>> + Send;
+
+    fn awaiting_deletion(
+        &self,
+        limit: u32,
+    ) -> impl Future<Output = Result<Vec<DataPlaneId>, CoreError>> + Send;
+
+    fn confirm_deleted(
+        &self,
+        id: &DataPlaneId,
+    ) -> impl Future<Output = Result<bool, CoreError>> + Send;
 }

@@ -510,3 +510,63 @@ async fn a_plane_being_provisioned_is_not_torn_down_and_a_disabled_one_is_left_a
     assert!(candidates(&pool).await.is_empty());
     wipe(&pool).await;
 }
+
+async fn awaiting(pool: &PgPool) -> Vec<DataPlaneId> {
+    with_tx(pool, db_error, async |tx: SharedTx<'_>| {
+        PostgresClusterClaims::new(&tx).awaiting_deletion(100).await
+    })
+    .await
+    .expect("the listing ran")
+}
+
+#[tokio::test]
+async fn a_released_plane_of_a_deleting_deployment_awaits_its_deleted_status_until_it_is_set() {
+    let Some(pool) = pool().await else { return };
+    let _serial = COMMITTED.lock().await;
+    let account = seed_account(&pool).await;
+    let (live, _) = seed_customer_plane(&pool, &account).await;
+    let (released, released_deployment) = seed_customer_plane(&pool, &account).await;
+    let (holding, holding_deployment) = seed_customer_plane(&pool, &account).await;
+    let (failed, failed_deployment) = seed_customer_plane(&pool, &account).await;
+    record(&pool, holding, "still-there").await;
+
+    with_tx(&pool, db_error, async |tx: SharedTx<'_>| {
+        let claims = PostgresClusterClaims::new(&tx);
+        let deployments = PostgresDeploymentRepository::new(&tx);
+        deployments.delete(released_deployment).await?;
+        deployments.delete(holding_deployment).await?;
+        deployments.delete(failed_deployment).await?;
+        claims.release_claim(&released).await?;
+        claims.disable(&released).await?;
+        claims.fail_provisioning(&failed, "quota").await?;
+        Ok(())
+    })
+    .await
+    .expect("the setup ran");
+
+    let listed: HashSet<_> = awaiting(&pool).await.into_iter().collect();
+    assert_eq!(listed, HashSet::from([released, failed]));
+    assert!(!listed.contains(&live));
+    assert!(!listed.contains(&holding));
+
+    let confirmed = with_tx(&pool, db_error, async |tx: SharedTx<'_>| {
+        let deployments = PostgresDeploymentRepository::new(&tx);
+        let mut deployment = deployments
+            .get_by_id(released_deployment)
+            .await?
+            .expect("the deployment exists");
+        let first = deployment.confirm_deletion(Utc::now());
+        deployments.update(deployment).await?;
+        let again = deployments
+            .get_by_id(released_deployment)
+            .await?
+            .expect("the deployment exists");
+        Ok((first, again.status, again.deleted_at.is_some()))
+    })
+    .await
+    .expect("the confirmation ran");
+
+    assert_eq!(confirmed, (true, DeploymentStatus::Deleted, true));
+    assert_eq!(awaiting(&pool).await, vec![failed]);
+    wipe(&pool).await;
+}

@@ -7,5 +7,5 @@ mod workdir;
 mod tests;
 
 pub use bootstrapper::HelmBootstrapper;
-pub use config::HelmConfig;
+pub use config::{HelmConfig, HelmRelease};
 pub use runner::{HelmOutcome, HelmRunner, TokioHelmRunner};

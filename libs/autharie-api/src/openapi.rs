@@ -62,6 +62,27 @@ mod tests {
     use utoipa::OpenApi;
 
     #[test]
+    fn the_region_of_the_provider_offers_is_a_query_parameter() {
+        let document = serde_json::to_value(ApiDoc::openapi()).expect("a document");
+        let parameters = document["paths"]
+            ["/organisations/{organisation_id}/cloud-credentials/{credential_id}/offers"]["get"]
+            ["parameters"]
+            .as_array()
+            .expect("parameters");
+
+        let location_of = |name: &str| {
+            parameters
+                .iter()
+                .find(|parameter| parameter["name"] == name)
+                .map(|parameter| parameter["in"].as_str().unwrap_or_default().to_string())
+        };
+
+        assert_eq!(location_of("region").as_deref(), Some("query"));
+        assert_eq!(location_of("organisation_id").as_deref(), Some("path"));
+        assert_eq!(location_of("credential_id").as_deref(), Some("path"));
+    }
+
+    #[test]
     fn openapi_has_title() {
         let doc = ApiDoc::openapi();
         assert_eq!(doc.info.title, "Autharie API");

@@ -50,9 +50,10 @@ describe('what a customer cloud deployment shows', () => {
   })
 
   it('shows nothing for an active plane, a shared deployment or an unread plane', () => {
-    expect(provisioningNotice(customer, { status: 'active' })).toBeNull()
+    expect(provisioningNotice(customer, { status: 'ready' })).toBeNull()
     expect(provisioningNotice({ distribution: 'shared' }, { status: 'provisioning' })).toBeNull()
     expect(provisioningNotice(customer, undefined)).toBeNull()
+    expect(provisioningNotice(customer, null)).toBeNull()
   })
 
   it('keeps polling only while provisioning', () => {

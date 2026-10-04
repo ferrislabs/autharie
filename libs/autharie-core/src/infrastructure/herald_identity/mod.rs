@@ -25,7 +25,7 @@ use autharie_domain::{
         value_objects::DataPlaneId,
     },
 };
-use reqwest::Client;
+use reqwest::{Client, StatusCode};
 use serde::Deserialize;
 use tracing::{info, warn};
 
@@ -177,6 +177,11 @@ impl FerrisKeyHeraldIdentities {
             .await
             .map_err(|e| Self::failed("remove a client", e))?;
 
+        if answer.status() == StatusCode::NOT_FOUND {
+            warn!(%uuid, "the client to remove was already gone");
+            return Ok(());
+        }
+
         if !answer.status().is_success() {
             return Err(Self::failed("remove a client", answer.status()));
         }
@@ -309,3 +314,6 @@ impl HeraldIdentityProvisioner for FerrisKeyHeraldIdentities {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

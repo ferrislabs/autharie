@@ -17,6 +17,7 @@ use crate::{
         environment::namespace_for,
         network::NetworkAccess,
         ports::{DeploymentPolicy, DeploymentRepository, DeploymentService},
+        provisioning::Provisioning,
     },
     organisation::{OrganisationId, ports::OrganisationRepository},
     user::ports::UserRepository,
@@ -536,6 +537,28 @@ where
         }
 
         Ok(deployment)
+    }
+
+    async fn get_provisioning_for_organisation(
+        &self,
+        identity: Identity,
+        organisation_id: OrganisationId,
+        deployment_id: DeploymentId,
+    ) -> Result<Option<Provisioning>, CoreError> {
+        let deployment = self
+            .get_deployment_for_organisation(identity, organisation_id, deployment_id)
+            .await?;
+
+        if !matches!(deployment.distribution, Distribution::CustomerCloud { .. }) {
+            return Ok(None);
+        }
+
+        Ok(self
+            .dataplane_repository
+            .find_by_id(&deployment.dataplane_id)
+            .await?
+            .as_ref()
+            .and_then(Provisioning::of))
     }
 
     async fn list_deployments_by_organisation(
@@ -2313,6 +2336,159 @@ mod tests {
                 )
                 .await
                 .expect_err("no right to delete");
+
+            assert!(matches!(error, CoreError::PermissionDenied { .. }));
+        }
+    }
+
+    mod the_owner_sees_why_a_cluster_is_not_ready {
+        use super::*;
+        use crate::dataplane::{
+            cloud_provider::{
+                ControlPlaneKind, ControlPlaneOffer, ControlPlaneOfferId, Money, NodeType,
+            },
+            cluster_profile::{ClusterMode, ClusterProfile, Replication},
+        };
+        use crate::deployments::provisioning::ProvisioningStatus;
+
+        fn customer_distribution() -> Distribution {
+            Distribution::CustomerCloud {
+                credential_id: CloudCredentialId(Uuid::new_v4()),
+                profile: ClusterProfile::restore(
+                    ClusterMode::Dev,
+                    ControlPlaneOffer {
+                        id: ControlPlaneOfferId::new("mutualized"),
+                        kind: ControlPlaneKind::Mutualized,
+                        monthly_price: Money::ZERO,
+                    },
+                    NodeType::new("small"),
+                    1,
+                    1,
+                    Replication::new(1).expect("one replica"),
+                )
+                .expect("a profile"),
+            }
+        }
+
+        fn service_over(
+            deployment: Deployment,
+            plane: Option<DataPlane>,
+        ) -> impl DeploymentService {
+            let mut deployments = MockDeploymentRepository::new();
+            deployments.expect_get_by_id().returning(move |_| {
+                let deployment = deployment.clone();
+                Box::pin(async move { Ok(Some(deployment)) })
+            });
+            let mut planes = MockDataPlaneRepository::new();
+            if let Some(plane) = plane {
+                planes.expect_find_by_id().returning(move |_| {
+                    let plane = plane.clone();
+                    Box::pin(async move { Ok(Some(plane)) })
+                });
+            }
+
+            DeploymentServiceImpl::new(
+                deployments,
+                StubUserRepository,
+                planes,
+                organisations_on(crate::organisation::value_objects::Plan::Enterprise),
+                no_provisioning(),
+                windows(),
+                Allowed,
+            )
+        }
+
+        fn customer_deployment(organisation_id: OrganisationId) -> Deployment {
+            let mut deployment = sample_deployment(DeploymentId(Uuid::new_v4()), organisation_id);
+            deployment.kind = DeploymentKind::Ferriskey;
+            deployment.distribution = customer_distribution();
+            deployment
+        }
+
+        #[tokio::test]
+        async fn a_cluster_still_being_built_is_provisioning() {
+            let organisation = OrganisationId(Uuid::new_v4());
+            let deployment = customer_deployment(organisation);
+            let id = deployment.id;
+            let mut plane = sample_dataplane();
+            plane.status = DataPlaneStatus::Provisioning;
+
+            let seen = service_over(deployment, Some(plane))
+                .get_provisioning_for_organisation(caller(), organisation, id)
+                .await
+                .expect("readable")
+                .expect("shown");
+
+            assert_eq!(seen.status, ProvisioningStatus::Provisioning);
+            assert_eq!(seen.failure_reason, None);
+        }
+
+        #[tokio::test]
+        async fn a_failed_cluster_carries_the_readable_reason() {
+            let organisation = OrganisationId(Uuid::new_v4());
+            let deployment = customer_deployment(organisation);
+            let id = deployment.id;
+            let mut plane = sample_dataplane();
+            plane.fail("the provider quota in this account does not allow this cluster");
+
+            let seen = service_over(deployment, Some(plane))
+                .get_provisioning_for_organisation(caller(), organisation, id)
+                .await
+                .expect("readable")
+                .expect("shown");
+
+            assert_eq!(seen.status, ProvisioningStatus::Failed);
+            assert_eq!(
+                seen.failure_reason.as_deref(),
+                Some("the provider quota in this account does not allow this cluster")
+            );
+        }
+
+        #[tokio::test]
+        async fn other_distributions_show_nothing_and_never_read_the_plane() {
+            let organisation = OrganisationId(Uuid::new_v4());
+            let deployment = sample_deployment(DeploymentId(Uuid::new_v4()), organisation);
+            let id = deployment.id;
+
+            let seen = service_over(deployment, None)
+                .get_provisioning_for_organisation(caller(), organisation, id)
+                .await
+                .expect("readable");
+
+            assert_eq!(seen, None);
+        }
+
+        #[tokio::test]
+        async fn somebody_else_organisation_learns_nothing() {
+            let deployment = customer_deployment(OrganisationId(Uuid::new_v4()));
+            let id = deployment.id;
+
+            let error = service_over(deployment, Some(sample_dataplane()))
+                .get_provisioning_for_organisation(caller(), OrganisationId(Uuid::new_v4()), id)
+                .await
+                .expect_err("not theirs");
+
+            assert!(matches!(error, CoreError::DeploymentNotFound { .. }));
+        }
+
+        #[tokio::test]
+        async fn a_caller_who_may_not_view_deployments_is_refused() {
+            let error = DeploymentServiceImpl::new(
+                MockDeploymentRepository::new(),
+                StubUserRepository,
+                MockDataPlaneRepository::new(),
+                organisations_on(crate::organisation::value_objects::Plan::Enterprise),
+                no_provisioning(),
+                windows(),
+                Refused,
+            )
+            .get_provisioning_for_organisation(
+                caller(),
+                OrganisationId(Uuid::new_v4()),
+                DeploymentId(Uuid::new_v4()),
+            )
+            .await
+            .expect_err("no right to look");
 
             assert!(matches!(error, CoreError::PermissionDenied { .. }));
         }

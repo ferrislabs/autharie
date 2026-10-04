@@ -22,15 +22,20 @@ export function planeNotice(
   return null
 }
 
+export const PROVISIONING_POLL_MS = 5000
+
 export function provisioningNotice(
   deployment: Pick<Schemas.Deployment, 'distribution'>,
-  dataplane: Pick<Schemas.DataPlane, 'status' | 'failure_reason'> | undefined,
+  provisioning: Schemas.Provisioning | null | undefined,
 ): ProvisioningNotice | null {
-  return isCustomerCloud(deployment.distribution) ? planeNotice(dataplane) : null
+  if (!provisioning || !isCustomerCloud(deployment.distribution)) return null
+  if (provisioning.status === 'provisioning') return { kind: 'creating', message: CREATING_MESSAGE }
+  if (provisioning.status === 'failed') {
+    return { kind: 'failed', message: provisioning.failure_reason ?? FAILED_WITHOUT_REASON }
+  }
+  return null
 }
 
-export function stillProvisioning(
-  dataplane: Pick<Schemas.DataPlane, 'status'> | undefined,
-): boolean {
-  return dataplane?.status === 'provisioning'
+export function stillProvisioning(provisioning: Schemas.Provisioning | null | undefined): boolean {
+  return provisioning?.status === 'provisioning'
 }

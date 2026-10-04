@@ -1778,7 +1778,7 @@
           },
           {
             "name": "region",
-            "in": "path",
+            "in": "query",
             "required": true,
             "schema": {
               "type": "string"
@@ -10489,6 +10489,16 @@
         "properties": {
           "data": {
             "$ref": "#/components/schemas/Deployment"
+          },
+          "provisioning": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Provisioning"
+              }
+            ]
           }
         }
       },
@@ -11991,6 +12001,31 @@
             }
           }
         }
+      },
+      "Provisioning": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "failure_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/ProvisioningStatus"
+          }
+        }
+      },
+      "ProvisioningStatus": {
+        "type": "string",
+        "enum": [
+          "provisioning",
+          "ready",
+          "failed"
+        ]
       },
       "PublishReleaseRequest": {
         "type": "object",

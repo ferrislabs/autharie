@@ -6,7 +6,7 @@ use autharie_domain::{
         entities::DataPlane,
         ports::HeraldIdentityProvisioner,
         provisioner::{ClusterProvisioner, ProvisionRequest, ProvisionTarget},
-        value_objects::DataPlaneStatus,
+        value_objects::{DataPlaneId, DataPlaneStatus},
     },
 };
 use futures::future::join_all;
@@ -42,6 +42,7 @@ pub struct ProvisionReport {
 pub struct TeardownReport {
     pub released: u32,
     pub retrying: u32,
+    pub confirmed: u32,
 }
 
 enum Outcome {
@@ -97,12 +98,18 @@ where
     }
 
     pub async fn teardown_released(&self) -> Result<TeardownReport, CoreError> {
-        let candidates = self.queue.teardown_candidates(self.settings.batch).await?;
-
         let mut report = TeardownReport::default();
+        for id in self.queue.awaiting_deletion(self.settings.batch).await? {
+            self.confirm_deletion(&id, &mut report).await;
+        }
+
+        let candidates = self.queue.teardown_candidates(self.settings.batch).await?;
         for data_plane in candidates {
             match self.tear_down(&data_plane).await {
-                Ok(()) => report.released += 1,
+                Ok(()) => {
+                    report.released += 1;
+                    self.confirm_deletion(&data_plane.id, &mut report).await;
+                }
                 Err(error) => {
                     error!(
                         data_plane_id = %data_plane.id,
@@ -114,6 +121,24 @@ where
             }
         }
         Ok(report)
+    }
+
+    async fn confirm_deletion(&self, id: &DataPlaneId, report: &mut TeardownReport) {
+        match self.queue.confirm_deleted(id).await {
+            Ok(true) => {
+                info!(data_plane_id = %id, "deployment on a released customer cluster marked deleted");
+                report.confirmed += 1;
+            }
+            Ok(false) => {}
+            Err(error) => {
+                error!(
+                    data_plane_id = %id,
+                    %error,
+                    "marking the deployment of a released cluster deleted failed, it is retried on the next pass"
+                );
+                report.retrying += 1;
+            }
+        }
     }
 
     async fn provision_one(&self, claimed: ClaimedCluster) -> Outcome {
@@ -192,9 +217,7 @@ where
     async fn tear_down(&self, data_plane: &DataPlane) -> Result<(), CoreError> {
         let id = data_plane.id;
 
-        if data_plane.herald.is_some() {
-            self.identities.revoke(id).await?;
-        }
+        self.identities.revoke(id).await?;
         self.provisioner.deprovision(&id).await?;
 
         if data_plane.status != DataPlaneStatus::Failed {

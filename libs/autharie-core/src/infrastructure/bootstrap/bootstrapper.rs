@@ -7,8 +7,12 @@ use autharie_domain::{
         value_objects::DataPlaneId,
     },
 };
+use std::{path::Path, time::Duration};
+
 use serde_json::{Value, json};
 use tracing::{info, warn};
+use uuid::Uuid;
+use zeroize::Zeroizing;
 
 use super::{
     config::HelmConfig,
@@ -21,6 +25,7 @@ const NAMESPACE: &str = "autharie";
 const KUBECONFIG_FILE: &str = "kubeconfig";
 const VALUES_FILE: &str = "values.json";
 const MIN_REDACTED_PART: usize = 8;
+const PASSWORD_PART: usize = 32;
 
 pub struct HelmBootstrapper<I, R = TokioHelmRunner> {
     identities: I,
@@ -53,34 +58,95 @@ impl<I: HeraldIdentityProvisioner, R: HelmRunner> HelmBootstrapper<I, R> {
         request: &BootstrapRequest,
         minted: &MintedHeraldIdentity,
     ) -> Result<(), CoreError> {
+        let password = generate_password();
         let workdir = Workdir::create()?;
         let kubeconfig =
             workdir.write_private(KUBECONFIG_FILE, request.kubeconfig.expose().as_bytes())?;
+        let secrets = [
+            minted.secret.as_str(),
+            request.kubeconfig.expose(),
+            password.as_str(),
+        ];
+
+        for (index, prerequisite) in self.config.prerequisites.iter().enumerate() {
+            let values = workdir.write_private(
+                &format!("prerequisite-{index}.json"),
+                prerequisite.values.to_string().as_bytes(),
+            )?;
+            let invocation = Invocation {
+                release: &prerequisite.release,
+                chart: &prerequisite.chart,
+                repo: prerequisite.repo.as_deref(),
+                version: Some(&prerequisite.version),
+                namespace: &prerequisite.namespace,
+            };
+            let args = upgrade_args(&invocation, self.config.timeout, &kubeconfig, &values);
+            self.run_step(
+                &args,
+                &workdir,
+                &secrets,
+                &format!("the prerequisite {}", prerequisite.release),
+            )
+            .await?;
+        }
+
         let values = workdir.write_private(
             VALUES_FILE,
-            values(&self.config, request.data_plane_id, minted)
+            values(&self.config, request.data_plane_id, minted, &password)
                 .to_string()
                 .as_bytes(),
         )?;
-
         let args = helm_args(&self.config, &kubeconfig, &values);
-        let outcome = self.runner.run(&args, workdir.path()).await?;
+        self.run_step(&args, &workdir, &secrets, "the data plane chart")
+            .await
+    }
+
+    async fn run_step(
+        &self,
+        args: &[String],
+        workdir: &Workdir,
+        secrets: &[&str],
+        what: &str,
+    ) -> Result<(), CoreError> {
+        let outcome = self.runner.run(args, workdir.path()).await?;
 
         if outcome.succeeded() {
             return Ok(());
         }
 
         Err(CoreError::InternalError(format!(
-            "installing the data plane chart failed (exit {}): {}",
+            "installing {what} failed (exit {}): {}",
             outcome
                 .code
                 .map_or_else(|| "signal".to_string(), |c| c.to_string()),
-            redact(&outcome, &minted.secret, request.kubeconfig.expose()),
+            redact(&outcome, secrets),
         )))
     }
 }
 
-pub(crate) fn values(config: &HelmConfig, id: DataPlaneId, minted: &MintedHeraldIdentity) -> Value {
+struct Invocation<'a> {
+    release: &'a str,
+    chart: &'a str,
+    repo: Option<&'a str>,
+    version: Option<&'a str>,
+    namespace: &'a str,
+}
+
+fn generate_password() -> Zeroizing<String> {
+    let mut password = Zeroizing::new(String::with_capacity(2 * PASSWORD_PART));
+    for _ in 0..2 {
+        let mut buffer = Zeroizing::new([0u8; PASSWORD_PART]);
+        password.push_str(Uuid::new_v4().simple().encode_lower(&mut *buffer));
+    }
+    password
+}
+
+pub(crate) fn values(
+    config: &HelmConfig,
+    id: DataPlaneId,
+    minted: &MintedHeraldIdentity,
+    rabbitmq_password: &str,
+) -> Value {
     let mut values = json!({
         "dataplane": { "id": id.0.to_string() },
         "controlPlane": {
@@ -91,6 +157,7 @@ pub(crate) fn values(config: &HelmConfig, id: DataPlaneId, minted: &MintedHerald
                 "clientSecret": minted.secret,
             },
         },
+        "rabbitmq": { "auth": { "password": rabbitmq_password } },
     });
 
     if let Some(registry) = &config.image_registry {
@@ -108,13 +175,29 @@ pub(crate) fn helm_args(
     kubeconfig: &std::path::Path,
     values: &std::path::Path,
 ) -> Vec<String> {
+    let invocation = Invocation {
+        release: RELEASE,
+        chart: &config.chart,
+        repo: None,
+        version: config.chart_version.as_deref(),
+        namespace: NAMESPACE,
+    };
+    upgrade_args(&invocation, config.timeout, kubeconfig, values)
+}
+
+fn upgrade_args(
+    invocation: &Invocation<'_>,
+    timeout: Duration,
+    kubeconfig: &Path,
+    values: &Path,
+) -> Vec<String> {
     let mut args: Vec<String> = [
         "upgrade",
         "--install",
-        RELEASE,
-        config.chart.as_str(),
+        invocation.release,
+        invocation.chart,
         "--namespace",
-        NAMESPACE,
+        invocation.namespace,
         "--create-namespace",
         "--wait",
         "--atomic",
@@ -124,27 +207,32 @@ pub(crate) fn helm_args(
     .map(String::from)
     .collect();
 
-    args.push(format!("{}s", config.timeout.as_secs()));
+    args.push(format!("{}s", timeout.as_secs()));
     args.push("--kubeconfig".to_string());
     args.push(kubeconfig.to_string_lossy().into_owned());
     args.push("--values".to_string());
     args.push(values.to_string_lossy().into_owned());
 
-    if let Some(version) = &config.chart_version {
+    if let Some(repo) = invocation.repo {
+        args.push("--repo".to_string());
+        args.push(repo.to_string());
+    }
+    if let Some(version) = invocation.version {
         args.push("--version".to_string());
-        args.push(version.clone());
+        args.push(version.to_string());
     }
 
     args
 }
 
-fn redact(outcome: &HelmOutcome, secret: &str, kubeconfig: &str) -> String {
+fn redact(outcome: &HelmOutcome, secrets: &[&str]) -> String {
     let line = &outcome.last_line;
-    let leaks = (!secret.is_empty() && line.contains(secret))
-        || (!kubeconfig.is_empty() && line.contains(kubeconfig))
-        || kubeconfig
-            .split(|c: char| c.is_whitespace() || c == '"' || c == '\'')
-            .any(|part| part.len() >= MIN_REDACTED_PART && line.contains(part));
+    let leaks = secrets.iter().any(|secret| {
+        (!secret.is_empty() && line.contains(secret))
+            || secret
+                .split(|c: char| c.is_whitespace() || c == '"' || c == '\'')
+                .any(|part| part.len() >= MIN_REDACTED_PART && line.contains(part))
+    });
 
     if leaks {
         "[output withheld]".to_string()

@@ -102,6 +102,9 @@ struct QueueState {
     completed: Vec<DataPlane>,
     failed: Vec<(DataPlaneId, String)>,
     disabled: Vec<DataPlaneId>,
+    deleting: Vec<DataPlaneId>,
+    confirmed: Vec<DataPlaneId>,
+    confirmations_refused: u32,
     complete_applies: bool,
     leases: Vec<Duration>,
 }
@@ -129,6 +132,20 @@ impl FakeQueue {
     fn with_plane(self, plane: DataPlane) -> Self {
         self.state.lock().expect("lock").planes.push(plane);
         self
+    }
+
+    fn with_deleting_deployment(self, id: DataPlaneId) -> Self {
+        self.state.lock().expect("lock").deleting.push(id);
+        self
+    }
+
+    fn refusing_confirmations(self, times: u32) -> Self {
+        self.state.lock().expect("lock").confirmations_refused = times;
+        self
+    }
+
+    fn confirmed(&self) -> Vec<DataPlaneId> {
+        self.state.lock().expect("lock").confirmed.clone()
     }
 
     fn refusing_completion(self) -> Self {
@@ -196,6 +213,41 @@ impl CustomerClusterQueue for FakeQueue {
             plane.disable();
         }
         Ok(true)
+    }
+
+    async fn awaiting_deletion(&self, _limit: u32) -> Result<Vec<DataPlaneId>, CoreError> {
+        Ok(self.deletion_pending())
+    }
+
+    async fn confirm_deleted(&self, id: &DataPlaneId) -> Result<bool, CoreError> {
+        let mut state = self.state.lock().expect("lock");
+        if state.confirmations_refused > 0 {
+            state.confirmations_refused -= 1;
+            return Err(CoreError::InternalError("database down".to_string()));
+        }
+        let Some(position) = state.deleting.iter().position(|pending| pending == id) else {
+            return Ok(false);
+        };
+        state.deleting.remove(position);
+        state.confirmed.push(*id);
+        Ok(true)
+    }
+}
+
+impl FakeQueue {
+    fn deletion_pending(&self) -> Vec<DataPlaneId> {
+        let state = self.state.lock().expect("lock");
+        state
+            .planes
+            .iter()
+            .filter(|plane| {
+                matches!(
+                    plane.status,
+                    DataPlaneStatus::Disabled | DataPlaneStatus::Failed
+                ) && state.deleting.contains(&plane.id)
+            })
+            .map(|plane| plane.id)
+            .collect()
     }
 }
 
@@ -510,7 +562,8 @@ async fn teardown_releases_the_cluster_revokes_the_identity_and_disables_the_pla
         first,
         TeardownReport {
             released: 1,
-            retrying: 0
+            retrying: 0,
+            confirmed: 0
         }
     );
     assert_eq!(steps(&journal), vec!["revoke", "deprovision"]);
@@ -535,7 +588,7 @@ async fn a_second_teardown_pass_does_nothing_spec_ccp_14() {
 }
 
 #[tokio::test]
-async fn a_plane_that_never_had_an_identity_is_not_revoked() {
+async fn a_plane_without_a_recorded_binding_is_still_revoked_for_an_orphaned_identity() {
     let journal = journal();
     let queue = FakeQueue::new().with_plane(customer_plane());
     let provisioner = FakeProvisioner::new(&journal);
@@ -544,7 +597,7 @@ async fn a_plane_that_never_had_an_identity_is_not_revoked() {
 
     worker.teardown_released().await.expect("a pass");
 
-    assert_eq!(steps(&journal), vec!["deprovision"]);
+    assert_eq!(steps(&journal), vec!["revoke", "deprovision"]);
 }
 
 #[tokio::test]
@@ -564,7 +617,8 @@ async fn a_failing_teardown_keeps_the_plane_and_is_retried() {
         first,
         TeardownReport {
             released: 0,
-            retrying: 1
+            retrying: 1,
+            confirmed: 0
         }
     );
     assert!(queue.disabled().is_empty());
@@ -575,7 +629,8 @@ async fn a_failing_teardown_keeps_the_plane_and_is_retried() {
         second,
         TeardownReport {
             released: 1,
-            retrying: 0
+            retrying: 0,
+            confirmed: 0
         }
     );
     assert_eq!(queue.disabled(), vec![id]);
@@ -609,8 +664,88 @@ async fn a_failed_plane_is_released_but_keeps_its_failed_status_and_reason() {
     let report = worker.teardown_released().await.expect("a pass");
 
     assert_eq!(report.released, 1);
-    assert_eq!(steps(&journal), vec!["deprovision"]);
+    assert_eq!(steps(&journal), vec!["revoke", "deprovision"]);
     assert!(queue.disabled().is_empty());
+}
+
+#[tokio::test]
+async fn a_released_cluster_marks_its_deployment_deleted_and_a_second_pass_does_nothing() {
+    let journal = journal();
+    let plane = deleted_plane_with_herald();
+    let id = plane.id;
+    let queue = FakeQueue::new()
+        .with_plane(plane)
+        .with_deleting_deployment(id);
+    let provisioner = FakeProvisioner::new(&journal);
+    let identities = FakeIdentities::new(&journal);
+    let worker = CustomerClusterWorker::new(queue.clone(), &provisioner, &identities, settings());
+
+    let first = worker.teardown_released().await.expect("a pass");
+    let second = worker.teardown_released().await.expect("a pass");
+
+    assert_eq!(
+        first,
+        TeardownReport {
+            released: 1,
+            retrying: 0,
+            confirmed: 1
+        }
+    );
+    assert_eq!(second, TeardownReport::default());
+    assert_eq!(queue.confirmed(), vec![id]);
+}
+
+#[tokio::test]
+async fn a_failed_plane_whose_deployment_was_deleted_ends_deleted_too() {
+    let journal = journal();
+    let mut plane = customer_plane();
+    plane.fail("the provider quota in this account does not allow this cluster");
+    let id = plane.id;
+    let queue = FakeQueue::new()
+        .with_plane(plane)
+        .with_deleting_deployment(id);
+    let provisioner = FakeProvisioner::new(&journal);
+    let identities = FakeIdentities::new(&journal);
+    let worker = CustomerClusterWorker::new(queue.clone(), &provisioner, &identities, settings());
+
+    worker.teardown_released().await.expect("a pass");
+
+    assert_eq!(queue.confirmed(), vec![id]);
+}
+
+#[tokio::test]
+async fn a_failed_status_update_is_retried_alone_after_the_teardown_stays_done() {
+    let journal = journal();
+    let plane = deleted_plane_with_herald();
+    let id = plane.id;
+    let queue = FakeQueue::new()
+        .with_plane(plane)
+        .with_deleting_deployment(id)
+        .refusing_confirmations(1);
+    let provisioner = FakeProvisioner::new(&journal);
+    let identities = FakeIdentities::new(&journal);
+    let worker = CustomerClusterWorker::new(queue.clone(), &provisioner, &identities, settings());
+
+    let first = worker.teardown_released().await.expect("a pass");
+    let after_first = steps(&journal);
+
+    assert_eq!(first.released, 1);
+    assert_eq!(first.retrying, 1);
+    assert!(queue.confirmed().is_empty());
+    assert_eq!(queue.disabled(), vec![id]);
+
+    let second = worker.teardown_released().await.expect("a pass");
+
+    assert_eq!(
+        second,
+        TeardownReport {
+            released: 0,
+            retrying: 0,
+            confirmed: 1
+        }
+    );
+    assert_eq!(steps(&journal), after_first);
+    assert_eq!(queue.confirmed(), vec![id]);
 }
 
 #[derive(Clone, Default)]

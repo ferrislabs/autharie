@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT dp.id AS \"id!\"\n            FROM data_planes dp\n            JOIN deployments d ON d.id = dp.deployment_id\n            WHERE dp.mode = 'customer'\n              AND dp.status IN ('disabled', 'failed')\n              AND d.status = 'deleting'\n              AND d.deleted_at IS NOT NULL\n              AND (dp.provisioning_claimed_until IS NULL\n                   OR dp.provisioning_claimed_until < now())\n              AND NOT EXISTS (\n                  SELECT 1\n                  FROM cluster_inventory ci\n                  WHERE ci.data_plane_id = dp.id\n                    AND ci.released_at IS NULL\n              )\n            ORDER BY dp.created_at\n            LIMIT $1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "4ca451c0502e39a69e3d4d74926ce4fdb249a8be93ee18f6a1b71a8846d7bcac"
+}

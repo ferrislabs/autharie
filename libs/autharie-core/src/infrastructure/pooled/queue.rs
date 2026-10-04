@@ -14,6 +14,7 @@ use autharie_postgres::{
     dataplane::{PostgresClusterClaims, PostgresDataPlaneRepository},
     deployments::PostgresDeploymentRepository,
 };
+use chrono::Utc;
 use sqlx::PgPool;
 use tracing::error;
 
@@ -132,6 +133,38 @@ impl CustomerClusterQueue for PostgresClusterQueue {
     async fn disable(&self, id: &DataPlaneId) -> Result<bool, CoreError> {
         with_tx(&self.pool, autharie_postgres::map_sqlx_error, async |tx| {
             PostgresClusterClaims::new(&tx).disable(id).await
+        })
+        .await
+    }
+
+    async fn awaiting_deletion(&self, limit: u32) -> Result<Vec<DataPlaneId>, CoreError> {
+        with_tx(&self.pool, autharie_postgres::map_sqlx_error, async |tx| {
+            PostgresClusterClaims::new(&tx)
+                .awaiting_deletion(i64::from(limit))
+                .await
+        })
+        .await
+    }
+
+    async fn confirm_deleted(&self, id: &DataPlaneId) -> Result<bool, CoreError> {
+        with_tx(&self.pool, autharie_postgres::map_sqlx_error, async |tx| {
+            let Some(data_plane) = PostgresDataPlaneRepository::new(&tx).find_by_id(id).await?
+            else {
+                return Ok(false);
+            };
+            let DataPlaneAllocation::Customer { deployment_id, .. } = data_plane.allocation else {
+                return Ok(false);
+            };
+
+            let deployments = PostgresDeploymentRepository::new(&tx);
+            let Some(mut deployment) = deployments.get_by_id(deployment_id).await? else {
+                return Ok(false);
+            };
+            if !deployment.confirm_deletion(Utc::now()) {
+                return Ok(false);
+            }
+            deployments.update(deployment).await?;
+            Ok(true)
         })
         .await
     }

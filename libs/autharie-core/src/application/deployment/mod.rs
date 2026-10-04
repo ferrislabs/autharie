@@ -16,6 +16,7 @@ use crate::{
         Deployment, DeploymentId,
         commands::{CreateDeploymentCommand, UpdateDeploymentCommand},
         ports::DeploymentService,
+        provisioning::Provisioning,
         service::DeploymentServiceImpl,
     },
     infrastructure::provisioner::LocalClusterProvisioner,
@@ -366,6 +367,26 @@ impl DeploymentService for AutharieService {
             AuthariePolicy::new(permissions_in(&tx)),
         )
         .get_deployment_for_organisation(identity, organisation_id, deployment_id)
+        .await
+    }
+
+    #[transactional(deployment, user, data_plane, organisation)]
+    async fn get_provisioning_for_organisation(
+        &self,
+        identity: Identity,
+        organisation_id: OrganisationId,
+        deployment_id: DeploymentId,
+    ) -> Result<Option<Provisioning>, CoreError> {
+        DeploymentServiceImpl::new(
+            deployment_repository,
+            user_repository,
+            data_plane_repository,
+            organisation_repository,
+            LocalClusterProvisioner,
+            self.placement_windows(),
+            AuthariePolicy::new(permissions_in(&tx)),
+        )
+        .get_provisioning_for_organisation(identity, organisation_id, deployment_id)
         .await
     }
 

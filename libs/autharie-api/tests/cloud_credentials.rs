@@ -8,7 +8,9 @@ use autharie_api::{
     args::Args,
     handlers::{
         cloud_credentials::cloud_credential_router,
-        deployments::create_deployment::create_deployment_handler,
+        deployments::{
+            create_deployment::create_deployment_handler, get_deployment::get_deployment_handler,
+        },
     },
     state::AppState,
 };
@@ -170,6 +172,7 @@ async fn forget(pool: &PgPool, tenant: &Tenant) {
     for statement in [
         "DELETE FROM cluster_inventory WHERE data_plane_id IN \
          (SELECT id FROM data_planes WHERE organisation_id = $1)",
+        "DELETE FROM deployments WHERE organisation_id = $1",
         "DELETE FROM data_planes WHERE organisation_id = $1",
         "DELETE FROM cloud_credentials WHERE organisation_id = $1",
         "DELETE FROM cloud_credential_secrets WHERE organisation_id = $1",
@@ -201,6 +204,7 @@ fn identity(sub: Uuid) -> Identity {
 fn app(state: AppState, sub: Uuid) -> Router {
     cloud_credential_router()
         .typed_post(create_deployment_handler)
+        .typed_get(get_deployment_handler)
         .layer(Extension(identity(sub)))
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state)
@@ -484,6 +488,34 @@ async fn a_credential_used_by_a_cluster_cannot_be_deleted_spec_ccp_4() {
 }
 
 #[tokio::test]
+async fn the_region_of_the_offers_is_read_from_the_query_string() {
+    let Some(pool) = pool().await else { return };
+    let _ = captured_logs();
+    let server = MockServer::start_async().await;
+    let tenant = tenant(&pool).await;
+    let app = app(
+        state(pool.clone(), FixedVerdict::Accept, transit(&server)),
+        tenant.owner,
+    );
+    let base = format!("/organisations/{}/cloud-credentials", tenant.organisation);
+    let (_, created) = call(&app, Method::POST, &base, Some(register_body())).await;
+    let credential = created["id"].as_str().expect("an id").to_string();
+    let offers = format!("{base}/{credential}/offers");
+
+    let (with_region, _) = call(&app, Method::GET, &format!("{offers}?region=nl-ams"), None).await;
+    let (without_region, _) = call(&app, Method::GET, &offers, None).await;
+    let (blank_region, _) = call(&app, Method::GET, &format!("{offers}?region=%20"), None).await;
+    let (as_a_path, _) = call(&app, Method::GET, &format!("{offers}/nl-ams"), None).await;
+
+    assert_eq!(with_region, StatusCode::OK);
+    assert_eq!(without_region, StatusCode::BAD_REQUEST);
+    assert_eq!(blank_region, StatusCode::BAD_REQUEST);
+    assert_eq!(as_a_path, StatusCode::NOT_FOUND);
+
+    forget(&pool, &tenant).await;
+}
+
+#[tokio::test]
 async fn offers_and_the_estimated_cost_are_shown_before_creation_spec_ccp_8() {
     let Some(pool) = pool().await else { return };
     let _ = captured_logs();
@@ -632,6 +664,82 @@ async fn a_keycloak_deployment_cannot_use_the_customer_cloud_spec_ccp_9() {
     .await;
 
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+
+    forget(&pool, &tenant).await;
+}
+
+#[tokio::test]
+async fn the_owner_of_a_customer_cluster_reads_why_it_is_not_ready_without_operator_rights() {
+    let Some(pool) = pool().await else { return };
+    let _ = captured_logs();
+    let server = MockServer::start_async().await;
+    let tenant = tenant(&pool).await;
+    let app = app(
+        state(pool.clone(), FixedVerdict::Accept, transit(&server)),
+        tenant.owner,
+    );
+    sqlx::query("UPDATE organisations SET plan = 'enterprise' WHERE id = $1")
+        .bind(tenant.organisation)
+        .execute(&pool)
+        .await
+        .expect("a plan");
+    let base = format!("/organisations/{}", tenant.organisation);
+    let (_, created) = call(
+        &app,
+        Method::POST,
+        &format!("{base}/cloud-credentials"),
+        Some(register_body()),
+    )
+    .await;
+    let credential = created["id"].as_str().expect("an id").to_string();
+    let (status, deployment) = call(
+        &app,
+        Method::POST,
+        &format!("{base}/deployments"),
+        Some(json!({
+            "name": "app", "kind": "ferriskey", "version": "1.0.0",
+            "environment": "production", "offer": "standard",
+            "distribution": {
+                "type": "customer_cloud",
+                "credential_id": credential,
+                "region": "fr-par",
+                "profile": {
+                    "mode": "dev", "control_plane_id": "mutualized", "node_type": "small",
+                    "min_nodes": 1, "max_nodes": 1, "replication": 1
+                }
+            }
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{deployment}");
+    let id = deployment["data"]["id"]
+        .as_str()
+        .or_else(|| deployment["id"].as_str())
+        .expect("an id")
+        .to_string();
+    let uri = format!("{base}/deployments/{id}");
+
+    let (building_status, building) = call(&app, Method::GET, &uri, None).await;
+    sqlx::query(
+        "UPDATE data_planes SET status = 'failed', failure_reason = $2 WHERE organisation_id = $1",
+    )
+    .bind(tenant.organisation)
+    .bind("the provider quota in this account does not allow this cluster")
+    .execute(&pool)
+    .await
+    .expect("failed");
+    let (_, failed) = call(&app, Method::GET, &uri, None).await;
+
+    assert_eq!(building_status, StatusCode::OK, "{building}");
+    assert_eq!(building["provisioning"], json!({"status": "provisioning"}));
+    assert_eq!(
+        failed["provisioning"],
+        json!({
+            "status": "failed",
+            "failure_reason": "the provider quota in this account does not allow this cluster"
+        })
+    );
+    assert!(!failed.to_string().contains(SECRET));
 
     forget(&pool, &tenant).await;
 }

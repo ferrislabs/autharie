@@ -15,7 +15,7 @@ interface Props {
   deployment?: Schemas.Deployment
   actions: Schemas.Action[]
   availability: AvailabilityView
-  dataplane?: Schemas.DataPlane
+  provisioning?: Schemas.Provisioning | null
   isLoading: boolean
 }
 
@@ -32,7 +32,7 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   )
 }
 
-export function PageDeploymentDetail({ deployment, actions, availability, dataplane, isLoading }: Props) {
+export function PageDeploymentDetail({ deployment, actions, availability, provisioning, isLoading }: Props) {
   if (isLoading || !deployment) {
     return (
       <Page>
@@ -42,7 +42,7 @@ export function PageDeploymentDetail({ deployment, actions, availability, datapl
     )
   }
 
-  const notice = provisioningNotice(deployment, dataplane)
+  const notice = provisioningNotice(deployment, provisioning)
 
   return (
     <Page>

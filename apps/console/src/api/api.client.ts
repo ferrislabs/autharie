@@ -441,7 +441,15 @@ export namespace Schemas {
   export type GetActiveUsersResponseData = Partial<{ active_users: number | null }>
   export type GetActiveUsersResponse = { data: GetActiveUsersResponseData }
   export type GetDataPlaneResponse = { data: DataPlane }
-  export type GetDeploymentResponse = { data: Deployment }
+  export type ProvisioningStatus = 'provisioning' | 'ready' | 'failed'
+  export type Provisioning = {
+    failure_reason?: (string | null) | undefined
+    status: ProvisioningStatus
+  }
+  export type GetDeploymentResponse = {
+    data: Deployment
+    provisioning?: (null | Provisioning) | undefined
+  }
   export type UsageBucketResponse = { bucket: string; value: number }
   export type GetDeploymentUsageResponse = { data: Array<UsageBucketResponse> }
   export type GetRoleResponse = { data: Role }
@@ -1013,7 +1021,8 @@ export namespace Endpoints {
     path: '/organisations/{organisation_id}/cloud-credentials/{credential_id}/offers'
     requestFormat: 'json'
     parameters: {
-      path: { organisation_id: string; credential_id: string; region: string }
+      query: { region: string }
+      path: { organisation_id: string; credential_id: string }
     }
     response: Schemas.ProviderOffers
   }
