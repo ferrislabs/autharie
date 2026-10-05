@@ -21,9 +21,10 @@ const ESTIMATE_DEBOUNCE_MS = 400
 interface Props {
   credentials: CloudCredential[]
   onChange: (distribution: Schemas.DistributionRequest | null) => void
+  onEstimate?: (text: string | undefined) => void
 }
 
-export function CustomerCloudSectionFeature({ credentials, onChange }: Props) {
+export function CustomerCloudSectionFeature({ credentials, onChange, onEstimate }: Props) {
   const [credentialId, setCredentialId] = useState(credentials[0]?.id ?? '')
   const credential = credentials.find((entry) => entry.id === credentialId) ?? credentials[0]
   const regions = REGIONS[credential.provider]
@@ -60,6 +61,14 @@ export function CustomerCloudSectionFeature({ credentials, onChange }: Props) {
   }, [distribution, onChange])
 
   const refusal = estimateRefusal(estimate.error)
+  const estimateText =
+    !refusal && estimate.data && settled === request ? describeEstimate(estimate.data) : undefined
+
+  useEffect(() => {
+    onEstimate?.(estimateText)
+  }, [estimateText, onEstimate])
+
+  useEffect(() => () => onEstimate?.(undefined), [onEstimate])
 
   const edit = (change: (current: ProfileDraft) => ProfileDraft) => {
     if (draft) setEdited(change(draft))
@@ -90,7 +99,7 @@ export function CustomerCloudSectionFeature({ credentials, onChange }: Props) {
       onMaxNodes={(value) => edit((current) => setMaxNodes(current, value))}
       estimate={{
         loading: request !== null && (estimate.isFetching || settled !== request),
-        text: !refusal && estimate.data && settled === request ? describeEstimate(estimate.data) : undefined,
+        text: estimateText,
         refusal: settled === request ? refusal : undefined,
       }}
     />
