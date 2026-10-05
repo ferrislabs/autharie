@@ -211,6 +211,20 @@ pub struct CustomerCloudArgs {
     pub chart_version: Option<String>,
 
     #[arg(
+        long = "customer-cloud-image-registry",
+        env = "CUSTOMER_CLOUD_IMAGE_REGISTRY",
+        long_help = "The registry the data plane images are pulled from. The chart's own default when unset"
+    )]
+    pub image_registry: Option<String>,
+
+    #[arg(
+        long = "customer-cloud-image-tag",
+        env = "CUSTOMER_CLOUD_IMAGE_TAG",
+        long_help = "The tag of the data plane images. The chart's appVersion when unset"
+    )]
+    pub image_tag: Option<String>,
+
+    #[arg(
         long = "customer-cloud-helm-binary",
         env = "CUSTOMER_CLOUD_HELM_BINARY",
         default_value = "helm",
@@ -246,11 +260,20 @@ impl Default for CustomerCloudArgs {
             herald_issuer: None,
             chart: "oci://ghcr.io/ferrislabs/charts/autharie-dataplane".to_string(),
             chart_version: None,
+            image_registry: None,
+            image_tag: None,
             helm_binary: PathBuf::from("helm"),
             poll_interval_seconds: 15,
             poll_attempts: 80,
         }
     }
+}
+
+fn non_blank(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 impl CustomerCloudArgs {
@@ -266,15 +289,13 @@ impl CustomerCloudArgs {
     pub fn helm_config(&self, auth: &AuthArgs) -> HelmConfig {
         HelmConfig {
             chart: self.chart.clone(),
-            chart_version: self.chart_version.clone(),
+            chart_version: non_blank(self.chart_version.as_deref()),
+            image_registry: non_blank(self.image_registry.as_deref()),
+            image_tag: non_blank(self.image_tag.as_deref()),
             helm_binary: self.helm_binary.clone(),
             ..HelmConfig::new(
                 self.control_plane_url.trim(),
-                self.herald_issuer
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|issuer| !issuer.is_empty())
-                    .unwrap_or(&auth.issuer),
+                non_blank(self.herald_issuer.as_deref()).unwrap_or_else(|| auth.issuer.clone()),
             )
         }
     }
@@ -960,6 +981,36 @@ mod tests {
             ..own
         };
         assert_eq!(blank.helm_config(&auth).herald_issuer, "http://issuer.test");
+    }
+
+    #[test]
+    fn the_image_registry_and_tag_reach_the_chart_and_blank_means_unset() {
+        let auth = AuthArgs {
+            issuer: "http://issuer.test".to_string(),
+        };
+        let unset = CustomerCloudArgs::default().helm_config(&auth);
+        assert_eq!(unset.image_registry, None);
+        assert_eq!(unset.image_tag, None);
+
+        let blank = CustomerCloudArgs {
+            image_registry: Some(String::new()),
+            image_tag: Some("  ".to_string()),
+            chart_version: Some(String::new()),
+            ..CustomerCloudArgs::default()
+        }
+        .helm_config(&auth);
+        assert_eq!(blank.image_registry, None);
+        assert_eq!(blank.image_tag, None);
+        assert_eq!(blank.chart_version, None);
+
+        let set = CustomerCloudArgs {
+            image_registry: Some("registry.example".to_string()),
+            image_tag: Some("sha-abc1234".to_string()),
+            ..CustomerCloudArgs::default()
+        }
+        .helm_config(&auth);
+        assert_eq!(set.image_registry.as_deref(), Some("registry.example"));
+        assert_eq!(set.image_tag.as_deref(), Some("sha-abc1234"));
     }
 
     #[test]

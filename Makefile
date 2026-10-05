@@ -1,4 +1,4 @@
-.PHONY: help crds install-crds uninstall-crds verify-crds test test-objectstore test-keys build local-up local-down local-status local-hosts local-hosts-apply local-hosts-remove bootstrap-auth demo demo-down
+.PHONY: help crds install-crds uninstall-crds verify-crds test test-objectstore test-keys build local-up local-down local-status local-hosts local-hosts-apply local-hosts-remove bootstrap-auth demo demo-down expose expose-down
 
 help: ## Afficher l'aide
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -43,6 +43,12 @@ demo: ## Monter tout Autharie en local, prêt à créer un déploiement depuis l
 
 demo-down: ## Tout supprimer : compose, volumes et cluster k3d
 	@./scripts/demo.sh down
+
+expose: ## Exposer le control plane et la route de token du realm sur une URL publique (tunnel Cloudflare)
+	@./scripts/expose.sh up
+
+expose-down: ## Couper le tunnel et son proxy
+	@./scripts/expose.sh down
 
 # === Identité ===
 

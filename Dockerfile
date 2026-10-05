@@ -75,9 +75,12 @@ RUN \
 FROM runtime AS control-plane
 
 COPY --from=helm /usr/local/bin/helm /usr/local/bin/helm
+COPY charts/autharie-dataplane /usr/local/share/autharie/charts/autharie-dataplane
 COPY --from=builder /usr/local/src/autharie/target/release/autharie-control-plane /usr/local/bin/
 COPY --from=builder --chown=autharie:autharie /usr/local/src/autharie/libs/autharie-core/migrations /usr/local/src/autharie/migrations
 COPY --from=builder /usr/local/cargo/bin/sqlx /usr/local/bin/
+
+ENV CUSTOMER_CLOUD_CHART=/usr/local/share/autharie/charts/autharie-dataplane
 
 EXPOSE 80
 
