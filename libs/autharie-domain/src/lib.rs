@@ -119,6 +119,12 @@ pub enum CoreError {
     #[error("Invalid organisation slug: {reason}")]
     InvalidOrganisationSlug { reason: String },
 
+    #[error("the name '{name}' is reserved: pick another name for this deployment")]
+    DeploymentNameReserved { name: String },
+
+    #[error("this name is already used by another deployment")]
+    DeploymentNameTaken,
+
     #[error("Organisation not found with id: {id}")]
     OrganisationNotFound { id: Uuid },
 

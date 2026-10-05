@@ -9,7 +9,7 @@
 //! cached, because a process running for days should not trust a clock delta
 //! it measured on the first call it ever made.
 
-use autharie_domain::dns::{DnsError, DnsProvider};
+use autharie_domain::dns::{DnsError, DnsProvider, is_reserved_label};
 use reqwest::{Client, Method, Response};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -31,6 +31,14 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// re-pointed should not leave callers stuck behind a stale answer for longer
 /// than a few minutes.
 const RECORD_TTL: u32 = 60;
+
+/// The only record types this adapter creates, rewrites or deletes. Anything
+/// else at a sub-domain (MX, TXT, NS, SRV...) belongs to someone else.
+const MANAGED_TYPES: &[&str] = &["A", "AAAA", "CNAME"];
+
+fn is_managed(field_type: &str) -> bool {
+    MANAGED_TYPES.contains(&field_type)
+}
 
 /// What differs between one OVH account and the next.
 #[derive(Debug, Clone)]
@@ -59,6 +67,8 @@ struct RecordDetail {
     #[serde(rename = "fieldType")]
     field_type: String,
     target: String,
+    #[serde(rename = "subDomain", default)]
+    sub_domain: Option<String>,
 }
 
 impl OvhDnsProvider {
@@ -82,16 +92,33 @@ impl OvhDnsProvider {
     ///
     /// Refused rather than guessed at: a hostname outside this provider's own
     /// zone is not a record this account can create, and creating one under
-    /// the wrong name would be worse than refusing.
+    /// the wrong name would be worse than refusing. The apex and the labels
+    /// the platform keeps for itself are refused here too, as a second line of
+    /// defence behind the check made when a deployment is named.
     fn subdomain_of(&self, hostname: &str) -> Result<String, DnsError> {
-        hostname
+        let refuse = |reason: String| DnsError::Refused {
+            operation: "compute the record's subdomain".to_string(),
+            reason,
+        };
+
+        if hostname == self.config.zone {
+            return Err(refuse(format!(
+                "{hostname} is the zone apex, which this provider never writes"
+            )));
+        }
+
+        let subdomain = hostname
             .strip_suffix(&format!(".{}", self.config.zone))
             .filter(|sub| !sub.is_empty())
-            .map(str::to_string)
-            .ok_or_else(|| DnsError::Refused {
-                operation: "compute the record's subdomain".to_string(),
-                reason: format!("{hostname} is not under {}", self.config.zone),
-            })
+            .ok_or_else(|| refuse(format!("{hostname} is not under {}", self.config.zone)))?;
+
+        if is_reserved_label(&subdomain.to_ascii_lowercase()) {
+            return Err(refuse(format!(
+                "{subdomain} is a name the platform keeps for itself"
+            )));
+        }
+
+        Ok(subdomain.to_string())
     }
 
     /// OVH's own clock, asked fresh for every operation.
@@ -218,6 +245,27 @@ impl OvhDnsProvider {
         })
     }
 
+    /// Every record at this sub-domain, read one by one. A record whose own
+    /// `subDomain` disagrees with the one asked for is dropped: the listing
+    /// filter is the provider's, and a write must never rest on it alone.
+    async fn records(&self, subdomain: &str) -> Result<Vec<RecordDetail>, DnsError> {
+        let mut records = Vec::new();
+
+        for id in self.record_ids(subdomain).await? {
+            let detail = self.record_detail(id).await?;
+
+            if detail
+                .sub_domain
+                .as_deref()
+                .is_none_or(|found| found == subdomain)
+            {
+                records.push(detail);
+            }
+        }
+
+        Ok(records)
+    }
+
     async fn record_detail(&self, id: u64) -> Result<RecordDetail, DnsError> {
         let path = format!("domain/zone/{}/record/{id}", self.config.zone);
         let response = self.call(Method::GET, &path, None).await?;
@@ -279,14 +327,22 @@ impl DnsProvider for OvhDnsProvider {
         let subdomain = self.subdomain_of(hostname)?;
         let field_type = field_type_for(target);
 
-        let ids = self.record_ids(&subdomain).await?;
+        let records = self.records(&subdomain).await?;
+
+        if let Some(foreign) = records.iter().find(|r| !is_managed(&r.field_type)) {
+            return Err(DnsError::Refused {
+                operation: "create a record".to_string(),
+                reason: format!(
+                    "{subdomain} already carries a {} record this provider does not manage",
+                    foreign.field_type
+                ),
+            });
+        }
 
         let mut wanted_exists = false;
         let mut stale = Vec::new();
 
-        for id in ids {
-            let detail = self.record_detail(id).await?;
-
+        for detail in records {
             if detail.field_type == field_type && detail.target == target {
                 wanted_exists = true;
             } else {
@@ -327,15 +383,20 @@ impl DnsProvider for OvhDnsProvider {
 
     async fn delete_record(&self, hostname: &str) -> Result<(), DnsError> {
         let subdomain = self.subdomain_of(hostname)?;
-        let ids = self.record_ids(&subdomain).await?;
+        let managed: Vec<u64> = self
+            .records(&subdomain)
+            .await?
+            .into_iter()
+            .filter(|record| is_managed(&record.field_type))
+            .map(|record| record.id)
+            .collect();
 
-        if ids.is_empty() {
-            // The outcome asked for, already true.
+        if managed.is_empty() {
             return Ok(());
         }
 
-        for id in &ids {
-            self.delete_record_by_id(*id).await?;
+        for id in managed {
+            self.delete_record_by_id(id).await?;
         }
 
         self.refresh_zone().await
@@ -460,7 +521,7 @@ mod tests {
         let list = server.mock(|when, then| {
             when.method(GET)
                 .path("/domain/zone/autharie.fr/record")
-                .query_param("subDomain", "app")
+                .query_param("subDomain", "tenant")
                 .header_exists("X-Ovh-Application")
                 .header_exists("X-Ovh-Consumer")
                 .header_exists("X-Ovh-Timestamp")
@@ -478,7 +539,7 @@ mod tests {
 
         let provider = OvhDnsProvider::new(config(&server)).expect("client builds");
         provider
-            .upsert_record("app.autharie.fr", "203.0.113.10")
+            .upsert_record("tenant.autharie.fr", "203.0.113.10")
             .await
             .expect("record created");
 
@@ -497,7 +558,7 @@ mod tests {
         server.mock(|when, then| {
             when.method(GET)
                 .path("/domain/zone/autharie.fr/record")
-                .query_param("subDomain", "app");
+                .query_param("subDomain", "tenant");
             then.status(200).json_body(json!([42]));
         });
         server.mock(|when, then| {
@@ -513,7 +574,7 @@ mod tests {
 
         let provider = OvhDnsProvider::new(config(&server)).expect("client builds");
         provider
-            .upsert_record("app.autharie.fr", "203.0.113.10")
+            .upsert_record("tenant.autharie.fr", "203.0.113.10")
             .await
             .expect("no-op");
 
@@ -530,7 +591,7 @@ mod tests {
         server.mock(|when, then| {
             when.method(GET)
                 .path("/domain/zone/autharie.fr/record")
-                .query_param("subDomain", "app");
+                .query_param("subDomain", "tenant");
             then.status(200).json_body(json!([42]));
         });
         server.mock(|when, then| {
@@ -555,7 +616,7 @@ mod tests {
 
         let provider = OvhDnsProvider::new(config(&server)).expect("client builds");
         provider
-            .upsert_record("app.autharie.fr", "203.0.113.10")
+            .upsert_record("tenant.autharie.fr", "203.0.113.10")
             .await
             .expect("record replaced");
 
@@ -600,8 +661,14 @@ mod tests {
         server.mock(|when, then| {
             when.method(GET)
                 .path("/domain/zone/autharie.fr/record")
-                .query_param("subDomain", "app");
+                .query_param("subDomain", "tenant");
             then.status(200).json_body(json!([42]));
+        });
+        server.mock(|when, then| {
+            when.method(GET).path("/domain/zone/autharie.fr/record/42");
+            then.status(200).json_body(json!({
+                "id": 42, "fieldType": "A", "target": "203.0.113.10"
+            }));
         });
         let delete = server.mock(|when, then| {
             when.method(DELETE)
@@ -615,7 +682,7 @@ mod tests {
 
         let provider = OvhDnsProvider::new(config(&server)).expect("client builds");
         provider
-            .delete_record("app.autharie.fr")
+            .delete_record("tenant.autharie.fr")
             .await
             .expect("deleted");
 
@@ -637,6 +704,197 @@ mod tests {
         assert!(matches!(result, Err(DnsError::Refused { .. })));
     }
 
+    fn record_mocks(server: &MockServer, subdomain: &str, records: &[(u64, &str, &str)]) {
+        let ids: Vec<u64> = records.iter().map(|(id, _, _)| *id).collect();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/domain/zone/autharie.fr/record")
+                .query_param("subDomain", subdomain);
+            then.status(200).json_body(json!(ids));
+        });
+        for (id, field_type, target) in records {
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path(format!("/domain/zone/autharie.fr/record/{id}"));
+                then.status(200).json_body(json!({
+                    "id": id, "fieldType": field_type, "target": target
+                }));
+            });
+        }
+    }
+
+    #[tokio::test]
+    async fn deleting_removes_only_the_managed_record_types() {
+        let server = MockServer::start();
+        time_mock(&server);
+        record_mocks(
+            &server,
+            "tenant",
+            &[
+                (1, "A", "203.0.113.10"),
+                (2, "TXT", "v=spf1 -all"),
+                (3, "MX", "10 mail.example.net."),
+            ],
+        );
+        let delete_a = server.mock(|when, then| {
+            when.method(DELETE)
+                .path("/domain/zone/autharie.fr/record/1");
+            then.status(200);
+        });
+        let delete_txt = server.mock(|when, then| {
+            when.method(DELETE)
+                .path("/domain/zone/autharie.fr/record/2");
+            then.status(200);
+        });
+        let delete_mx = server.mock(|when, then| {
+            when.method(DELETE)
+                .path("/domain/zone/autharie.fr/record/3");
+            then.status(200);
+        });
+        let refresh = server.mock(|when, then| {
+            when.method(POST).path("/domain/zone/autharie.fr/refresh");
+            then.status(200);
+        });
+
+        let provider = OvhDnsProvider::new(config(&server)).expect("client builds");
+        provider
+            .delete_record("tenant.autharie.fr")
+            .await
+            .expect("deleted");
+
+        delete_a.assert();
+        delete_txt.assert_hits(0);
+        delete_mx.assert_hits(0);
+        refresh.assert();
+    }
+
+    #[tokio::test]
+    async fn deleting_a_subdomain_holding_only_unmanaged_records_touches_nothing() {
+        let server = MockServer::start();
+        time_mock(&server);
+        record_mocks(&server, "tenant", &[(2, "TXT", "v=spf1 -all")]);
+        let delete = server.mock(|when, then| {
+            when.method(DELETE);
+            then.status(200);
+        });
+        let refresh = server.mock(|when, then| {
+            when.method(POST);
+            then.status(200);
+        });
+
+        let provider = OvhDnsProvider::new(config(&server)).expect("client builds");
+        provider
+            .delete_record("tenant.autharie.fr")
+            .await
+            .expect("nothing to remove is not an error");
+
+        delete.assert_hits(0);
+        refresh.assert_hits(0);
+    }
+
+    #[tokio::test]
+    async fn upserting_on_a_subdomain_holding_an_mx_record_is_refused() {
+        let server = MockServer::start();
+        time_mock(&server);
+        record_mocks(&server, "tenant", &[(7, "MX", "10 mail.example.net.")]);
+        let delete = server.mock(|when, then| {
+            when.method(DELETE);
+            then.status(200);
+        });
+        let create = server.mock(|when, then| {
+            when.method(POST);
+            then.status(200);
+        });
+
+        let provider = OvhDnsProvider::new(config(&server)).expect("client builds");
+        let result = provider
+            .upsert_record("tenant.autharie.fr", "203.0.113.10")
+            .await;
+
+        match result {
+            Err(DnsError::Refused { reason, .. }) => assert!(reason.contains("MX"), "{reason}"),
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+        delete.assert_hits(0);
+        create.assert_hits(0);
+    }
+
+    #[tokio::test]
+    async fn the_apex_is_refused_for_both_actions() {
+        let server = MockServer::start();
+        let provider = OvhDnsProvider::new(config(&server)).expect("client builds");
+
+        assert!(matches!(
+            provider.upsert_record("autharie.fr", "203.0.113.10").await,
+            Err(DnsError::Refused { .. })
+        ));
+        assert!(matches!(
+            provider.delete_record("autharie.fr").await,
+            Err(DnsError::Refused { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn every_reserved_label_is_refused_for_both_actions_before_any_call() {
+        let server = MockServer::start();
+        let anything = server.mock(|when, then| {
+            when.any_request();
+            then.status(200);
+        });
+        let provider = OvhDnsProvider::new(config(&server)).expect("client builds");
+
+        for label in autharie_domain::dns::RESERVED_HOSTNAME_LABELS {
+            let hostname = format!("{label}.autharie.fr");
+
+            assert!(
+                matches!(
+                    provider.upsert_record(&hostname, "203.0.113.10").await,
+                    Err(DnsError::Refused { .. })
+                ),
+                "upsert {hostname}"
+            );
+            assert!(
+                matches!(
+                    provider.delete_record(&hostname).await,
+                    Err(DnsError::Refused { .. })
+                ),
+                "delete {hostname}"
+            );
+        }
+
+        anything.assert_hits(0);
+    }
+
+    #[tokio::test]
+    async fn a_record_listed_for_another_subdomain_is_never_touched() {
+        let server = MockServer::start();
+        time_mock(&server);
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/domain/zone/autharie.fr/record")
+                .query_param("subDomain", "tenant");
+            then.status(200).json_body(json!([5]));
+        });
+        server.mock(|when, then| {
+            when.method(GET).path("/domain/zone/autharie.fr/record/5");
+            then.status(200).json_body(json!({
+                "id": 5, "fieldType": "A", "target": "203.0.113.1", "subDomain": "other"
+            }));
+        });
+        let delete = server.mock(|when, then| {
+            when.method(DELETE);
+            then.status(200);
+        });
+
+        let provider = OvhDnsProvider::new(config(&server)).expect("client builds");
+        provider
+            .delete_record("tenant.autharie.fr")
+            .await
+            .expect("nothing of ours to remove");
+
+        delete.assert_hits(0);
+    }
+
     #[tokio::test]
     async fn an_unreachable_provider_is_reported_as_unavailable() {
         let config = OvhConfig {
@@ -649,7 +907,7 @@ mod tests {
 
         let provider = OvhDnsProvider::new(config).expect("client builds");
         let result = provider
-            .upsert_record("app.autharie.fr", "203.0.113.10")
+            .upsert_record("tenant.autharie.fr", "203.0.113.10")
             .await;
 
         assert!(matches!(result, Err(DnsError::ProviderUnavailable { .. })));

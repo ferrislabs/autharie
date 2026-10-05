@@ -179,7 +179,7 @@ fn deployment(
     named_deployment(dataplane_id, organisation_id, created_by, "reclaim")
 }
 
-/// `name` seeds `hostname_slug`, which is unique per organisation -- a test
+/// `name` seeds `hostname_slug`, which is unique across live deployments -- a test
 /// that saves more than one deployment under the same organisation needs a
 /// distinct one for each.
 fn named_deployment(

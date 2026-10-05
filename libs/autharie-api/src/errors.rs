@@ -309,6 +309,12 @@ impl From<CoreError> for ApiError {
             CoreError::ClusterResizeNotRecorded { .. } => ApiError::InternalServerError {
                 reason: value.to_string(),
             },
+            CoreError::DeploymentNameReserved { .. } => ApiError::Unprocessable {
+                reason: value.to_string(),
+            },
+            CoreError::DeploymentNameTaken => ApiError::Conflict {
+                reason: value.to_string(),
+            },
             CoreError::Profile(_) | CoreError::Distribution(_) | CoreError::Resize(_) => {
                 ApiError::Unprocessable {
                     reason: value.to_string(),
@@ -821,5 +827,26 @@ mod tests {
             StatusCode::NOT_FOUND,
             "the caller sees 404"
         );
+    }
+
+    #[test]
+    fn a_reserved_name_is_a_422_that_says_so_and_a_taken_name_is_a_409() {
+        let reserved = ApiError::from(CoreError::DeploymentNameReserved {
+            name: "api".to_string(),
+        });
+        let ApiError::Unprocessable { reason } = &reserved else {
+            panic!("expected unprocessable, got {reserved:?}");
+        };
+        assert!(reason.contains("reserved") && reason.contains("pick another"));
+        assert_eq!(
+            reserved.into_response().status(),
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
+
+        let taken = ApiError::from(CoreError::DeploymentNameTaken);
+        let ApiError::Conflict { reason } = &taken else {
+            panic!("expected a conflict, got {taken:?}");
+        };
+        assert_eq!(reason, "this name is already used by another deployment");
     }
 }

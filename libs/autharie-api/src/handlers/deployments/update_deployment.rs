@@ -76,7 +76,7 @@ pub async fn update_deployment_handler(
 
     let mut command = UpdateDeploymentCommand::new();
     if let Some(name) = request.name {
-        command = command.with_name(DeploymentName(name));
+        command = command.with_name(DeploymentName(name))?;
     }
     if let Some(kind) = request.kind {
         let kind = DeploymentKind::try_from(kind.as_str()).map_err(|e| ApiError::BadRequest {

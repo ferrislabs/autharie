@@ -1,6 +1,6 @@
 //! Publishing where a deployment can be reached.
 //!
-//! `<deployment>.<organisation>.autharie.fr` cannot be one wildcard record
+//! `<deployment>.autharie.fr` cannot be one wildcard record
 //! the way the control plane's own hostnames are: a deployment lands on one
 //! of potentially many data planes, each its own cluster with its own
 //! address (see [`crate::dataplane::entities::DataPlane::gateway_address`]).
@@ -60,22 +60,61 @@ pub trait DnsProvider: Send + Sync {
     fn delete_record(&self, hostname: &str) -> impl Future<Output = Result<(), DnsError>> + Send;
 }
 
+/// Labels the platform owns, or will, in the zone deployments are published
+/// under. A deployment's hostname is flat (`<name>.<zone>`), so a customer
+/// naming one `www` or `api` would otherwise make the platform publish over,
+/// or delete, a record that is not theirs.
+pub const RESERVED_HOSTNAME_LABELS: &[&str] = &[
+    "www",
+    "ftp",
+    "mail",
+    "smtp",
+    "imap",
+    "pop",
+    "pop3",
+    "webmail",
+    "ns",
+    "ns1",
+    "ns2",
+    "mx",
+    "mx1",
+    "api",
+    "app",
+    "console",
+    "id",
+    "auth",
+    "login",
+    "sso",
+    "admin",
+    "status",
+    "docs",
+    "blog",
+    "landing",
+    "cdn",
+    "static",
+    "assets",
+    "git",
+    "vpn",
+    "autodiscover",
+    "autoconfig",
+    "autharie",
+    "ferriskey",
+    "keycloak",
+];
+
+pub fn is_reserved_label(slug: &str) -> bool {
+    RESERVED_HOSTNAME_LABELS.contains(&slug)
+}
+
 /// A deployment's own hostname, under whichever zone this installation
 /// publishes DNS records in.
 ///
-/// Scoped by the organisation's slug, not just the deployment's name: a
-/// deployment name is not unique anywhere in this platform -- not globally,
-/// not even within one organisation -- and `<name>.<zone>` alone would let
-/// two organisations' same-named deployments fight over one record, with
-/// whichever placed or reconciled last silently taking traffic meant for the
-/// other. An organisation's slug is unique by construction (`slug VARCHAR
-/// UNIQUE` on `organisations`), which makes `<name>.<org-slug>.<zone>`
-/// collision-free the same way. Two deployments named alike inside the same
-/// organisation still share a record -- that is a conflict the organisation
-/// can see and rename its way out of, not a cross-tenant one.
-pub fn hostname_for(organisation_slug: &str, deployment_name: &str, zone: &str) -> String {
+/// Flat: `<name>.<zone>`. Uniqueness of the name across the whole platform is
+/// enforced by the database, and the labels the platform keeps for itself are
+/// refused at creation (see [`is_reserved_label`]).
+pub fn hostname_for(deployment_name: &str, zone: &str) -> String {
     format!(
-        "{}.{organisation_slug}.{zone}",
+        "{}.{zone}",
         crate::deployments::environment::slug(deployment_name)
     )
 }
@@ -85,28 +124,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_hostname_is_the_slugged_name_scoped_by_the_organisation_under_the_zone() {
+    fn the_hostname_is_the_slugged_name_under_the_zone() {
         assert_eq!(
-            hostname_for("acme", "My Deployment", "autharie.fr"),
-            "my-deployment.acme.autharie.fr"
+            hostname_for("My Deployment", "autharie.fr"),
+            "my-deployment.autharie.fr"
         );
     }
 
     #[test]
     fn a_name_that_is_already_a_valid_label_is_left_alone() {
         assert_eq!(
-            hostname_for("acme", "acme-prod", "autharie.fr"),
-            "acme-prod.acme.autharie.fr"
+            hostname_for("acme-prod", "autharie.fr"),
+            "acme-prod.autharie.fr"
         );
+        assert_eq!(hostname_for("demo", "autharie.fr"), "demo.autharie.fr");
     }
 
-    /// The whole point of scoping by organisation: two organisations naming a
-    /// deployment the same thing get different records, not a fight over one.
     #[test]
-    fn two_organisations_naming_a_deployment_alike_get_different_hostnames() {
-        assert_ne!(
-            hostname_for("acme", "api", "autharie.fr"),
-            hostname_for("globex", "api", "autharie.fr"),
-        );
+    fn every_reserved_label_is_a_lowercase_label_and_reported_reserved() {
+        for label in RESERVED_HOSTNAME_LABELS {
+            assert!(is_reserved_label(label));
+            assert_eq!(crate::deployments::environment::slug(label), *label);
+        }
+    }
+
+    #[test]
+    fn demo_and_ordinary_names_are_not_reserved() {
+        assert!(!is_reserved_label("demo"));
+        assert!(!is_reserved_label("acme-prod"));
+        assert!(!is_reserved_label("www2"));
     }
 }

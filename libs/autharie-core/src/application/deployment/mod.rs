@@ -68,31 +68,12 @@ pub(crate) fn deployment_payload(
 /// has a domain to publish deployments under.
 ///
 /// `None` when there is no domain configured -- Genesis keeps inventing
-/// `.autharie.local`, exactly today's behaviour. Scoped by the organisation's
-/// slug the same way [`crate::dns::hostname_for`] always is: this is what
-/// `autharie-ovh` created a record for, at placement, and every apply after it
-/// has to keep saying the same thing or the two drift.
-pub(crate) async fn deployment_hostname(
-    domain: Option<&str>,
-    organisation_repository: &impl crate::organisation::ports::OrganisationRepository,
-    deployment: &Deployment,
-) -> Result<Option<String>, CoreError> {
-    let Some(domain) = domain else {
-        return Ok(None);
-    };
-
-    let organisation = organisation_repository
-        .find_by_id(&deployment.organisation_id)
-        .await?
-        .ok_or(CoreError::OrganisationNotFound {
-            id: deployment.organisation_id.0,
-        })?;
-
-    Ok(Some(crate::dns::hostname_for(
-        organisation.slug.as_str(),
-        &deployment.name.0,
-        domain,
-    )))
+/// `.autharie.local`, exactly today's behaviour. The same
+/// [`crate::dns::hostname_for`] `autharie-ovh` created a record for at
+/// placement: every apply after it has to keep saying the same thing or the
+/// two drift.
+pub(crate) fn deployment_hostname(domain: Option<&str>, deployment: &Deployment) -> Option<String> {
+    domain.map(|domain| crate::dns::hostname_for(&deployment.name.0, domain))
 }
 
 /// Where this deployment archives, and when.
@@ -143,16 +124,7 @@ impl DeploymentService for AutharieService {
         .create_deployment(identity, command)
         .await?;
 
-        // A repository of its own rather than the one just moved into
-        // `DeploymentServiceImpl` above: `PostgresOrganisationRepository`
-        // holds no state beyond the transaction, so a second one from the
-        // same `tx` is exactly as cheap as cloning would have been.
-        let hostname = deployment_hostname(
-            self.deployment_domain(),
-            &autharie_postgres::organisation::PostgresOrganisationRepository::new(&tx),
-            &deployment,
-        )
-        .await?;
+        let hostname = deployment_hostname(self.deployment_domain(), &deployment);
 
         // A deployment starts backed up. The alternative is a platform where
         // the first thing anybody learns about backups is that they did not
@@ -682,7 +654,8 @@ mod tests {
             autharie_domain::deployments::environment::Environment::Production,
             Region::new("fr-par"),
             autharie_domain::offers::Offer::Standard,
-        );
+        )
+        .expect("a creatable name");
 
         let result = service().create_deployment(caller(), command).await;
         assert!(matches!(result, Err(CoreError::DatabaseError { .. })));
@@ -743,6 +716,7 @@ mod tests {
     async fn update_deployment_maps_pool_error() {
         let command = UpdateDeploymentCommand::new()
             .with_name(DeploymentName("name".to_string()))
+            .expect("a publishable name")
             .with_status(DeploymentStatus::Pending);
 
         let result = service()
@@ -756,6 +730,7 @@ mod tests {
     async fn update_deployment_for_organisation_maps_pool_error() {
         let command = UpdateDeploymentCommand::new()
             .with_name(DeploymentName("name".to_string()))
+            .expect("a publishable name")
             .with_status(DeploymentStatus::Pending);
 
         let result = service()

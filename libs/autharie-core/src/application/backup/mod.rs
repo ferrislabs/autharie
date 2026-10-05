@@ -177,7 +177,7 @@ impl BackupService for AutharieService {
         .await
     }
 
-    #[transactional(backup, backup_schedule, deployment, audit, action, organisation)]
+    #[transactional(backup, backup_schedule, deployment, audit, action)]
     async fn set_backup_schedule(
         &self,
         identity: Identity,
@@ -223,12 +223,7 @@ impl BackupService for AutharieService {
             // included -- an update that left it out would revert an
             // instance's real hostname back to Genesis's own fallback the
             // moment anybody turned archiving on.
-            let hostname = deployment_hostname(
-                self.deployment_domain(),
-                &organisation_repository,
-                &deployment,
-            )
-            .await?;
+            let hostname = deployment_hostname(self.deployment_domain(), &deployment);
 
             ActionServiceImpl::new(action_repository)
                 .record_action(RecordActionCommand::new(
@@ -432,7 +427,7 @@ impl BackupService for AutharieService {
                 source.environment,
                 command.region,
                 planned.offer,
-            )
+            )?
             .recovering(Recovery {
                 backup: archive.id,
                 resources: planned.resources,
@@ -480,16 +475,7 @@ impl BackupService for AutharieService {
         // `deployment.create` does, and an instance recovered onto a new
         // deployment still needs somewhere real to resolve to.
         //
-        // A repository of its own rather than the one just moved into
-        // `DeploymentServiceImpl` above: `PostgresOrganisationRepository`
-        // holds no state beyond the transaction, so a second one from the
-        // same `tx` is exactly as cheap as cloning would have been.
-        let hostname = deployment_hostname(
-            self.deployment_domain(),
-            &autharie_postgres::organisation::PostgresOrganisationRepository::new(&tx),
-            &recovery,
-        )
-        .await?;
+        let hostname = deployment_hostname(self.deployment_domain(), &recovery);
 
         let mut payload = deployment_payload(&recovery, archive_directive, hostname);
         payload["restore"] = restore_section(&planned, &archive);
@@ -581,12 +567,7 @@ impl BackupService for AutharieService {
         let actions = ActionServiceImpl::new(action_repository);
 
         for deployment in [&promote, &demote] {
-            let hostname = deployment_hostname(
-                self.deployment_domain(),
-                &autharie_postgres::organisation::PostgresOrganisationRepository::new(&tx),
-                deployment,
-            )
-            .await?;
+            let hostname = deployment_hostname(self.deployment_domain(), deployment);
 
             actions
                 .record_action(RecordActionCommand::new(

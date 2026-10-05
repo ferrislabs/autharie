@@ -273,6 +273,22 @@ pub struct PostgresDeploymentRepository<'tx> {
 }
 
 #[cfg_attr(coverage_nightly, coverage(off))]
+const HOSTNAME_SLUG_INDEX: &str = "idx_deployments_hostname_slug";
+
+fn write_error(action: &str, error: sqlx::Error) -> CoreError {
+    let name_taken = error
+        .as_database_error()
+        .is_some_and(|db| db.is_unique_violation() && db.constraint() == Some(HOSTNAME_SLUG_INDEX));
+
+    if name_taken {
+        return CoreError::DeploymentNameTaken;
+    }
+
+    CoreError::DatabaseError {
+        message: format!("Failed to {action} deployment: {error}"),
+    }
+}
+
 impl<'tx> PostgresDeploymentRepository<'tx> {
     pub fn new(tx: &SharedTx<'tx>) -> Self {
         Self { tx: tx.clone() }
@@ -400,9 +416,7 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
             .execute(&mut ***tx)
             .await
         }
-        .map_err(|e| CoreError::DatabaseError {
-            message: format!("Failed to insert deployment: {}", e),
-        })?;
+        .map_err(|e| write_error("insert", e))?;
 
         Ok(())
     }
@@ -604,9 +618,7 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
             .execute(&mut ***tx)
             .await
         }
-        .map_err(|e| CoreError::DatabaseError {
-            message: format!("Failed to update deployment: {}", e),
-        })?;
+        .map_err(|e| write_error("update", e))?;
 
         Ok(())
     }

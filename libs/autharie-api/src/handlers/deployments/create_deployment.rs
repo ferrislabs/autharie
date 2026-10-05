@@ -247,7 +247,7 @@ pub async fn create_deployment_handler(
         parsed.environment,
         parsed.region,
         parsed.offer,
-    )
+    )?
     .with_distribution(distribution)
     .map_err(CoreError::from)?;
 
