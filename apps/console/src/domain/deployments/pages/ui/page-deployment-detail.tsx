@@ -3,6 +3,9 @@ import { Card, EmptyState, Page, PageTitle, Section } from '@/components/layout/
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { formatDistanceToNow } from 'date-fns'
+import { ProvisioningNoticeBanner } from '@/domain/cloud-providers/pages/ui/provisioning-notice'
+import { describeDistribution } from '@/domain/cloud-providers/distribution'
+import { provisioningNotice } from '@/domain/cloud-providers/provisioning'
 import { KIND_LABELS } from '../../types/deployment'
 import type { AvailabilityView } from '../../availability'
 import { AvailabilityCard } from './components/availability-card'
@@ -12,6 +15,8 @@ interface Props {
   deployment?: Schemas.Deployment
   actions: Schemas.Action[]
   availability: AvailabilityView
+  provisioning?: Schemas.Provisioning | null
+  clusterPanel?: React.ReactNode
   isLoading: boolean
 }
 
@@ -28,7 +33,7 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   )
 }
 
-export function PageDeploymentDetail({ deployment, actions, availability, isLoading }: Props) {
+export function PageDeploymentDetail({ deployment, actions, availability, provisioning, clusterPanel, isLoading }: Props) {
   if (isLoading || !deployment) {
     return (
       <Page>
@@ -37,6 +42,8 @@ export function PageDeploymentDetail({ deployment, actions, availability, isLoad
       </Page>
     )
   }
+
+  const notice = provisioningNotice(deployment, provisioning)
 
   return (
     <Page>
@@ -53,9 +60,12 @@ export function PageDeploymentDetail({ deployment, actions, availability, isLoad
       />
 
       <div className='mt-8 space-y-8'>
-        <div className='grid gap-4 sm:grid-cols-3'>
+        {notice && <ProvisioningNoticeBanner notice={notice} />}
+
+        <div className='grid gap-4 sm:grid-cols-2 lg:grid-cols-4'>
           <Stat label='Version' value={<span className='font-mono'>{deployment.version}</span>} />
           <Stat label='Environment' value={deployment.environment} />
+          <Stat label='Runs on' value={describeDistribution(deployment.distribution)} />
           <Stat
             label='Created'
             value={`${formatDistanceToNow(new Date(deployment.created_at))} ago`}
@@ -63,6 +73,8 @@ export function PageDeploymentDetail({ deployment, actions, availability, isLoad
         </div>
 
         <AvailabilityCard view={availability} />
+
+        {clusterPanel}
 
         <Section title='Activity'>
           {actions.length === 0 ? (

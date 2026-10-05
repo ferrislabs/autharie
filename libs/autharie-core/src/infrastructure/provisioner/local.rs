@@ -3,8 +3,8 @@ use tracing::{info, warn};
 use crate::domain::{
     CoreError,
     dataplane::{
-        entities::DataPlane,
-        provisioner::{ClusterProvisioner, ProvisionRequest},
+        cluster_profile::ClusterProfile,
+        provisioner::{ClusterProvisioner, ProvisionRequest, ProvisionedCluster},
         value_objects::DataPlaneId,
     },
 };
@@ -31,7 +31,7 @@ use crate::domain::{
 pub struct LocalClusterProvisioner;
 
 impl ClusterProvisioner for LocalClusterProvisioner {
-    async fn provision(&self, request: ProvisionRequest) -> Result<DataPlane, CoreError> {
+    async fn provision(&self, request: ProvisionRequest) -> Result<ProvisionedCluster, CoreError> {
         warn!(
             organisation_id = %request.organisation_id.0,
             region = %request.region.as_str(),
@@ -59,22 +59,36 @@ impl ClusterProvisioner for LocalClusterProvisioner {
         info!(dataplane_id = %id, "local provisioner has nothing to deprovision");
         Ok(())
     }
+
+    async fn resize(&self, id: &DataPlaneId, _profile: &ClusterProfile) -> Result<(), CoreError> {
+        warn!(dataplane_id = %id, "refusing to resize: no cluster provisioner is configured");
+
+        Err(CoreError::ProvisioningUnavailable {
+            reason: "This installation cannot create clusters, so it cannot resize one."
+                .to_string(),
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::domain::{
-        dataplane::value_objects::{DeploymentResources, Region},
+        dataplane::{
+            provisioner::ProvisionTarget,
+            value_objects::{DeploymentResources, Region},
+        },
         organisation::OrganisationId,
     };
     use uuid::Uuid;
 
     fn request() -> ProvisionRequest {
         ProvisionRequest {
+            data_plane_id: DataPlaneId(Uuid::new_v4()),
             organisation_id: OrganisationId(Uuid::new_v4()),
             region: Region::new("local"),
             minimum: DeploymentResources::DEFAULT,
+            target: ProvisionTarget::Platform,
         }
     }
 

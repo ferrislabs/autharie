@@ -15,6 +15,7 @@ members = [
     "libs/autharie-s3",
     "libs/autharie-transit", "libs/autharie-postgres", "libs/autharie-domain", "apps/aegis", "libs/aegis-core", "apps/genesis", "libs/genesis-core", "apps/herald",
     "libs/autharie-ovh",
+    "libs/autharie-scaleway",
     "libs/autharie-e2e",
 ]
 

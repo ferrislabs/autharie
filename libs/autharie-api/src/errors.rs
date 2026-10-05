@@ -1,4 +1,4 @@
-use autharie_core::CoreError;
+use autharie_core::{CoreError, dataplane::credential::CredentialError};
 use axum::{Json, http::StatusCode, response::IntoResponse};
 use serde::Serialize;
 use thiserror::Error;
@@ -30,6 +30,15 @@ pub enum ApiError {
 
     #[error("{reason}")]
     NotFound { reason: String },
+
+    #[error("{reason}")]
+    Unprocessable { reason: String },
+
+    #[error("{reason}")]
+    BadGateway { reason: String },
+
+    #[error("{reason}")]
+    ServiceUnavailable { reason: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -111,6 +120,33 @@ impl IntoResponse for ApiError {
                 Json(ApiErrorResponse::new(
                     "E_NOT_FOUND",
                     StatusCode::NOT_FOUND,
+                    reason,
+                )),
+            )
+                .into_response(),
+            ApiError::Unprocessable { reason } => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(ApiErrorResponse::new(
+                    "E_UNPROCESSABLE",
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    reason,
+                )),
+            )
+                .into_response(),
+            ApiError::BadGateway { reason } => (
+                StatusCode::BAD_GATEWAY,
+                Json(ApiErrorResponse::new(
+                    "E_BAD_GATEWAY",
+                    StatusCode::BAD_GATEWAY,
+                    reason,
+                )),
+            )
+                .into_response(),
+            ApiError::ServiceUnavailable { reason } => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ApiErrorResponse::new(
+                    "E_SERVICE_UNAVAILABLE",
+                    StatusCode::SERVICE_UNAVAILABLE,
                     reason,
                 )),
             )
@@ -267,6 +303,44 @@ impl From<CoreError> for ApiError {
                 reason: value.to_string(),
             },
 
+            CoreError::ClusterNotReady { .. } => ApiError::Conflict {
+                reason: value.to_string(),
+            },
+            CoreError::ClusterResizeNotRecorded { .. } => ApiError::InternalServerError {
+                reason: value.to_string(),
+            },
+            CoreError::Profile(_) | CoreError::Distribution(_) | CoreError::Resize(_) => {
+                ApiError::Unprocessable {
+                    reason: value.to_string(),
+                }
+            }
+            CoreError::Credential(CredentialError::InUse) => ApiError::Conflict {
+                reason: value.to_string(),
+            },
+            CoreError::Credential(CredentialError::NotFound { .. }) => ApiError::NotFound {
+                reason: value.to_string(),
+            },
+            CoreError::Credential(
+                CredentialError::MissingPermissions { .. }
+                | CredentialError::ExcessPermissions { .. }
+                | CredentialError::Invalid,
+            ) => ApiError::Unprocessable {
+                reason: value.to_string(),
+            },
+            CoreError::Credential(CredentialError::NotEnabled) => ApiError::ServiceUnavailable {
+                reason: value.to_string(),
+            },
+            CoreError::Credential(CredentialError::Store(_)) => {
+                tracing::error!(error = %value, "the credential store failed");
+
+                ApiError::InternalServerError {
+                    reason: "the credential store failed".to_string(),
+                }
+            }
+            CoreError::Provision(_) => ApiError::BadGateway {
+                reason: value.to_string(),
+            },
+
             // Everything else stays deliberately opaque to the caller: a
             // database error or an internal invariant is not something they
             // can act on, and its message may name things they should not see.
@@ -338,6 +412,96 @@ mod tests {
         });
 
         assert!(!error.to_string().contains("deployments"), "{error}");
+    }
+
+    #[test]
+    fn the_customer_cloud_refusals_get_the_status_that_means_something() {
+        use autharie_core::dataplane::{
+            cluster_profile::ProfileError, provisioner::ProvisionError,
+        };
+
+        for (refused, expected) in [
+            (
+                CoreError::Profile(ProfileError::NodeRangeInvalid {
+                    min_nodes: 3,
+                    max_nodes: 1,
+                }),
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+            (
+                CoreError::Credential(CredentialError::InUse),
+                StatusCode::CONFLICT,
+            ),
+            (
+                CoreError::Credential(CredentialError::NotFound {
+                    id: autharie_core::dataplane::credential::CloudCredentialId(uuid::Uuid::nil()),
+                }),
+                StatusCode::NOT_FOUND,
+            ),
+            (
+                CoreError::Credential(CredentialError::MissingPermissions {
+                    missing: vec!["a".to_string()],
+                }),
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+            (
+                CoreError::Credential(CredentialError::ExcessPermissions {
+                    extra: vec!["b".to_string()],
+                }),
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+            (
+                CoreError::Credential(CredentialError::Invalid),
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+            (
+                CoreError::Credential(CredentialError::Store("vault down".to_string())),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+            (
+                CoreError::Credential(CredentialError::NotEnabled),
+                StatusCode::SERVICE_UNAVAILABLE,
+            ),
+            (
+                CoreError::Provision(ProvisionError::QuotaExceeded),
+                StatusCode::BAD_GATEWAY,
+            ),
+            (
+                CoreError::ClusterNotReady {
+                    deployment: uuid::Uuid::nil(),
+                    state: "provisioning".to_string(),
+                },
+                StatusCode::CONFLICT,
+            ),
+            (
+                CoreError::ClusterResizeNotRecorded {
+                    deployment: uuid::Uuid::nil(),
+                },
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+            (
+                CoreError::Resize(
+                    autharie_core::dataplane::cluster_profile::ResizeError::NodeTypeChange {
+                        current: "a".to_string(),
+                        requested: "b".to_string(),
+                    },
+                ),
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+        ] {
+            assert_eq!(ApiError::from(refused).into_response().status(), expected);
+        }
+    }
+
+    #[test]
+    fn a_refused_profile_keeps_its_message() {
+        use autharie_core::dataplane::cluster_profile::ProfileError;
+
+        let error = ApiError::from(CoreError::Profile(ProfileError::NodeTypeUnavailable {
+            node_type: "gigantic".to_string(),
+        }));
+
+        assert!(error.to_string().contains("gigantic"), "{error}");
     }
 
     #[test]

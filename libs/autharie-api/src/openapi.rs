@@ -3,6 +3,7 @@ use utoipa::OpenApi;
 use crate::handlers::{
     actions::ActionApiDoc,
     audit::AuditApiDoc,
+    cloud_credentials::CloudCredentialApiDoc,
     dataplanes::DataPlaneApiDoc,
     deployments::DeploymentApiDoc,
     invitations::{InvitationApiDoc, accept::__path_accept_invitation_handler},
@@ -37,6 +38,7 @@ use crate::handlers::{
         (path = "/organisations", api = InvitationApiDoc),
         (path = "/organisations", api = PermissionsApiDoc),
         (path = "/organisations", api = DeploymentApiDoc),
+        (path = "/organisations", api = CloudCredentialApiDoc),
         (path = "/organisations", api = ActionApiDoc),
         (path = "/organisations", api = AuditApiDoc),
         (path = "/organisations", api = LogsApiDoc),
@@ -58,6 +60,27 @@ mod tests {
 
     use super::ApiDoc;
     use utoipa::OpenApi;
+
+    #[test]
+    fn the_region_of_the_provider_offers_is_a_query_parameter() {
+        let document = serde_json::to_value(ApiDoc::openapi()).expect("a document");
+        let parameters = document["paths"]
+            ["/organisations/{organisation_id}/cloud-credentials/{credential_id}/offers"]["get"]
+            ["parameters"]
+            .as_array()
+            .expect("parameters");
+
+        let location_of = |name: &str| {
+            parameters
+                .iter()
+                .find(|parameter| parameter["name"] == name)
+                .map(|parameter| parameter["in"].as_str().unwrap_or_default().to_string())
+        };
+
+        assert_eq!(location_of("region").as_deref(), Some("query"));
+        assert_eq!(location_of("organisation_id").as_deref(), Some("path"));
+        assert_eq!(location_of("credential_id").as_deref(), Some("path"));
+    }
 
     #[test]
     fn openapi_has_title() {
@@ -136,8 +159,8 @@ fn served_paths() -> Vec<&'static str> {
     use axum_extra::routing::TypedPath;
 
     use crate::handlers::{
-        actions, audit, dataplanes, deployments, invitations, logs, members, metrics,
-        organisations, permissions, platform, releases, roles, traces, users,
+        actions, audit, cloud_credentials, dataplanes, deployments, invitations, logs, members,
+        metrics, organisations, permissions, platform, releases, roles, traces, users,
     };
 
     vec![
@@ -157,6 +180,11 @@ fn served_paths() -> Vec<&'static str> {
         <deployments::backups::BackupsRoute as TypedPath>::PATH,
         <deployments::backups::BackupScheduleRoute as TypedPath>::PATH,
         <deployments::cutover::CutoverRoute as TypedPath>::PATH,
+        <deployments::resize_cluster::ClusterProfileRoute as TypedPath>::PATH,
+        <cloud_credentials::register_credential::CloudCredentialsRoute as TypedPath>::PATH,
+        <cloud_credentials::delete_credential::CloudCredentialRoute as TypedPath>::PATH,
+        <cloud_credentials::list_offers::ProviderOffersRoute as TypedPath>::PATH,
+        <cloud_credentials::estimate_cluster_cost::EstimateClusterProfileRoute as TypedPath>::PATH,
         <members::list_members::ListMembersRoute as TypedPath>::PATH,
         <members::get_member::MemberRoute as TypedPath>::PATH,
         <members::set_member_roles::MemberRolesRoute as TypedPath>::PATH,

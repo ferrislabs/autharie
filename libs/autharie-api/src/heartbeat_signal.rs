@@ -104,6 +104,7 @@ mod tests {
             created_at: now - chrono::Duration::minutes(10),
             operator_version: None,
             gateway_address: None,
+            failure_reason: None,
             herald: None,
         };
 
@@ -129,6 +130,7 @@ mod tests {
             created_at: now - chrono::Duration::minutes(10),
             operator_version: None,
             gateway_address: None,
+            failure_reason: None,
             herald: None,
         };
 
@@ -154,6 +156,7 @@ mod tests {
             created_at: now - chrono::Duration::minutes(5),
             operator_version: None,
             gateway_address: None,
+            failure_reason: None,
             herald: None,
         };
 

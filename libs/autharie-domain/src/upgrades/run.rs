@@ -239,6 +239,7 @@ mod tests {
                 last_restore_drill_seconds: None,
                 log_shipping_enabled: false,
                 iam_settings: Default::default(),
+                distribution: Default::default(),
             },
             change,
             path: UpgradePath::direct(Version::new(26, 0, 1)),

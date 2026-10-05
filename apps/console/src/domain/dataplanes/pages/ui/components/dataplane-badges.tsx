@@ -42,15 +42,16 @@ export function DataPlaneAllocationBadge({
 }: {
   allocation: Schemas.DataPlaneAllocation
 }) {
-  const dedicated = allocationLabel(allocation) === 'Dedicated'
+  const label = allocationLabel(allocation)
+  const shared = label === 'Shared'
 
   return (
     <StatusBadge
-      tone={dedicated ? 'accent' : 'neutral'}
+      tone={shared ? 'neutral' : 'accent'}
       dot={false}
-      icon={dedicated ? <Lock className='h-3 w-3' /> : <Globe className='h-3 w-3' />}
+      icon={shared ? <Globe className='h-3 w-3' /> : <Lock className='h-3 w-3' />}
     >
-      {dedicated ? 'Dedicated' : 'Shared'}
+      {label}
     </StatusBadge>
   )
 }

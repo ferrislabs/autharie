@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE data_planes\n            SET provisioning_claimed_until = now() + make_interval(secs => $1),\n                updated_at = now()\n            WHERE id IN (\n                SELECT dp.id\n                FROM data_planes dp\n                JOIN deployments d ON d.id = dp.deployment_id\n                WHERE dp.mode = 'customer'\n                  AND dp.status = 'provisioning'\n                  AND dp.herald_client_id IS NULL\n                  AND d.deleted_at IS NULL\n                  AND (dp.provisioning_claimed_until IS NULL\n                       OR dp.provisioning_claimed_until < now())\n                ORDER BY dp.created_at\n                LIMIT $2\n                FOR UPDATE OF dp SKIP LOCKED\n            )\n            RETURNING id\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Float8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "ea167dbf5c58ea835e06ae0789143fd452daa8a03443ea082fa6cc374a2e0e49"
+}

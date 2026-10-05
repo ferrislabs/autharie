@@ -869,6 +869,7 @@ mod tests {
             created_at: Utc::now(),
             operator_version,
             gateway_address: None,
+            failure_reason: None,
         }
     }
 
@@ -1087,6 +1088,7 @@ mod tests {
             last_restore_drill_seconds: None,
             log_shipping_enabled: false,
             iam_settings: Default::default(),
+            distribution: Default::default(),
         }
     }
 

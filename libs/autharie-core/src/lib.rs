@@ -8,4 +8,19 @@ pub use domain::*;
 // The one piece of infrastructure configuration the binary has to name:
 // creating a client for a data plane is an act on the identity provider, and
 // the credentials for it come from the same place every other one does.
-pub use infrastructure::herald_identity::RealmAdmin;
+pub use infrastructure::herald_identity::{FerrisKeyHeraldIdentities, RealmAdmin};
+
+pub use infrastructure::credentials::{
+    CREDENTIALS_KEY, CloudProviders, EnvelopeCredentialStore, FixedCloudProvider, FixedVerdict,
+};
+
+pub use infrastructure::{
+    bootstrap::{
+        HelmBootstrapper, HelmConfig, HelmOutcome, HelmRelease, HelmRunner, TokioHelmRunner,
+    },
+    pooled::{PooledCredentialStore, PooledDataPlanes, PooledInventory, PostgresClusterQueue},
+};
+
+pub use autharie_scaleway::{
+    ScalewayCatalog, ScalewayConfig, ScalewayError, ScalewayProvisioner, ScalewayVerifier,
+};

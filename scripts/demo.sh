@@ -79,6 +79,9 @@ fi
 # start of a fresh checkout comes up with nobody, says so in its logs, and is
 # granted on the second pass a few lines later.
 export AUTHARIE_BOOTSTRAP_OPERATOR="${AUTHARIE_BOOTSTRAP_OPERATOR:-}"
+export CUSTOMER_CLOUD_ENABLED="${CUSTOMER_CLOUD_ENABLED:-false}"
+export CUSTOMER_CLOUD_CONTROL_PLANE_URL="${CUSTOMER_CLOUD_CONTROL_PLANE_URL:-}"
+export CUSTOMER_CLOUD_HERALD_ISSUER="${CUSTOMER_CLOUD_HERALD_ISSUER:-}"
 
 step "control plane (docker compose)"
 docker compose --profile ferriskey up -d --build --wait 2>&1 | tail -3 \
@@ -253,6 +256,9 @@ RESTART_AFTER_INSTALL=1
 # --------------------------------------------------------------- register the DP
 
 step "registering the shared data plane"
+# The token from the rights step has outlived its five minutes by now: building
+# and importing the images takes longer than that on a cold cache.
+OPERATOR_TOKEN=$(token autharie-operator-cli "${OPERATOR_SECRET}")
 # Idempotent by lookup rather than by an upsert the API does not offer: running
 # this twice must not leave two data planes competing for the same cluster.
 existing=$(curl -sS "${CONTROL_PLANE}/dataplanes" -H "Authorization: Bearer ${OPERATOR_TOKEN}" \

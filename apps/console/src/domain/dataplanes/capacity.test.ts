@@ -126,6 +126,15 @@ describe('allocation', () => {
     expect(allocationLabel({ dedicated: { organisation_id: 'org-1' } })).toBe('Dedicated')
   })
 
+  it('reads the owner out of a customer allocation', () => {
+    const customer = {
+      customer: { credential_id: 'cred-1', deployment_id: 'dep-1', organisation_id: 'org-2' },
+    }
+
+    expect(allocationOwner(customer)).toBe('org-2')
+    expect(allocationLabel(customer)).toBe('Customer cloud')
+  })
+
   it('has no owner for a shared allocation', () => {
     expect(allocationOwner('shared')).toBeNull()
     expect(allocationLabel('shared')).toBe('Shared')

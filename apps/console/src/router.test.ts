@@ -20,6 +20,11 @@ function shellsFor(pathname: string): string[] {
 }
 
 describe('the route tree', () => {
+  it('puts the cloud accounts page inside the organisation shell', () => {
+    expect(shellsFor(`${ORGANISATION}/cloud-accounts`)).toContain('AppLayout')
+    expect(shellsFor(`${ORGANISATION}/cloud-accounts`)).toContain('PageCloudCredentialsFeature')
+  })
+
   it('gives an organisation page the organisation shell', () => {
     expect(shellsFor(`${ORGANISATION}/deployments`)).toContain('AppLayout')
   })

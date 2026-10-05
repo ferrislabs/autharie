@@ -296,6 +296,7 @@ async fn seed(tx: &autharie_persistence::SharedTx<'_>) -> Result<Deployment, Cor
         last_restore_drill_seconds: None,
         log_shipping_enabled: false,
         iam_settings: Default::default(),
+        distribution: Default::default(),
     };
     deployments.insert(deployment.clone()).await?;
 

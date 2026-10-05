@@ -19,6 +19,8 @@ import { organisationPathFor } from '@/lib/paths'
 import { KIND_LABELS } from '@/domain/deployments/types/deployment'
 import { formatCpu, formatMemory, formatStorage } from '@/domain/deployments/types/resources'
 import { DeploymentStatusBadge } from '@/domain/deployments/pages/ui/components/deployment-status'
+import { ProvisioningNoticeBanner } from '@/domain/cloud-providers/pages/ui/provisioning-notice'
+import { planeNotice } from '@/domain/cloud-providers/provisioning'
 import { allocationOwner, capacityUsage } from '../../capacity'
 import {
   DataPlaneAllocationBadge,
@@ -94,6 +96,7 @@ export function PageDataPlaneDetail({
 
   const usage = capacityUsage(dataplane.capacity, deployments)
   const owner = allocationOwner(dataplane.allocation)
+  const notice = planeNotice(dataplane)
   const live = deployments.filter((deployment) => !deployment.deleted_at)
 
   return (
@@ -113,6 +116,12 @@ export function PageDataPlaneDetail({
           </>
         }
       />
+
+      {notice && (
+        <div className='mt-6'>
+          <ProvisioningNoticeBanner notice={notice} />
+        </div>
+      )}
 
       {canOperate && dataplane.status !== 'failed' && (
         <div className='mt-6 flex flex-wrap items-center gap-2 rounded-lg border bg-muted/20 px-4 py-3'>

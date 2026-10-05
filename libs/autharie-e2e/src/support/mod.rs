@@ -1,7 +1,9 @@
 pub mod cluster;
+pub mod customer_cloud;
 pub mod iam;
 pub mod platform;
 pub mod reachability;
 pub mod requests;
+pub mod scaleway_api;
 pub mod signals;
 pub mod upgrades;

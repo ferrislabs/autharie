@@ -10,6 +10,7 @@ use crate::{
         Deployment, DeploymentId, DeploymentKind,
         commands::{CreateDeploymentCommand, UpdateDeploymentCommand},
         network::NetworkAccess,
+        provisioning::Provisioning,
     },
     organisation::OrganisationId,
     version::Version,
@@ -74,6 +75,18 @@ pub trait DeploymentService: Send + Sync {
         organisation_id: OrganisationId,
         deployment_id: DeploymentId,
     ) -> impl Future<Output = Result<Deployment, CoreError>> + Send;
+
+    /// What the cluster behind a customer cloud deployment is doing, for the
+    /// people who own the deployment.
+    ///
+    /// `None` for any other distribution: a shared or dedicated plane is the
+    /// operator's business, not something a customer waits on.
+    fn get_provisioning_for_organisation(
+        &self,
+        identity: Identity,
+        organisation_id: OrganisationId,
+        deployment_id: DeploymentId,
+    ) -> impl Future<Output = Result<Option<Provisioning>, CoreError>> + Send;
 
     /// Lists deployments for an organisation
     fn list_deployments_by_organisation(

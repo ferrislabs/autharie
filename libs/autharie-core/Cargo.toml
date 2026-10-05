@@ -11,6 +11,10 @@ autharie-auth = { path = "../autharie-auth" }
 autharie-domain = { path = "../autharie-domain" }
 autharie-persistence = { path = "../autharie-persistence" }
 autharie-postgres = { path = "../autharie-postgres" }
+autharie-transit = { path = "../autharie-transit" }
+autharie-scaleway = { path = "../autharie-scaleway" }
+aes-gcm = "0.10.3"
+zeroize = "1.8"
 chrono = { version = "0.4.42", features = ["serde"] }
 uuid = { version = "1.19.0", features = ["serde", "v4"] }
 sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono", "macros", "json"] }
@@ -21,10 +25,12 @@ serde = { version = "1.0.228", features = ["derive"] }
 reqwest = { version = "0.12.24", default-features = false, features = ["json", "rustls-tls"] }
 serde_json = "1.0.149"
 autharie-permission = { path = "../autharie-permission" }
-tokio = { version = "1", features = ["sync"] }
+tokio = { version = "1", features = ["sync", "process", "time", "io-util"] }
 tracing = "0.1.44"
+futures = "0.3.31"
 
 
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tracing-subscriber = "0.3.22"

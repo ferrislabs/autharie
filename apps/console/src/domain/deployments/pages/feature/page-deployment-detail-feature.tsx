@@ -2,6 +2,12 @@ import { useParams } from '@tanstack/react-router'
 import { useGetDeployment, useGetDeploymentActions } from '@/api/deployment.api'
 import { useGetDeploymentUptime } from '@/api/deployment-uptime.api'
 import { useHoldsPlatformRight } from '@/domain/organisations/hooks/use-is-operator'
+import { ClusterPanelFeature } from '@/domain/cloud-providers/pages/feature/cluster-panel-feature'
+import {
+  currentCredentialId,
+  currentProfile,
+  isResizable,
+} from '@/domain/cloud-providers/resize'
 import { availabilityView } from '../../availability'
 import { PageDeploymentDetail } from '../ui/page-deployment-detail'
 
@@ -35,11 +41,28 @@ export default function PageDeploymentDetailFeature() {
       return dateB - dateA
     }) ?? []
 
+  const subject = deployment.data?.data
+  const profile = subject && currentProfile(subject.distribution)
+  const credentialId = subject && currentCredentialId(subject.distribution)
+  const resizable =
+    subject && profile && credentialId && isResizable(subject, deployment.data?.provisioning)
+
   return (
     <PageDeploymentDetail
       deployment={deployment.data?.data}
       actions={filteredActions}
       availability={availability}
+      provisioning={deployment.data?.provisioning}
+      clusterPanel={
+        resizable ? (
+          <ClusterPanelFeature
+            key={subject.id}
+            deploymentId={subject.id}
+            credentialId={credentialId}
+            profile={profile}
+          />
+        ) : undefined
+      }
       isLoading={deployment.isLoading}
     />
   )

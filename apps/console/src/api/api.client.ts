@@ -85,6 +85,9 @@ export namespace Schemas {
     | { Forbidden: { reason: string } }
     | { Conflict: { reason: string } }
     | { NotFound: { reason: string } }
+    | { Unprocessable: { reason: string } }
+    | { BadGateway: { reason: string } }
+    | { ServiceUnavailable: { reason: string } }
   export type KeyName = string
   export type ProviderName = string
   export type KeyVersion = number
@@ -191,8 +194,45 @@ export namespace Schemas {
     max: number
   }
   export type ClaimActionsResponse = { data: Array<Action> }
+  export type CloudCredentialId = string
+  export type Provider = 'scaleway'
+  export type CloudCredentialResponse = {
+    created_at: string
+    id: string
+    label: string
+    provider: Provider
+    scope_checked_at: string
+  }
+  export type ClusterMode = 'dev' | 'standard' | 'ha'
+  export type ControlPlaneOfferId = string
+  export type ControlPlaneKind = 'mutualized' | 'dedicated'
+  export type Money = number
+  export type ControlPlaneOffer = {
+    id: ControlPlaneOfferId
+    kind: ControlPlaneKind
+    monthly_price: Money
+  }
+  export type NodeType = string
+  export type Replication = number
+  export type ClusterProfile = {
+    control_plane: ControlPlaneOffer
+    max_nodes: number
+    min_nodes: number
+    mode: ClusterMode
+    node_type: NodeType
+    replication: Replication
+  }
+  export type ClusterProfileRequest = {
+    control_plane_id: string
+    max_nodes: number
+    min_nodes: number
+    mode: ClusterMode
+    node_type: string
+    replication: number
+  }
   export type Every = 'all'
   export type ComponentSelection = Every | Array<string>
+  export type CostEstimate = { max: Money; min: Money }
   export type DataPlaneMode = 'shared' | 'dedicated'
   export type Region = string
   export type CreateDataPlaneRequest = {
@@ -201,7 +241,17 @@ export namespace Schemas {
     organisation_id?: (null | OrganisationId) | undefined
     region: Region
   }
+  export type DistributionRequest =
+    | { type: 'shared' }
+    | { type: 'self_hosted' }
+    | {
+        credential_id: string
+        profile: ClusterProfileRequest
+        region: string
+        type: 'customer_cloud'
+      }
   export type CreateDeploymentRequest = {
+    distribution?: (null | DistributionRequest) | undefined
     environment: string
     kind: string
     name: string
@@ -209,6 +259,10 @@ export namespace Schemas {
     region?: (string | null) | undefined
     version: string
   }
+  export type Distribution =
+    | 'shared'
+    | 'self_hosted'
+    | { customer_cloud: { credential_id: CloudCredentialId; profile: ClusterProfile } }
   export type Environment = 'production' | 'staging' | 'development'
   export type IamSettings = Partial<{ branding: null | Branding }>
   export type MaintenanceWindow = { day: string; duration: number; start: string; timezone: string }
@@ -234,6 +288,7 @@ export namespace Schemas {
     dataplane_id: DataPlaneId
     deleted_at?: (string | null) | undefined
     deployed_at?: (string | null) | undefined
+    distribution: Distribution
     environment: Environment
     iam_settings: IamSettings
     id: DeploymentId
@@ -286,13 +341,23 @@ export namespace Schemas {
   export type CutoverRequest = { demote: string }
   export type CutoverResponseData = { demoted: Deployment; promoted: Deployment }
   export type CutoverResponse = { data: CutoverResponseData }
-  export type DataPlaneAllocation = 'shared' | { dedicated: { organisation_id: OrganisationId } }
+  export type DataPlaneAllocation =
+    | 'shared'
+    | { dedicated: { organisation_id: OrganisationId } }
+    | {
+        customer: {
+          credential_id: CloudCredentialId
+          deployment_id: DeploymentId
+          organisation_id: OrganisationId
+        }
+      }
   export type HeraldBinding = { client_id: string; subject: string }
   export type DataPlaneStatus = 'provisioning' | 'active' | 'draining' | 'disabled' | 'failed'
   export type DataPlane = {
     allocation: DataPlaneAllocation
     capacity: Capacity
     created_at: string
+    failure_reason?: (string | null) | undefined
     gateway_address?: (string | null) | undefined
     herald?: (null | HeraldBinding) | undefined
     id: DataPlaneId
@@ -339,6 +404,16 @@ export namespace Schemas {
     data: Array<EstateDeployment>
     next_cursor?: (null | DeploymentId) | undefined
   }
+  export type EstimateClusterProfileRequest = {
+    control_plane_id: string
+    credential_id: string
+    max_nodes: number
+    min_nodes: number
+    mode: ClusterMode
+    node_type: string
+    region: string
+    replication: number
+  }
   export type FleetActor =
     | { kind: 'operator'; subject: string }
     | { client_id: string; kind: 'api' }
@@ -367,7 +442,15 @@ export namespace Schemas {
   export type GetActiveUsersResponseData = Partial<{ active_users: number | null }>
   export type GetActiveUsersResponse = { data: GetActiveUsersResponseData }
   export type GetDataPlaneResponse = { data: DataPlane }
-  export type GetDeploymentResponse = { data: Deployment }
+  export type ProvisioningStatus = 'provisioning' | 'ready' | 'failed'
+  export type Provisioning = {
+    failure_reason?: (string | null) | undefined
+    status: ProvisioningStatus
+  }
+  export type GetDeploymentResponse = {
+    data: Deployment
+    provisioning?: (null | Provisioning) | undefined
+  }
   export type UsageBucketResponse = { bucket: string; value: number }
   export type GetDeploymentUsageResponse = { data: Array<UsageBucketResponse> }
   export type GetRoleResponse = { data: Role }
@@ -555,6 +638,7 @@ export namespace Schemas {
   export type PlatformRights = Array<PlatformRight>
   export type MyRightsResponse = { data: PlatformRights }
   export type NetworkAccessResponse = { data: NetworkAccess }
+  export type NodeOffer = { monthly_price: Money; node_type: NodeType }
   export type PlatformOperator = {
     granted_at: string
     granted_by?: (string | null) | undefined
@@ -563,6 +647,10 @@ export namespace Schemas {
   }
   export type OperatorResponse = { data: PlatformOperator }
   export type OperatorsResponse = { data: Array<PlatformOperator> }
+  export type ProviderOffers = {
+    control_planes: Array<ControlPlaneOffer>
+    node_types: Array<NodeOffer>
+  }
   export type PublishReleaseRequest = {
     minimum_operator_version?: (string | null) | undefined
     notes?: string | undefined
@@ -573,6 +661,7 @@ export namespace Schemas {
   export type PushLogsRequest = { ending?: (null | Ending) | undefined; lines: Array<LogLine> }
   export type PushLogsResponseData = { listening: boolean; relayed: number }
   export type PushLogsResponse = { data: PushLogsResponseData }
+  export type RegisterCloudCredentialRequest = { label: string; provider: Provider; secret: string }
   export type RegisteredDataPlaneResponse = DataPlane &
     Partial<{ herald_client_id: string | null; herald_secret: string | null }>
   export type ReleaseAvailability = Release & {
@@ -617,6 +706,7 @@ export namespace Schemas {
     dataplane_id: DataPlaneId
   }
   export type RequestedUpgradesResponse = { data: Array<RequestedUpgradeItem> }
+  export type ResizeClusterResponse = { data: ClusterProfile }
   export type RestoreBackupRequest = { name: string; region?: (string | null) | undefined }
   export type RestoreBackupResponse = { data: Deployment }
   export type ReviseReleaseRequest = {
@@ -899,6 +989,56 @@ export namespace Endpoints {
     }
     response: Schemas.ListAuditLogResponse
   }
+  export type get_List_cloud_credentials_handler = {
+    method: 'GET'
+    path: '/organisations/{organisation_id}/cloud-credentials'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string }
+    }
+    response: Array<Schemas.CloudCredentialResponse>
+  }
+  export type post_Register_cloud_credential_handler = {
+    method: 'POST'
+    path: '/organisations/{organisation_id}/cloud-credentials'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string }
+
+      body: Schemas.RegisterCloudCredentialRequest
+    }
+    response: Schemas.CloudCredentialResponse
+  }
+  export type delete_Delete_cloud_credential_handler = {
+    method: 'DELETE'
+    path: '/organisations/{organisation_id}/cloud-credentials/{credential_id}'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; credential_id: string }
+    }
+    response: unknown
+  }
+  export type get_List_provider_offers_handler = {
+    method: 'GET'
+    path: '/organisations/{organisation_id}/cloud-credentials/{credential_id}/offers'
+    requestFormat: 'json'
+    parameters: {
+      query: { region: string }
+      path: { organisation_id: string; credential_id: string }
+    }
+    response: Schemas.ProviderOffers
+  }
+  export type post_Estimate_cluster_profile_handler = {
+    method: 'POST'
+    path: '/organisations/{organisation_id}/cluster-profiles/estimate'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string }
+
+      body: Schemas.EstimateClusterProfileRequest
+    }
+    response: Schemas.CostEstimate
+  }
   export type get_List_deployments_handler = {
     method: 'GET'
     path: '/organisations/{organisation_id}/deployments'
@@ -1025,6 +1165,17 @@ export namespace Endpoints {
       body: Schemas.RestoreBackupRequest
     }
     response: Schemas.RestoreBackupResponse
+  }
+  export type put_Resize_cluster_handler = {
+    method: 'PUT'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/cluster-profile'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string }
+
+      body: Schemas.ClusterProfileRequest
+    }
+    response: Schemas.ResizeClusterResponse
   }
   export type post_Cutover_handler = {
     method: 'POST'
@@ -1582,6 +1733,8 @@ export type EndpointByMethod = {
     '/dataplanes/{dataplane_id}': Endpoints.get_Get_dataplane_handler
     '/dataplanes/{dataplane_id}/deployments': Endpoints.get_List_deployments_for_dataplane_handler
     '/organisations/{organisation_id}/audit-log': Endpoints.get_List_audit_log_handler
+    '/organisations/{organisation_id}/cloud-credentials': Endpoints.get_List_cloud_credentials_handler
+    '/organisations/{organisation_id}/cloud-credentials/{credential_id}/offers': Endpoints.get_List_provider_offers_handler
     '/organisations/{organisation_id}/deployments': Endpoints.get_List_deployments_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}': Endpoints.get_Get_deployment_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/actions': Endpoints.get_List_actions_handler
@@ -1637,6 +1790,8 @@ export type EndpointByMethod = {
     '/deployments/{deployment_id}/usage-metrics': Endpoints.post_Report_usage_metrics_handler
     '/invitations/accept': Endpoints.post_Accept_invitation_handler
     '/organisations': Endpoints.post_Create_organisation_handler
+    '/organisations/{organisation_id}/cloud-credentials': Endpoints.post_Register_cloud_credential_handler
+    '/organisations/{organisation_id}/cluster-profiles/estimate': Endpoints.post_Estimate_cluster_profile_handler
     '/organisations/{organisation_id}/deployments': Endpoints.post_Create_deployment_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/backups': Endpoints.post_Ask_for_backup_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/backups/{backup_id}/restore': Endpoints.post_Restore_backup_handler
@@ -1651,6 +1806,7 @@ export type EndpointByMethod = {
   put: {
     '/dataplanes/{dataplane_id}/service': Endpoints.put_Set_service_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/backup-schedule': Endpoints.put_Set_backup_schedule_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/cluster-profile': Endpoints.put_Resize_cluster_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/iam-settings': Endpoints.put_Set_iam_settings_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/network-access': Endpoints.put_Set_network_access_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/upgrade-settings': Endpoints.put_Set_upgrade_settings_handler
@@ -1661,6 +1817,7 @@ export type EndpointByMethod = {
     '/releases/operator/{kind}/{version}/status': Endpoints.put_Move_release_handler
   }
   delete: {
+    '/organisations/{organisation_id}/cloud-credentials/{credential_id}': Endpoints.delete_Delete_cloud_credential_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}': Endpoints.delete_Delete_deployment_handler
     '/organisations/{organisation_id}/invitations/{invitation_id}': Endpoints.delete_Revoke_invitation_handler
     '/organisations/{organisation_id}/members/{user_id}': Endpoints.delete_Remove_member_handler

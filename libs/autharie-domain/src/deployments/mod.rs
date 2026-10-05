@@ -20,7 +20,9 @@ use crate::{
 };
 
 pub mod commands;
+pub mod distribution;
 pub mod ports;
+pub mod provisioning;
 pub mod service;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
@@ -225,6 +227,10 @@ pub struct Deployment {
     pub log_shipping_enabled: bool,
 
     pub iam_settings: crate::iam_settings::IamSettings,
+
+    /// How it is hosted. `Shared` for every deployment created before
+    /// customer clusters existed.
+    pub distribution: distribution::Distribution,
 }
 
 impl Deployment {
@@ -425,6 +431,7 @@ mod tests {
             last_restore_drill_seconds: None,
             log_shipping_enabled: false,
             iam_settings: Default::default(),
+            distribution: Default::default(),
         }
     }
 

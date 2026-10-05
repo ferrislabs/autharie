@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE data_planes\n            SET status = 'disabled',\n                updated_at = now()\n            WHERE id = $1\n              AND status NOT IN ('failed', 'disabled')\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "834949960c4fbc60ee2819550e3153ce8d1213dce71eeb2518d5042e8e712f86"
+}

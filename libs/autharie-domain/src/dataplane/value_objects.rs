@@ -6,7 +6,10 @@ use uuid::Uuid;
 
 use chrono::{DateTime, Duration, Utc};
 
-use crate::{CoreError, organisation::OrganisationId};
+use crate::{
+    CoreError, dataplane::credential::CloudCredentialId, deployments::DeploymentId,
+    organisation::OrganisationId,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 pub struct DataPlaneId(pub Uuid);
@@ -43,6 +46,13 @@ pub enum DataPlaneAllocation {
     Shared,
     /// Reserved to one organisation. Placement for anyone else must not see it.
     Dedicated { organisation_id: OrganisationId },
+    /// A cluster created in the customer's own cloud account for one
+    /// deployment, and deleted with it.
+    Customer {
+        organisation_id: OrganisationId,
+        deployment_id: DeploymentId,
+        credential_id: CloudCredentialId,
+    },
 }
 
 impl DataPlaneAllocation {
@@ -50,14 +60,17 @@ impl DataPlaneAllocation {
     pub fn mode(&self) -> DataPlaneMode {
         match self {
             Self::Shared => DataPlaneMode::Shared,
-            Self::Dedicated { .. } => DataPlaneMode::Dedicated,
+            Self::Dedicated { .. } | Self::Customer { .. } => DataPlaneMode::Dedicated,
         }
     }
 
     pub fn owner(&self) -> Option<OrganisationId> {
         match self {
             Self::Shared => None,
-            Self::Dedicated { organisation_id } => Some(*organisation_id),
+            Self::Dedicated { organisation_id }
+            | Self::Customer {
+                organisation_id, ..
+            } => Some(*organisation_id),
         }
     }
 
@@ -67,6 +80,10 @@ impl DataPlaneAllocation {
             Self::Shared => true,
             Self::Dedicated {
                 organisation_id: owner,
+            }
+            | Self::Customer {
+                organisation_id: owner,
+                ..
             } => *owner == organisation_id,
         }
     }

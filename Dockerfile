@@ -54,8 +54,27 @@ RUN \
 
 USER autharie
 
+FROM rust:1.96-bookworm AS helm
+
+ARG TARGETARCH
+ARG HELM_VERSION=v3.17.3
+ARG HELM_SHA256_AMD64=ee88b3c851ae6466a3de507f7be73fe94d54cbf2987cbaa3d1a3832ea331f2cd
+ARG HELM_SHA256_ARM64=7944e3defd386c76fd92d9e6fec5c2d65a323f6fadc19bfb5e704e3eee10348e
+
+RUN \
+    case "${TARGETARCH}" in \
+    amd64) sha="${HELM_SHA256_AMD64}" ;; \
+    arm64) sha="${HELM_SHA256_ARM64}" ;; \
+    *) echo "unsupported architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac && \
+    curl -fsSL -o /tmp/helm.tar.gz "https://get.helm.sh/helm-${HELM_VERSION}-linux-${TARGETARCH}.tar.gz" && \
+    echo "${sha}  /tmp/helm.tar.gz" | sha256sum -c - && \
+    tar -xzf /tmp/helm.tar.gz -C /tmp "linux-${TARGETARCH}/helm" && \
+    install -m 0755 "/tmp/linux-${TARGETARCH}/helm" /usr/local/bin/helm
+
 FROM runtime AS control-plane
 
+COPY --from=helm /usr/local/bin/helm /usr/local/bin/helm
 COPY --from=builder /usr/local/src/autharie/target/release/autharie-control-plane /usr/local/bin/
 COPY --from=builder --chown=autharie:autharie /usr/local/src/autharie/libs/autharie-core/migrations /usr/local/src/autharie/migrations
 COPY --from=builder /usr/local/cargo/bin/sqlx /usr/local/bin/

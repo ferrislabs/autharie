@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT kind, provider_id\n            FROM cluster_inventory\n            WHERE data_plane_id = $1\n              AND released_at IS NULL\n            ORDER BY recorded_at DESC, provider_id DESC\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "kind",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "provider_id",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "7bc4a93d292b8788b12f7fa99e3c1290c6dde18fd85cf1111e005fd11d9465c2"
+}

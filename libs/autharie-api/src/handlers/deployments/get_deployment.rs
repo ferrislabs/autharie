@@ -1,5 +1,7 @@
 use autharie_auth::Identity;
-use autharie_core::deployments::{Deployment, ports::DeploymentService};
+use autharie_core::deployments::{
+    Deployment, ports::DeploymentService, provisioning::Provisioning,
+};
 use axum::extract::{Extension, State};
 use axum_extra::routing::TypedPath;
 use serde::{Deserialize, Serialize};
@@ -11,6 +13,8 @@ use crate::{errors::ApiError, response::Response, state::AppState};
 #[derive(Serialize, ToSchema, PartialEq)]
 pub struct GetDeploymentResponse {
     data: Deployment,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provisioning: Option<Provisioning>,
 }
 
 #[derive(TypedPath, IntoParams, Deserialize)]
@@ -50,10 +54,17 @@ pub async fn get_deployment_handler(
 
     let deployment = state
         .service
-        .get_deployment_for_organisation(identity, organisation_id, deployment_id)
+        .get_deployment_for_organisation(identity.clone(), organisation_id, deployment_id)
+        .await?;
+    let provisioning = state
+        .service
+        .get_provisioning_for_organisation(identity, organisation_id, deployment_id)
         .await?;
 
-    Ok(Response::OK(GetDeploymentResponse { data: deployment }))
+    Ok(Response::OK(GetDeploymentResponse {
+        data: deployment,
+        provisioning,
+    }))
 }
 
 #[cfg(test)]

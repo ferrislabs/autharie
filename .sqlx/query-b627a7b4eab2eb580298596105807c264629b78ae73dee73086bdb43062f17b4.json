@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO cloud_credential_secrets (\n                id,\n                organisation_id,\n                provider,\n                ciphertext,\n                nonce,\n                wrapped_dek,\n                key_provider,\n                key_name,\n                key_version\n            )\n            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Bytea",
+        "Bytea",
+        "Text",
+        "Text",
+        "Text",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b627a7b4eab2eb580298596105807c264629b78ae73dee73086bdb43062f17b4"
+}

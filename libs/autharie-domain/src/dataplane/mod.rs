@@ -1,5 +1,11 @@
+pub mod bootstrap;
+pub mod cloud_provider;
+pub mod cluster_profile;
+pub mod credential;
+pub mod credential_repository;
 pub mod entities;
 pub mod herald_identity;
+pub mod inventory;
 pub mod ports;
 pub mod provisioner;
 pub mod service;
