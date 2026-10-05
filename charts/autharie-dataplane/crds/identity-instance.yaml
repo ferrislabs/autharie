@@ -1,0 +1,403 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: identityinstances.autharie.fr
+spec:
+  group: autharie.fr
+  names:
+    categories: []
+    kind: IdentityInstance
+    plural: identityinstances
+    shortNames:
+    - ii
+    singular: identityinstance
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.provider
+      name: Provider
+      type: string
+    - jsonPath: .spec.version
+      name: Version
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.ready
+      name: Ready
+      type: boolean
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha
+    schema:
+      openAPIV3Schema:
+        description: Auto-generated derived type for IdentityInstanceSpec via `CustomResource`
+        properties:
+          spec:
+            properties:
+              allowedCidrs:
+                description: |-
+                  Source ranges allowed to reach this instance, in CIDR notation.
+
+                  Absent is open, and so is an empty list: there is no way to spell
+                  "reachable by nobody" here, the same way there is none in the control
+                  plane's own type. An instance whose allow list is cleared goes back to
+                  being reachable rather than disappearing from the network.
+                items:
+                  type: string
+                nullable: true
+                type: array
+              backup:
+                description: |-
+                  Where this instance's database is archived, and with what.
+
+                  Absent means nothing is archived. That is a decision an installation can
+                  make, and it is a different one from a store being unreachable, so it is
+                  expressed as absence rather than as an empty destination.
+                nullable: true
+                properties:
+                  credentialsSecret:
+                    description: |-
+                      The secret holding the credentials the cluster writes with, in this
+                      instance's own namespace.
+
+                      A name rather than the credentials themselves. A CRD is readable by
+                      anything that can list the namespace, and a secret is at least the
+                      object Kubernetes knows to treat carefully.
+                    type: string
+                  destinationPath:
+                    description: |-
+                      `s3://bucket/organisation/deployment`, with no trailing slash.
+
+                      Barman writes the data and the WALs into their own folders underneath.
+                    type: string
+                  encryption:
+                    description: |-
+                      What the store is asked to do with the archive once it has it.
+
+                      `AES256` or `aws:kms`; absent leaves it to the bucket's own policy. The
+                      store decrypts on read either way, which is the part worth knowing and
+                      the part this field cannot change.
+                    nullable: true
+                    type: string
+                  endpointUrl:
+                    description: |-
+                      Where the store answers. Absent means AWS, which is the only store that
+                      needs no endpoint.
+                    nullable: true
+                    type: string
+                required:
+                - credentialsSecret
+                - destinationPath
+                type: object
+              database:
+                properties:
+                  managedCluster:
+                    properties:
+                      instances:
+                        default: 1
+                        format: int32
+                        type: integer
+                      resources:
+                        description: ResourceRequirements specifies resource requests and limits
+                        properties:
+                          limits:
+                            nullable: true
+                            properties:
+                              cpu:
+                                nullable: true
+                                type: string
+                              memory:
+                                nullable: true
+                                type: string
+                            type: object
+                          requests:
+                            nullable: true
+                            properties:
+                              cpu:
+                                nullable: true
+                                type: string
+                              memory:
+                                nullable: true
+                                type: string
+                            type: object
+                        type: object
+                      storage:
+                        properties:
+                          size:
+                            type: string
+                          storageClass:
+                            nullable: true
+                            type: string
+                        required:
+                        - size
+                        type: object
+                    required:
+                    - resources
+                    - storage
+                    type: object
+                  mode:
+                    default: managedCluster
+                    enum:
+                    - managedCluster
+                    type: string
+                required:
+                - managedCluster
+                type: object
+              ferriskey:
+                nullable: true
+                properties:
+                  apiBaseUrl:
+                    nullable: true
+                    type: string
+                  webappUrl:
+                    nullable: true
+                    type: string
+                type: object
+              hostname:
+                type: string
+              iam:
+                description: |-
+                  How the identity provider behaves and looks for this instance.
+
+                  Absent means the provider's own defaults. The control plane writes the
+                  whole value each time, so what is not named here is not set.
+                nullable: true
+                properties:
+                  branding:
+                    description: The look of the login pages. Absent leaves the provider's theme.
+                    nullable: true
+                    properties:
+                      colors:
+                        description: Every colour is `#rrggbb`. Each one is optional and falls back to the theme.
+                        nullable: true
+                        properties:
+                          error:
+                            nullable: true
+                            pattern: ^#[0-9a-fA-F]{6}$
+                            type: string
+                          links:
+                            nullable: true
+                            pattern: ^#[0-9a-fA-F]{6}$
+                            type: string
+                          pageBackground:
+                            nullable: true
+                            pattern: ^#[0-9a-fA-F]{6}$
+                            type: string
+                          primary:
+                            nullable: true
+                            pattern: ^#[0-9a-fA-F]{6}$
+                            type: string
+                          primaryText:
+                            nullable: true
+                            pattern: ^#[0-9a-fA-F]{6}$
+                            type: string
+                          text:
+                            nullable: true
+                            pattern: ^#[0-9a-fA-F]{6}$
+                            type: string
+                          widgetBackground:
+                            nullable: true
+                            pattern: ^#[0-9a-fA-F]{6}$
+                            type: string
+                        type: object
+                      radius:
+                        description: Corner radius in pixels, 0 to 24.
+                        format: uint8
+                        maximum: 24.0
+                        minimum: 0.0
+                        nullable: true
+                        type: integer
+                    type: object
+                type: object
+              ingress:
+                description: |-
+                  Whether and how an instance is reachable from outside the cluster.
+
+                  Named `ingress` from when that is what it built. An instance is served
+                  through an `HTTPRoute` attached to the data plane's Gateway now, so only
+                  `enabled` is still read; the two below describe an edge the operator no
+                  longer creates.
+                nullable: true
+                properties:
+                  className:
+                    description: |-
+                      IGNORED. The edge is the Gateway the data plane declares, and the
+                      operator does not choose between several.
+                    nullable: true
+                    type: string
+                  enabled:
+                    default: true
+                    description: Whether to expose this instance at all. Still read.
+                    type: boolean
+                  tls:
+                    description: |-
+                      IGNORED. TLS terminates on the Gateway listener, which is configured
+                      once for the data plane rather than per instance.
+                    nullable: true
+                    properties:
+                      clusterIssuer:
+                        nullable: true
+                        type: string
+                      enabled:
+                        default: true
+                        type: boolean
+                      secretName:
+                        nullable: true
+                        type: string
+                    type: object
+                type: object
+              organisationId:
+                type: string
+              provider:
+                enum:
+                - keycloak
+                - ferriskey
+                type: string
+              restore:
+                description: |-
+                  Where this instance's database comes from, when it is a recovery.
+
+                  Absent is the ordinary case: a new instance starts empty. Present, the
+                  database is bootstrapped from somebody else's archive instead -- which
+                  is read-only from this instance's side, so the deployment it restores
+                  is never touched.
+
+                  Set once, when the instance is created, and meaningless afterwards: a
+                  cluster already running is not re-bootstrapped by changing this.
+                nullable: true
+                properties:
+                  backupId:
+                    description: |-
+                      Which archive this came from, carried for the operator's logs and for
+                      anybody reading the cluster afterwards.
+                    nullable: true
+                    type: string
+                  destinationPath:
+                    description: '`s3://bucket/organisation/deployment`, the source''s prefix.'
+                    type: string
+                  serverName:
+                    description: |-
+                      The name barman filed the archive under, which is the source's own
+                      database cluster.
+
+                      Without it a recovery finds an empty prefix. CloudNativePG does not
+                      treat that as an error -- it bootstraps an empty cluster -- so the
+                      operator refuses a recovery whose source it cannot see rather than
+                      letting one come up looking restored.
+                    type: string
+                required:
+                - destinationPath
+                - serverName
+                type: object
+              version:
+                type: string
+            required:
+            - database
+            - hostname
+            - organisationId
+            - provider
+            - version
+            type: object
+          status:
+            description: Status of the IdentityInstance
+            nullable: true
+            properties:
+              adminUrl:
+                description: Admin console URL
+                nullable: true
+                type: string
+              conditions:
+                description: Conditions represent the latest available observations
+                items:
+                  properties:
+                    lastTransitionTime:
+                      type: string
+                    message:
+                      nullable: true
+                      type: string
+                    reason:
+                      nullable: true
+                      type: string
+                    status:
+                      enum:
+                      - 'True'
+                      - 'False'
+                      - Unknown
+                      type: string
+                    type:
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - status
+                  - type
+                  type: object
+                type: array
+              endpoint:
+                description: Public endpoint URL (e.g., https://auth.acme.com)
+                nullable: true
+                type: string
+              error:
+                description: Error message if the instance is in Failed phase
+                nullable: true
+                type: string
+              iam:
+                description: What became of `spec.iam`. Absent until the operator has had something to do.
+                nullable: true
+                properties:
+                  applied:
+                    description: |-
+                      The branding the provider is showing, as the operator wrote it. Absent
+                      when the provider shows its default theme.
+                    nullable: true
+                    type: string
+                  message:
+                    description: Why the settings are pending or were refused.
+                    nullable: true
+                    type: string
+                  observedAt:
+                    nullable: true
+                    type: string
+                  phase:
+                    enum:
+                    - Pending
+                    - Applied
+                    - Failed
+                    type: string
+                required:
+                - phase
+                type: object
+              lastUpdated:
+                description: Last time the status was updated
+                nullable: true
+                type: string
+              phase:
+                description: Current phase of the instance
+                enum:
+                - Pending
+                - DatabaseProvisioning
+                - Deploying
+                - Running
+                - Updating
+                - Upgrading
+                - Maintenance
+                - Failed
+                - Deleting
+                - Terminated
+                - null
+                nullable: true
+                type: string
+              ready:
+                default: false
+                description: Is the instance ready to serve traffic
+                type: boolean
+            type: object
+        required:
+        - spec
+        title: IdentityInstance
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
