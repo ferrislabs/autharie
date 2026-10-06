@@ -17,8 +17,8 @@ use crate::{
         entities::DataPlane,
         ports::{DataPlaneRepository, DataPlaneService},
         value_objects::{
-            CreateDataplaneCommand, DataPlaneId, DataPlaneStatus, ListDataPlaneDeploymentsCommand,
-            Region, ServiceIntent,
+            CreateDataplaneCommand, DataPlaneAllocation, DataPlaneId, DataPlaneStatus,
+            ListDataPlaneDeploymentsCommand, Region, ServiceIntent,
         },
     },
     deployments::{
@@ -414,16 +414,19 @@ where
         dataplane_id: DataPlaneId,
         operator_version: Option<Version>,
         gateway_address: Option<String>,
-    ) -> Result<bool, CoreError> {
+    ) -> Result<Option<DataPlaneAllocation>, CoreError> {
         let speaking = speaking_for(&self.dataplane_repository, &identity).await?;
 
         // A heartbeat for somebody else's cluster would keep a dead one
         // receiving deployments.
         speaking.is(dataplane_id)?;
 
-        self.dataplane_repository
+        let recorded = self
+            .dataplane_repository
             .touch_last_seen(&dataplane_id, Utc::now(), operator_version, gateway_address)
-            .await
+            .await?;
+
+        Ok(recorded.then(|| speaking.allocation()))
     }
 }
 
@@ -984,6 +987,74 @@ mod tests {
             email: None,
             name: None,
             roles: vec![],
+        })
+    }
+
+    fn heartbeat_service(
+        allocation: DataPlaneAllocation,
+        id: DataPlaneId,
+        exists: bool,
+    ) -> DataPlaneServiceImpl<
+        MockDataPlaneRepository,
+        MockDeploymentRepository,
+        Granting,
+        NoIdentities,
+        Recording,
+    > {
+        let mut dataplanes = MockDataPlaneRepository::new();
+        dataplanes
+            .expect_find_by_herald_subject()
+            .returning(move |_| {
+                let mut dataplane = DataPlane::new(
+                    allocation,
+                    Region::new("somewhere"),
+                    Capacity::new(1000, 1024, 10).expect("non-zero"),
+                );
+                dataplane.id = id;
+                Box::pin(async move { Ok(Some(dataplane)) })
+            });
+        dataplanes
+            .expect_touch_last_seen()
+            .returning(move |_, _, _, _| Box::pin(async move { Ok(exists) }));
+
+        fleet(dataplanes, Granting::nothing())
+    }
+
+    #[tokio::test]
+    async fn a_heartbeat_answers_with_the_allocation_of_the_data_plane_it_recorded() {
+        let id = DataPlaneId(Uuid::new_v4());
+        let customer = DataPlaneAllocation::Customer {
+            organisation_id: OrganisationId(Uuid::new_v4()),
+            deployment_id: DeploymentId(Uuid::new_v4()),
+            credential_id: crate::dataplane::credential::CloudCredentialId(Uuid::new_v4()),
+        };
+
+        let recorded = heartbeat_service(customer, id, true)
+            .record_heartbeat(customer_herald(), id, None, None)
+            .await
+            .expect("a heartbeat for itself");
+
+        assert_eq!(recorded, Some(customer));
+    }
+
+    #[tokio::test]
+    async fn a_heartbeat_for_an_unknown_data_plane_answers_with_no_allocation() {
+        let id = DataPlaneId(Uuid::new_v4());
+
+        let recorded = heartbeat_service(DataPlaneAllocation::Shared, id, false)
+            .record_heartbeat(customer_herald(), id, None, None)
+            .await
+            .expect("a heartbeat for itself");
+
+        assert_eq!(recorded, None);
+    }
+
+    fn customer_herald() -> Identity {
+        Identity::Client(autharie_auth::Client {
+            id: "herald-subject".to_string(),
+            client_id: "herald".to_string(),
+            roles: vec![],
+            scopes: vec![],
         })
     }
 

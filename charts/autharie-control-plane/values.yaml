@@ -206,7 +206,8 @@ ovh:
   existingSecretConsumerKeyKey: consumer-key
 
 # Where the control plane's own wildcard certificate can be read from, to
-# distribute to every data plane's own Gateway. Empty means this
+# distribute to the own Gateway of each data plane the platform operates
+# (never to one in a customer's cloud account). Empty means this
 # installation distributes none -- a data plane keeps whatever
 # `gateway.tls.secretName` already means without one.
 #

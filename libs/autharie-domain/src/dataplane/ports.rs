@@ -9,8 +9,9 @@ use crate::{
         entities::DataPlane,
         herald_identity::{MintedHeraldIdentity, RegisteredDataPlane},
         value_objects::{
-            CreateDataplaneCommand, DataPlaneId, DataPlaneMode, DeploymentResources,
-            ListDataPlaneDeploymentsCommand, PlacementRequest, Region, ServiceIntent,
+            CreateDataplaneCommand, DataPlaneAllocation, DataPlaneId, DataPlaneMode,
+            DeploymentResources, ListDataPlaneDeploymentsCommand, PlacementRequest, Region,
+            ServiceIntent,
         },
     },
     deployments::{Deployment, commands::ReportDeploymentOutcomeCommand},
@@ -116,13 +117,18 @@ pub trait DataPlaneService: Send + Sync {
     /// Herald sending the heartbeat does not report one; the stored value is
     /// left untouched rather than cleared, since a missing report is not
     /// evidence the fact changed.
+    ///
+    /// Answers with the allocation of the data plane that was recorded, or
+    /// `None` when no data plane carries this id. The allocation is read from
+    /// the credential's own data plane, so the caller can decide what that
+    /// cluster may be sent without a second lookup.
     fn record_heartbeat(
         &self,
         identity: Identity,
         dataplane_id: DataPlaneId,
         operator_version: Option<Version>,
         gateway_address: Option<String>,
-    ) -> impl Future<Output = Result<bool, CoreError>> + Send;
+    ) -> impl Future<Output = Result<Option<DataPlaneAllocation>, CoreError>> + Send;
 }
 
 /// Minting the identity a data plane authenticates with.
