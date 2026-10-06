@@ -9,7 +9,7 @@ use autharie_domain::{
         credential::CloudCredentialId,
         credential_repository::DataPlaneFailures,
         entities::DataPlane,
-        ports::DataPlaneRepository,
+        ports::{DataPlaneRepository, Removal},
         value_objects::{
             Capacity, DataPlaneAllocation, DataPlaneId, DataPlaneMode, DataPlaneStatus,
             DeploymentResources, PlacementPolicy, PlacementRequest, Region,
@@ -507,6 +507,40 @@ impl DataPlaneRepository for PostgresDataPlaneRepository<'_> {
         })?;
 
         Ok(())
+    }
+
+    async fn remove(&self, id: &DataPlaneId) -> Result<Removal, CoreError> {
+        let mut tx = self.tx.lock().await;
+
+        let unreleased = sqlx::query_scalar!(
+            r#"
+            SELECT EXISTS (
+                SELECT 1
+                FROM cluster_inventory
+                WHERE data_plane_id = $1
+                  AND released_at IS NULL
+            ) AS "unreleased!"
+            "#,
+            id.0
+        )
+        .fetch_one(&mut ***tx)
+        .await
+        .map_err(|e| CoreError::DatabaseError {
+            message: format!("Failed to read the infrastructure of a data plane: {}", e),
+        })?;
+
+        if unreleased {
+            return Ok(Removal::InfrastructureRemains);
+        }
+
+        sqlx::query!("DELETE FROM data_planes WHERE id = $1", id.0)
+            .execute(&mut ***tx)
+            .await
+            .map_err(|e| CoreError::DatabaseError {
+                message: format!("Failed to remove a data plane: {}", e),
+            })?;
+
+        Ok(Removal::Removed)
     }
 
     async fn touch_last_seen(

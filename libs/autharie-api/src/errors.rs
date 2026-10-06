@@ -230,7 +230,8 @@ impl From<CoreError> for ApiError {
             | CoreError::PlanBelowWhatIsInUse { .. }
             // Not a 400: the request is well formed and the caller may ask.
             // What refuses it is the state of the cluster.
-            | CoreError::DataPlaneCannotReturnToService { .. } => ApiError::Conflict {
+            | CoreError::DataPlaneCannotReturnToService { .. }
+            | CoreError::DataPlaneCannotBeRemoved { .. } => ApiError::Conflict {
                 reason: value.to_string(),
             },
 

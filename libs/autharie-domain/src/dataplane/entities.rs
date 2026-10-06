@@ -172,6 +172,21 @@ impl DataPlane {
     /// complete, and reviving it silently would hide a half-built cluster
     /// behind a status that says otherwise. The way back is registering one
     /// that works.
+    /// Only a plane that is out of service can go.
+    ///
+    /// Disabled by somebody, or failed before it ever served. An active or
+    /// draining one still has a Herald answering for deployments, and
+    /// forgetting it would leave them with nobody to claim their work.
+    pub fn ensure_removable(&self) -> Result<(), CoreError> {
+        match self.status {
+            DataPlaneStatus::Disabled | DataPlaneStatus::Failed => Ok(()),
+            status => Err(CoreError::DataPlaneCannotBeRemoved {
+                id: self.id,
+                reason: format!("it is {status}, disable it first"),
+            }),
+        }
+    }
+
     pub fn return_to_service(&mut self) -> Result<(), CoreError> {
         if self.status == DataPlaneStatus::Failed {
             return Err(CoreError::DataPlaneCannotReturnToService {

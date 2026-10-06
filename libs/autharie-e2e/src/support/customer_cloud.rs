@@ -40,7 +40,7 @@ use autharie_domain::{
         entities::DataPlane,
         herald_identity::{HeraldBinding, MintedHeraldIdentity},
         inventory::{ClusterInventory, ProvisionedResource},
-        ports::{DataPlaneRepository, HeraldBindingStore, HeraldIdentityProvisioner},
+        ports::{DataPlaneRepository, HeraldBindingStore, HeraldIdentityProvisioner, Removal},
         provisioner::{ClusterProvisioner, ProvisionRequest, ProvisionedCluster},
         value_objects::{
             DataPlaneAllocation, DataPlaneId, DataPlaneMode, DataPlaneStatus, DeploymentResources,
@@ -370,6 +370,22 @@ impl DataPlaneRepository for Platform {
 
     async fn current_load(&self, _: &DataPlaneId) -> Result<u32, CoreError> {
         Ok(0)
+    }
+
+    async fn remove(&self, id: &DataPlaneId) -> Result<Removal, CoreError> {
+        let mut state = self.state();
+        if state
+            .inventory
+            .iter()
+            .any(|(owner, _, released)| owner == id && !released)
+        {
+            return Ok(Removal::InfrastructureRemains);
+        }
+        state.planes.retain(|plane| plane.id != *id);
+        state
+            .deployments
+            .retain(|deployment| deployment.dataplane_id != *id);
+        Ok(Removal::Removed)
     }
 
     async fn save(&self, dataplane: &DataPlane) -> Result<(), CoreError> {

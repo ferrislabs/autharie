@@ -10,6 +10,7 @@ use crate::handlers::dataplanes::{
         __path_create_dataplane_handler, __path_reissue_herald_credential_handler,
         create_dataplane_handler, reissue_herald_credential_handler,
     },
+    delete_dataplane::{__path_delete_dataplane_handler, delete_dataplane_handler},
     get_dataplane::{__path_get_dataplane_handler, get_dataplane_handler},
     heartbeat::{__path_heartbeat_handler, heartbeat_handler},
     list_dataplanes::{__path_list_dataplanes_handler, list_dataplanes_handler},
@@ -28,6 +29,7 @@ pub mod ack_actions;
 pub mod ack_dataplane_actions;
 pub mod claim_actions;
 pub mod create_dataplane;
+pub mod delete_dataplane;
 pub mod get_dataplane;
 pub mod heartbeat;
 pub mod list_dataplanes;
@@ -53,7 +55,8 @@ pub mod set_service;
     push_logs_handler,
     create_dataplane_handler,
     reissue_herald_credential_handler,
-    set_service_handler
+    set_service_handler,
+    delete_dataplane_handler
 ))]
 pub struct DataPlaneApiDoc;
 
@@ -63,6 +66,7 @@ pub fn dataplanes_routes(app_state: AppState) -> Router<AppState> {
         .typed_post(create_dataplane_handler)
         .typed_post(reissue_herald_credential_handler)
         .typed_put(set_service_handler)
+        .typed_delete(delete_dataplane_handler)
         .typed_get(get_dataplane_handler)
         .typed_get(list_deployments_for_dataplane_handler)
         .typed_post(claim_actions_handler)

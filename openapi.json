@@ -190,6 +190,84 @@
             "bearer_auth": []
           }
         ]
+      },
+      "delete": {
+        "tags": [
+          "dataplanes"
+        ],
+        "summary": "remove a data plane that is out of service",
+        "description": "Forgets a data plane and revokes the identity its Herald used. Only a disabled or failed one can go, and only once nothing live is hosted on it: the deployments already deleted are removed with it. For a cluster in a customer's cloud account the infrastructure has to be released first, which happens by itself once the plane is disabled and its deployment is deleted.",
+        "operationId": "delete_dataplane_handler",
+        "parameters": [
+          {
+            "name": "dataplane_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/DataPlaneId"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The data plane is gone"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Changing the fleet is a separate right",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such data plane",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The data plane is in service, hosts a live deployment, or still has infrastructure to release",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
       }
     },
     "/dataplanes/{dataplane_id}/actions:ack": {
@@ -10502,6 +10580,7 @@
           "dataplane.disabled",
           "dataplane.returned_to_service",
           "dataplane.credential_reissued",
+          "dataplane.removed",
           "operator.granted",
           "operator.revoked"
         ]

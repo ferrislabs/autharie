@@ -3,7 +3,7 @@ use autharie_domain::{
     dataplane::{
         entities::DataPlane,
         herald_identity::HeraldBinding,
-        ports::{DataPlaneRepository, HeraldBindingStore},
+        ports::{DataPlaneRepository, HeraldBindingStore, Removal},
         value_objects::DataPlaneStatus,
         value_objects::{
             DataPlaneId, DataPlaneMode, DeploymentResources, PlacementRequest, Region,
@@ -105,6 +105,10 @@ impl DataPlaneRepository for PooledDataPlanes {
 
     async fn save(&self, dataplane: &DataPlane) -> Result<(), CoreError> {
         in_tx!(&self.pool, PostgresDataPlaneRepository, save(dataplane))
+    }
+
+    async fn remove(&self, id: &DataPlaneId) -> Result<Removal, CoreError> {
+        in_tx!(&self.pool, PostgresDataPlaneRepository, remove(id))
     }
 
     async fn touch_last_seen(

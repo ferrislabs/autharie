@@ -6,7 +6,7 @@ use autharie_domain::action::{
     ActionType, ports::ActionRepository,
 };
 use autharie_domain::dataplane::entities::DataPlane;
-use autharie_domain::dataplane::ports::DataPlaneRepository;
+use autharie_domain::dataplane::ports::{DataPlaneRepository, Removal};
 use autharie_domain::dataplane::value_objects::{
     Capacity, DataPlaneAllocation, DataPlaneId, DataPlaneMode, DeploymentResources,
     PlacementRequest, Region,
@@ -211,6 +211,10 @@ impl DataPlaneRepository for InMemoryDataPlanes {
 
     async fn save(&self, _: &DataPlane) -> Result<(), CoreError> {
         Ok(())
+    }
+
+    async fn remove(&self, _: &DataPlaneId) -> Result<Removal, CoreError> {
+        Ok(Removal::Removed)
     }
 
     async fn touch_last_seen(

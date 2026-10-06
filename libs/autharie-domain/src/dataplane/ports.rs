@@ -52,6 +52,18 @@ pub trait DataPlaneService: Send + Sync {
         service: ServiceIntent,
     ) -> impl Future<Output = Result<DataPlane, CoreError>> + Send;
 
+    /// Removes a data plane that is out of service and hosts nothing.
+    ///
+    /// Refused while a deployment that is not deleted still lives on it, and
+    /// while infrastructure created for it in a customer's account has not
+    /// been released: forgetting the cluster first would leave resources
+    /// nobody knows to delete, billed to somebody else.
+    fn delete_dataplane(
+        &self,
+        identity: Identity,
+        dataplane_id: DataPlaneId,
+    ) -> impl Future<Output = Result<(), CoreError>> + Send;
+
     fn list_dataplanes(
         &self,
         identity: Identity,
@@ -174,6 +186,12 @@ pub trait HeraldBindingStore: Send + Sync {
     fn unbind(&self, dataplane: DataPlaneId) -> impl Future<Output = Result<(), CoreError>> + Send;
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Removal {
+    Removed,
+    InfrastructureRemains,
+}
+
 #[cfg_attr(test, mockall::automock)]
 pub trait DataPlaneRepository: Send + Sync {
     /// The data plane a caller is allowed to speak for.
@@ -246,6 +264,13 @@ pub trait DataPlaneRepository: Send + Sync {
     fn current_load(&self, id: &DataPlaneId)
     -> impl Future<Output = Result<u32, CoreError>> + Send;
     fn save(&self, dataplane: &DataPlane) -> impl Future<Output = Result<(), CoreError>> + Send;
+
+    /// Deletes the row, and with it the deployments already deleted and the
+    /// actions that were addressed to it.
+    ///
+    /// Leaves it alone and says so when infrastructure created for it is still
+    /// unreleased.
+    fn remove(&self, id: &DataPlaneId) -> impl Future<Output = Result<Removal, CoreError>> + Send;
 
     /// Stamps `last_seen_at`, and promotes a `Provisioning` data plane to
     /// `Active`.

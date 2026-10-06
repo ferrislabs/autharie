@@ -8,7 +8,8 @@ use crate::audit::fleet::{
     service::fleet_actor,
 };
 use crate::dataplane::herald_identity::{RegisteredDataPlane, speaking_for};
-use crate::dataplane::ports::HeraldIdentityProvisioner;
+use crate::dataplane::ports::{HeraldIdentityProvisioner, Removal};
+use crate::deployments::DeploymentStatus;
 use crate::generate_uuid_v7;
 use crate::platform::{PlatformRight, ports::PlatformPolicy};
 use crate::{
@@ -228,6 +229,63 @@ where
         Ok(dataplane)
     }
 
+    async fn delete_dataplane(
+        &self,
+        identity: Identity,
+        dataplane_id: DataPlaneId,
+    ) -> Result<(), CoreError> {
+        self.policy
+            .require(identity.clone(), PlatformRight::OperateFleet)
+            .await?;
+
+        let dataplane = self
+            .dataplane_repository
+            .find_by_id(&dataplane_id)
+            .await?
+            .ok_or(CoreError::DataPlaneNotFound { id: dataplane_id })?;
+
+        dataplane.ensure_removable()?;
+
+        let still_hosted = self
+            .deployment_repository
+            .list_by_dataplane(&dataplane_id)
+            .await?
+            .iter()
+            .filter(|deployment| deployment.status != DeploymentStatus::Deleted)
+            .count();
+        if still_hosted > 0 {
+            return Err(CoreError::DataPlaneCannotBeRemoved {
+                id: dataplane_id,
+                reason: format!("{still_hosted} deployment(s) still live on it"),
+            });
+        }
+
+        if self.dataplane_repository.remove(&dataplane_id).await? == Removal::InfrastructureRemains
+        {
+            return Err(CoreError::DataPlaneCannotBeRemoved {
+                id: dataplane_id,
+                reason: "its infrastructure in the customer's account is not released yet, \
+                         try again once it is"
+                    .to_string(),
+            });
+        }
+
+        if let (Some(identities), Some(_)) = (self.identities.as_ref(), dataplane.herald.as_ref()) {
+            identities.revoke(dataplane_id).await?;
+        }
+
+        self.record(
+            &identity,
+            FleetAuditAction::DataPlaneRemoved,
+            dataplane_id,
+            Some(AuditChange::new(
+                json!({ "status": dataplane.status.to_string() }),
+                json!({ "status": "removed" }),
+            )?),
+        )
+        .await
+    }
+
     async fn reissue_herald_credential(
         &self,
         identity: Identity,
@@ -435,6 +493,7 @@ mod tests {
     use super::*;
     use crate::audit::fleet::fixtures::Recording;
     use crate::dataplane::herald_identity::NoIdentities;
+    use crate::dataplane::ports::Removal;
     use crate::dataplane::value_objects::{Capacity, DataPlaneAllocation};
     use crate::platform::fixtures::Granting;
     use crate::{
@@ -1234,6 +1293,162 @@ mod tests {
             None::<NoIdentities>,
             Recording::new(),
         )
+    }
+
+    fn removal_service(
+        dataplanes: MockDataPlaneRepository,
+        hosted: Vec<Deployment>,
+    ) -> (
+        DataPlaneServiceImpl<
+            MockDataPlaneRepository,
+            MockDeploymentRepository,
+            Granting,
+            NoIdentities,
+            Recording,
+        >,
+        Recording,
+    ) {
+        let mut deployments = MockDeploymentRepository::new();
+        deployments.expect_list_by_dataplane().returning(move |_| {
+            let hosted = hosted.clone();
+            Box::pin(async move { Ok(hosted) })
+        });
+        let recorded = Recording::new();
+        let service = DataPlaneServiceImpl::new(
+            dataplanes,
+            deployments,
+            Duration::seconds(90),
+            Granting::only(crate::platform::PlatformRight::OperateFleet),
+            None::<NoIdentities>,
+            recorded.clone(),
+        );
+
+        (service, recorded)
+    }
+
+    fn removing(existing: DataPlane, outcome: Removal) -> MockDataPlaneRepository {
+        let (mut dataplanes, _) = holding(existing);
+        dataplanes
+            .expect_remove()
+            .returning(move |_| Box::pin(async move { Ok(outcome) }));
+        dataplanes
+    }
+
+    #[tokio::test]
+    async fn a_disabled_plane_hosting_nothing_is_removed_and_the_trail_says_so() {
+        let existing = plane(DataPlaneStatus::Disabled, None);
+        let id = existing.id;
+        let mut gone = deployment_with_id(Uuid::new_v4(), Utc::now());
+        gone.status = DeploymentStatus::Deleted;
+        let (service, recorded) = removal_service(removing(existing, Removal::Removed), vec![gone]);
+
+        service
+            .delete_dataplane(identity("somebody"), id)
+            .await
+            .expect("removed");
+
+        let entry = recorded.only();
+        assert_eq!(entry.action, FleetAuditAction::DataPlaneRemoved);
+        assert_eq!(entry.target, FleetTarget::DataPlane { id });
+        let change = entry.change.expect("a status change");
+        assert_eq!(change.before(), &json!({ "status": "disabled" }));
+        assert_eq!(change.after(), &json!({ "status": "removed" }));
+    }
+
+    #[tokio::test]
+    async fn a_failed_plane_can_be_removed_too() {
+        let existing = plane(DataPlaneStatus::Failed, None);
+        let id = existing.id;
+        let (service, _) = removal_service(removing(existing, Removal::Removed), vec![]);
+
+        service
+            .delete_dataplane(identity("somebody"), id)
+            .await
+            .expect("removed");
+    }
+
+    #[tokio::test]
+    async fn a_plane_that_is_still_in_service_is_refused_and_left_alone() {
+        for status in [
+            DataPlaneStatus::Active,
+            DataPlaneStatus::Draining,
+            DataPlaneStatus::Provisioning,
+        ] {
+            let existing = plane(status, None);
+            let id = existing.id;
+            let (dataplanes, _) = holding(existing);
+            let (service, recorded) = removal_service(dataplanes, vec![]);
+
+            let refused = service
+                .delete_dataplane(identity("somebody"), id)
+                .await
+                .expect_err("an in-service plane was removed");
+
+            assert!(
+                matches!(refused, CoreError::DataPlaneCannotBeRemoved { .. }),
+                "{refused}"
+            );
+            assert!(recorded.entries().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn a_plane_with_a_live_deployment_is_refused() {
+        let existing = plane(DataPlaneStatus::Disabled, None);
+        let id = existing.id;
+        let (dataplanes, _) = holding(existing);
+        let live = deleting_deployment(id);
+        let (service, recorded) = removal_service(dataplanes, vec![live]);
+
+        let refused = service
+            .delete_dataplane(identity("somebody"), id)
+            .await
+            .expect_err("a plane hosting a deployment was removed");
+
+        assert!(
+            refused.to_string().contains("1 deployment(s) still live"),
+            "{refused}"
+        );
+        assert!(recorded.entries().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_plane_whose_infrastructure_is_not_released_is_refused_and_not_recorded() {
+        let existing = plane(DataPlaneStatus::Disabled, None);
+        let id = existing.id;
+        let (service, recorded) =
+            removal_service(removing(existing, Removal::InfrastructureRemains), vec![]);
+
+        let refused = service
+            .delete_dataplane(identity("somebody"), id)
+            .await
+            .expect_err("a plane with infrastructure was removed");
+
+        assert!(
+            refused.to_string().contains("not released yet"),
+            "{refused}"
+        );
+        assert!(recorded.entries().is_empty());
+    }
+
+    #[tokio::test]
+    async fn seeing_the_fleet_is_not_permission_to_remove_a_plane() {
+        let (dataplanes, _) = holding(plane(DataPlaneStatus::Disabled, None));
+        let service = DataPlaneServiceImpl::new(
+            dataplanes,
+            MockDeploymentRepository::new(),
+            Duration::seconds(90),
+            Granting::only(crate::platform::PlatformRight::ViewEstate),
+            None::<NoIdentities>,
+            Recording::new(),
+        );
+
+        let refused = service
+            .delete_dataplane(identity("somebody"), DataPlaneId(Uuid::new_v4()))
+            .await
+            .expect_err("a reader removed a data plane");
+
+        assert!(matches!(refused, CoreError::MissingPlatformRight { .. }));
     }
 
     fn deleting_deployment(dataplane_id: DataPlaneId) -> Deployment {

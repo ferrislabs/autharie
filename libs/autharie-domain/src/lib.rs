@@ -374,6 +374,11 @@ pub enum CoreError {
     #[error("data plane {id} is {status} and cannot be returned to service")]
     DataPlaneCannotReturnToService { id: DataPlaneId, status: String },
 
+    /// Removing a data plane forgets it, so anything that still depends on it
+    /// has to be gone first. The reason says which.
+    #[error("data plane {id} cannot be removed: {reason}")]
+    DataPlaneCannotBeRemoved { id: DataPlaneId, reason: String },
+
     /// The requested region is served, but every data plane in it is full,
     /// drained or unreachable. Retrying later may succeed.
     #[error("No data plane with room in region '{region}' for a {mode} deployment")]
