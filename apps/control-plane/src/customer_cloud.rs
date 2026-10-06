@@ -71,7 +71,7 @@ type Worker = CustomerClusterWorker<
         PooledCredentialStore,
         PooledInventory,
         PooledDataPlanes,
-        HelmBootstrapper<FerrisKeyHeraldIdentities>,
+        HelmBootstrapper<FerrisKeyHeraldIdentities, PooledDataPlanes>,
     >,
     FerrisKeyHeraldIdentities,
 >;
@@ -87,6 +87,7 @@ fn build_worker(args: &Args, state: &AppState) -> Option<Worker> {
 
     let bootstrapper = HelmBootstrapper::new(
         FerrisKeyHeraldIdentities::new(realm.clone()),
+        PooledDataPlanes::new(pool.clone()),
         args.customer_cloud.helm_config(&args.auth),
     );
     let provisioner = match ScalewayProvisioner::new(

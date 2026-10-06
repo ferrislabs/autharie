@@ -7,7 +7,7 @@ use crate::{
     CoreError,
     dataplane::{
         entities::DataPlane,
-        herald_identity::{MintedHeraldIdentity, RegisteredDataPlane},
+        herald_identity::{HeraldBinding, MintedHeraldIdentity, RegisteredDataPlane},
         value_objects::{
             CreateDataplaneCommand, DataPlaneAllocation, DataPlaneId, DataPlaneMode,
             DeploymentResources, ListDataPlaneDeploymentsCommand, PlacementRequest, Region,
@@ -154,6 +154,24 @@ pub trait HeraldIdentityProvisioner: Send + Sync {
 
     /// Removes the client, so a retired cluster cannot authenticate.
     fn revoke(&self, dataplane: DataPlaneId) -> impl Future<Output = Result<(), CoreError>> + Send;
+}
+
+/// Writes down which Herald identity a data plane expects, ahead of that
+/// Herald existing.
+///
+/// A Herald starts calling the control plane the moment the chart is running,
+/// and the control plane only accepts a subject it has a data plane for. So the
+/// binding has to be recorded before the chart is installed, not after the
+/// whole provisioning returns -- otherwise every first call is refused.
+pub trait HeraldBindingStore: Send + Sync {
+    fn bind(
+        &self,
+        dataplane: DataPlaneId,
+        binding: &HeraldBinding,
+    ) -> impl Future<Output = Result<(), CoreError>> + Send;
+
+    /// Takes the binding back, for an install that did not happen.
+    fn unbind(&self, dataplane: DataPlaneId) -> impl Future<Output = Result<(), CoreError>> + Send;
 }
 
 #[cfg_attr(test, mockall::automock)]

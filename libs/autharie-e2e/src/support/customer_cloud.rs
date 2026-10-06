@@ -40,7 +40,7 @@ use autharie_domain::{
         entities::DataPlane,
         herald_identity::{HeraldBinding, MintedHeraldIdentity},
         inventory::{ClusterInventory, ProvisionedResource},
-        ports::{DataPlaneRepository, HeraldIdentityProvisioner},
+        ports::{DataPlaneRepository, HeraldBindingStore, HeraldIdentityProvisioner},
         provisioner::{ClusterProvisioner, ProvisionRequest, ProvisionedCluster},
         value_objects::{
             DataPlaneAllocation, DataPlaneId, DataPlaneMode, DataPlaneStatus, DeploymentResources,
@@ -158,6 +158,12 @@ pub struct Platform {
 impl Platform {
     fn state(&self) -> MutexGuard<'_, State> {
         self.state.lock().expect("not poisoned")
+    }
+
+    pub fn mark_successful(&self, id: DeploymentId) {
+        if let Some(row) = self.state().deployments.iter_mut().find(|row| row.id == id) {
+            row.status = autharie_domain::deployments::DeploymentStatus::Successful;
+        }
     }
 
     pub fn deployments(&self) -> Vec<Deployment> {
@@ -281,6 +287,32 @@ impl DeploymentRepository for Platform {
 
     async fn count_by_version(&self, _: &DeploymentKind) -> Result<Vec<(Version, u64)>, CoreError> {
         Ok(Vec::new())
+    }
+}
+
+impl HeraldBindingStore for Platform {
+    async fn bind(&self, dataplane: DataPlaneId, binding: &HeraldBinding) -> Result<(), CoreError> {
+        if let Some(plane) = self
+            .state()
+            .planes
+            .iter_mut()
+            .find(|row| row.id == dataplane)
+        {
+            plane.herald = Some(binding.clone());
+        }
+        Ok(())
+    }
+
+    async fn unbind(&self, dataplane: DataPlaneId) -> Result<(), CoreError> {
+        if let Some(plane) = self
+            .state()
+            .planes
+            .iter_mut()
+            .find(|row| row.id == dataplane)
+        {
+            plane.herald = None;
+        }
+        Ok(())
     }
 }
 
@@ -1020,7 +1052,7 @@ pub type Provisioner<'a> = ScalewayProvisioner<
     EnvelopeCredentialStore<'a, Platform, Keys>,
     Platform,
     Platform,
-    HelmBootstrapper<Identities, Runner>,
+    HelmBootstrapper<Identities, Platform, Runner>,
 >;
 
 pub type Worker<'a> = CustomerClusterWorker<Platform, Provisioner<'a>, Identities>;
@@ -1045,6 +1077,7 @@ pub fn provisioner<'a>(
         EnvelopeCredentialStore::new(platform.clone(), keys).expect("a credential store");
     let bootstrapper = HelmBootstrapper::with_runner(
         identities.clone(),
+        platform.clone(),
         runner.clone(),
         HelmConfig::new("https://cp.example", "https://id.example/realms/autharie"),
     );

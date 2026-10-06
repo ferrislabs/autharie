@@ -10,7 +10,7 @@ use autharie_domain::{
         bootstrap::{BootstrapRequest, ClusterBootstrapper},
         credential::SecretString,
         herald_identity::{HeraldBinding, MintedHeraldIdentity},
-        ports::HeraldIdentityProvisioner,
+        ports::{HeraldBindingStore, HeraldIdentityProvisioner},
         value_objects::{DataPlaneId, Region},
     },
     organisation::OrganisationId,
@@ -47,6 +47,35 @@ impl HeraldIdentityProvisioner for &Identities {
 
     async fn revoke(&self, dataplane: DataPlaneId) -> Result<(), CoreError> {
         self.revoked.lock().unwrap().push(dataplane);
+        Ok(())
+    }
+}
+
+struct Bindings {
+    bound: Mutex<Vec<(DataPlaneId, HeraldBinding)>>,
+    unbound: Mutex<Vec<DataPlaneId>>,
+}
+
+impl Bindings {
+    fn new() -> Self {
+        Self {
+            bound: Mutex::new(Vec::new()),
+            unbound: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+impl HeraldBindingStore for &Bindings {
+    async fn bind(&self, dataplane: DataPlaneId, binding: &HeraldBinding) -> Result<(), CoreError> {
+        self.bound
+            .lock()
+            .unwrap()
+            .push((dataplane, binding.clone()));
+        Ok(())
+    }
+
+    async fn unbind(&self, dataplane: DataPlaneId) -> Result<(), CoreError> {
+        self.unbound.lock().unwrap().push(dataplane);
         Ok(())
     }
 }
@@ -141,8 +170,9 @@ fn chart_call(runner: &FakeRunner) -> Seen {
 #[tokio::test]
 async fn the_secret_is_in_the_values_file_and_not_on_the_command_line() {
     let identities = Identities::new();
+    let bindings = Bindings::new();
     let runner = FakeRunner::answering(0, "");
-    let bootstrapper = HelmBootstrapper::with_runner(&identities, &runner, config());
+    let bootstrapper = HelmBootstrapper::with_runner(&identities, &bindings, &runner, config());
 
     bootstrapper.bootstrap(request(1)).await.unwrap();
 
@@ -171,8 +201,9 @@ async fn each_install_gets_its_own_rabbitmq_password() {
     let mut passwords = Vec::new();
     for _ in 0..2 {
         let identities = Identities::new();
+        let bindings = Bindings::new();
         let runner = FakeRunner::answering(0, "");
-        HelmBootstrapper::with_runner(&identities, &runner, config())
+        HelmBootstrapper::with_runner(&identities, &bindings, &runner, config())
             .bootstrap(request(1))
             .await
             .unwrap();
@@ -187,8 +218,9 @@ async fn each_install_gets_its_own_rabbitmq_password() {
 #[tokio::test]
 async fn prerequisites_are_installed_in_order_before_the_chart() {
     let identities = Identities::new();
+    let bindings = Bindings::new();
     let runner = FakeRunner::answering(0, "");
-    HelmBootstrapper::with_runner(&identities, &runner, config())
+    HelmBootstrapper::with_runner(&identities, &bindings, &runner, config())
         .bootstrap(request(1))
         .await
         .unwrap();
@@ -213,8 +245,9 @@ async fn prerequisites_are_installed_in_order_before_the_chart() {
 #[tokio::test]
 async fn a_failing_prerequisite_stops_the_sequence_and_revokes() {
     let identities = Identities::new();
+    let bindings = Bindings::new();
     let runner = FakeRunner::failing_call(1, "Error: keda not ready");
-    let error = HelmBootstrapper::with_runner(&identities, &runner, config())
+    let error = HelmBootstrapper::with_runner(&identities, &bindings, &runner, config())
         .bootstrap(request(1))
         .await
         .unwrap_err();
@@ -234,8 +267,9 @@ async fn a_failing_prerequisite_stops_the_sequence_and_revokes() {
 #[tokio::test]
 async fn the_binding_returned_is_the_one_minted_and_the_directory_is_gone() {
     let identities = Identities::new();
+    let bindings = Bindings::new();
     let runner = FakeRunner::answering(0, "");
-    let bootstrapper = HelmBootstrapper::with_runner(&identities, &runner, config());
+    let bootstrapper = HelmBootstrapper::with_runner(&identities, &bindings, &runner, config());
 
     let binding = bootstrapper.bootstrap(request(1)).await.unwrap();
 
@@ -248,8 +282,9 @@ async fn the_binding_returned_is_the_one_minted_and_the_directory_is_gone() {
 #[tokio::test]
 async fn a_failed_chart_install_revokes_the_identity_and_removes_the_directory() {
     let identities = Identities::new();
+    let bindings = Bindings::new();
     let runner = FakeRunner::failing_call(3, "Error: release failed");
-    let bootstrapper = HelmBootstrapper::with_runner(&identities, &runner, config());
+    let bootstrapper = HelmBootstrapper::with_runner(&identities, &bindings, &runner, config());
 
     let error = bootstrapper.bootstrap(request(1)).await.unwrap_err();
 
@@ -272,8 +307,10 @@ async fn an_error_never_echoes_a_secret_or_the_kubeconfig() {
             "Error: token-abcdef123456 rejected".to_string(),
         ] {
             let identities = Identities::new();
+            let bindings = Bindings::new();
             let runner = FakeRunner::failing_call(failing, &echoed);
-            let bootstrapper = HelmBootstrapper::with_runner(&identities, &runner, config());
+            let bootstrapper =
+                HelmBootstrapper::with_runner(&identities, &bindings, &runner, config());
 
             let message = bootstrapper
                 .bootstrap(request(1))
@@ -315,8 +352,9 @@ async fn an_error_never_echoes_the_generated_password() {
     }
 
     let identities = Identities::new();
+    let bindings = Bindings::new();
     let echo = Arc::new(Echo(Mutex::new(None)));
-    let message = HelmBootstrapper::with_runner(&identities, echo.clone(), config())
+    let message = HelmBootstrapper::with_runner(&identities, &bindings, echo.clone(), config())
         .bootstrap(request(1))
         .await
         .unwrap_err()
@@ -415,4 +453,60 @@ async fn helm_keeps_its_cache_and_config_inside_the_working_directory() {
             format!("{root}/helm-data"),
         ]
     );
+}
+
+struct BindingWatcher<'a> {
+    bindings: &'a Bindings,
+    bound_when_helm_first_ran: Mutex<Option<usize>>,
+}
+
+impl HelmRunner for &BindingWatcher<'_> {
+    async fn run(&self, _: &[String], _: &Path) -> Result<HelmOutcome, CoreError> {
+        self.bound_when_helm_first_ran
+            .lock()
+            .unwrap()
+            .get_or_insert(self.bindings.bound.lock().unwrap().len());
+        Ok(HelmOutcome {
+            code: Some(0),
+            last_line: String::new(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn the_binding_is_recorded_before_the_first_chart_is_installed() {
+    let identities = Identities::new();
+    let bindings = Bindings::new();
+    let runner = BindingWatcher {
+        bindings: &bindings,
+        bound_when_helm_first_ran: Mutex::new(None),
+    };
+
+    let binding = HelmBootstrapper::with_runner(&identities, &bindings, &runner, config())
+        .bootstrap(request(1))
+        .await
+        .unwrap();
+
+    assert_eq!(*runner.bound_when_helm_first_ran.lock().unwrap(), Some(1));
+    assert_eq!(
+        *bindings.bound.lock().unwrap(),
+        vec![(DataPlaneId(Uuid::from_u128(1)), binding)]
+    );
+    assert!(bindings.unbound.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_failed_install_takes_the_binding_back_with_the_identity() {
+    let identities = Identities::new();
+    let bindings = Bindings::new();
+    let runner = FakeRunner::failing_call(0, "Error: boom");
+
+    HelmBootstrapper::with_runner(&identities, &bindings, &runner, config())
+        .bootstrap(request(1))
+        .await
+        .unwrap_err();
+
+    let id = DataPlaneId(Uuid::from_u128(1));
+    assert_eq!(*bindings.unbound.lock().unwrap(), vec![id]);
+    assert_eq!(*identities.revoked.lock().unwrap(), vec![id]);
 }
