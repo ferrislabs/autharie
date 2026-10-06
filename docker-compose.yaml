@@ -103,6 +103,13 @@ services:
       # chart's appVersion, so a local run says which one it wants.
       CUSTOMER_CLOUD_IMAGE_TAG: ${CUSTOMER_CLOUD_IMAGE_TAG:-latest}
       CUSTOMER_CLOUD_IMAGE_REGISTRY: ${CUSTOMER_CLOUD_IMAGE_REGISTRY:-}
+      # DNS for deployment hostnames. Off while the zone is empty: a deployment
+      # then gets no name of its own and the log says so at startup.
+      OVH_ENDPOINT: ${OVH_ENDPOINT:-https://eu.api.ovh.com/1.0}
+      OVH_APPLICATION_KEY: ${OVH_APPLICATION_KEY:-}
+      OVH_APPLICATION_SECRET: ${OVH_APPLICATION_SECRET:-}
+      OVH_CONSUMER_KEY: ${OVH_CONSUMER_KEY:-}
+      OVH_ZONE: ${OVH_ZONE:-}
       # The oldest version a data plane may report and still be sent an
       # upgrade: the control plane refuses one for a Herald older than this,
       # which could not read the action. Set to what the local chart reports

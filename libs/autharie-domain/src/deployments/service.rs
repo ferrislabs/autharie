@@ -911,7 +911,7 @@ mod tests {
             id: deployment_id,
             organisation_id,
             dataplane_id: DataPlaneId(Uuid::new_v4()),
-            name: DeploymentName("app".to_string()),
+            name: DeploymentName("tenant".to_string()),
             kind: DeploymentKind::Keycloak,
             version: crate::version::Version::new(1, 0, 0),
             status: DeploymentStatus::Pending,
@@ -982,7 +982,7 @@ mod tests {
         mock_repo
             .expect_insert()
             .times(1)
-            .withf(|deployment| deployment.name.0 == "app")
+            .withf(|deployment| deployment.name.0 == "tenant")
             .returning(|_| Box::pin(async { Ok(()) }));
         mock_dataplane_repo
             .expect_find_available()
@@ -1003,14 +1003,15 @@ mod tests {
         );
         let command = CreateDeploymentCommand::new(
             OrganisationId(Uuid::new_v4()),
-            DeploymentName("app".to_string()),
+            DeploymentName("tenant".to_string()),
             DeploymentKind::Keycloak,
             crate::version::Version::new(1, 0, 0),
             UserId(Uuid::new_v4()),
             crate::deployments::environment::Environment::Development,
             Region::new("fr-par"),
             crate::offers::Offer::Standard,
-        );
+        )
+        .expect("a creatable name");
 
         let result = service.create_deployment(caller(), command).await;
         assert!(result.is_ok());
@@ -1309,7 +1310,7 @@ mod tests {
 
         CreateDeploymentCommand::new(
             OrganisationId(Uuid::new_v4()),
-            DeploymentName("app".to_string()),
+            DeploymentName("tenant".to_string()),
             DeploymentKind::Keycloak,
             crate::version::Version::new(1, 0, 0),
             UserId(Uuid::new_v4()),
@@ -1317,6 +1318,7 @@ mod tests {
             Region::new(region),
             offer,
         )
+        .expect("a creatable name")
     }
 
     /// The point of the change: what the caller asked for is what reaches the
@@ -2213,8 +2215,9 @@ mod tests {
             Allowed,
         );
 
-        let command =
-            UpdateDeploymentCommand::default().with_name(DeploymentName("renamed".to_string()));
+        let command = UpdateDeploymentCommand::default()
+            .with_name(DeploymentName("renamed".to_string()))
+            .expect("a publishable name");
 
         let error = service
             .update_deployment(DeploymentId(Uuid::new_v4()), command)

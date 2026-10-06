@@ -98,7 +98,7 @@ fn deployment(
         id: DeploymentId(Uuid::new_v4()),
         organisation_id,
         dataplane_id,
-        name: DeploymentName("reachability-checks".to_string()),
+        name: DeploymentName(format!("reachability-checks-{}", Uuid::new_v4())),
         kind: DeploymentKind::Ferriskey,
         version: Version::new(26, 0, 1),
         status: DeploymentStatus::InProgress,

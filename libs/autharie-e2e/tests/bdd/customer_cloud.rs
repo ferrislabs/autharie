@@ -210,7 +210,7 @@ impl CustomerCloudWorld {
         }
         let command = CreateDeploymentCommand::new(
             self.organisation,
-            DeploymentName("auth".to_string()),
+            DeploymentName("tenant".to_string()),
             DeploymentKind::Ferriskey,
             Version::new(26, 0, 1),
             UserId(Uuid::from_u128(9)),
@@ -218,6 +218,7 @@ impl CustomerCloudWorld {
             Region::new(REGION),
             Offer::Sandbox,
         )
+        .expect("a creatable name")
         .with_distribution(distribution)
         .expect("ferriskey may use the customer cloud");
         self.deployment = Some(
@@ -550,7 +551,7 @@ async fn build_request(
         .expect("a valid distribution");
     CreateDeploymentCommand::new(
         world.organisation,
-        DeploymentName("auth".to_string()),
+        DeploymentName("tenant".to_string()),
         kind_named(kind),
         Version::new(26, 0, 1),
         UserId(Uuid::from_u128(9)),
@@ -558,6 +559,7 @@ async fn build_request(
         Region::new(REGION),
         Offer::Sandbox,
     )
+    .expect("a creatable name")
     .with_distribution(distribution)
 }
 

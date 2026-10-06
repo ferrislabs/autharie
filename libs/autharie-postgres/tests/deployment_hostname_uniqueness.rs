@@ -1,8 +1,8 @@
 //! Two live deployments cannot hold one hostname (#184), checked against a
 //! real Postgres rather than a mock.
 //!
-//! The rule lives in a partial unique index on `(organisation_id,
-//! hostname_slug) WHERE deleted_at IS NULL` -- SQL, not a service-level
+//! The rule lives in a partial unique index on `(hostname_slug)
+//! WHERE deleted_at IS NULL` -- SQL, not a service-level
 //! check -- so this is the shape of logic that has to meet the real engine.
 //! See `heartbeat_activates.rs` for why these skip without `DATABASE_URL`.
 
@@ -120,9 +120,9 @@ fn deployment(
     }
 }
 
-/// The point of the issue: a second live deployment with the same hostname
-/// in the same organisation is refused by the database itself, not just by
-/// whatever service happened to check first.
+/// A second live deployment with the same hostname in the same organisation
+/// is refused by the database itself, not just by whatever service happened
+/// to check first.
 #[tokio::test]
 async fn a_second_live_deployment_with_the_same_hostname_is_refused() {
     let Some(pool) = pool().await else {
@@ -160,7 +160,7 @@ async fn a_second_live_deployment_with_the_same_hostname_is_refused() {
                 ))
                 .await;
 
-            Ok(collision.is_err())
+            Ok(matches!(collision, Err(CoreError::DeploymentNameTaken)))
         },
     )
     .await;
@@ -171,11 +171,50 @@ async fn a_second_live_deployment_with_the_same_hostname_is_refused() {
     );
 }
 
-/// Two organisations naming a deployment alike were never going to collide:
-/// #281 scopes a deployment's hostname by its own organisation's slug, which
-/// is unique by construction.
+/// The hostname is flat, so two organisations naming a deployment alike
+/// would fight over one record: the second is refused, with the same readable
+/// error a clash inside one organisation gives.
 #[tokio::test]
-async fn two_organisations_can_each_use_the_same_hostname() {
+async fn two_organisations_cannot_hold_the_same_hostname() {
+    let Some(pool) = pool().await else {
+        eprintln!("skipped: DATABASE_URL is not set");
+        return;
+    };
+
+    let result: Result<CoreError, CoreError> = in_scratch_tx(
+        &pool,
+        |e| CoreError::DatabaseError {
+            message: e.to_string(),
+        },
+        async |tx| {
+            let dataplane_id = seed_dataplane(&tx).await?;
+            let (mine_user, mine_org) = seed_organisation(&tx, "acme").await?;
+            let (theirs_user, theirs_org) = seed_organisation(&tx, "globex").await?;
+            let deployments = PostgresDeploymentRepository::new(&tx);
+
+            deployments
+                .insert(deployment(mine_org, dataplane_id, mine_user, "prod"))
+                .await?;
+
+            Ok(deployments
+                .insert(deployment(theirs_org, dataplane_id, theirs_user, "Prod"))
+                .await
+                .expect_err("the name is already taken by another organisation"))
+        },
+    )
+    .await;
+
+    let error = result.expect("the transaction committed");
+    assert!(matches!(error, CoreError::DeploymentNameTaken), "{error}");
+    assert_eq!(
+        error.to_string(),
+        "this name is already used by another deployment"
+    );
+}
+
+/// A deleted deployment frees its name for another organisation too.
+#[tokio::test]
+async fn a_deleted_deployments_hostname_can_be_taken_by_another_organisation() {
     let Some(pool) = pool().await else {
         eprintln!("skipped: DATABASE_URL is not set");
         return;
@@ -192,9 +231,10 @@ async fn two_organisations_can_each_use_the_same_hostname() {
             let (theirs_user, theirs_org) = seed_organisation(&tx, "globex").await?;
             let deployments = PostgresDeploymentRepository::new(&tx);
 
-            deployments
-                .insert(deployment(mine_org, dataplane_id, mine_user, "prod"))
-                .await?;
+            let first = deployment(mine_org, dataplane_id, mine_user, "prod");
+            deployments.insert(first.clone()).await?;
+            deployments.delete(first.id).await?;
+
             deployments
                 .insert(deployment(theirs_org, dataplane_id, theirs_user, "prod"))
                 .await?;
@@ -204,7 +244,7 @@ async fn two_organisations_can_each_use_the_same_hostname() {
     )
     .await;
 
-    result.expect("neither organisation's hostname blocks the other's");
+    result.expect("a deleted deployment's name does not block another organisation");
 }
 
 /// A deleted deployment's hostname is free to reuse. Without the partial

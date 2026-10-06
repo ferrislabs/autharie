@@ -661,7 +661,7 @@ async fn a_keycloak_deployment_cannot_use_the_customer_cloud_spec_ccp_9() {
         Method::POST,
         &format!("/organisations/{}/deployments", tenant.organisation),
         Some(json!({
-            "name": "app", "kind": "keycloak", "version": "1.0.0",
+            "name": format!("tenant-{}", Uuid::new_v4()), "kind": "keycloak", "version": "1.0.0",
             "environment": "production", "offer": "standard",
             "distribution": {
                 "type": "customer_cloud",
@@ -710,7 +710,7 @@ async fn the_owner_of_a_customer_cluster_reads_why_it_is_not_ready_without_opera
         Method::POST,
         &format!("{base}/deployments"),
         Some(json!({
-            "name": "app", "kind": "ferriskey", "version": "1.0.0",
+            "name": format!("tenant-{}", Uuid::new_v4()), "kind": "ferriskey", "version": "1.0.0",
             "environment": "production", "offer": "standard",
             "distribution": {
                 "type": "customer_cloud",
@@ -798,7 +798,7 @@ async fn a_customer_cluster_is_resized_through_the_api_spec_ccp_15_and_ccp_16() 
         Method::POST,
         &format!("{base}/deployments"),
         Some(json!({
-            "name": "app", "kind": "ferriskey", "version": "1.0.0",
+            "name": format!("tenant-{}", Uuid::new_v4()), "kind": "ferriskey", "version": "1.0.0",
             "environment": "production", "offer": "standard",
             "distribution": {
                 "type": "customer_cloud",

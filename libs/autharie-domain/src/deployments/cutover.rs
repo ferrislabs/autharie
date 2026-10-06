@@ -1,6 +1,6 @@
 //! Moving which deployment serves a hostname.
 //!
-//! A deployment's hostname is `slug(name)` under its organisation's own
+//! A deployment's hostname is `slug(name)` under the installation's
 //! domain (#282) -- nothing else decides it. So moving a customer's traffic
 //! from one deployment to another, without an outage on the only name they
 //! use, is a name swap: the deployment taking over gets the name the

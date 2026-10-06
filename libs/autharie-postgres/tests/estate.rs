@@ -50,8 +50,7 @@ macro_rules! pool_or_skip {
 }
 
 /// The whole point of the endpoint: two organisations, and each deployment
-/// carries the one that owns it. Both are called the same thing, because a
-/// join that matched on a name rather than an id would pass otherwise.
+/// carries the one that owns it, read back by their own ids and not by name.
 #[tokio::test]
 async fn every_deployment_carries_the_organisation_that_owns_it() {
     let pool = pool_or_skip!();
@@ -68,10 +67,10 @@ async fn every_deployment_carries_the_organisation_that_owns_it() {
 
             let deployments = PostgresDeploymentRepository::new(&tx);
             deployments
-                .insert(a_deployment(dataplane, first, "auth", 1))
+                .insert(a_deployment(dataplane, first, "auth-first", 1))
                 .await?;
             deployments
-                .insert(a_deployment(dataplane, second, "auth", 2))
+                .insert(a_deployment(dataplane, second, "auth-second", 2))
                 .await?;
 
             let estate = PostgresEstateRepository::new(&tx);
@@ -106,10 +105,10 @@ async fn every_deployment_carries_the_organisation_that_owns_it() {
     assert_eq!(
         seen,
         vec![
-            ("auth".to_string(), "acme".to_string()),
-            ("auth".to_string(), "globex".to_string()),
+            ("auth-first".to_string(), "acme".to_string()),
+            ("auth-second".to_string(), "globex".to_string()),
         ],
-        "two deployments of the same name, each attributed to its own owner"
+        "each deployment attributed to its own owner"
     );
 }
 

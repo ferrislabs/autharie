@@ -1,4 +1,5 @@
 use crate::{
+    CoreError,
     dataplane::value_objects::{DataPlaneId, DeploymentResources, Region},
     deployments::environment::Environment,
     offers::Offer,
@@ -69,10 +70,10 @@ impl CreateDeploymentCommand {
         environment: Environment,
         region: Region,
         offer: Offer,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, CoreError> {
+        Ok(Self {
             organisation_id,
-            name,
+            name: name.publishable()?,
             kind,
             version,
             created_by,
@@ -81,7 +82,7 @@ impl CreateDeploymentCommand {
             offer,
             recovery: None,
             distribution: Distribution::Shared,
-        }
+        })
     }
 
     /// Where it is hosted, refused when this kind cannot be hosted there.
@@ -124,9 +125,9 @@ impl UpdateDeploymentCommand {
         Self::default()
     }
 
-    pub fn with_name(mut self, name: DeploymentName) -> Self {
-        self.name = Some(name);
-        self
+    pub fn with_name(mut self, name: DeploymentName) -> Result<Self, CoreError> {
+        self.name = Some(name.publishable()?);
+        Ok(self)
     }
 
     pub fn with_kind(mut self, kind: DeploymentKind) -> Self {
@@ -186,16 +187,17 @@ mod tests {
     fn create_deployment_command_sets_fields() {
         let command = CreateDeploymentCommand::new(
             OrganisationId(Uuid::new_v4()),
-            DeploymentName("app".to_string()),
+            DeploymentName("tenant".to_string()),
             DeploymentKind::Keycloak,
             Version::new(1, 0, 0),
             UserId(Uuid::new_v4()),
             Environment::Production,
             Region::new("fr-par"),
             Offer::Standard,
-        );
+        )
+        .expect("a creatable name");
 
-        assert_eq!(command.name.0, "app");
+        assert_eq!(command.name.0, "tenant");
         assert_eq!(command.kind, DeploymentKind::Keycloak);
         assert_eq!(command.version.to_string(), "1.0.0");
         assert_eq!(command.environment, Environment::Production);
@@ -217,7 +219,7 @@ mod tests {
     fn a_command(kind: DeploymentKind) -> CreateDeploymentCommand {
         CreateDeploymentCommand::new(
             OrganisationId(Uuid::new_v4()),
-            DeploymentName("app".to_string()),
+            DeploymentName("tenant".to_string()),
             kind,
             Version::new(1, 0, 0),
             UserId(Uuid::new_v4()),
@@ -225,6 +227,80 @@ mod tests {
             Region::new("fr-par"),
             Offer::Standard,
         )
+        .expect("a creatable name")
+    }
+
+    fn create_named(name: &str) -> Result<CreateDeploymentCommand, CoreError> {
+        CreateDeploymentCommand::new(
+            OrganisationId(Uuid::new_v4()),
+            DeploymentName(name.to_string()),
+            DeploymentKind::Ferriskey,
+            Version::new(1, 0, 0),
+            UserId(Uuid::new_v4()),
+            Environment::Production,
+            Region::new("fr-par"),
+            Offer::Standard,
+        )
+    }
+
+    #[test]
+    fn every_reserved_label_is_refused_at_creation() {
+        for label in crate::dns::RESERVED_HOSTNAME_LABELS {
+            assert!(
+                matches!(
+                    create_named(label),
+                    Err(CoreError::DeploymentNameReserved { .. })
+                ),
+                "{label} was accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn a_reserved_label_is_refused_however_the_name_is_written() {
+        for name in ["WWW", " Api ", "A.P.I", "--www--", "Console!"] {
+            let expected_reserved =
+                crate::dns::is_reserved_label(&crate::deployments::environment::slug(name));
+            assert_eq!(
+                matches!(
+                    create_named(name),
+                    Err(CoreError::DeploymentNameReserved { .. })
+                ),
+                expected_reserved,
+                "{name}"
+            );
+        }
+        assert!(create_named("WWW").is_err());
+        assert!(create_named(" Api ").is_err());
+        assert!(create_named("--www--").is_err());
+        assert!(create_named("Console!").is_err());
+    }
+
+    #[test]
+    fn the_refusal_says_the_name_is_reserved_and_to_pick_another() {
+        let Err(error) = create_named("api") else {
+            panic!("api must be refused");
+        };
+        let message = error.to_string();
+
+        assert!(message.contains("reserved"), "{message}");
+        assert!(message.contains("pick another"), "{message}");
+    }
+
+    #[test]
+    fn demo_and_a_prefixed_reserved_label_are_creatable() {
+        assert!(create_named("demo").is_ok());
+        assert!(create_named("api-gateway").is_ok());
+    }
+
+    #[test]
+    fn a_rename_to_a_reserved_label_is_refused() {
+        let result = UpdateDeploymentCommand::new().with_name(DeploymentName("Status".to_string()));
+
+        assert!(matches!(
+            result,
+            Err(CoreError::DeploymentNameReserved { .. })
+        ));
     }
 
     /// @spec-ccp-9
@@ -273,6 +349,7 @@ mod tests {
 
         let command = UpdateDeploymentCommand::new()
             .with_name(DeploymentName("new".to_string()))
+            .expect("a publishable name")
             .with_kind(DeploymentKind::Ferriskey)
             .with_version(Version::new(2, 0, 0))
             .with_status(DeploymentStatus::Successful)

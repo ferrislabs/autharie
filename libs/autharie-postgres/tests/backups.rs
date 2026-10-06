@@ -266,7 +266,7 @@ async fn what_a_recovery_came_back_from_survives_the_round_trip() {
             let deployments = PostgresDeploymentRepository::new(&tx);
             let recovery = Deployment {
                 id: DeploymentId(Uuid::new_v4()),
-                name: DeploymentName("recovery".to_string()),
+                name: DeploymentName(format!("recovery-{}", Uuid::new_v4())),
                 namespace: "backups-test-recovery".to_string(),
                 restored_from: Some(taken_from),
                 ..source
@@ -545,7 +545,7 @@ async fn seed(tx: &autharie_persistence::SharedTx<'_>) -> Result<Deployment, Cor
         id: DeploymentId(Uuid::new_v4()),
         organisation_id,
         dataplane_id: DataPlaneId(dataplane.id.0),
-        name: DeploymentName("backups".to_string()),
+        name: DeploymentName(format!("backups-{}", Uuid::new_v4())),
         kind: DeploymentKind::Keycloak,
         version: Version::parse("26.0.0").unwrap(),
         status: DeploymentStatus::Successful,

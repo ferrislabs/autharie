@@ -51,6 +51,20 @@ impl fmt::Display for DeploymentId {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, ToSchema)]
 pub struct DeploymentName(pub String);
 
+impl DeploymentName {
+    /// The name, once its hostname label is known not to be one the platform
+    /// keeps for itself. Commands that carry a name into creation or rename go
+    /// through this, so a reserved label cannot reach the repository by
+    /// either path.
+    pub fn publishable(self) -> Result<Self, CoreError> {
+        if crate::dns::is_reserved_label(&environment::slug(&self.0)) {
+            return Err(CoreError::DeploymentNameReserved { name: self.0 });
+        }
+
+        Ok(self)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DeploymentKind {
@@ -235,7 +249,7 @@ pub struct Deployment {
 
 impl Deployment {
     /// The label a repository constraint keys on to prove two live
-    /// deployments in one organisation never hold the same hostname.
+    /// deployments never hold the same hostname.
     ///
     /// The same rule [`crate::dns::hostname_for`] slugs `name` with --
     /// computed here rather than trusted from a stored column so the two
@@ -445,7 +459,7 @@ mod tests {
 
         assert_eq!(subject.hostname_slug(), "my-deployment");
         assert!(
-            crate::dns::hostname_for("acme", &subject.name.0, "autharie.fr")
+            crate::dns::hostname_for(&subject.name.0, "autharie.fr")
                 .starts_with(&subject.hostname_slug())
         );
     }

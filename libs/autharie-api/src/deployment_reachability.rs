@@ -54,31 +54,7 @@ pub async fn run_deployment_reachability_probe(state: AppState) {
                 continue;
             };
 
-            let organisation_slug = match state
-                .service
-                .organisation_slug(deployment.organisation_id)
-                .await
-            {
-                Ok(Some(slug)) => slug,
-                Ok(None) => {
-                    error!(
-                        deployment_id = %deployment.id,
-                        "failed to look up organisation for deployment"
-                    );
-                    continue;
-                }
-                Err(err) => {
-                    error!(
-                        deployment_id = %deployment.id,
-                        %err,
-                        "failed to query organisation slug"
-                    );
-                    continue;
-                }
-            };
-
-            let hostname =
-                autharie_core::dns::hostname_for(&organisation_slug, &deployment.name.0, &zone);
+            let hostname = autharie_core::dns::hostname_for(&deployment.name.0, &zone);
             let health_path = health_path_for_kind(&deployment.kind);
             let url = format!("https://{}{}", hostname, health_path);
 
