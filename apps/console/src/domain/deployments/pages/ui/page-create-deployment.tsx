@@ -14,18 +14,26 @@ import {
 import { Page, PageTitle, Section } from '@/components/layout/page'
 import { useOrganisationPath } from '@/domain/organisations/hooks/use-organisation-path'
 import { Link, useNavigate } from '@tanstack/react-router'
-import { useState, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { KIND_LABELS, type DeploymentKind, type Environment } from '../../types/deployment'
 import {
   OFFER_COPY,
   describeResources,
-  firstOpen,
   whyClosed,
   type Offer,
   type OfferAvailability,
 } from '../../offers'
+import { offerFor, resolveOffer } from '../../pricing/offer-for'
+import { priceOf, type Hosting, type PlanId, type Selection } from '../../pricing/model'
+import { applyChange, STARTER_MOVED_NOTICE } from '../../pricing/selection'
 import { customerCloudAvailability } from '@/domain/cloud-providers/distribution'
 import { OptionCard } from './components/option-card'
+import { EnginePicker } from './components/engine-picker'
+import { HostingPicker } from './components/hosting-picker'
+import { KeycloakNotice } from './components/keycloak-notice'
+import { PlanPicker } from './components/plan-picker'
+import { PriceSummary } from './components/price-summary'
+import { VolumePicker } from './components/volume-picker'
 
 interface Props {
   onSubmit: (data: {
@@ -47,6 +55,7 @@ interface Props {
   credentialsLoading: boolean
   customerCloud: ReactNode
   distribution: Schemas.DistributionRequest | null
+  clusterEstimate?: string
 }
 
 export default function PageCreateDeployment({
@@ -61,6 +70,7 @@ export default function PageCreateDeployment({
   credentialsLoading,
   customerCloud,
   distribution,
+  clusterEstimate,
 }: Props) {
   const navigate = useNavigate()
   const organisationPath = useOrganisationPath()
@@ -68,19 +78,38 @@ export default function PageCreateDeployment({
   const [name, setName] = useState('')
   const [kind, setKind] = useState<DeploymentKind>('ferriskey')
   const [environment, setEnvironment] = useState<Environment>('development')
-  const [offer, setOffer] = useState<Offer | undefined>(undefined)
+  const [offerOverride, setOfferOverride] = useState<Offer | undefined>(undefined)
   const [wantsCustomerCloud, setWantsCustomerCloud] = useState(false)
-  const chosen = offer ?? firstOpen(offers)
+  const [plan, setPlan] = useState<PlanId>('business')
+  const [volume, setVolume] = useState(10000)
+  const [movedToBusiness, setMovedToBusiness] = useState(false)
 
-  // Not a choice. A new instance starts on the newest version the catalogue
-  // offers, and moving between versions is what the upgrade screen is for:
-  // offering the choice twice invites somebody to create an instance already
-  // behind, for no reason they could name.
   const version = newestInstallable(releases[kind]) ?? ''
 
   const availability = customerCloudAvailability(kind, credentials)
   const onCustomerCloud = wantsCustomerCloud && availability !== 'hidden'
   const placement = onCustomerCloud ? (distribution ?? undefined) : undefined
+  const hosting: Hosting = onCustomerCloud ? 'byoc' : 'managed'
+
+  const selection = useMemo<Selection>(
+    () => ({ hosting, engine: kind, plan, volume }),
+    [hosting, kind, plan, volume],
+  )
+  const price = priceOf(selection)
+
+  const derived = offerFor(plan, hosting === 'byoc' ? null : volume)
+  const resolved = resolveOffer(derived, offerOverride, offers)
+  const chosen = resolved.offer
+
+  const commit = (patch: Partial<Selection>) => {
+    const change = applyChange(selection, patch)
+    setPlan(change.selection.plan)
+    setVolume(change.selection.volume)
+    setMovedToBusiness(change.movedToBusiness)
+    setOfferOverride(undefined)
+    if (patch.engine) setKind(patch.engine)
+    if (patch.hosting) setWantsCustomerCloud(patch.hosting === 'byoc')
+  }
 
   const canSubmit =
     !!chosen &&
@@ -109,40 +138,6 @@ export default function PageCreateDeployment({
           }
         }}
       >
-        <Section title='Identity provider'>
-          <div className='grid gap-3 sm:grid-cols-2'>
-            {(Object.keys(KIND_LABELS) as DeploymentKind[]).map((value) => (
-              <OptionCard
-                key={value}
-                selected={kind === value}
-                onSelect={() => setKind(value)}
-                label={KIND_LABELS[value]}
-              />
-            ))}
-          </div>
-
-          <div className='mt-4 space-y-2'>
-            <Label>Version</Label>
-            {releasesLoading ? (
-              <Skeleton className='h-9 w-full sm:w-72' />
-            ) : version === '' ? (
-              <p className='rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200'>
-                No version of {KIND_LABELS[kind]} is available yet, so there is nothing to create.
-                Someone operating the platform publishes one and makes it available.
-              </p>
-            ) : (
-              <>
-                <p className='font-mono text-sm'>{version}</p>
-                <p className='text-xs text-muted-foreground'>
-                  The newest available version, chosen for you. It can be upgraded afterwards,
-                  which is where choosing a version belongs.
-                </p>
-              </>
-            )}
-          </div>
-
-        </Section>
-
         <Section title='Details'>
           <div className='grid gap-4 sm:grid-cols-2'>
             <div className='space-y-2'>
@@ -175,6 +170,77 @@ export default function PageCreateDeployment({
           </div>
         </Section>
 
+        <Section title='Identity provider'>
+          <EnginePicker engine={kind} onSelect={(engine) => commit({ engine })} />
+
+          {kind === 'keycloak' && (
+            <KeycloakNotice hosting={hosting} onSwitch={() => commit({ engine: 'ferriskey' })} />
+          )}
+
+          <div className='mt-4 space-y-2'>
+            <Label>Version</Label>
+            {releasesLoading ? (
+              <Skeleton className='h-9 w-full sm:w-72' />
+            ) : version === '' ? (
+              <p className='rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200'>
+                No version of {KIND_LABELS[kind]} is available yet, so there is nothing to create.
+                Someone operating the platform publishes one and makes it available.
+              </p>
+            ) : (
+              <>
+                <p className='font-mono text-sm'>{version}</p>
+                <p className='text-xs text-muted-foreground'>
+                  The newest available version, chosen for you. It can be upgraded afterwards,
+                  which is where choosing a version belongs.
+                </p>
+              </>
+            )}
+          </div>
+        </Section>
+
+        <Section title='Hosting'>
+          <HostingPicker
+            hosting={hosting}
+            onSelect={(next) => commit({ hosting: next })}
+            customerCloudAvailable={availability !== 'hidden'}
+          />
+
+          {onCustomerCloud &&
+            (credentialsLoading ? (
+              <Skeleton className='h-24 w-full' />
+            ) : availability === 'needs_credentials' ? (
+              <p className='rounded-md border bg-muted/30 px-3 py-3 text-sm text-muted-foreground'>
+                No cloud account is registered yet.{' '}
+                <Link
+                  to={organisationPath('/cloud-accounts')}
+                  className='font-medium text-foreground underline'
+                >
+                  Add one on the Cloud accounts page
+                </Link>{' '}
+                to run a deployment in your own cloud.
+              </p>
+            ) : (
+              customerCloud
+            ))}
+        </Section>
+
+        <Section title='Plan'>
+          <PlanPicker
+            selection={selection}
+            onSelect={(next) => commit({ plan: next })}
+            movedNotice={movedToBusiness ? STARTER_MOVED_NOTICE : undefined}
+          />
+        </Section>
+
+        <Section title='Expected volume'>
+          <VolumePicker
+            hosting={hosting}
+            engine={kind}
+            volume={volume}
+            onChange={(next) => commit({ volume: next })}
+          />
+        </Section>
+
         <Section title='Offer'>
           {offersLoading ? (
             <Skeleton className='h-24 w-full' />
@@ -183,88 +249,61 @@ export default function PageCreateDeployment({
               This organisation's plan opens no offer, so there is nothing to deploy on.
             </p>
           ) : (
-            <div className='grid gap-3 sm:grid-cols-2'>
-              {offers.map((entry) => {
-                const closed = whyClosed(entry)
+            <>
+              <p className='text-sm text-muted-foreground'>
+                Suggested from your plan and volume: {OFFER_COPY[derived].label}. You can choose
+                another.
+              </p>
+              {resolved.because && (
+                <p className='rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200'>
+                  {resolved.because}
+                </p>
+              )}
+              <div className='grid gap-3 sm:grid-cols-2'>
+                {offers.map((entry) => {
+                  const closed = whyClosed(entry)
 
-                return (
-                  <OptionCard
-                    key={entry.offer}
-                    selected={chosen === entry.offer}
-                    disabled={!entry.open}
-                    onSelect={() => entry.open && setOffer(entry.offer)}
-                    label={OFFER_COPY[entry.offer].label}
-                    description={OFFER_COPY[entry.offer].description}
-                    footer={
-                      <span className='font-mono text-xs text-muted-foreground'>
-                        {closed ?? describeResources(entry)}
-                      </span>
-                    }
-                  />
-                )
-              })}
-            </div>
+                  return (
+                    <OptionCard
+                      key={entry.offer}
+                      selected={chosen === entry.offer}
+                      disabled={!entry.open}
+                      onSelect={() => entry.open && setOfferOverride(entry.offer)}
+                      label={OFFER_COPY[entry.offer].label}
+                      description={OFFER_COPY[entry.offer].description}
+                      footer={
+                        <span className='font-mono text-xs text-muted-foreground'>
+                          {closed ?? describeResources(entry)}
+                        </span>
+                      }
+                    />
+                  )
+                })}
+              </div>
+            </>
           )}
         </Section>
 
-        {availability !== 'hidden' && (
-          <Section title='Where it runs'>
-            <div className='grid gap-3 sm:grid-cols-2'>
-              <OptionCard
-                selected={!onCustomerCloud}
-                onSelect={() => setWantsCustomerCloud(false)}
-                label='Shared platform'
-                description='Runs on the platform operated for you.'
-              />
-              <OptionCard
-                selected={onCustomerCloud}
-                onSelect={() => setWantsCustomerCloud(true)}
-                label='Your cloud'
-                description='A cluster created in your own cloud account, billed by your provider.'
-              />
-            </div>
-
-            {onCustomerCloud &&
-              (credentialsLoading ? (
-                <Skeleton className='h-24 w-full' />
-              ) : availability === 'needs_credentials' ? (
-                <p className='rounded-md border bg-muted/30 px-3 py-3 text-sm text-muted-foreground'>
-                  No cloud account is registered yet.{' '}
-                  <Link
-                    to={organisationPath('/cloud-accounts')}
-                    className='font-medium text-foreground underline'
-                  >
-                    Add one on the Cloud accounts page
-                  </Link>{' '}
-                  to run a deployment in your own cloud.
-                </p>
-              ) : (
-                customerCloud
-              ))}
-          </Section>
-        )}
-
-        {/* Where a deployment lands is the platform's decision, so the
-            reasons it cannot land anywhere are the platform's to explain --
-            and this is where somebody finds out, now that nothing on the form
-            pre-empts it. */}
         {refusal && (
           <p className='rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive'>
             {refusal}
           </p>
         )}
 
-        <div className='flex items-center justify-end gap-2 border-t pt-6'>
-          <Button
-            type='button'
-            variant='ghost'
-            onClick={() => navigate({ to: organisationPath('/deployments') })}
-          >
-            Cancel
-          </Button>
-          <Button type='submit' disabled={!canSubmit}>
-            {isSubmitting ? 'Creating…' : 'Create deployment'}
-          </Button>
+        <div className='sticky bottom-0 -mx-2 space-y-4 border-t bg-background px-2 py-4'>
+          <PriceSummary hosting={hosting} price={price} clusterEstimate={clusterEstimate} />
+          <div className='flex items-center justify-end gap-2'>
+            <Button
+              type='button'
+              variant='ghost'
+              onClick={() => navigate({ to: organisationPath('/deployments') })}
+            >
+              Cancel
+            </Button>
+            <Button type='submit' disabled={!canSubmit}>
+              {isSubmitting ? 'Creating…' : 'Create deployment'}
+            </Button>
+          </div>
         </div>
       </form>
     </Page>

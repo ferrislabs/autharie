@@ -22,6 +22,7 @@ export default function PageCreateDeploymentFeature() {
   const offers = useGetOffers(organisationId ?? null)
   const credentials = useGetCloudCredentials()
   const [distribution, setDistribution] = useState<Schemas.DistributionRequest | null>(null)
+  const [clusterEstimate, setClusterEstimate] = useState<string | undefined>(undefined)
 
   // Both products, because the form lets the choice change and a version list
   // that arrives after the click is a list nobody saw.
@@ -57,10 +58,12 @@ export default function PageCreateDeploymentFeature() {
       credentials={credentials.data ?? []}
       credentialsLoading={credentials.isLoading}
       distribution={distribution}
+      clusterEstimate={clusterEstimate}
       customerCloud={
         <CustomerCloudSectionFeature
           credentials={credentials.data ?? []}
           onChange={setDistribution}
+          onEstimate={setClusterEstimate}
         />
       }
     />
