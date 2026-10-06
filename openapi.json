@@ -12172,6 +12172,16 @@
           },
           "status": {
             "$ref": "#/components/schemas/ProvisioningStatus"
+          },
+          "step": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ProvisioningStep"
+              }
+            ]
           }
         }
       },
@@ -12181,6 +12191,15 @@
           "provisioning",
           "ready",
           "failed"
+        ]
+      },
+      "ProvisioningStep": {
+        "type": "string",
+        "description": "Where a customer deployment is on its way from \"asked for\" to \"running\".\n\nRead from what already exists rather than stored: a plane without a Herald\nidentity is still being built, one with it is being installed, and one that\nanswers while its deployment has not come up is setting the IAM up.",
+        "enum": [
+          "creating_infrastructure",
+          "installing_data_plane",
+          "setting_up_iam"
         ]
       },
       "PublishReleaseRequest": {

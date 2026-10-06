@@ -599,6 +599,11 @@ async fn the_first_heartbeat(world: &mut CustomerCloudWorld) {
     world.heartbeat().await;
 }
 
+#[when("the deployment comes up")]
+fn the_deployment_comes_up(world: &mut CustomerCloudWorld) {
+    world.platform.mark_successful(world.deployment().id);
+}
+
 #[when("the customer deletes the deployment")]
 async fn the_customer_deletes_the_deployment(world: &mut CustomerCloudWorld) {
     let id = world.deployment().id;
@@ -1021,6 +1026,15 @@ async fn active_and_ready(world: &mut CustomerCloudWorld, status: String) {
     assert_eq!(plane.status, DataPlaneStatus::Active);
     assert!(plane.last_seen_at.is_some());
     assert_eq!(world.provisioning_status().await["status"], json!(status));
+}
+
+#[then(expr = "the provisioning step is {string}")]
+async fn the_provisioning_step_is(world: &mut CustomerCloudWorld, wanted: String) {
+    let view = world.provisioning_status().await;
+    match wanted.as_str() {
+        "none" => assert!(view.get("step").is_none(), "{view}"),
+        _ => assert_eq!(view["step"], json!(wanted)),
+    }
 }
 
 #[then("the worker reports one failed provisioning")]

@@ -92,16 +92,22 @@ Feature: A deployment runs on a cluster created in the customer's own cloud acco
     Given a registered credential
     When the customer creates a customer cloud deployment
     Then the deployment is "pending" and its data plane is provisioning without a Herald binding
+    And the provisioning step is "creating_infrastructure"
     And the create request did not provision anything
     When the worker provisions the cluster on a healthy Scaleway
     Then Scaleway was asked for exactly one private network, one cluster and one node pool
     And the data plane carries the Herald binding minted by the bootstrap and the capacity of the nodes
     And the data plane is still provisioning and its provisioning status is "provisioning"
+    And the provisioning step is "installing_data_plane"
     And the chart prerequisites and then the data plane chart were installed once
     When the worker runs a second time on a healthy Scaleway
     Then Scaleway was asked for nothing more and the report says nothing was provisioned
     When the first heartbeat of the data plane arrives
+    Then the data plane is active and its provisioning status is "provisioning"
+    And the provisioning step is "setting_up_iam"
+    When the deployment comes up
     Then the data plane is active and its provisioning status is "ready"
+    And the provisioning step is "none"
 
   @spec-ccp-11
   Scenario: a quota failure ends as a `Failed` data plane with a readable reason
