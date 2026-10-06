@@ -9,7 +9,13 @@
 //! renewal clock to keep in sync with the first, for no reader that needs
 //! anything the first does not already provide.
 
+use std::{
+    collections::HashSet,
+    sync::{Mutex, OnceLock, PoisonError},
+};
+
 use autharie_core::certificate::{Certificate, CertificateError, CertificateSource};
+use autharie_core::dataplane::value_objects::{DataPlaneAllocation, DataPlaneId};
 use k8s_openapi::api::core::v1::Secret;
 use kube::Client;
 use kube::api::Api;
@@ -120,9 +126,43 @@ pub async fn certificate_for_heartbeat<S: CertificateSource>(
     (known_fingerprint != Some(certificate.fingerprint().as_str())).then_some(certificate)
 }
 
+static WITHHELD_WARNED: OnceLock<Mutex<HashSet<DataPlaneId>>> = OnceLock::new();
+
+fn first_withheld(dataplane_id: DataPlaneId) -> bool {
+    WITHHELD_WARNED
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(dataplane_id)
+}
+
+/// [`certificate_for_heartbeat`] for one particular data plane: the source is
+/// not consulted at all unless the allocation may receive the platform
+/// certificate, so a customer cluster never has its key read, let alone sent.
+pub async fn certificate_for_dataplane<S: CertificateSource>(
+    source: Option<&S>,
+    allocation: DataPlaneAllocation,
+    dataplane_id: DataPlaneId,
+    known_fingerprint: Option<&str>,
+) -> Option<Certificate> {
+    if !allocation.receives_platform_certificate() {
+        if source.is_some() && first_withheld(dataplane_id) {
+            warn!(
+                dataplane_id = %dataplane_id.0,
+                "the platform certificate is withheld from customer data planes"
+            );
+        }
+        return None;
+    }
+
+    certificate_for_heartbeat(source, known_fingerprint).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use uuid::Uuid;
 
     struct FixedSource(Certificate);
 
@@ -201,5 +241,91 @@ mod tests {
         let sent = certificate_for_heartbeat(Some(&FailingSource), None).await;
 
         assert!(sent.is_none());
+    }
+
+    struct CountingSource {
+        certificate: Certificate,
+        reads: AtomicUsize,
+    }
+
+    impl CountingSource {
+        fn new() -> Self {
+            Self {
+                certificate: certificate(),
+                reads: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    impl CertificateSource for CountingSource {
+        async fn current(&self) -> Result<Certificate, CertificateError> {
+            self.reads.fetch_add(1, Ordering::SeqCst);
+            Ok(self.certificate.clone())
+        }
+    }
+
+    fn customer() -> DataPlaneAllocation {
+        use autharie_core::dataplane::credential::CloudCredentialId;
+        use autharie_core::deployments::DeploymentId;
+        use autharie_core::organisation::OrganisationId;
+
+        DataPlaneAllocation::Customer {
+            organisation_id: OrganisationId(Uuid::new_v4()),
+            deployment_id: DeploymentId(Uuid::new_v4()),
+            credential_id: CloudCredentialId(Uuid::new_v4()),
+        }
+    }
+
+    fn plane() -> DataPlaneId {
+        DataPlaneId(Uuid::new_v4())
+    }
+
+    #[tokio::test]
+    async fn a_customer_data_plane_never_reads_nor_receives_the_certificate() {
+        let source = CountingSource::new();
+
+        for known in [None, Some("anything")] {
+            let sent = certificate_for_dataplane(Some(&source), customer(), plane(), known).await;
+            assert!(sent.is_none());
+        }
+
+        assert_eq!(source.reads.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn a_shared_data_plane_receives_a_changed_certificate_and_none_when_current() {
+        let source = CountingSource::new();
+        let fingerprint = source.certificate.fingerprint();
+        let shared = DataPlaneAllocation::Shared;
+
+        let stale = certificate_for_dataplane(Some(&source), shared, plane(), Some("old")).await;
+        let current =
+            certificate_for_dataplane(Some(&source), shared, plane(), Some(&fingerprint)).await;
+
+        assert_eq!(stale, Some(source.certificate.clone()));
+        assert!(current.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_dedicated_data_plane_receives_the_certificate() {
+        use autharie_core::organisation::OrganisationId;
+
+        let source = CountingSource::new();
+        let dedicated = DataPlaneAllocation::Dedicated {
+            organisation_id: OrganisationId(Uuid::new_v4()),
+        };
+
+        let sent = certificate_for_dataplane(Some(&source), dedicated, plane(), None).await;
+
+        assert_eq!(sent, Some(source.certificate.clone()));
+    }
+
+    #[test]
+    fn the_withheld_warning_is_given_once_per_data_plane() {
+        let id = plane();
+
+        assert!(first_withheld(id));
+        assert!(!first_withheld(id));
+        assert!(first_withheld(plane()));
     }
 }

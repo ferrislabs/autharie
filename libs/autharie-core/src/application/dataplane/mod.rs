@@ -270,7 +270,8 @@ impl DataPlaneService for AutharieService {
         dataplane_id: DataPlaneId,
         operator_version: Option<autharie_domain::version::Version>,
         gateway_address: Option<String>,
-    ) -> Result<bool, CoreError> {
+    ) -> Result<Option<autharie_domain::dataplane::value_objects::DataPlaneAllocation>, CoreError>
+    {
         DataPlaneServiceImpl::new(
             data_plane_repository,
             deployment_repository,

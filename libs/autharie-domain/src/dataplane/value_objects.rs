@@ -64,6 +64,17 @@ impl DataPlaneAllocation {
         }
     }
 
+    /// Whether the platform's wildcard certificate and private key may be sent
+    /// to this data plane. Only clusters the platform operates itself qualify:
+    /// a customer's cluster administrator can read whatever its Herald writes.
+    pub fn receives_platform_certificate(&self) -> bool {
+        match self {
+            Self::Shared => true,
+            Self::Dedicated { .. } => true,
+            Self::Customer { .. } => false,
+        }
+    }
+
     pub fn owner(&self) -> Option<OrganisationId> {
         match self {
             Self::Shared => None,
@@ -544,6 +555,31 @@ mod allocation_tests {
 
         assert!(allocation.accepts(owner));
         assert!(!allocation.accepts(someone_else));
+    }
+
+    #[test]
+    fn a_shared_data_plane_receives_the_platform_certificate() {
+        assert!(DataPlaneAllocation::Shared.receives_platform_certificate());
+    }
+
+    #[test]
+    fn a_dedicated_data_plane_receives_the_platform_certificate() {
+        let allocation = DataPlaneAllocation::Dedicated {
+            organisation_id: org(),
+        };
+
+        assert!(allocation.receives_platform_certificate());
+    }
+
+    #[test]
+    fn a_customer_data_plane_never_receives_the_platform_certificate() {
+        let allocation = DataPlaneAllocation::Customer {
+            organisation_id: org(),
+            deployment_id: DeploymentId(Uuid::new_v4()),
+            credential_id: CloudCredentialId(Uuid::new_v4()),
+        };
+
+        assert!(!allocation.receives_platform_certificate());
     }
 
     #[test]

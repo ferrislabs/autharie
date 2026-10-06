@@ -84,9 +84,14 @@ pub struct RegisteredDataPlane {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HeraldSpeaking {
     dataplane: crate::dataplane::value_objects::DataPlaneId,
+    allocation: crate::dataplane::value_objects::DataPlaneAllocation,
 }
 
 impl HeraldSpeaking {
+    pub fn allocation(&self) -> crate::dataplane::value_objects::DataPlaneAllocation {
+        self.allocation
+    }
+
     pub fn dataplane(&self) -> crate::dataplane::value_objects::DataPlaneId {
         self.dataplane
     }
@@ -128,6 +133,7 @@ pub async fn speaking_for<R: crate::dataplane::ports::DataPlaneRepository>(
         .await?
         .map(|dataplane| HeraldSpeaking {
             dataplane: dataplane.id,
+            allocation: dataplane.allocation,
         })
         .ok_or(crate::CoreError::PermissionDenied {
             // Says what is wrong without saying which data planes exist: a
@@ -187,7 +193,10 @@ impl HeraldSpeaking {
     /// Behind `cfg(test)` on purpose: in a build that ships, the only way to
     /// hold one of these is to have read it from a credential.
     pub fn for_test(dataplane: crate::dataplane::value_objects::DataPlaneId) -> Self {
-        Self { dataplane }
+        Self {
+            dataplane,
+            allocation: crate::dataplane::value_objects::DataPlaneAllocation::Shared,
+        }
     }
 }
 

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
 use crate::{
-    certificate::certificate_for_heartbeat, errors::ApiError, response::Response, state::AppState,
+    certificate::certificate_for_dataplane, errors::ApiError, response::Response, state::AppState,
 };
 
 #[derive(TypedPath, IntoParams, Deserialize)]
@@ -117,7 +117,7 @@ pub async fn heartbeat_handler(
         })
         .transpose()?;
 
-    let recorded = state
+    let allocation = state
         .service
         .record_heartbeat(
             identity,
@@ -126,20 +126,26 @@ pub async fn heartbeat_handler(
             request.gateway_address,
         )
         .await?;
+    let recorded = allocation.is_some();
 
     // Read after the transaction closes rather than inside it: this is a
     // Kubernetes API call, not a database one, and a slow cluster has no
     // reason to hold a Postgres transaction open while it answers.
-    let certificate = certificate_for_heartbeat(
-        state.certificate_source.as_deref(),
-        request.certificate_fingerprint.as_deref(),
-    )
-    .await
-    .map(|certificate| CertificatePayload {
-        fingerprint: certificate.fingerprint(),
-        certificate_pem: certificate.certificate_pem,
-        private_key_pem: certificate.private_key_pem,
-    });
+    let certificate = match allocation {
+        Some(allocation) => certificate_for_dataplane(
+            state.certificate_source.as_deref(),
+            allocation,
+            dataplane_id,
+            request.certificate_fingerprint.as_deref(),
+        )
+        .await
+        .map(|certificate| CertificatePayload {
+            fingerprint: certificate.fingerprint(),
+            certificate_pem: certificate.certificate_pem,
+            private_key_pem: certificate.private_key_pem,
+        }),
+        None => None,
+    };
 
     Ok(Response::OK(HeartbeatResponse {
         data: HeartbeatResponseData {
