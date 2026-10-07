@@ -9,6 +9,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { ThemeMenu } from './theme-menu'
 import { useAuthStore } from '@/stores/auth'
 import { signOut } from '@/lib/auth/sign-out'
 import {
@@ -175,6 +176,8 @@ export function TopBar({
               <p className='truncate text-sm'>{profile?.preferred_username}</p>
               <p className='truncate text-xs font-normal text-muted-foreground'>{profile?.email}</p>
             </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <ThemeMenu />
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => void signOut()}>Sign out</DropdownMenuItem>
           </DropdownMenuContent>
