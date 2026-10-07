@@ -2,6 +2,14 @@ import type { Schemas } from '@/api/api.client'
 import { Card, EmptyState, InfoRow, Page, PageTitle, Section } from '@/components/layout/page'
 import { Button } from '@/components/ui/button'
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
   Sheet,
   SheetContent,
   SheetDescription,
@@ -12,6 +20,7 @@ import { HeraldCredential } from './components/herald-credential'
 import { Meter } from '@/components/ui/meter'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import { formatDistanceToNow } from 'date-fns'
 import { Boxes, CalendarClock, Cpu, HardDrive, MemoryStick, Radio, Server } from 'lucide-react'
@@ -22,6 +31,7 @@ import { DeploymentStatusBadge } from '@/domain/deployments/pages/ui/components/
 import { ProvisioningNoticeBanner } from '@/domain/cloud-providers/pages/ui/provisioning-notice'
 import { planeNotice } from '@/domain/cloud-providers/provisioning'
 import { allocationOwner, capacityUsage } from '../../capacity'
+import { canRemove } from '../../removal'
 import {
   DataPlaneAllocationBadge,
   DataPlaneLivenessBadge,
@@ -41,6 +51,8 @@ interface Props {
   refusal?: string
   onReissue: () => void
   isReissuing: boolean
+  onDelete: () => void
+  isDeleting: boolean
   /** Present once a new credential has been issued, and only then. */
   reissued?: { clientId: string; clientSecret: string }
   onCredentialDismissed: () => void
@@ -79,11 +91,14 @@ export function PageDataPlaneDetail({
   refusal,
   onReissue,
   isReissuing,
+  onDelete,
+  isDeleting,
   reissued,
   onCredentialDismissed,
   apiUrl,
   issuerUrl,
 }: Props) {
+  const [confirmingRemoval, setConfirmingRemoval] = useState(false)
 
   if (isLoading || !dataplane) {
     return (
@@ -164,6 +179,50 @@ export function PageDataPlaneDetail({
           </Button>
         </div>
       )}
+
+      {canOperate && canRemove(dataplane.status) && (
+        <div className='mt-6 flex flex-wrap items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3'>
+          <p className='mr-auto text-sm text-muted-foreground'>
+            Out of service. Removing it forgets this data plane and revokes its Herald identity.
+            {live.length > 0 && ` ${live.length} deployment(s) still live on it must be deleted first.`}
+          </p>
+          <Button
+            variant='destructive'
+            size='sm'
+            disabled={isDeleting || live.length > 0}
+            onClick={() => setConfirmingRemoval(true)}
+          >
+            Remove data plane
+          </Button>
+        </div>
+      )}
+
+      <Dialog open={confirmingRemoval} onOpenChange={setConfirmingRemoval}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remove this data plane?</DialogTitle>
+            <DialogDescription>
+              The data plane and the deployments already deleted on it are removed for good, and
+              its Herald can no longer authenticate. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant='outline' onClick={() => setConfirmingRemoval(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant='destructive'
+              disabled={isDeleting}
+              onClick={() => {
+                setConfirmingRemoval(false)
+                onDelete()
+              }}
+            >
+              {isDeleting ? 'Removing…' : 'Remove'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Sheet open={!!reissued} onOpenChange={(next) => !next && onCredentialDismissed()}>
         <SheetContent className='w-full overflow-y-auto sm:max-w-xl'>

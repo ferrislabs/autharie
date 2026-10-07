@@ -453,6 +453,13 @@ mod tests {
             unreachable!()
         }
 
+        async fn remove(
+            &self,
+            _: &DataPlaneId,
+        ) -> Result<autharie_domain::dataplane::ports::Removal, CoreError> {
+            unreachable!()
+        }
+
         async fn touch_last_seen(
             &self,
             _: &DataPlaneId,

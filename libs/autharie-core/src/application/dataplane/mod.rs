@@ -80,6 +80,29 @@ impl DataPlaneService for AutharieService {
         .await
     }
 
+    /// Revoking the Herald's client is a call to the identity provider, made
+    /// inside this transaction: if it fails the removal rolls back, so a data
+    /// plane is never forgotten while its client can still authenticate.
+    #[transactional(data_plane, deployment, fleet_audit)]
+    async fn delete_dataplane(
+        &self,
+        identity: Identity,
+        dataplane_id: DataPlaneId,
+    ) -> Result<(), CoreError> {
+        DataPlaneServiceImpl::new(
+            data_plane_repository,
+            deployment_repository,
+            self.heartbeat_window(),
+            PlatformRightsPolicy::new(
+                autharie_postgres::platform::PostgresOperatorRepository::new(&tx),
+            ),
+            self.herald_identities(),
+            fleet_audit_repository,
+        )
+        .delete_dataplane(identity, dataplane_id)
+        .await
+    }
+
     #[transactional(data_plane, deployment, fleet_audit)]
     async fn list_dataplanes(&self, identity: Identity) -> Result<Vec<DataPlane>, CoreError> {
         DataPlaneServiceImpl::new(

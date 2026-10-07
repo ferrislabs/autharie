@@ -67,6 +67,25 @@ export const useSetDataplaneService = () => {
 }
 
 /**
+ * Forgetting a data plane that is out of service.
+ *
+ * The list is invalidated rather than patched: the server also removes the
+ * deployments already deleted, and decides whether the plane could go at all.
+ */
+export const useDeleteDataplane = () => {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    ...window.api.mutation('delete', '/dataplanes/{dataplane_id}').mutationOptions,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: window.api.get('/dataplanes').queryKey,
+      })
+    },
+  })
+}
+
+/**
  * Registering a cluster somebody already runs.
  *
  * The answer carries the only copy of the secret there will ever be, so the

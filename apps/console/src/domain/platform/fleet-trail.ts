@@ -27,6 +27,7 @@ const ACTIONS: Record<Schemas.FleetAuditAction, string> = {
   'dataplane.disabled': 'Disabled a data plane',
   'dataplane.returned_to_service': 'Returned a data plane to service',
   'dataplane.credential_reissued': 'Re-issued a data plane credential',
+  'dataplane.removed': 'Removed a data plane',
   'operator.granted': 'Granted platform rights',
   'operator.revoked': 'Revoked platform rights',
 }

@@ -9,7 +9,7 @@ use autharie_domain::{
         entities::DataPlane,
         herald_identity::HeraldBinding,
         inventory::{ClusterInventory, ProvisionedResource},
-        ports::DataPlaneRepository,
+        ports::{DataPlaneRepository, Removal},
         value_objects::{
             DataPlaneId, DataPlaneMode, DeploymentResources, PlacementRequest, Region,
         },
@@ -186,6 +186,10 @@ impl DataPlaneRepository for FakeRepository {
 
     async fn save(&self, _dataplane: &DataPlane) -> Result<(), CoreError> {
         Ok(())
+    }
+
+    async fn remove(&self, _: &DataPlaneId) -> Result<Removal, CoreError> {
+        Ok(Removal::Removed)
     }
 
     async fn touch_last_seen(

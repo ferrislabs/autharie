@@ -1,11 +1,13 @@
-import { useParams } from '@tanstack/react-router'
+import { useNavigate, useParams } from '@tanstack/react-router'
 import type { Schemas } from '@/api/api.client'
 import {
+  useDeleteDataplane,
   useGetDataplane,
   useGetDataplaneDeployments,
   useReissueHeraldCredential,
   useSetDataplaneService,
 } from '@/api/dataplane.api'
+import { platformPath } from '@/lib/paths'
 import { useHoldsPlatformRight } from '@/domain/organisations/hooks/use-is-operator'
 import { PageDataPlaneDetail } from '../ui/page-dataplane-detail'
 
@@ -16,6 +18,8 @@ export default function PageDataPlaneDetailFeature() {
 
   const setService = useSetDataplaneService()
   const reissue = useReissueHeraldCredential()
+  const remove = useDeleteDataplane()
+  const navigate = useNavigate()
   const canOperate = useHoldsPlatformRight('operate_fleet')
 
   const issued = reissue.data
@@ -44,7 +48,9 @@ export default function PageDataPlaneDetailFeature() {
           ? setService.error.message
           : reissue.error instanceof Error
             ? reissue.error.message
-            : undefined
+            : remove.error instanceof Error
+              ? remove.error.message
+              : undefined
       }
       onReissue={() => {
         if (!dataplaneId) return
@@ -52,6 +58,15 @@ export default function PageDataPlaneDetailFeature() {
         reissue.mutate({ path: { dataplane_id: dataplaneId } })
       }}
       isReissuing={reissue.isPending}
+      onDelete={() => {
+        if (!dataplaneId) return
+
+        remove.mutate(
+          { path: { dataplane_id: dataplaneId } },
+          { onSuccess: () => navigate({ to: platformPath('/dataplanes') }) },
+        )
+      }}
+      isDeleting={remove.isPending}
       reissued={reissued}
       // Dropped from the mutation's cache, not merely hidden: it is the only
       // copy of a secret, and a screen that kept it would hand it back to

@@ -101,6 +101,9 @@ pub enum FleetAuditAction {
     /// offline without touching the deployment.
     #[serde(rename = "dataplane.credential_reissued")]
     DataPlaneCredentialReissued,
+    /// A cluster left the fleet for good. What it hosted was already gone.
+    #[serde(rename = "dataplane.removed")]
+    DataPlaneRemoved,
     /// A subject was granted platform rights, or had the ones it held
     /// changed.
     #[serde(rename = "operator.granted")]
@@ -115,12 +118,13 @@ impl FleetAuditAction {
     /// Walked by the round trip test below, the same way
     /// [`crate::platform::PlatformRight::ALL`] is: an action with no name is
     /// one the trail silently drops.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::DataPlaneRegistered,
         Self::DataPlaneDrained,
         Self::DataPlaneDisabled,
         Self::DataPlaneReturnedToService,
         Self::DataPlaneCredentialReissued,
+        Self::DataPlaneRemoved,
         Self::OperatorGranted,
         Self::OperatorRevoked,
     ];
@@ -134,6 +138,7 @@ impl fmt::Display for FleetAuditAction {
             Self::DataPlaneDisabled => "dataplane.disabled",
             Self::DataPlaneReturnedToService => "dataplane.returned_to_service",
             Self::DataPlaneCredentialReissued => "dataplane.credential_reissued",
+            Self::DataPlaneRemoved => "dataplane.removed",
             Self::OperatorGranted => "operator.granted",
             Self::OperatorRevoked => "operator.revoked",
         };
@@ -152,6 +157,7 @@ impl FromStr for FleetAuditAction {
             "dataplane.disabled" => Ok(Self::DataPlaneDisabled),
             "dataplane.returned_to_service" => Ok(Self::DataPlaneReturnedToService),
             "dataplane.credential_reissued" => Ok(Self::DataPlaneCredentialReissued),
+            "dataplane.removed" => Ok(Self::DataPlaneRemoved),
             "operator.granted" => Ok(Self::OperatorGranted),
             "operator.revoked" => Ok(Self::OperatorRevoked),
             other => Err(CoreError::InternalError(format!(
