@@ -443,9 +443,14 @@ export namespace Schemas {
   export type GetActiveUsersResponse = { data: GetActiveUsersResponseData }
   export type GetDataPlaneResponse = { data: DataPlane }
   export type ProvisioningStatus = 'provisioning' | 'ready' | 'failed'
+  export type ProvisioningStep =
+    | 'creating_infrastructure'
+    | 'installing_data_plane'
+    | 'setting_up_iam'
   export type Provisioning = {
     failure_reason?: (string | null) | undefined
     status: ProvisioningStatus
+    step?: (null | ProvisioningStep) | undefined
   }
   export type GetDeploymentResponse = {
     data: Deployment

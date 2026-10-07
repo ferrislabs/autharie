@@ -105,6 +105,22 @@ pub(crate) fn archive_section(
     })
 }
 
+/// Where a new deployment archives to, if anywhere.
+///
+/// Not on the customer's own cloud account: the store behind this bucket is the
+/// platform's, which a cluster in somebody else's account holds no credentials
+/// for and may not even reach. Asking the operator to archive there leaves the
+/// instance refused on every pass, and the IAM never starts.
+fn archive_destination_for(
+    config: &crate::ArchiveConfig,
+    deployment: &autharie_domain::deployments::Deployment,
+) -> Option<ArchiveDestination> {
+    match deployment.distribution {
+        autharie_domain::deployments::distribution::Distribution::CustomerCloud { .. } => None,
+        _ => config.destination_for(deployment.organisation_id, deployment.id),
+    }
+}
+
 impl DeploymentService for AutharieService {
     #[transactional(deployment, user, data_plane, action, backup_schedule, organisation)]
     async fn create_deployment(
@@ -134,10 +150,8 @@ impl DeploymentService for AutharieService {
         // Written only when there is somewhere to archive to. A schedule on an
         // installation with no bucket is a row promising something nothing
         // will carry out.
-        let archive = match self
-            .archive_config()
-            .destination_for(deployment.organisation_id, deployment.id)
-        {
+        let destination = archive_destination_for(self.archive_config(), &deployment);
+        let archive = match destination {
             None => None,
             Some(destination) => {
                 let schedule = BackupSchedule::default_for(
@@ -527,6 +541,43 @@ mod tests {
         );
         assert_eq!(payload["archive"]["schedule"]["zone"], json!("UTC"));
         assert_eq!(payload["archive"]["schedule"]["enabled"], json!(true));
+    }
+
+    #[test]
+    fn a_customer_cloud_deployment_is_not_asked_to_archive_to_the_platform_store() {
+        use autharie_domain::dataplane::{
+            cloud_provider::{
+                ControlPlaneKind, ControlPlaneOffer, ControlPlaneOfferId, Money, NodeType,
+            },
+            cluster_profile::{ClusterMode, ClusterProfile, Replication},
+            credential::CloudCredentialId,
+        };
+        let config = ArchiveConfig {
+            bucket: Some(crate::backups::BucketName::new("autharie-backups").unwrap()),
+            encryption: StoreEncryption::Managed,
+        };
+        let shared = sample_deployment();
+        let mut customer = sample_deployment();
+        customer.distribution =
+            autharie_domain::deployments::distribution::Distribution::CustomerCloud {
+                credential_id: CloudCredentialId(uuid::Uuid::new_v4()),
+                profile: ClusterProfile::restore(
+                    ClusterMode::Dev,
+                    ControlPlaneOffer {
+                        id: ControlPlaneOfferId::new("mutualized"),
+                        kind: ControlPlaneKind::Mutualized,
+                        monthly_price: Money::ZERO,
+                    },
+                    NodeType::new("small"),
+                    1,
+                    1,
+                    Replication::new(1).expect("one replica"),
+                )
+                .expect("a profile"),
+            };
+
+        assert!(archive_destination_for(&config, &shared).is_some());
+        assert!(archive_destination_for(&config, &customer).is_none());
     }
 
     /// An installation that archives nowhere says so by absence. A deployment

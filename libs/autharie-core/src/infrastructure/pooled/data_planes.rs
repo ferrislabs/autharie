@@ -2,7 +2,9 @@ use autharie_domain::{
     CoreError,
     dataplane::{
         entities::DataPlane,
-        ports::DataPlaneRepository,
+        herald_identity::HeraldBinding,
+        ports::{DataPlaneRepository, HeraldBindingStore},
+        value_objects::DataPlaneStatus,
         value_objects::{
             DataPlaneId, DataPlaneMode, DeploymentResources, PlacementRequest, Region,
         },
@@ -117,5 +119,33 @@ impl DataPlaneRepository for PooledDataPlanes {
             PostgresDataPlaneRepository,
             touch_last_seen(id, at, operator_version, gateway_address)
         )
+    }
+}
+
+impl HeraldBindingStore for PooledDataPlanes {
+    async fn bind(&self, dataplane: DataPlaneId, binding: &HeraldBinding) -> Result<(), CoreError> {
+        self.set_binding(dataplane, Some(binding.clone())).await
+    }
+
+    async fn unbind(&self, dataplane: DataPlaneId) -> Result<(), CoreError> {
+        self.set_binding(dataplane, None).await
+    }
+}
+
+impl PooledDataPlanes {
+    async fn set_binding(
+        &self,
+        id: DataPlaneId,
+        binding: Option<HeraldBinding>,
+    ) -> Result<(), CoreError> {
+        let mut plane = self
+            .find_by_id(&id)
+            .await?
+            .ok_or(CoreError::DataPlaneNotFound { id })?;
+        if plane.status != DataPlaneStatus::Provisioning {
+            return Ok(());
+        }
+        plane.herald = binding;
+        self.save(&plane).await
     }
 }

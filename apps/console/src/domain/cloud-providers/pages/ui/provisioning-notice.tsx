@@ -1,4 +1,4 @@
-import { AlertTriangle, Loader2 } from 'lucide-react'
+import { AlertTriangle, Check, Circle, Loader2 } from 'lucide-react'
 import type { ProvisioningNotice } from '../../provisioning'
 
 export function ProvisioningNoticeBanner({ notice }: { notice: ProvisioningNotice }) {
@@ -14,6 +14,24 @@ export function ProvisioningNoticeBanner({ notice }: { notice: ProvisioningNotic
           <p className='text-xs opacity-80'>
             This takes a few minutes. The deployment starts once the cluster is ready.
           </p>
+          {notice.steps && (
+            <ol className='mt-2 space-y-1 text-xs'>
+              {notice.steps.map((step) => (
+                <li
+                  key={step.id}
+                  data-state={step.state}
+                  className={`flex items-center gap-2 ${step.state === 'todo' ? 'opacity-60' : ''}`}
+                >
+                  {step.state === 'done' && <Check className='h-3 w-3' />}
+                  {step.state === 'current' && <Loader2 className='h-3 w-3 animate-spin' />}
+                  {step.state === 'todo' && <Circle className='h-3 w-3' />}
+                  <span className={step.state === 'current' ? 'font-medium' : ''}>
+                    {step.label}
+                  </span>
+                </li>
+              ))}
+            </ol>
+          )}
         </div>
       </div>
     )

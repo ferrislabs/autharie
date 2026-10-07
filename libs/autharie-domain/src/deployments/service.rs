@@ -558,7 +558,7 @@ where
             .find_by_id(&deployment.dataplane_id)
             .await?
             .as_ref()
-            .and_then(Provisioning::of))
+            .and_then(|plane| Provisioning::of(plane, &deployment.status)))
     }
 
     async fn list_deployments_by_organisation(

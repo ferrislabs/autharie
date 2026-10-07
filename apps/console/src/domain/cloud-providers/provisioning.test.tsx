@@ -26,8 +26,36 @@ describe('what a customer cloud deployment shows', () => {
 
     expect(notice).toEqual({ kind: 'creating', message: 'Creating your cluster' })
     expect(renderToStaticMarkup(<ProvisioningNoticeBanner notice={notice!} />)).toContain(
-      'Creating your cluster',
+      'Creating your cluster'
     )
+  })
+
+  it('shows which of the three steps the cluster is at', () => {
+    const notice = provisioningNotice(customer, {
+      status: 'provisioning',
+      step: 'installing_data_plane',
+    })
+
+    expect(notice).toMatchObject({ kind: 'creating', message: 'Installing the data plane' })
+    expect(notice?.kind === 'creating' && notice.steps?.map((step) => step.state)).toEqual([
+      'done',
+      'current',
+      'todo',
+    ])
+    const html = renderToStaticMarkup(<ProvisioningNoticeBanner notice={notice!} />)
+    expect(html).toContain('Creating the infrastructure')
+    expect(html).toContain('Setting up the IAM')
+  })
+
+  it('names the IAM as the last step before the deployment is up', () => {
+    const notice = provisioningNotice(customer, { status: 'provisioning', step: 'setting_up_iam' })
+
+    expect(notice).toMatchObject({ kind: 'creating', message: 'Setting up the IAM' })
+    expect(notice?.kind === 'creating' && notice.steps?.map((step) => step.state)).toEqual([
+      'done',
+      'done',
+      'current',
+    ])
   })
 
   it('shows the failure reason when the plane failed', () => {
@@ -38,7 +66,7 @@ describe('what a customer cloud deployment shows', () => {
 
     expect(notice).toEqual({ kind: 'failed', message: 'quota exceeded for DEV1-M in fr-par' })
     expect(renderToStaticMarkup(<ProvisioningNoticeBanner notice={notice!} />)).toContain(
-      'quota exceeded for DEV1-M in fr-par',
+      'quota exceeded for DEV1-M in fr-par'
     )
   })
 

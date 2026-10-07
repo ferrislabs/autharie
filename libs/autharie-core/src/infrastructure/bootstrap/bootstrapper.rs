@@ -3,7 +3,7 @@ use autharie_domain::{
     dataplane::{
         bootstrap::{BootstrapRequest, ClusterBootstrapper},
         herald_identity::{HeraldBinding, MintedHeraldIdentity},
-        ports::HeraldIdentityProvisioner,
+        ports::{HeraldBindingStore, HeraldIdentityProvisioner},
         value_objects::DataPlaneId,
     },
 };
@@ -27,27 +27,30 @@ const VALUES_FILE: &str = "values.json";
 const MIN_REDACTED_PART: usize = 8;
 const PASSWORD_PART: usize = 32;
 
-pub struct HelmBootstrapper<I, R = TokioHelmRunner> {
+pub struct HelmBootstrapper<I, B, R = TokioHelmRunner> {
     identities: I,
+    bindings: B,
     runner: R,
     config: HelmConfig,
 }
 
-impl<I: HeraldIdentityProvisioner> HelmBootstrapper<I> {
-    pub fn new(identities: I, config: HelmConfig) -> Self {
+impl<I: HeraldIdentityProvisioner, B: HeraldBindingStore> HelmBootstrapper<I, B> {
+    pub fn new(identities: I, bindings: B, config: HelmConfig) -> Self {
         let runner = TokioHelmRunner::new(config.helm_binary.clone(), config.timeout);
         Self {
             identities,
+            bindings,
             runner,
             config,
         }
     }
 }
 
-impl<I: HeraldIdentityProvisioner, R: HelmRunner> HelmBootstrapper<I, R> {
-    pub fn with_runner(identities: I, runner: R, config: HelmConfig) -> Self {
+impl<I: HeraldIdentityProvisioner, B: HeraldBindingStore, R: HelmRunner> HelmBootstrapper<I, B, R> {
+    pub fn with_runner(identities: I, bindings: B, runner: R, config: HelmConfig) -> Self {
         Self {
             identities,
+            bindings,
             runner,
             config,
         }
@@ -241,9 +244,20 @@ fn redact(outcome: &HelmOutcome, secrets: &[&str]) -> String {
     }
 }
 
-impl<I: HeraldIdentityProvisioner, R: HelmRunner> ClusterBootstrapper for HelmBootstrapper<I, R> {
+impl<I: HeraldIdentityProvisioner, B: HeraldBindingStore, R: HelmRunner> ClusterBootstrapper
+    for HelmBootstrapper<I, B, R>
+{
     async fn bootstrap(&self, request: BootstrapRequest) -> Result<HeraldBinding, CoreError> {
         let minted = self.identities.mint(request.data_plane_id).await?;
+
+        if let Err(error) = self
+            .bindings
+            .bind(request.data_plane_id, &minted.binding)
+            .await
+        {
+            self.abandon(&request).await;
+            return Err(error);
+        }
 
         match self.install(&request, &minted).await {
             Ok(()) => {
@@ -251,11 +265,21 @@ impl<I: HeraldIdentityProvisioner, R: HelmRunner> ClusterBootstrapper for HelmBo
                 Ok(minted.binding.clone())
             }
             Err(error) => {
-                if let Err(revoke) = self.identities.revoke(request.data_plane_id).await {
-                    warn!(data_plane = %request.data_plane_id.0, error = %revoke, "could not revoke the identity after a failed install");
-                }
+                self.abandon(&request).await;
                 Err(error)
             }
+        }
+    }
+}
+
+impl<I: HeraldIdentityProvisioner, B: HeraldBindingStore, R: HelmRunner> HelmBootstrapper<I, B, R> {
+    async fn abandon(&self, request: &BootstrapRequest) {
+        let id = request.data_plane_id;
+        if let Err(error) = self.bindings.unbind(id).await {
+            warn!(data_plane = %id.0, %error, "could not take the binding back after a failed install");
+        }
+        if let Err(error) = self.identities.revoke(id).await {
+            warn!(data_plane = %id.0, %error, "could not revoke the identity after a failed install");
         }
     }
 }
