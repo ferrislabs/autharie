@@ -50,20 +50,11 @@ const catalogue = [
 
 describe('resolving the offer against what the platform opens', () => {
   it('uses the derived offer when it is open', () => {
-    expect(resolveOffer('sandbox', undefined, catalogue)).toEqual({ offer: 'sandbox' })
-  })
-
-  it('keeps an override that is open', () => {
-    const open = [entry('sandbox', true), entry('standard', true)]
-    expect(resolveOffer('sandbox', 'standard', open)).toEqual({ offer: 'standard' })
-  })
-
-  it('ignores an override that is closed', () => {
-    expect(resolveOffer('sandbox', 'private', catalogue).offer).toBe('sandbox')
+    expect(resolveOffer('sandbox', catalogue)).toEqual({ offer: 'sandbox' })
   })
 
   it('selects the first open offer and says why when the derived one is closed', () => {
-    const resolved = resolveOffer('standard', undefined, catalogue)
+    const resolved = resolveOffer('standard', catalogue)
     expect(resolved.offer).toBe('sandbox')
     expect(resolved.because).toBe(
       'Standard fits this choice, but it is closed. Available from the Scale plan. Sandbox is selected instead.',
@@ -71,7 +62,7 @@ describe('resolving the offer against what the platform opens', () => {
   })
 
   it('selects nothing when nothing is open', () => {
-    expect(resolveOffer('standard', undefined, [entry('sandbox', false)]).offer).toBeUndefined()
-    expect(resolveOffer('standard', undefined, []).offer).toBeUndefined()
+    expect(resolveOffer('standard', [entry('sandbox', false)]).offer).toBeUndefined()
+    expect(resolveOffer('standard', []).offer).toBeUndefined()
   })
 })

@@ -16,18 +16,11 @@ import { useOrganisationPath } from '@/domain/organisations/hooks/use-organisati
 import { Link, useNavigate } from '@tanstack/react-router'
 import { useMemo, useState, type ReactNode } from 'react'
 import { KIND_LABELS, type DeploymentKind, type Environment } from '../../types/deployment'
-import {
-  OFFER_COPY,
-  describeResources,
-  whyClosed,
-  type Offer,
-  type OfferAvailability,
-} from '../../offers'
+import { type Offer, type OfferAvailability } from '../../offers'
 import { offerFor, resolveOffer } from '../../pricing/offer-for'
 import { priceOf, type Hosting, type PlanId, type Selection } from '../../pricing/model'
 import { applyChange, STARTER_MOVED_NOTICE } from '../../pricing/selection'
 import { customerCloudAvailability } from '@/domain/cloud-providers/distribution'
-import { OptionCard } from './components/option-card'
 import { EnginePicker } from './components/engine-picker'
 import { HostingPicker } from './components/hosting-picker'
 import { KeycloakNotice } from './components/keycloak-notice'
@@ -78,7 +71,6 @@ export default function PageCreateDeployment({
   const [name, setName] = useState('')
   const [kind, setKind] = useState<DeploymentKind>('ferriskey')
   const [environment, setEnvironment] = useState<Environment>('development')
-  const [offerOverride, setOfferOverride] = useState<Offer | undefined>(undefined)
   const [wantsCustomerCloud, setWantsCustomerCloud] = useState(false)
   const [plan, setPlan] = useState<PlanId>('business')
   const [volume, setVolume] = useState(10000)
@@ -98,7 +90,7 @@ export default function PageCreateDeployment({
   const price = priceOf(selection)
 
   const derived = offerFor(plan, hosting === 'byoc' ? null : volume)
-  const resolved = resolveOffer(derived, offerOverride, offers)
+  const resolved = resolveOffer(derived, offers)
   const chosen = resolved.offer
 
   const commit = (patch: Partial<Selection>) => {
@@ -106,7 +98,6 @@ export default function PageCreateDeployment({
     setPlan(change.selection.plan)
     setVolume(change.selection.volume)
     setMovedToBusiness(change.movedToBusiness)
-    setOfferOverride(undefined)
     if (patch.engine) setKind(patch.engine)
     if (patch.hosting) setWantsCustomerCloud(patch.hosting === 'byoc')
   }
@@ -241,48 +232,17 @@ export default function PageCreateDeployment({
           />
         </Section>
 
-        <Section title='Offer'>
-          {offersLoading ? (
-            <Skeleton className='h-24 w-full' />
-          ) : offers.length === 0 ? (
-            <p className='text-sm text-destructive'>
-              This organisation's plan opens no offer, so there is nothing to deploy on.
-            </p>
-          ) : (
-            <>
-              <p className='text-sm text-muted-foreground'>
-                Suggested from your plan and volume: {OFFER_COPY[derived].label}. You can choose
-                another.
-              </p>
-              {resolved.because && (
-                <p className='rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200'>
-                  {resolved.because}
-                </p>
-              )}
-              <div className='grid gap-3 sm:grid-cols-2'>
-                {offers.map((entry) => {
-                  const closed = whyClosed(entry)
+        {!offersLoading && offers.length === 0 && (
+          <p className='rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive'>
+            This organisation's plan opens no offer, so there is nothing to deploy on.
+          </p>
+        )}
 
-                  return (
-                    <OptionCard
-                      key={entry.offer}
-                      selected={chosen === entry.offer}
-                      disabled={!entry.open}
-                      onSelect={() => entry.open && setOfferOverride(entry.offer)}
-                      label={OFFER_COPY[entry.offer].label}
-                      description={OFFER_COPY[entry.offer].description}
-                      footer={
-                        <span className='font-mono text-xs text-muted-foreground'>
-                          {closed ?? describeResources(entry)}
-                        </span>
-                      }
-                    />
-                  )
-                })}
-              </div>
-            </>
-          )}
-        </Section>
+        {resolved.because && (
+          <p className='rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200'>
+            {resolved.because}
+          </p>
+        )}
 
         {refusal && (
           <p className='rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive'>

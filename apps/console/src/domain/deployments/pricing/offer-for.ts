@@ -11,8 +11,7 @@ import type { PlanId } from './model'
  *   above 25,000 accounts         -> scale
  *   unlimited accounts (in your cloud), any other plan -> standard
  *
- * The private, dedicated offer is never derived. It stays reachable from the
- * Offer section.
+ * The private, dedicated offer is never derived, so it is not offered here.
  */
 export function offerFor(plan: PlanId, volume: number | null): Offer {
   if (plan === 'scale') return 'scale'
@@ -27,14 +26,9 @@ export interface ResolvedOffer {
   because?: string
 }
 
-export function resolveOffer(
-  derived: Offer,
-  override: Offer | undefined,
-  catalogue: OfferAvailability[],
-): ResolvedOffer {
+export function resolveOffer(derived: Offer, catalogue: OfferAvailability[]): ResolvedOffer {
   const open = (offer: Offer) => catalogue.find((entry) => entry.offer === offer)?.open === true
 
-  if (override && open(override)) return { offer: override }
   if (open(derived)) return { offer: derived }
 
   const fallback = firstOpen(catalogue)
