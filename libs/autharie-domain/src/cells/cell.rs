@@ -32,17 +32,6 @@ pub enum CellStatus {
     Failed,
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub struct RealmSlot {
-    cell: CellId,
-}
-
-impl RealmSlot {
-    pub fn cell(&self) -> CellId {
-        self.cell
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cell {
     id: CellId,
@@ -86,8 +75,34 @@ impl Cell {
         capacity: u16,
         realms: u16,
         created_at: DateTime<Utc>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, CellError> {
+        let inconsistent = |reason: &str| CellError::Inconsistent {
+            reason: reason.to_string(),
+        };
+
+        if capacity == 0 {
+            return Err(inconsistent("its capacity is zero"));
+        }
+        if realms > capacity {
+            return Err(inconsistent("it holds more realms than its capacity"));
+        }
+        match status {
+            CellStatus::Provisioning if realms != 0 => {
+                return Err(inconsistent("a cell being provisioned holds no realm"));
+            }
+            CellStatus::Open if realms == capacity => {
+                return Err(inconsistent("an open cell has a free slot"));
+            }
+            CellStatus::Full if realms != capacity => {
+                return Err(inconsistent("a full cell holds exactly its capacity"));
+            }
+            CellStatus::Retired if realms != 0 => {
+                return Err(inconsistent("a retired cell holds no realm"));
+            }
+            _ => {}
+        }
+
+        Ok(Self {
             id,
             region,
             data_plane_id,
@@ -96,7 +111,7 @@ impl Cell {
             capacity,
             realms,
             created_at,
-        }
+        })
     }
 
     pub fn id(&self) -> CellId {
@@ -139,7 +154,7 @@ impl Cell {
         self.status == CellStatus::Open && self.realms < self.capacity
     }
 
-    pub fn reserve(&mut self) -> Result<RealmSlot, CellError> {
+    pub fn reserve(&mut self) -> Result<(), CellError> {
         match self.status {
             CellStatus::Open => {}
             CellStatus::Full => return Err(CellError::Full),
@@ -149,7 +164,6 @@ impl Cell {
             | CellStatus::Failed => return Err(CellError::NotOpen),
         }
         if self.realms >= self.capacity {
-            self.status = CellStatus::Full;
             return Err(CellError::Full);
         }
 
@@ -158,7 +172,7 @@ impl Cell {
             self.status = CellStatus::Full;
         }
 
-        Ok(RealmSlot { cell: self.id })
+        Ok(())
     }
 
     pub fn release(&mut self) {
@@ -201,7 +215,9 @@ impl Cell {
     }
 
     pub fn fail(&mut self) {
-        self.status = CellStatus::Failed;
+        if self.status != CellStatus::Retired {
+            self.status = CellStatus::Failed;
+        }
     }
 }
 
@@ -233,6 +249,7 @@ mod tests {
             realms,
             DateTime::<Utc>::UNIX_EPOCH + Duration::days(age),
         )
+        .expect("a consistent cell")
     }
 
     fn cell(status: CellStatus, capacity: u16, realms: u16, age: i64) -> Cell {
@@ -260,7 +277,7 @@ mod tests {
         assert_eq!(cell.capacity(), 10);
     }
 
-    // @spec-fpr-1
+    /// @spec-fpr-1
     #[test]
     fn choose_takes_an_open_cell_of_the_region() {
         let cells = [cell(CellStatus::Open, 200, 3, 0)];
@@ -268,7 +285,7 @@ mod tests {
         assert_eq!(choose(&cells, &region()).map(Cell::id), Some(cells[0].id()));
     }
 
-    // @spec-fpr-1
+    /// @spec-fpr-1
     #[test]
     fn choose_is_empty_when_the_region_has_no_cell() {
         let cells = [cell_in(Region::new("us-east"), CellStatus::Open, 200, 3, 0)];
@@ -277,7 +294,7 @@ mod tests {
         assert_eq!(choose(&[], &region()), None);
     }
 
-    // @spec-fpr-2
+    /// @spec-fpr-2
     #[test]
     fn choose_takes_the_fullest_cell_that_still_has_room() {
         let cells = [
@@ -292,7 +309,7 @@ mod tests {
         );
     }
 
-    // @spec-fpr-2
+    /// @spec-fpr-2
     #[test]
     fn choose_never_takes_a_cell_of_another_region_even_if_fuller() {
         let cells = [
@@ -320,7 +337,7 @@ mod tests {
         );
     }
 
-    // @spec-fpr-3
+    /// @spec-fpr-3
     #[test]
     fn reserving_the_last_slot_closes_the_cell_and_choose_moves_on() {
         let mut cells = [
@@ -330,16 +347,15 @@ mod tests {
         let first = cells[0].id();
 
         assert_eq!(choose(&cells, &region()).map(Cell::id), Some(first));
-        let slot = cells[0].reserve().expect("the 200th slot");
+        cells[0].reserve().expect("the 200th slot");
 
-        assert_eq!(slot.cell(), first);
         assert_eq!(cells[0].status(), CellStatus::Full);
         assert_eq!(cells[0].realms(), 200);
         assert_eq!(choose(&cells, &region()).map(Cell::id), Some(cells[1].id()));
         assert_eq!(cells[0].reserve(), Err(CellError::Full));
     }
 
-    // @spec-fpr-9
+    /// @spec-fpr-9
     #[test]
     fn a_full_cell_that_releases_a_slot_is_open_again() {
         let mut full = cell(CellStatus::Full, 200, 200, 0);
@@ -370,7 +386,7 @@ mod tests {
         assert_eq!(draining.realms(), 2);
     }
 
-    // @spec-fpr-10
+    /// @spec-fpr-10
     #[test]
     fn a_cell_that_is_not_open_is_never_chosen_and_refuses_a_reservation() {
         let expected = [
@@ -382,21 +398,13 @@ mod tests {
         ];
 
         for (status, error) in expected {
-            let mut closed = cell(status, 200, 0, 0);
+            let held = if status == CellStatus::Full { 200 } else { 0 };
+            let mut closed = cell(status, 200, held, 0);
 
             assert_eq!(choose(std::slice::from_ref(&closed), &region()), None);
             assert_eq!(closed.reserve(), Err(error), "{status:?}");
-            assert_eq!(closed.realms(), 0);
+            assert_eq!(closed.realms(), held);
         }
-    }
-
-    #[test]
-    fn an_open_cell_already_at_capacity_is_not_chosen_and_turns_full() {
-        let mut saturated = cell(CellStatus::Open, 5, 5, 0);
-
-        assert_eq!(choose(std::slice::from_ref(&saturated), &region()), None);
-        assert_eq!(saturated.reserve(), Err(CellError::Full));
-        assert_eq!(saturated.status(), CellStatus::Full);
     }
 
     #[test]
@@ -431,17 +439,69 @@ mod tests {
     }
 
     #[test]
-    fn any_cell_can_fail() {
+    fn any_cell_that_is_not_retired_can_fail() {
         for status in [
             CellStatus::Provisioning,
             CellStatus::Open,
             CellStatus::Full,
             CellStatus::Draining,
-            CellStatus::Retired,
         ] {
-            let mut cell = cell(status, 200, 0, 0);
+            let held = if status == CellStatus::Full { 200 } else { 0 };
+            let mut cell = cell(status, 200, held, 0);
             cell.fail();
             assert_eq!(cell.status(), CellStatus::Failed);
         }
+    }
+
+    #[test]
+    fn a_retired_cell_stays_retired_when_it_is_told_it_failed() {
+        let mut cell = cell(CellStatus::Retired, 200, 0, 0);
+
+        cell.fail();
+
+        assert_eq!(cell.status(), CellStatus::Retired);
+    }
+
+    #[test]
+    fn reserving_on_a_full_cell_leaves_it_as_it_was() {
+        let mut cell = cell(CellStatus::Full, 5, 5, 0);
+
+        assert_eq!(cell.reserve(), Err(CellError::Full));
+        assert_eq!(cell.realms(), 5);
+        assert_eq!(cell.status(), CellStatus::Full);
+    }
+
+    #[test]
+    fn a_stored_cell_that_cannot_be_real_is_refused() {
+        let restore = |status, capacity, realms| {
+            Cell::restore(
+                CellId(Uuid::new_v4()),
+                region(),
+                DataPlaneId(Uuid::new_v4()),
+                DeploymentId(Uuid::new_v4()),
+                status,
+                capacity,
+                realms,
+                DateTime::<Utc>::UNIX_EPOCH,
+            )
+        };
+
+        for (status, capacity, realms) in [
+            (CellStatus::Open, 0, 0),
+            (CellStatus::Open, 5, 6),
+            (CellStatus::Open, 5, 5),
+            (CellStatus::Full, 5, 4),
+            (CellStatus::Retired, 5, 1),
+            (CellStatus::Provisioning, 5, 1),
+        ] {
+            assert!(
+                matches!(
+                    restore(status, capacity, realms),
+                    Err(CellError::Inconsistent { .. })
+                ),
+                "{status:?} {capacity} {realms}"
+            );
+        }
+        assert!(restore(CellStatus::Draining, 5, 5).is_ok());
     }
 }

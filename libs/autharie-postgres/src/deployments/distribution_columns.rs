@@ -67,7 +67,7 @@ pub(super) fn to_columns(distribution: &Distribution) -> Result<DistributionColu
             })
         }
         Distribution::Pooled { .. } => Err(CoreError::InternalError(
-            "a pooled deployment cannot be stored yet: its persistence is added by W2".to_owned(),
+            "a pooled deployment cannot be stored: its persistence is not implemented".to_owned(),
         )),
     }
 }

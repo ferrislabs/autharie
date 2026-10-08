@@ -407,6 +407,12 @@ where
                 )
                 .await?
             }
+            (Distribution::Pooled { .. }, _) => {
+                return Err(CoreError::InternalError(
+                    "a pooled deployment cannot be created: its creation path is not implemented"
+                        .to_string(),
+                ));
+            }
             (_, DataPlaneMode::Shared) => {
                 self.place_on_shared(command.organisation_id, &command.region, mode, resources)
                     .await?
@@ -1559,6 +1565,41 @@ mod tests {
         command
             .with_distribution(crate::deployments::distribution::tests::customer_cloud())
             .expect("ferriskey may use the customer cloud")
+    }
+
+    #[tokio::test]
+    async fn a_pooled_deployment_is_refused_before_any_data_plane_is_placed_or_saved() {
+        let mut mock_repo = MockDeploymentRepository::new();
+        mock_repo.expect_insert().times(0);
+
+        let mut mock_dataplane_repo = MockDataPlaneRepository::new();
+        mock_dataplane_repo.expect_find_available().times(0);
+        mock_dataplane_repo
+            .expect_find_dedicated_for_organisation()
+            .times(0);
+        mock_dataplane_repo.expect_save().times(0);
+
+        let service = DeploymentServiceImpl::new(
+            mock_repo,
+            StubUserRepository,
+            mock_dataplane_repo,
+            organisations_on(crate::organisation::value_objects::Plan::Enterprise),
+            MockClusterProvisioner::new(),
+            windows(),
+            Allowed,
+        );
+        let mut command = command_for("fr-par", DataPlaneMode::Shared);
+        command.kind = DeploymentKind::Ferriskey;
+        let command = command
+            .with_distribution(Distribution::Pooled {
+                cell_id: crate::cells::CellId(uuid::Uuid::new_v4()),
+                realm: crate::cells::RealmName::try_from("acme").expect("a valid name"),
+            })
+            .expect("ferriskey may be pooled");
+
+        let refused = service.create_deployment(caller(), command).await;
+
+        assert!(refused.is_err());
     }
 
     #[tokio::test]

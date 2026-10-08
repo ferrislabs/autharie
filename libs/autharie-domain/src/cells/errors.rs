@@ -11,6 +11,9 @@ pub enum CellError {
     #[error("the cell does not take new tenants")]
     NotOpen,
 
+    #[error("the stored cell is inconsistent: {reason}")]
+    Inconsistent { reason: String },
+
     #[error("that status change is not allowed for this cell")]
     InvalidTransition,
 

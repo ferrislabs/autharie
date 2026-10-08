@@ -8,6 +8,7 @@ use crate::{CoreError, deployments::DeploymentName};
 use super::RealmError;
 
 const MAX_LENGTH: usize = 63;
+const ADMINISTRATOR_REALMS: [&str; 1] = ["master"];
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, ToSchema)]
 pub struct RealmName(String);
@@ -51,7 +52,18 @@ impl TryFrom<&str> for RealmName {
             return Err(invalid("it must not start or end with '-'"));
         }
 
-        let name = DeploymentName(value.to_owned()).publishable()?;
+        if value.as_bytes().get(2..4) == Some(b"--") {
+            return Err(invalid(
+                "'--' is reserved at the third and fourth characters",
+            ));
+        }
+        if ADMINISTRATOR_REALMS.contains(&value) {
+            return Err(invalid("it is the administrator realm of a cell"));
+        }
+
+        let name = DeploymentName(value.to_owned())
+            .publishable()
+            .map_err(|_| invalid("it is reserved"))?;
 
         Ok(Self(name.0))
     }
@@ -92,16 +104,34 @@ mod tests {
     }
 
     #[test]
-    fn a_reserved_slug_is_refused() {
-        assert!(matches!(
-            RealmName::try_from("www"),
-            Err(CoreError::DeploymentNameReserved { name }) if name == "www"
-        ));
+    fn a_badly_formed_name_is_the_callers_mistake_and_not_a_refusal_by_the_cell() {
+        let error = RealmName::try_from("-acme").expect_err("a leading dash");
+
+        assert!(
+            matches!(error, CoreError::Realm(RealmError::InvalidName { .. })),
+            "{error}"
+        );
     }
 
     #[test]
-    fn a_badly_formed_name_is_the_callers_mistake_and_not_a_refusal_by_the_cell() {
-        let error = RealmName::try_from("-acme").expect_err("a leading dash");
+    fn the_administrator_realm_of_a_cell_is_never_a_tenant_name() {
+        let error = RealmName::try_from("master").expect_err("the administrator realm");
+
+        assert!(
+            matches!(error, CoreError::Realm(RealmError::InvalidName { .. })),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_label_that_reads_as_punycode_is_refused() {
+        assert!(RealmName::try_from("xn--abc").is_err());
+        assert!(RealmName::try_from("a-b--c").is_ok());
+    }
+
+    #[test]
+    fn a_reserved_slug_is_an_invalid_name_like_the_others() {
+        let error = RealmName::try_from("www").expect_err("a reserved slug");
 
         assert!(
             matches!(error, CoreError::Realm(RealmError::InvalidName { .. })),

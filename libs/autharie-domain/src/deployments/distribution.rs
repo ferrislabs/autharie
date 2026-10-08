@@ -30,10 +30,13 @@ pub enum Distribution {
 pub enum DistributionError {
     #[error("a {kind} deployment cannot run in the customer's cloud")]
     NotAllowedForKind { kind: DeploymentKind },
+
+    #[error("a {kind} deployment cannot be hosted as a realm in a cell")]
+    NotPoolable { kind: DeploymentKind },
 }
 
 impl Distribution {
-    /// Only FerrisKey is built to be created on a cluster of its own.
+    /// Only FerrisKey is built to run on a cluster of its own or as a realm in a cell.
     pub fn allowed_for(&self, kind: &DeploymentKind) -> bool {
         match self {
             Self::CustomerCloud { .. } | Self::Pooled { .. } => *kind == DeploymentKind::Ferriskey,
@@ -43,10 +46,16 @@ impl Distribution {
 
     pub fn checked_for(self, kind: &DeploymentKind) -> Result<Self, DistributionError> {
         if self.allowed_for(kind) {
-            Ok(self)
-        } else {
-            Err(DistributionError::NotAllowedForKind { kind: kind.clone() })
+            return Ok(self);
         }
+
+        let kind = kind.clone();
+        Err(match self {
+            Self::Pooled { .. } => DistributionError::NotPoolable { kind },
+            Self::Shared | Self::SelfHosted | Self::CustomerCloud { .. } => {
+                DistributionError::NotAllowedForKind { kind }
+            }
+        })
     }
 }
 
@@ -100,7 +109,7 @@ pub(crate) mod tests {
         }
     }
 
-    // @spec-fpr-13
+    /// @spec-fpr-13
     #[test]
     fn only_a_ferriskey_deployment_can_be_pooled() {
         assert!(pooled().allowed_for(&DeploymentKind::Ferriskey));
@@ -108,9 +117,28 @@ pub(crate) mod tests {
         assert!(pooled().checked_for(&DeploymentKind::Ferriskey).is_ok());
         assert_eq!(
             pooled().checked_for(&DeploymentKind::Keycloak),
-            Err(DistributionError::NotAllowedForKind {
+            Err(DistributionError::NotPoolable {
                 kind: DeploymentKind::Keycloak
             })
+        );
+    }
+
+    #[test]
+    fn each_refusal_names_the_distribution_it_is_about() {
+        let customer = customer_cloud()
+            .checked_for(&DeploymentKind::Keycloak)
+            .expect_err("keycloak in the customer's cloud");
+        let pooled = pooled()
+            .checked_for(&DeploymentKind::Keycloak)
+            .expect_err("keycloak in a cell");
+
+        assert_eq!(
+            customer.to_string(),
+            "a keycloak deployment cannot run in the customer's cloud"
+        );
+        assert_eq!(
+            pooled.to_string(),
+            "a keycloak deployment cannot be hosted as a realm in a cell"
         );
     }
 
