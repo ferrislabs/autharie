@@ -354,8 +354,13 @@ impl From<CoreError> for ApiError {
             CoreError::Placement(_) => ApiError::ServiceUnavailable {
                 reason: value.to_string(),
             },
-            CoreError::Cell(CellError::Full | CellError::NotOpen)
+            CoreError::Cell(
+                CellError::Full | CellError::NotOpen | CellError::InvalidTransition,
+            )
             | CoreError::Realm(RealmError::AlreadyExists) => ApiError::Conflict {
+                reason: value.to_string(),
+            },
+            CoreError::Realm(RealmError::InvalidName { .. }) => ApiError::Unprocessable {
                 reason: value.to_string(),
             },
             CoreError::Cell(CellError::UnknownCell { .. }) => ApiError::NotFound {
@@ -415,6 +420,38 @@ mod tests {
         })
         .into_response();
         assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
+
+    #[test]
+    fn the_errors_of_a_cell_say_who_is_at_fault() {
+        let status = |error: CoreError| ApiError::from(error).into_response().status();
+
+        assert_eq!(
+            status(CoreError::Placement(
+                autharie_core::cells::PlacementError::NoOpenCell {
+                    region: "fr-par".to_string(),
+                }
+            )),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            status(CoreError::Cell(CellError::Full)),
+            StatusCode::CONFLICT
+        );
+        assert_eq!(
+            status(CoreError::Cell(CellError::InvalidTransition)),
+            StatusCode::CONFLICT
+        );
+        assert_eq!(
+            status(CoreError::Realm(RealmError::InvalidName {
+                reason: "too long".to_string(),
+            })),
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
+        assert_eq!(
+            status(CoreError::Realm(RealmError::CellUnreachable)),
+            StatusCode::BAD_GATEWAY
+        );
     }
 
     #[test]

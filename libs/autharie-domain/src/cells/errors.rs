@@ -11,6 +11,9 @@ pub enum CellError {
     #[error("the cell does not take new tenants")]
     NotOpen,
 
+    #[error("that status change is not allowed for this cell")]
+    InvalidTransition,
+
     #[error("cell not found with id: {id}")]
     UnknownCell { id: Uuid },
 }
@@ -23,6 +26,9 @@ pub enum PlacementError {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RealmError {
+    #[error("{reason}")]
+    InvalidName { reason: String },
+
     #[error("the realm already exists in this cell")]
     AlreadyExists,
 
