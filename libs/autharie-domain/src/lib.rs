@@ -8,6 +8,7 @@ pub mod action;
 pub mod audit;
 pub mod backups;
 pub mod catalog;
+pub mod cells;
 pub mod certificate;
 pub mod dataplane;
 pub mod deployments;
@@ -267,6 +268,15 @@ pub enum CoreError {
 
     #[error(transparent)]
     Provision(#[from] crate::dataplane::provisioner::ProvisionError),
+
+    #[error(transparent)]
+    Cell(#[from] crate::cells::CellError),
+
+    #[error(transparent)]
+    Placement(#[from] crate::cells::PlacementError),
+
+    #[error(transparent)]
+    Realm(#[from] crate::cells::RealmError),
 
     #[error(transparent)]
     ObjectStore(#[from] crate::backups::ObjectStoreError),

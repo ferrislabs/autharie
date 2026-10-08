@@ -1,4 +1,8 @@
-use autharie_core::{CoreError, dataplane::credential::CredentialError};
+use autharie_core::{
+    CoreError,
+    cells::{CellError, RealmError},
+    dataplane::credential::CredentialError,
+};
 use axum::{Json, http::StatusCode, response::IntoResponse};
 use serde::Serialize;
 use thiserror::Error;
@@ -347,6 +351,21 @@ impl From<CoreError> for ApiError {
             CoreError::Provision(_) => ApiError::BadGateway {
                 reason: value.to_string(),
             },
+            CoreError::Placement(_) => ApiError::ServiceUnavailable {
+                reason: value.to_string(),
+            },
+            CoreError::Cell(CellError::Full | CellError::NotOpen)
+            | CoreError::Realm(RealmError::AlreadyExists) => ApiError::Conflict {
+                reason: value.to_string(),
+            },
+            CoreError::Cell(CellError::UnknownCell { .. }) => ApiError::NotFound {
+                reason: value.to_string(),
+            },
+            CoreError::Realm(RealmError::CellUnreachable | RealmError::Refused { .. }) => {
+                ApiError::BadGateway {
+                    reason: value.to_string(),
+                }
+            }
 
             // Everything else stays deliberately opaque to the caller: a
             // database error or an internal invariant is not something they
