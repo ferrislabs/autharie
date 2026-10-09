@@ -115,9 +115,13 @@ fn archive_destination_for(
     config: &crate::ArchiveConfig,
     deployment: &autharie_domain::deployments::Deployment,
 ) -> Option<ArchiveDestination> {
+    use autharie_domain::deployments::distribution::Distribution;
+
     match deployment.distribution {
-        autharie_domain::deployments::distribution::Distribution::CustomerCloud { .. } => None,
-        _ => config.destination_for(deployment.organisation_id, deployment.id),
+        Distribution::CustomerCloud { .. } | Distribution::Pooled { .. } => None,
+        Distribution::Shared | Distribution::SelfHosted => {
+            config.destination_for(deployment.organisation_id, deployment.id)
+        }
     }
 }
 
@@ -576,8 +580,15 @@ mod tests {
                 .expect("a profile"),
             };
 
+        let mut pooled = sample_deployment();
+        pooled.distribution = autharie_domain::deployments::distribution::Distribution::Pooled {
+            cell_id: autharie_domain::cells::CellId(uuid::Uuid::new_v4()),
+            realm: autharie_domain::cells::RealmName::try_from("acme").unwrap(),
+        };
+
         assert!(archive_destination_for(&config, &shared).is_some());
         assert!(archive_destination_for(&config, &customer).is_none());
+        assert!(archive_destination_for(&config, &pooled).is_none());
     }
 
     /// An installation that archives nowhere says so by absence. A deployment

@@ -66,6 +66,9 @@ pub(super) fn to_columns(distribution: &Distribution) -> Result<DistributionColu
                 cluster_profile: Some(value),
             })
         }
+        Distribution::Pooled { .. } => Err(CoreError::InternalError(
+            "a pooled deployment cannot be stored: its persistence is not implemented".to_owned(),
+        )),
     }
 }
 

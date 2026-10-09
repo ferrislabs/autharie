@@ -182,6 +182,7 @@ export namespace Schemas {
     memory_mib: number
     storage_gib: number
   }
+  export type CellId = string
   export type CertificatePayload = {
     certificate_pem: string
     fingerprint: string
@@ -259,10 +260,12 @@ export namespace Schemas {
     region?: (string | null) | undefined
     version: string
   }
+  export type RealmName = string
   export type Distribution =
     | 'shared'
     | 'self_hosted'
     | { customer_cloud: { credential_id: CloudCredentialId; profile: ClusterProfile } }
+    | { pooled: { cell_id: CellId; realm: RealmName } }
   export type Environment = 'production' | 'staging' | 'development'
   export type IamSettings = Partial<{ branding: null | Branding }>
   export type MaintenanceWindow = { day: string; duration: number; start: string; timezone: string }

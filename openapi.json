@@ -9324,6 +9324,10 @@
           }
         }
       },
+      "CellId": {
+        "type": "string",
+        "format": "uuid"
+      },
       "CertificatePayload": {
         "type": "object",
         "description": "A certificate crossing the wire, PEM-encoded -- the same shape a\nKubernetes `kubernetes.io/tls` Secret holds it in, on both ends of this\ntrip.",
@@ -10291,6 +10295,29 @@
                   },
                   "profile": {
                     "$ref": "#/components/schemas/ClusterProfile"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "pooled"
+            ],
+            "properties": {
+              "pooled": {
+                "type": "object",
+                "required": [
+                  "cell_id",
+                  "realm"
+                ],
+                "properties": {
+                  "cell_id": {
+                    "$ref": "#/components/schemas/CellId"
+                  },
+                  "realm": {
+                    "$ref": "#/components/schemas/RealmName"
                   }
                 }
               }
@@ -12370,6 +12397,9 @@
         "type": "integer",
         "format": "int32",
         "minimum": 0
+      },
+      "RealmName": {
+        "type": "string"
       },
       "Region": {
         "type": "string"
