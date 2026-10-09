@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT c.id AS \"id!\"\n            FROM (\n                SELECT cells.id,\n                       cells.capacity,\n                       cells.created_at,\n                       (SELECT count(*) FROM deployments d\n                        WHERE d.cell_id = cells.id AND d.cell_slot_held) AS realms\n                FROM cells\n                WHERE cells.region = $1 AND cells.status = 'open'\n            ) c\n            WHERE c.realms < c.capacity\n            ORDER BY c.realms DESC, c.created_at, c.id\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "c826ee55ede3216574b148124f1cb4f4cf11fa34ef7726aeaf0ab906ee491b70"
+}

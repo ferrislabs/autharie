@@ -190,6 +190,7 @@ pub trait HeraldBindingStore: Send + Sync {
 pub enum Removal {
     Removed,
     InfrastructureRemains,
+    HostsCells,
 }
 
 #[cfg_attr(test, mockall::automock)]

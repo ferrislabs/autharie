@@ -9,16 +9,31 @@ use crate::{
     deployments::DeploymentId,
 };
 
-use super::{Cell, CellId, RealmError, RealmName};
+use super::{Cell, CellId, CellStatus, RealmError, RealmName};
 
 #[cfg_attr(test, mockall::automock)]
 pub trait CellRepository: Send + Sync {
+    fn create(&self, cell: &Cell) -> impl Future<Output = Result<(), CoreError>> + Send;
+
+    fn find(&self, id: CellId) -> impl Future<Output = Result<Option<Cell>, CoreError>> + Send;
+
+    fn list(&self) -> impl Future<Output = Result<Vec<Cell>, CoreError>> + Send;
+
+    fn set_status(
+        &self,
+        id: CellId,
+        status: CellStatus,
+    ) -> impl Future<Output = Result<(), CoreError>> + Send;
+
     fn place(
         &self,
         region: &Region,
     ) -> impl Future<Output = Result<Option<Cell>, CoreError>> + Send;
 
-    fn release(&self, cell: CellId) -> impl Future<Output = Result<(), CoreError>> + Send;
+    fn release(
+        &self,
+        deployment: DeploymentId,
+    ) -> impl Future<Output = Result<bool, CoreError>> + Send;
 }
 
 #[cfg_attr(test, mockall::automock)]
