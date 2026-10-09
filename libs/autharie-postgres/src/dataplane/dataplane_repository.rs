@@ -512,6 +512,26 @@ impl DataPlaneRepository for PostgresDataPlaneRepository<'_> {
     async fn remove(&self, id: &DataPlaneId) -> Result<Removal, CoreError> {
         let mut tx = self.tx.lock().await;
 
+        let hosts_cells = sqlx::query_scalar!(
+            r#"
+            SELECT EXISTS (
+                SELECT 1
+                FROM cells
+                WHERE data_plane_id = $1
+            ) AS "hosts_cells!"
+            "#,
+            id.0
+        )
+        .fetch_one(&mut ***tx)
+        .await
+        .map_err(|e| CoreError::DatabaseError {
+            message: format!("Failed to read the cells of a data plane: {}", e),
+        })?;
+
+        if hosts_cells {
+            return Ok(Removal::HostsCells);
+        }
+
         let unreleased = sqlx::query_scalar!(
             r#"
             SELECT EXISTS (

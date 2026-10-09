@@ -260,14 +260,22 @@ where
             });
         }
 
-        if self.dataplane_repository.remove(&dataplane_id).await? == Removal::InfrastructureRemains
-        {
-            return Err(CoreError::DataPlaneCannotBeRemoved {
-                id: dataplane_id,
-                reason: "its infrastructure in the customer's account is not released yet, \
-                         try again once it is"
-                    .to_string(),
-            });
+        match self.dataplane_repository.remove(&dataplane_id).await? {
+            Removal::Removed => {}
+            Removal::InfrastructureRemains => {
+                return Err(CoreError::DataPlaneCannotBeRemoved {
+                    id: dataplane_id,
+                    reason: "its infrastructure in the customer's account is not released yet, \
+                             try again once it is"
+                        .to_string(),
+                });
+            }
+            Removal::HostsCells => {
+                return Err(CoreError::DataPlaneCannotBeRemoved {
+                    id: dataplane_id,
+                    reason: "it hosts a cell, retire the cell first".to_string(),
+                });
+            }
         }
 
         if let (Some(identities), Some(_)) = (self.identities.as_ref(), dataplane.herald.as_ref()) {
@@ -1409,6 +1417,21 @@ mod tests {
             refused.to_string().contains("1 deployment(s) still live"),
             "{refused}"
         );
+        assert!(recorded.entries().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_plane_that_hosts_a_cell_is_refused_and_not_recorded() {
+        let existing = plane(DataPlaneStatus::Disabled, None);
+        let id = existing.id;
+        let (service, recorded) = removal_service(removing(existing, Removal::HostsCells), vec![]);
+
+        let refused = service
+            .delete_dataplane(identity("somebody"), id)
+            .await
+            .expect_err("a plane hosting a cell was removed");
+
+        assert!(refused.to_string().contains("hosts a cell"), "{refused}");
         assert!(recorded.entries().is_empty());
     }
 
