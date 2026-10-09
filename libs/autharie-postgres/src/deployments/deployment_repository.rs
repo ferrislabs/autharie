@@ -60,6 +60,8 @@ struct DeploymentRow {
     distribution: String,
     credential_id: Option<Uuid>,
     cluster_profile: Option<serde_json::Value>,
+    cell_id: Option<Uuid>,
+    realm: Option<String>,
 }
 
 impl DeploymentRow {
@@ -125,6 +127,8 @@ impl DeploymentRow {
                 &self.distribution,
                 self.credential_id,
                 self.cluster_profile,
+                self.cell_id,
+                self.realm,
                 self.id,
             )?,
         })
@@ -364,11 +368,14 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                 iam_settings,
                 distribution,
                 credential_id,
-                cluster_profile
+                cluster_profile,
+                cell_id,
+                realm,
+                cell_slot_held
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
                     $17, $18, $19, $20, $21, $22, $23, $24, $25::TEXT[]::CIDR[], $26, $27, $28, $29,
-                    $30, $31, $32, $33)
+                    $30, $31, $32, $33, $34, $35, $36)
             "#,
                 deployment.id.0,
                 deployment.organisation_id.0,
@@ -412,6 +419,9 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                 distribution.distribution,
                 distribution.credential_id,
                 distribution.cluster_profile,
+                distribution.cell_id,
+                distribution.realm,
+                distribution.cell_slot_held,
             )
             .execute(&mut ***tx)
             .await
@@ -461,7 +471,9 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                    iam_settings,
                    distribution,
                    credential_id,
-                   cluster_profile
+                   cluster_profile,
+                   cell_id,
+                   realm
             FROM deployments
             WHERE id = $1
             "#,
@@ -517,7 +529,9 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                    iam_settings,
                    distribution,
                    credential_id,
-                   cluster_profile
+                   cluster_profile,
+                   cell_id,
+                   realm
             FROM deployments
             WHERE organisation_id = $1
               AND status <> 'deleted'
@@ -577,7 +591,9 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                 iam_settings = $22,
                 distribution = $23,
                 credential_id = $24,
-                cluster_profile = $25
+                cluster_profile = $25,
+                cell_id = $26,
+                realm = $27
             WHERE id = $1
             "#,
                 deployment.id.0,
@@ -614,6 +630,8 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                 distribution.distribution,
                 distribution.credential_id,
                 distribution.cluster_profile,
+                distribution.cell_id,
+                distribution.realm,
             )
             .execute(&mut ***tx)
             .await
@@ -725,7 +743,9 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                    iam_settings,
                    distribution,
                    credential_id,
-                   cluster_profile
+                   cluster_profile,
+                   cell_id,
+                   realm
             FROM deployments
             WHERE dataplane_id = $1
               -- A deployment the data plane has finished tearing down is not
@@ -788,7 +808,9 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                    iam_settings,
                    distribution,
                    credential_id,
-                   cluster_profile
+                   cluster_profile,
+                   cell_id,
+                   realm
             FROM deployments
             WHERE status IN ('successful', 'maintenance', 'upgrading', 'upgrade_required')
             ORDER BY created_at DESC
@@ -850,6 +872,8 @@ mod tests {
             distribution: "shared".to_string(),
             credential_id: None,
             cluster_profile: None,
+            cell_id: None,
+            realm: None,
         }
     }
 
