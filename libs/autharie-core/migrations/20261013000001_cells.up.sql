@@ -30,11 +30,13 @@ ALTER TABLE deployments
                 AND cell_id IS NULL
                 AND realm IS NULL
                 AND cell_slot_held = false)
-        );
+        ),
+    ADD CONSTRAINT deployments_realm_is_hostname_slug
+        CHECK (distribution <> 'pooled' OR realm = hostname_slug);
 
 CREATE UNIQUE INDEX idx_deployments_live_realm
     ON deployments (realm)
-    WHERE deleted_at IS NULL AND realm IS NOT NULL;
+    WHERE realm IS NOT NULL AND (deleted_at IS NULL OR cell_slot_held);
 
 CREATE INDEX idx_deployments_cell_slot
     ON deployments (cell_id)

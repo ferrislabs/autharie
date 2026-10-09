@@ -309,6 +309,9 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
             DELETE FROM deployments
             WHERE status = 'deleted'
               AND updated_at < $1
+              AND NOT EXISTS (
+                  SELECT 1 FROM cells c WHERE c.instance_deployment_id = deployments.id
+              )
             "#,
                 before
             )
@@ -591,9 +594,7 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                 iam_settings = $22,
                 distribution = $23,
                 credential_id = $24,
-                cluster_profile = $25,
-                cell_id = $26,
-                realm = $27
+                cluster_profile = $25
             WHERE id = $1
             "#,
                 deployment.id.0,
@@ -630,8 +631,6 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                 distribution.distribution,
                 distribution.credential_id,
                 distribution.cluster_profile,
-                distribution.cell_id,
-                distribution.realm,
             )
             .execute(&mut ***tx)
             .await

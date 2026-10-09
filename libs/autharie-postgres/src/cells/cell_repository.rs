@@ -177,6 +177,10 @@ impl CellRepository for PostgresCellRepository<'_> {
             UPDATE cells
             SET status = $2
             WHERE id = $1
+              AND NOT ($2 IN ('provisioning', 'retired') AND EXISTS (
+                  SELECT 1 FROM deployments d
+                  WHERE d.cell_id = cells.id AND d.cell_slot_held
+              ))
             "#,
             id.0,
             status
@@ -187,7 +191,20 @@ impl CellRepository for PostgresCellRepository<'_> {
         .rows_affected();
 
         if affected == 0 {
-            return Err(CellError::UnknownCell { id: id.0 }.into());
+            let exists = sqlx::query_scalar!(
+                r#"SELECT EXISTS (SELECT 1 FROM cells WHERE id = $1) AS "exists!""#,
+                id.0
+            )
+            .fetch_one(&mut ***tx)
+            .await
+            .map_err(database_error("look up a cell"))?;
+
+            return Err(if exists {
+                CellError::InvalidTransition
+            } else {
+                CellError::UnknownCell { id: id.0 }
+            }
+            .into());
         }
 
         Ok(())

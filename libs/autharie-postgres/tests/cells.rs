@@ -210,14 +210,13 @@ async fn place_takes_the_fullest_open_cell_with_room_and_stays_in_its_region() {
         let deployments = PostgresDeploymentRepository::new(&tx);
         let elsewhere = Region::new(format!("elsewhere-{}", Uuid::new_v4()));
 
-        let empty = open_cell(&cells, &world, &world.region, 5, 0).await?;
+        open_cell(&cells, &world, &world.region, 5, 0).await?;
         let fuller = open_cell(&cells, &world, &world.region, 5, 1).await?;
         let other_region = open_cell(&cells, &world, &elsewhere, 5, 2).await?;
         fill(&deployments, &world, fuller, 2).await?;
         fill(&deployments, &world, other_region, 4).await?;
 
         assert_eq!(placed(&cells, &world.region).await, Some(fuller));
-        assert_ne!(placed(&cells, &world.region).await, Some(empty));
         assert_eq!(placed(&cells, &elsewhere).await, Some(other_region));
         Ok(())
     })
@@ -234,8 +233,9 @@ async fn place_breaks_a_tie_with_the_oldest_cell() {
         let young = open_cell(&cells, &world, &world.region, 5, 9).await?;
         let old = open_cell(&cells, &world, &world.region, 5, 1).await?;
 
-        assert_eq!(placed(&cells, &world.region).await, Some(old));
-        assert_ne!(Some(young), Some(old));
+        let chosen = placed(&cells, &world.region).await;
+        assert_eq!(chosen, Some(old));
+        assert_ne!(chosen, Some(young));
         Ok(())
     })
     .await;
@@ -372,7 +372,6 @@ async fn a_cell_that_is_not_open_is_never_placed() {
     .await;
 }
 
-/// @spec-fpr-10
 #[tokio::test]
 async fn set_status_refuses_full_and_an_unknown_cell() {
     scratch(async |tx| {
@@ -488,66 +487,120 @@ async fn shared_and_self_hosted_deployments_still_round_trip() {
     .await;
 }
 
+async fn guarded<T>(
+    tx: &SharedTx<'_>,
+    work: impl Future<Output = Result<T, CoreError>>,
+) -> Result<Result<T, CoreError>, CoreError> {
+    sqlx::query("SAVEPOINT attempt")
+        .execute(&mut ***tx.lock().await)
+        .await
+        .map_err(db_error)?;
+    let outcome = work.await;
+    let closing = if outcome.is_ok() {
+        "RELEASE SAVEPOINT attempt"
+    } else {
+        "ROLLBACK TO SAVEPOINT attempt"
+    };
+    sqlx::query(closing)
+        .execute(&mut ***tx.lock().await)
+        .await
+        .map_err(db_error)?;
+    Ok(outcome)
+}
+
+fn names(error: &CoreError, constraint: &str) -> bool {
+    matches!(error, CoreError::DatabaseError { message } if message.contains(constraint))
+}
+
 #[tokio::test]
-async fn two_live_pooled_deployments_cannot_share_a_realm_until_the_first_is_deleted() {
+async fn two_live_pooled_deployments_cannot_share_a_realm() {
     scratch(async |tx| {
         let world = seed_world(&tx).await?;
         let cells = PostgresCellRepository::new(&tx);
+        let deployments = PostgresDeploymentRepository::new(&tx);
         let cell = open_cell(&cells, &world, &world.region, 5, 0).await?;
         let realm = unique("t");
-        let insert = async |name: &str, deleted: bool| -> Result<(), sqlx::Error> {
-            let mut guard = tx.lock().await;
-            sqlx::query(
-                "INSERT INTO deployments \
-                 (id, organisation_id, dataplane_id, name, kind, status, namespace, \
-                  environment, version, cpu_millis, memory_mib, storage_gib, created_by, \
-                  created_at, updated_at, deleted_at, hostname_slug, distribution, \
-                  cell_id, realm, cell_slot_held) \
-                 VALUES ($1, $2, $3, $4, 'ferriskey', 'successful', $5, 'development', \
-                         '26.0.1', 1, 1, 1, $6, now(), now(), \
-                         CASE WHEN $7 THEN now() END, $4, 'pooled', $8, $9, true)",
-            )
-            .bind(Uuid::new_v4())
-            .bind(world.organisation.0)
-            .bind(world.dataplane.0)
-            .bind(name)
-            .bind(format!("ns-{name}"))
-            .bind(world.user.0)
-            .bind(deleted)
-            .bind(cell.0)
-            .bind(&realm)
-            .execute(&mut ***guard)
-            .await
-            .map(|_| ())
-        };
 
-        let first = unique("a");
-        insert(&first, false).await.expect("the first realm");
-        sqlx::query("SAVEPOINT clash")
-            .execute(&mut ***tx.lock().await)
-            .await
-            .map_err(db_error)?;
-        let second = insert(&unique("b"), false).await;
-        assert!(second.is_err(), "a live realm cannot be taken twice");
-        sqlx::query("ROLLBACK TO SAVEPOINT clash")
-            .execute(&mut ***tx.lock().await)
-            .await
-            .map_err(db_error)?;
+        deployments.insert(pooled_in(&world, cell, &realm)).await?;
+        let second = guarded(&tx, deployments.insert(pooled_in(&world, cell, &realm))).await?;
 
-        sqlx::query("UPDATE deployments SET deleted_at = now() WHERE name = $1")
-            .bind(&first)
-            .execute(&mut ***tx.lock().await)
-            .await
-            .map_err(db_error)?;
-        insert(&unique("c"), false)
-            .await
-            .expect("the realm is free once the first is deleted");
+        assert!(matches!(second, Err(CoreError::DeploymentNameTaken)));
         Ok(())
     })
     .await;
 }
 
-async fn refused(tx: &SharedTx<'_>, statement: &str) -> Result<bool, CoreError> {
+#[tokio::test]
+async fn a_soft_deleted_realm_still_holding_its_slot_blocks_the_name_until_released() {
+    scratch(async |tx| {
+        let world = seed_world(&tx).await?;
+        let cells = PostgresCellRepository::new(&tx);
+        let deployments = PostgresDeploymentRepository::new(&tx);
+        let cell = open_cell(&cells, &world, &world.region, 5, 0).await?;
+        let realm = unique("t");
+
+        let first = pooled_in(&world, cell, &realm);
+        deployments.insert(first.clone()).await?;
+        deployments.delete(first.id).await?;
+
+        let blocked = guarded(&tx, deployments.insert(pooled_in(&world, cell, &realm))).await?;
+        let error = blocked.expect_err("the realm may still exist in the cell");
+        assert!(names(&error, "idx_deployments_live_realm"), "{error}");
+
+        assert!(cells.release(first.id).await?);
+        deployments.insert(pooled_in(&world, cell, &realm)).await?;
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_hard_deleted_realm_frees_its_name() {
+    scratch(async |tx| {
+        let world = seed_world(&tx).await?;
+        let cells = PostgresCellRepository::new(&tx);
+        let deployments = PostgresDeploymentRepository::new(&tx);
+        let cell = open_cell(&cells, &world, &world.region, 5, 0).await?;
+        let realm = unique("t");
+
+        let first = pooled_in(&world, cell, &realm);
+        deployments.insert(first.clone()).await?;
+        deployments.delete(first.id).await?;
+        sqlx::query("DELETE FROM deployments WHERE id = $1")
+            .bind(first.id.0)
+            .execute(&mut ***tx.lock().await)
+            .await
+            .map_err(db_error)?;
+
+        deployments.insert(pooled_in(&world, cell, &realm)).await?;
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_pooled_row_whose_hostname_slug_differs_from_its_realm_is_refused() {
+    scratch(async |tx| {
+        let world = seed_world(&tx).await?;
+        let cells = PostgresCellRepository::new(&tx);
+        let deployments = PostgresDeploymentRepository::new(&tx);
+        let cell = open_cell(&cells, &world, &world.region, 5, 0).await?;
+
+        let mut tenant = pooled_in(&world, cell, &unique("t"));
+        tenant.name = DeploymentName(unique("other"));
+
+        let result = guarded(&tx, deployments.insert(tenant)).await?;
+        let error = result.expect_err("the realm is the slug of the hostname");
+        assert!(
+            names(&error, "deployments_realm_is_hostname_slug"),
+            "{error}"
+        );
+        Ok(())
+    })
+    .await;
+}
+
+async fn constraint_fired(tx: &SharedTx<'_>, statement: &str) -> Result<Option<String>, CoreError> {
     sqlx::query("SAVEPOINT attempt")
         .execute(&mut ***tx.lock().await)
         .await
@@ -559,7 +612,12 @@ async fn refused(tx: &SharedTx<'_>, statement: &str) -> Result<bool, CoreError> 
         .execute(&mut ***tx.lock().await)
         .await
         .map_err(db_error)?;
-    Ok(result.is_err())
+
+    Ok(result.err().and_then(|error| {
+        error
+            .as_database_error()
+            .and_then(|db| db.constraint().map(str::to_owned))
+    }))
 }
 
 #[tokio::test]
@@ -567,27 +625,39 @@ async fn the_database_refuses_rows_that_cannot_be_real() {
     scratch(async |tx| {
         let world = seed_world(&tx).await?;
         let cells = PostgresCellRepository::new(&tx);
+        let deployments = PostgresDeploymentRepository::new(&tx);
         let cell = open_cell(&cells, &world, &world.region, 5, 0).await?;
         let tenant = deployment(&world, &unique("d"), Distribution::Shared);
-        PostgresDeploymentRepository::new(&tx)
-            .insert(tenant.clone())
-            .await?;
+        deployments.insert(tenant.clone()).await?;
+        let pooled = pooled_in(&world, cell, &unique("t"));
+        deployments.insert(pooled.clone()).await?;
 
-        for (what, statement) in [
+        for (what, statement, constraint) in [
             (
                 "pooled without a cell",
                 format!(
-                    "UPDATE deployments SET distribution = 'pooled', realm = 'x{}' WHERE id = '{}'",
-                    tenant.id.0.simple(),
+                    "UPDATE deployments SET distribution = 'pooled', realm = hostname_slug \
+                     WHERE id = '{}'",
                     tenant.id.0
                 ),
+                "deployments_pooled_is_whole",
             ),
             (
                 "pooled without a realm",
                 format!(
-                    "UPDATE deployments SET distribution = 'pooled', cell_id = '{}' WHERE id = '{}'",
+                    "UPDATE deployments SET distribution = 'pooled', cell_id = '{}' \
+                     WHERE id = '{}'",
                     cell.0, tenant.id.0
                 ),
+                "deployments_pooled_is_whole",
+            ),
+            (
+                "a cell on a shared deployment",
+                format!(
+                    "UPDATE deployments SET cell_id = '{}' WHERE id = '{}'",
+                    cell.0, tenant.id.0
+                ),
+                "deployments_pooled_is_whole",
             ),
             (
                 "a slot held outside a pool",
@@ -595,22 +665,149 @@ async fn the_database_refuses_rows_that_cannot_be_real() {
                     "UPDATE deployments SET cell_slot_held = true WHERE id = '{}'",
                     tenant.id.0
                 ),
+                "deployments_pooled_is_whole",
+            ),
+            (
+                "a realm that is not the hostname slug",
+                format!(
+                    "UPDATE deployments SET realm = 'elsewhere' WHERE id = '{}'",
+                    pooled.id.0
+                ),
+                "deployments_realm_is_hostname_slug",
             ),
             (
                 "a cell without capacity",
                 format!("UPDATE cells SET capacity = 0 WHERE id = '{}'", cell.0),
+                "cells_capacity_in_range",
             ),
             (
                 "a cell above 65535",
                 format!("UPDATE cells SET capacity = 65536 WHERE id = '{}'", cell.0),
+                "cells_capacity_in_range",
             ),
             (
                 "a stored full cell",
                 format!("UPDATE cells SET status = 'full' WHERE id = '{}'", cell.0),
+                "cells_status_known",
+            ),
+            (
+                "deleting a cell that has a deployment",
+                format!("DELETE FROM cells WHERE id = '{}'", cell.0),
+                "deployments_cell_id_fkey",
+            ),
+            (
+                "deleting the instance of a cell",
+                format!("DELETE FROM deployments WHERE id = '{}'", world.instance.0),
+                "cells_instance_deployment_id_fkey",
             ),
         ] {
-            assert!(refused(&tx, &statement).await?, "{what}");
+            let fired = constraint_fired(&tx, &statement).await?;
+            assert_eq!(fired.as_deref(), Some(constraint), "{what}");
         }
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn set_status_refuses_provisioning_and_retired_while_slots_are_held() {
+    scratch(async |tx| {
+        let world = seed_world(&tx).await?;
+        let cells = PostgresCellRepository::new(&tx);
+        let deployments = PostgresDeploymentRepository::new(&tx);
+        let cell = open_cell(&cells, &world, &world.region, 5, 0).await?;
+        let tenants = fill(&deployments, &world, cell, 1).await?;
+
+        for status in [CellStatus::Provisioning, CellStatus::Retired] {
+            assert!(
+                matches!(
+                    cells.set_status(cell, status).await,
+                    Err(CoreError::Cell(CellError::InvalidTransition))
+                ),
+                "{status:?}"
+            );
+        }
+        cells.set_status(cell, CellStatus::Draining).await?;
+        assert_eq!(
+            cells.find(cell).await?.expect("still readable").status(),
+            CellStatus::Draining
+        );
+        assert!(cells.list().await?.iter().any(|c| c.id() == cell));
+
+        assert!(cells.release(tenants[0]).await?);
+        cells.set_status(cell, CellStatus::Retired).await?;
+        assert_eq!(
+            cells.find(cell).await?.expect("exists").status(),
+            CellStatus::Retired
+        );
+        assert!(matches!(
+            cells
+                .set_status(CellId(Uuid::new_v4()), CellStatus::Retired)
+                .await,
+            Err(CoreError::Cell(CellError::UnknownCell { .. }))
+        ));
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn update_never_moves_a_deployment_between_cells() {
+    scratch(async |tx| {
+        let world = seed_world(&tx).await?;
+        let cells = PostgresCellRepository::new(&tx);
+        let deployments = PostgresDeploymentRepository::new(&tx);
+        let home = open_cell(&cells, &world, &world.region, 5, 0).await?;
+        let other = open_cell(&cells, &world, &world.region, 5, 1).await?;
+
+        let tenant = pooled_in(&world, home, &unique("t"));
+        deployments.insert(tenant.clone()).await?;
+
+        let mut moved = tenant.clone();
+        moved.distribution = Distribution::Pooled {
+            cell_id: other,
+            realm: RealmName::try_from(unique("x").as_str()).expect("a valid realm"),
+        };
+        deployments.update(moved).await?;
+
+        let read = deployments.get_by_id(tenant.id).await?.expect("exists");
+        assert_eq!(read.distribution, tenant.distribution);
+        assert_eq!(cells.find(home).await?.expect("exists").realms(), 1);
+        assert_eq!(cells.find(other).await?.expect("exists").realms(), 0);
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn purge_leaves_the_instance_of_a_cell_and_still_purges_the_rest() {
+    scratch(async |tx| {
+        let world = seed_world(&tx).await?;
+        let cells = PostgresCellRepository::new(&tx);
+        let deployments = PostgresDeploymentRepository::new(&tx);
+        open_cell(&cells, &world, &world.region, 5, 0).await?;
+
+        let long_ago = Utc::now() - Duration::days(30);
+        let unrelated = deployment(&world, &unique("d"), Distribution::Shared);
+        deployments.insert(unrelated.clone()).await?;
+        let mut instance = deployments
+            .get_by_id(world.instance)
+            .await?
+            .expect("the instance exists");
+        instance.status = DeploymentStatus::Deleted;
+        instance.updated_at = long_ago;
+        deployments.update(instance).await?;
+        let mut gone = unrelated.clone();
+        gone.status = DeploymentStatus::Deleted;
+        gone.updated_at = long_ago;
+        deployments.update(gone).await?;
+
+        deployments
+            .purge_deleted(Utc::now() - Duration::days(1))
+            .await?;
+
+        assert!(deployments.get_by_id(unrelated.id).await?.is_none());
+        assert!(deployments.get_by_id(world.instance).await?.is_some());
         Ok(())
     })
     .await;
@@ -707,33 +904,44 @@ async fn two_creations_racing_for_the_last_slot_never_exceed_the_capacity() {
     let Some(committed) = committed_world().await else {
         return;
     };
+    let committed = std::sync::Arc::new(committed);
 
-    let cell_id = with_tx(&committed.pool, db_error, async |tx| {
-        let cells = PostgresCellRepository::new(&tx);
-        let deployments = PostgresDeploymentRepository::new(&tx);
-        let cell = open_cell(&cells, &committed.world, &committed.world.region, 2, 0).await?;
-        fill(&deployments, &committed.world, cell, 1).await?;
-        Ok(cell)
-    })
-    .await
-    .expect("the cell was committed");
+    let body = tokio::spawn({
+        let committed = committed.clone();
+        async move {
+            let cell_id = with_tx(&committed.pool, db_error, async |tx| {
+                let cells = PostgresCellRepository::new(&tx);
+                let deployments = PostgresDeploymentRepository::new(&tx);
+                let cell =
+                    open_cell(&cells, &committed.world, &committed.world.region, 2, 0).await?;
+                fill(&deployments, &committed.world, cell, 1).await?;
+                Ok(cell)
+            })
+            .await
+            .expect("the cell was committed");
 
-    let (first, second) = tokio::join!(
-        race_for_a_slot(&committed, cell_id),
-        race_for_a_slot(&committed, cell_id)
-    );
+            let (first, second) = tokio::join!(
+                race_for_a_slot(&committed, cell_id),
+                race_for_a_slot(&committed, cell_id)
+            );
 
-    let cells_after = with_tx(&committed.pool, db_error, async |tx| {
-        PostgresCellRepository::new(&tx).find(cell_id).await
+            let after = with_tx(&committed.pool, db_error, async |tx| {
+                PostgresCellRepository::new(&tx).find(cell_id).await
+            })
+            .await
+            .expect("the cell was read")
+            .expect("the cell exists");
+
+            let winners = [first, second].into_iter().flatten().count();
+            assert_eq!(winners, 1, "exactly one creation gets the last slot");
+            assert_eq!(after.realms(), 2);
+            assert_eq!(after.status(), CellStatus::Full);
+        }
     })
     .await;
-    committed.clean_up().await;
-    let cells_after = cells_after
-        .expect("the cell was read")
-        .expect("the cell exists");
 
-    let winners = [first, second].into_iter().flatten().count();
-    assert_eq!(winners, 1, "exactly one creation gets the last slot");
-    assert_eq!(cells_after.realms(), 2);
-    assert_eq!(cells_after.status(), CellStatus::Full);
+    committed.clean_up().await;
+    if let Err(failure) = body {
+        std::panic::resume_unwind(failure.into_panic());
+    }
 }
