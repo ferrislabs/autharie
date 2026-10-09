@@ -744,7 +744,10 @@ async fn the_owner_of_a_customer_cluster_reads_why_it_is_not_ready_without_opera
     let (_, failed) = call(&app, Method::GET, &uri, None).await;
 
     assert_eq!(building_status, StatusCode::OK, "{building}");
-    assert_eq!(building["provisioning"], json!({"status": "provisioning"}));
+    assert_eq!(
+        building["provisioning"],
+        json!({"status": "provisioning", "step": "creating_infrastructure"})
+    );
     assert_eq!(
         failed["provisioning"],
         json!({
