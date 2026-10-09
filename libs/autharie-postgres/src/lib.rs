@@ -18,6 +18,9 @@ pub mod backups;
 pub mod catalog;
 
 #[cfg_attr(coverage_nightly, coverage(off))]
+pub mod cells;
+
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub mod credentials;
 
 #[cfg_attr(coverage_nightly, coverage(off))]
