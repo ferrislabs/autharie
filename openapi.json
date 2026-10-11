@@ -13614,12 +13614,14 @@
           "database_instances": {
             "type": "integer",
             "format": "int32",
-            "minimum": 0
+            "maximum": 5,
+            "minimum": 1
           },
           "replicas": {
             "type": "integer",
             "format": "int32",
-            "minimum": 0
+            "maximum": 5,
+            "minimum": 1
           }
         }
       },

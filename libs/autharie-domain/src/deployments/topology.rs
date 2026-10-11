@@ -7,7 +7,9 @@ const RANGE: std::ops::RangeInclusive<u8> = 1..=5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, ToSchema)]
 pub struct Topology {
+    #[schema(minimum = 1, maximum = 5)]
     replicas: u8,
+    #[schema(minimum = 1, maximum = 5)]
     database_instances: u8,
 }
 

@@ -27,7 +27,6 @@ use autharie_domain::{
         cutover::{CutoverCommand, plan_cutover},
         ports::DeploymentRepository,
         service::DeploymentServiceImpl,
-        topology::Topology,
     },
     organisation::OrganisationId,
     user::ports::UserRepository,
@@ -77,8 +76,6 @@ fn drill_payload(
         "cpu_millis": planned.resources.cpu_millis,
         "memory_mib": planned.resources.memory_mib,
         "storage_gib": planned.resources.storage_gib,
-        "replicas": Topology::SINGLE.replicas(),
-        "database_instances": Topology::SINGLE.database_instances(),
         "source": {
             "destination_path": planned.source.destination_path,
             "server_name": planned.source.server_name,
@@ -431,10 +428,10 @@ impl BackupService for AutharieService {
                 command.region,
                 planned.offer,
             )?
-            .with_topology(source.topology)
             .recovering(Recovery {
                 backup: archive.id,
                 resources: planned.resources,
+                topology: source.topology,
             }),
         )
         .await?;

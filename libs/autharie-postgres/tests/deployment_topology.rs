@@ -34,10 +34,7 @@ fn db_error(error: sqlx::Error) -> CoreError {
 }
 
 async fn scratch<T>(work: impl AsyncFnOnce(SharedTx<'_>) -> Result<T, CoreError>) -> Option<T> {
-    let Some(pool) = pool().await else {
-        eprintln!("skipped: DATABASE_URL is not set");
-        return None;
-    };
+    let pool = pool().await?;
 
     Some(
         in_scratch_tx(&pool, db_error, work)
