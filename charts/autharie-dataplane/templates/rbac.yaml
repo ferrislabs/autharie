@@ -114,6 +114,19 @@ rules:
       - identityinstancebackups
       - identityinstancebackupschedules
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # The operator re-asserts its own CRDs at start-up: Helm installs `crds/`
+  # once and never updates it, so a schema change would otherwise never reach
+  # an existing data plane. Limited to these names, and to the verbs server-side
+  # apply needs on an object that already exists: no create, no delete.
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    resourceNames:
+      - "identityinstances.autharie.fr"
+      - "identityinstanceupgrades.autharie.fr"
+      - "identityinstancebackups.autharie.fr"
+      - "identityinstancebackupschedules.autharie.fr"
+      - "identitydataplaneupgrades.autharie.fr"
+    verbs: ["get", "patch", "update"]
   - apiGroups: ["autharie.fr"]
     resources:
       - identityinstances/status
