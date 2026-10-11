@@ -1019,6 +1019,15 @@ mod versioned_workload_naming {
     }
 
     #[test]
+    fn a_workload_waits_for_every_replica_before_it_is_ready() {
+        let one = deployment("ghcr.io/x/ferriskey-api:0.6.0", "ferriskey-api", 1);
+        let two = deployment("ghcr.io/x/ferriskey-api:0.6.0", "ferriskey-api", 2);
+
+        assert!(!workload_ready_on(&one, "ferriskey-api", "0.6.0", 2));
+        assert!(workload_ready_on(&two, "ferriskey-api", "0.6.0", 2));
+    }
+
+    #[test]
     fn a_workload_on_the_target_version_and_serving_is_ready() {
         let deployment = deployment("ghcr.io/x/ferriskey-api:0.6.0", "ferriskey-api", 1);
 

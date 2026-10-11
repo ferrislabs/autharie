@@ -31,7 +31,8 @@ pub struct IdentityInstanceSpec {
 
     pub hostname: String,
 
-    /// Replicas of the identity provider's own workloads, 1 to 5.
+    /// Replicas of a FerrisKey instance (API and webapp), 1 to 5. Keycloak
+    /// always runs one.
     #[serde(default = "default_replicas")]
     #[schemars(range(min = 1, max = 5))]
     pub replicas: i32,
@@ -535,6 +536,7 @@ mod tests {
 
         assert_eq!(replicas["minimum"].as_f64(), Some(1.0));
         assert_eq!(replicas["maximum"].as_f64(), Some(5.0));
+        assert_eq!(replicas["default"], json!(1));
     }
 
     #[test]

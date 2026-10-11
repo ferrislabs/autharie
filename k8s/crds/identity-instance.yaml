@@ -257,7 +257,9 @@ spec:
                 type: string
               replicas:
                 default: 1
-                description: Replicas of the identity provider's own workloads, 1 to 5.
+                description: |-
+                  Replicas of a FerrisKey instance (API and webapp), 1 to 5. Keycloak
+                  always runs one.
                 format: int32
                 maximum: 5.0
                 minimum: 1.0

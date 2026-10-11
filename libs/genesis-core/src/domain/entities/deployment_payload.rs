@@ -148,6 +148,27 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    #[test]
+    fn the_replica_keys_are_read_under_their_wire_names() {
+        let raw = json!({
+            "deployment_id": "b6a1c2d3-e4f5-4a6b-8c9d-0e1f2a3b4c5d",
+            "dataplane_id": "1c2b3a4d-5e6f-4a7b-8c9d-0e1f2a3b4c5e",
+            "organisation_id": "9f8e7d6c-5b4a-3c2d-1e0f-a1b2c3d4e5f6",
+            "name": "acme-prod",
+            "kind": "ferriskey",
+            "version": "1.0.0",
+            "namespace": "autharie-acme-prod",
+            "created_by": "11111111-2222-3333-4444-555555555555",
+            "replicas": 2,
+            "database_instances": 3
+        });
+
+        let payload = DeploymentPayloadV1::from_value(&raw).expect("valid payload");
+
+        assert_eq!(payload.replicas, Some(2));
+        assert_eq!(payload.database_instances, Some(3));
+    }
+
     /// The archive half, shaped the way the control plane writes it in
     /// `archive_section`. Duplicated from `autharie-core` deliberately and
     /// visibly: this crate does not depend on it, and a payload that fails to
