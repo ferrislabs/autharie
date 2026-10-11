@@ -56,6 +56,13 @@ pub struct DeploymentPayloadV1 {
     /// what genesis has always invented, in `DesiredIdentityInstance::from_payload`.
     #[serde(default)]
     pub hostname: Option<String>,
+
+    /// Replicas of the identity provider and of the database. Absent is 1,
+    /// which is what every deployment had before the control plane sent them.
+    #[serde(default)]
+    pub replicas: Option<i32>,
+    #[serde(default)]
+    pub database_instances: Option<i32>,
 }
 
 /// The restore half of a `deployment.restore` payload.

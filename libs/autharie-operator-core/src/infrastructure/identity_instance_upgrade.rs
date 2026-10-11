@@ -892,7 +892,12 @@ async fn deployment_ready_for_version(
             return Ok(false);
         };
 
-        if !workload_ready_on(&deployment, container_name, target_version) {
+        if !workload_ready_on(
+            &deployment,
+            container_name,
+            target_version,
+            super::identity_instance::desired_replicas(instance),
+        ) {
             return Ok(false);
         }
     }
@@ -900,7 +905,12 @@ async fn deployment_ready_for_version(
     Ok(true)
 }
 
-fn workload_ready_on(deployment: &Deployment, container_name: &str, target_version: &str) -> bool {
+fn workload_ready_on(
+    deployment: &Deployment,
+    container_name: &str,
+    target_version: &str,
+    desired_replicas: i32,
+) -> bool {
     let has_target_version = deployment
         .spec
         .as_ref()
@@ -917,7 +927,6 @@ fn workload_ready_on(deployment: &Deployment, container_name: &str, target_versi
         })
         .unwrap_or(false);
 
-    let desired_replicas = 1;
     let generation = deployment.metadata.generation.unwrap_or_default();
     let observed_generation = deployment
         .status
@@ -1013,7 +1022,7 @@ mod versioned_workload_naming {
     fn a_workload_on_the_target_version_and_serving_is_ready() {
         let deployment = deployment("ghcr.io/x/ferriskey-api:0.6.0", "ferriskey-api", 1);
 
-        assert!(workload_ready_on(&deployment, "ferriskey-api", "0.6.0"));
+        assert!(workload_ready_on(&deployment, "ferriskey-api", "0.6.0", 1));
     }
 
     /// Still on the version it came from. The rollout has not reached it yet.
@@ -1021,7 +1030,7 @@ mod versioned_workload_naming {
     fn a_workload_left_on_the_old_version_is_not_ready() {
         let deployment = deployment("ghcr.io/x/ferriskey-api:0.5.0", "ferriskey-api", 1);
 
-        assert!(!workload_ready_on(&deployment, "ferriskey-api", "0.6.0"));
+        assert!(!workload_ready_on(&deployment, "ferriskey-api", "0.6.0", 1));
     }
 
     /// On the right version and answering to nobody.
@@ -1029,7 +1038,7 @@ mod versioned_workload_naming {
     fn a_workload_with_no_ready_replica_is_not_ready() {
         let deployment = deployment("ghcr.io/x/ferriskey-api:0.6.0", "ferriskey-api", 0);
 
-        assert!(!workload_ready_on(&deployment, "ferriskey-api", "0.6.0"));
+        assert!(!workload_ready_on(&deployment, "ferriskey-api", "0.6.0", 1));
     }
 
     /// A version that is a prefix of another must not pass for it: 0.6.0 is
@@ -1038,7 +1047,7 @@ mod versioned_workload_naming {
     fn a_neighbouring_tag_is_not_the_target() {
         let deployment = deployment("ghcr.io/x/ferriskey-api:0.6.0-rc1", "ferriskey-api", 1);
 
-        assert!(!workload_ready_on(&deployment, "ferriskey-api", "0.6.0"));
+        assert!(!workload_ready_on(&deployment, "ferriskey-api", "0.6.0", 1));
     }
 }
 
@@ -1080,6 +1089,7 @@ mod tests {
                 // A hostname that resolves nowhere: the point of probing the in-cluster
                 // Service instead of the public endpoint is that this must not matter.
                 hostname: "auth.acme.test".to_string(),
+                replicas: 1,
                 database: DatabaseConfig {
                     mode: DatabaseMode::ManagedCluster,
                     managed_cluster: ManagedClusterConfig {
