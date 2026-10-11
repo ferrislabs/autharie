@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            DELETE FROM deployments\n            WHERE status = 'deleted'\n              AND updated_at < $1\n              AND NOT EXISTS (\n                  SELECT 1 FROM cells c WHERE c.instance_deployment_id = deployments.id\n              )\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7925d09a64e700e6ea73f84d17e8d5572d8c3911c7fd8a57cffc396e4031f55c"
+}

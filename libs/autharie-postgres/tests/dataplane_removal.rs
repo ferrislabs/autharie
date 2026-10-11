@@ -228,3 +228,48 @@ async fn released_infrastructure_does_not_hold_a_plane_back() {
 
     assert_eq!(result.expect("the transaction committed"), Removal::Removed);
 }
+
+#[tokio::test]
+async fn a_plane_that_hosts_a_cell_stays() {
+    let Some(pool) = pool().await else {
+        eprintln!("skipped: DATABASE_URL is not set");
+        return;
+    };
+
+    let result: Result<(Removal, bool), CoreError> = in_scratch_tx(&pool, db_error, async |tx| {
+        let dataplane_id = seed_dataplane(&tx).await?;
+        let (user_id, organisation_id) = seed_organisation(&tx, "acme").await?;
+        let instance = deployment(organisation_id, dataplane_id, user_id, "cell-instance");
+        let instance_id = instance.id.0;
+        PostgresDeploymentRepository::new(&tx)
+            .insert(instance)
+            .await?;
+        {
+            let mut guard = tx.lock().await;
+            sqlx::query(
+                "INSERT INTO cells \
+                 (id, region, data_plane_id, instance_deployment_id, status, capacity, created_at) \
+                 VALUES ($1, $2, $3, $4, 'retired', 200, now())",
+            )
+            .bind(Uuid::new_v4())
+            .bind(TEST_REGION)
+            .bind(dataplane_id)
+            .bind(instance_id)
+            .execute(&mut ***guard)
+            .await
+            .map_err(db_error)?;
+        }
+
+        let planes = PostgresDataPlaneRepository::new(&tx);
+        let id = DataPlaneId(dataplane_id);
+        let removal = planes.remove(&id).await?;
+        let still_there = planes.find_by_id(&id).await?.is_some();
+
+        Ok((removal, still_there))
+    })
+    .await;
+
+    let (removal, still_there) = result.expect("the transaction committed");
+    assert_eq!(removal, Removal::HostsCells);
+    assert!(still_there, "a plane that hosts a cell cannot be forgotten");
+}

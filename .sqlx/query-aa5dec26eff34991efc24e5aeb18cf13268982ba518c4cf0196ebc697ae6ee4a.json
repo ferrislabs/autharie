@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE deployments\n            SET cell_slot_held = false\n            WHERE id = $1 AND cell_slot_held\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "aa5dec26eff34991efc24e5aeb18cf13268982ba518c4cf0196ebc697ae6ee4a"
+}

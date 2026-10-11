@@ -1,0 +1,64 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                SELECT c.id,\n                       c.region,\n                       c.data_plane_id,\n                       c.instance_deployment_id,\n                       c.status,\n                       c.capacity,\n                       (SELECT count(*) FROM deployments d\n                        WHERE d.cell_id = c.id AND d.cell_slot_held) AS \"realms!\",\n                       c.created_at\n                FROM cells c\n                WHERE c.id = $1\n                ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "region",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "data_plane_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "instance_deployment_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 4,
+        "name": "status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "capacity",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 6,
+        "name": "realms!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 7,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      null,
+      false
+    ]
+  },
+  "hash": "8c81344f3be6bcbc1805ee6abd5949716f85a1335952a4b2f2094318ec6ee8b7"
+}
