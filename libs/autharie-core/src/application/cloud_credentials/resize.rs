@@ -640,6 +640,7 @@ mod tests {
             data_plane.status = DataPlaneStatus::Active;
             let at = Utc::now();
             let deployment = Deployment {
+                topology: Default::default(),
                 id: deployment_id,
                 organisation_id: organisation,
                 dataplane_id: data_plane.id,

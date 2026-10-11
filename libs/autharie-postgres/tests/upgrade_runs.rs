@@ -133,6 +133,7 @@ async fn seed(pool: &PgPool, fixture: &Fixture) {
         let at = now();
         deployments
             .insert(Deployment {
+                topology: Default::default(),
                 id: fixture.deployment_id,
                 organisation_id: fixture.organisation_id,
                 dataplane_id: dataplane.id,
@@ -178,6 +179,7 @@ fn run(
 ) -> UpgradeRun {
     let accepted = AcceptedUpgrade {
         deployment: Deployment {
+            topology: Default::default(),
             id: fixture.deployment_id,
             organisation_id: fixture.organisation_id,
             dataplane_id: DataPlaneId(Uuid::new_v4()),

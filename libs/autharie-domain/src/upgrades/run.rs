@@ -215,6 +215,7 @@ mod tests {
     fn accepted(from: Version, change: VersionChange) -> AcceptedUpgrade {
         AcceptedUpgrade {
             deployment: Deployment {
+                topology: Default::default(),
                 id: DeploymentId(Uuid::from_u128(1)),
                 organisation_id: OrganisationId(Uuid::from_u128(2)),
                 dataplane_id: DataPlaneId(Uuid::from_u128(3)),

@@ -165,6 +165,7 @@ mod tests {
         let now = chrono::Utc::now();
 
         Deployment {
+            topology: Default::default(),
             id: DeploymentId(Uuid::from_u128(2)),
             organisation_id: OrganisationId(Uuid::from_u128(1)),
             dataplane_id: DataPlaneId(Uuid::from_u128(9)),

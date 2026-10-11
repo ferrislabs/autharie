@@ -480,6 +480,7 @@ fn a_deployment(
     let at = Utc.with_ymd_and_hms(2026, 9, 1, 0, 0, 0).unwrap();
 
     Deployment {
+        topology: Default::default(),
         id: DeploymentId(Uuid::new_v4()),
         organisation_id,
         dataplane_id,

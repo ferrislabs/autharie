@@ -92,6 +92,7 @@ fn deployment(
     let at = Utc::now();
 
     Deployment {
+        topology: Default::default(),
         id: DeploymentId(Uuid::new_v4()),
         organisation_id,
         dataplane_id: autharie_domain::dataplane::value_objects::DataPlaneId(dataplane_id),

@@ -670,6 +670,7 @@ mod tests {
     fn deployment(status: DeploymentStatus, version: Version) -> Deployment {
         let at = Utc::now();
         Deployment {
+            topology: Default::default(),
             id: DeploymentId(DEPLOYMENT),
             organisation_id: OrganisationId(ORGANISATION),
             dataplane_id: DataPlaneId(Uuid::from_u128(3)),

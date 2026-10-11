@@ -1,7 +1,7 @@
 use crate::{
     CoreError,
     dataplane::value_objects::{DataPlaneId, DeploymentResources, Region},
-    deployments::environment::Environment,
+    deployments::{environment::Environment, topology::Topology},
     offers::Offer,
     organisation::OrganisationId,
     user::UserId,
@@ -45,6 +45,8 @@ pub struct CreateDeploymentCommand {
     /// Private so the only way to ask for the customer's cloud is
     /// [`CreateDeploymentCommand::with_distribution`], which checks the kind.
     distribution: Distribution,
+
+    topology: Topology,
 }
 
 /// What a recovery deployment is coming back from.
@@ -82,6 +84,7 @@ impl CreateDeploymentCommand {
             offer,
             recovery: None,
             distribution: Distribution::Shared,
+            topology: Topology::SINGLE,
         })
     }
 
@@ -96,6 +99,15 @@ impl CreateDeploymentCommand {
 
     pub fn distribution(&self) -> &Distribution {
         &self.distribution
+    }
+
+    pub fn with_topology(mut self, topology: Topology) -> Self {
+        self.topology = topology;
+        self
+    }
+
+    pub fn topology(&self) -> Topology {
+        self.topology
     }
 
     /// The same deployment, brought back from an archive.

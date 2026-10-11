@@ -11,6 +11,7 @@ use autharie_domain::{
         Deployment, DeploymentId, DeploymentKind, DeploymentName, DeploymentStatus,
         network::{Cidr, NetworkAccess},
         ports::DeploymentRepository,
+        topology::Topology,
     },
     iam_settings::IamSettings,
     organisation::OrganisationId,
@@ -62,6 +63,8 @@ struct DeploymentRow {
     cluster_profile: Option<serde_json::Value>,
     cell_id: Option<Uuid>,
     realm: Option<String>,
+    replicas: i16,
+    database_instances: i16,
 }
 
 impl DeploymentRow {
@@ -130,6 +133,10 @@ impl DeploymentRow {
                 self.cell_id,
                 self.realm,
                 self.id,
+            )?,
+            topology: Topology::new(
+                u8::try_from(self.replicas).unwrap_or(0),
+                u8::try_from(self.database_instances).unwrap_or(0),
             )?,
         })
     }
@@ -374,11 +381,13 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                 cluster_profile,
                 cell_id,
                 realm,
-                cell_slot_held
+                cell_slot_held,
+                replicas,
+                database_instances
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
                     $17, $18, $19, $20, $21, $22, $23, $24, $25::TEXT[]::CIDR[], $26, $27, $28, $29,
-                    $30, $31, $32, $33, $34, $35, $36)
+                    $30, $31, $32, $33, $34, $35, $36, $37, $38)
             "#,
                 deployment.id.0,
                 deployment.organisation_id.0,
@@ -425,6 +434,8 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                 distribution.cell_id,
                 distribution.realm,
                 distribution.cell_slot_held,
+                i16::from(deployment.topology.replicas()),
+                i16::from(deployment.topology.database_instances()),
             )
             .execute(&mut ***tx)
             .await
@@ -476,7 +487,9 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                    credential_id,
                    cluster_profile,
                    cell_id,
-                   realm
+                   realm,
+                   replicas,
+                   database_instances
             FROM deployments
             WHERE id = $1
             "#,
@@ -534,7 +547,9 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                    credential_id,
                    cluster_profile,
                    cell_id,
-                   realm
+                   realm,
+                   replicas,
+                   database_instances
             FROM deployments
             WHERE organisation_id = $1
               AND status <> 'deleted'
@@ -594,7 +609,9 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                 iam_settings = $22,
                 distribution = $23,
                 credential_id = $24,
-                cluster_profile = $25
+                cluster_profile = $25,
+                replicas = $26,
+                database_instances = $27
             WHERE id = $1
             "#,
                 deployment.id.0,
@@ -631,6 +648,8 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                 distribution.distribution,
                 distribution.credential_id,
                 distribution.cluster_profile,
+                i16::from(deployment.topology.replicas()),
+                i16::from(deployment.topology.database_instances()),
             )
             .execute(&mut ***tx)
             .await
@@ -744,7 +763,9 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                    credential_id,
                    cluster_profile,
                    cell_id,
-                   realm
+                   realm,
+                   replicas,
+                   database_instances
             FROM deployments
             WHERE dataplane_id = $1
               -- A deployment the data plane has finished tearing down is not
@@ -809,7 +830,9 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                    credential_id,
                    cluster_profile,
                    cell_id,
-                   realm
+                   realm,
+                   replicas,
+                   database_instances
             FROM deployments
             WHERE status IN ('successful', 'maintenance', 'upgrading', 'upgrade_required')
             ORDER BY created_at DESC
@@ -873,6 +896,8 @@ mod tests {
             cluster_profile: None,
             cell_id: None,
             realm: None,
+            replicas: 1,
+            database_instances: 1,
         }
     }
 

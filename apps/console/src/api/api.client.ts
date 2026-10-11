@@ -284,6 +284,7 @@ export namespace Schemas {
     | 'upgrading'
     | 'deleting'
     | 'deleted'
+  export type Topology = { database_instances: number; replicas: number }
   export type Deployment = {
     auto_upgrade: AutoUpgradePolicy
     created_at: string
@@ -308,6 +309,7 @@ export namespace Schemas {
     resources: DeploymentResources
     restored_from?: (null | BackupId) | undefined
     status: DeploymentStatus
+    topology: Topology
     updated_at: string
     version: Version
   }
