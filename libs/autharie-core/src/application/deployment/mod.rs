@@ -16,6 +16,7 @@ use crate::{
     backups::{
         ArchiveDestination, BackupSchedule, StoreEncryption, ports::BackupScheduleRepository,
     },
+    cells::{PlacementError, RealmRequests},
     deployments::{
         Deployment, DeploymentId,
         commands::{CreateDeploymentCommand, UpdateDeploymentCommand},
@@ -27,6 +28,7 @@ use crate::{
     organisation::OrganisationId,
 };
 use crate::{infrastructure::role::permissions_in, policy::AuthariePolicy};
+use autharie_postgres::deployments::PostgresDeploymentRepository;
 
 /// The payload every `deployment.*` action carries.
 ///
@@ -235,13 +237,21 @@ impl AutharieService {
 }
 
 impl DeploymentService for AutharieService {
-    #[transactional(deployment, user, data_plane, action, backup_schedule, organisation)]
+    #[transactional(
+        deployment,
+        user,
+        data_plane,
+        action,
+        backup_schedule,
+        organisation,
+        cell
+    )]
     async fn create_deployment(
         &self,
         identity: Identity,
         command: CreateDeploymentCommand,
     ) -> Result<Deployment, CoreError> {
-        let deployment = DeploymentServiceImpl::new(
+        let deployments = DeploymentServiceImpl::new(
             deployment_repository,
             user_repository,
             data_plane_repository,
@@ -249,9 +259,27 @@ impl DeploymentService for AutharieService {
             LocalClusterProvisioner,
             self.placement_windows(),
             AuthariePolicy::new(permissions_in(&tx)),
-        )
-        .create_deployment(identity, command)
-        .await?;
+        );
+
+        if command.offer.is_pooled() {
+            let zone = self
+                .deployment_domain()
+                .ok_or(PlacementError::NoTenantZone)?;
+            let deployment = deployments
+                .create_pooled(identity, command, &cell_repository)
+                .await?;
+            RealmRequests::new(
+                cell_repository,
+                PostgresDeploymentRepository::new(&tx),
+                action_repository,
+            )
+            .create(&deployment, zone)
+            .await?;
+
+            return Ok(deployment);
+        }
+
+        let deployment = deployments.create_deployment(identity, command).await?;
 
         self.announce_new_deployment(
             &deployment,

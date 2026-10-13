@@ -47,7 +47,7 @@ pub struct CreateDeploymentRequest {
     #[serde(default)]
     pub region: Option<String>,
 
-    /// What they are buying: `sandbox`, `standard`, `scale` or `private`.
+    /// What they are buying: `free`, `sandbox`, `standard`, `scale` or `private`.
     ///
     /// The size and whether the deployment gets a cluster of its own are read
     /// from it. There is no field for either, deliberately: a request that

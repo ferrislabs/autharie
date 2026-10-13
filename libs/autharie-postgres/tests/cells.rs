@@ -577,10 +577,29 @@ async fn a_soft_deleted_realm_still_holding_its_slot_blocks_the_name_until_relea
 
         let blocked = guarded(&tx, deployments.insert(pooled_in(&world, cell, &realm))).await?;
         let error = blocked.expect_err("the realm may still exist in the cell");
-        assert!(names(&error, "idx_deployments_live_realm"), "{error}");
+        assert!(
+            matches!(error, CoreError::DeploymentNameBeingReleased),
+            "{error}"
+        );
 
         assert!(cells.release(first.id).await?);
         deployments.insert(pooled_in(&world, cell, &realm)).await?;
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn pooled_tenants_take_no_room_on_the_data_plane_of_their_cell() {
+    scratch(async |tx| {
+        let world = seed_world(&tx).await?;
+        let planes = PostgresDataPlaneRepository::new(&tx);
+        let cell = open_cell(&tx, &world, &world.region, 5, 0).await?;
+        let before = planes.current_load(&world.dataplane).await?;
+
+        fill(&PostgresDeploymentRepository::new(&tx), &world, cell, 3).await?;
+
+        assert_eq!(planes.current_load(&world.dataplane).await?, before);
         Ok(())
     })
     .await;

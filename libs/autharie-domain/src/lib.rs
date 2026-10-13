@@ -126,6 +126,11 @@ pub enum CoreError {
     #[error("this name is already used by another deployment")]
     DeploymentNameTaken,
 
+    #[error(
+        "this name is still being released by a deleted deployment: try again in a few minutes or pick another"
+    )]
+    DeploymentNameBeingReleased,
+
     #[error("Organisation not found with id: {id}")]
     OrganisationNotFound { id: Uuid },
 

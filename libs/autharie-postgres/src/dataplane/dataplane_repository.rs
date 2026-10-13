@@ -284,6 +284,7 @@ impl DataPlaneRepository for PostgresDataPlaneRepository<'_> {
                     LEFT JOIN deployments d
                       ON d.dataplane_id = dp.id
                      AND d.deleted_at IS NULL
+                     AND d.distribution <> 'pooled'
                     WHERE dp.region = $1
                       AND dp.mode = $6
                       AND dp.status = 'active'
@@ -339,6 +340,7 @@ impl DataPlaneRepository for PostgresDataPlaneRepository<'_> {
                     LEFT JOIN deployments d
                       ON d.dataplane_id = dp.id
                      AND d.deleted_at IS NULL
+                     AND d.distribution <> 'pooled'
                     WHERE dp.mode = $5
                       AND dp.status = 'active'
                       AND dp.last_seen_at >= $4
@@ -421,6 +423,7 @@ impl DataPlaneRepository for PostgresDataPlaneRepository<'_> {
             FROM deployments
             WHERE dataplane_id = $1
               AND deleted_at IS NULL
+              AND distribution <> 'pooled'
             "#,
                 id.0
             )
@@ -664,6 +667,7 @@ impl DataPlaneRepository for PostgresDataPlaneRepository<'_> {
                 LEFT JOIN deployments d
                   ON d.dataplane_id = dp.id
                  AND d.deleted_at IS NULL
+                 AND d.distribution <> 'pooled'
                 WHERE dp.region = $1
                   AND dp.mode = $5
                   AND dp.status = 'active'

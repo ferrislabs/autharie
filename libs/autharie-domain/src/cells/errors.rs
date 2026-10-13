@@ -34,6 +34,9 @@ pub enum CellError {
 pub enum PlacementError {
     #[error("no cell in region '{region}' has room for a new tenant, try again later")]
     NoOpenCell { region: String },
+
+    #[error("free deployments are not available on this installation: it has no DNS zone for them")]
+    NoTenantZone,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

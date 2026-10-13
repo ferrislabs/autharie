@@ -285,7 +285,7 @@ export namespace Schemas {
   export type MaintenanceWindow = { day: string; duration: number; start: string; timezone: string }
   export type DeploymentName = string
   export type NetworkAccess = { kind: 'open' } | { allowed: AllowList; kind: 'restricted' }
-  export type Offer = 'sandbox' | 'standard' | 'scale' | 'private'
+  export type Offer = 'free' | 'sandbox' | 'standard' | 'scale' | 'private'
   export type DeploymentResources = { cpu_millis: number; memory_mib: number; storage_gib: number }
   export type DeploymentStatus =
     | 'pending'
