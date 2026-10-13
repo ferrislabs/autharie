@@ -60,6 +60,12 @@ export const ADMINISTRATOR_COPY = {
     'The credential was revealed but could not be read, and it is not kept. Regenerate it.',
 }
 
+export function waitingForAdministrator(
+  administrator: Pick<Schemas.TenantAdministrator, 'credential' | 'stale'> | null | undefined
+): boolean {
+  return administrator?.credential === 'issuing' && !administrator.stale
+}
+
 function administratorView(
   administrator: Schemas.TenantAdministrator | null | undefined
 ): TenantAdministratorView {

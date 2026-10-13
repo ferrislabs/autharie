@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { PROVISIONING_POLL_MS, stillProvisioning } from '@/domain/cloud-providers/provisioning'
 import { anySettling, settlingRefetchInterval } from '@/domain/deployments/settling'
+import { waitingForAdministrator } from '@/domain/deployments/tenant-realm'
 import { useResolvedOrganisationId } from '@/domain/organisations/hooks/use-resolved-organisation-id'
 import { selectAccessToken, useAuthStore } from '@/stores/auth'
 
@@ -43,7 +44,7 @@ export const useGetDeployment = (deploymentId: string | null) => {
     refetchInterval: (query) =>
       settlingRefetchInterval(query.state.data?.data?.status) ||
       (stillProvisioning(query.state.data?.provisioning) ? PROVISIONING_POLL_MS : false) ||
-      (query.state.data?.realm?.administrator?.credential === 'issuing'
+      (waitingForAdministrator(query.state.data?.realm?.administrator)
         ? ADMINISTRATOR_ISSUE_POLL_MS
         : false),
   })

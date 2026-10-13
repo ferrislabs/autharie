@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { tenantRealmView } from './tenant-realm'
+import { tenantRealmView, waitingForAdministrator } from './tenant-realm'
 
 describe('the tenant realm of a deployment', () => {
   it('is absent for a deployment with an instance of its own', () => {
@@ -58,5 +58,12 @@ describe('the tenant realm of a deployment', () => {
       stale: false,
       expiresAt: '2026-10-20T12:00:00Z',
     })
+  })
+
+  it('is polled only while a fresh issue is pending', () => {
+    expect(waitingForAdministrator({ credential: 'issuing', stale: false })).toBe(true)
+    expect(waitingForAdministrator({ credential: 'issuing', stale: true })).toBe(false)
+    expect(waitingForAdministrator({ credential: 'ready', stale: false })).toBe(false)
+    expect(waitingForAdministrator(undefined)).toBe(false)
   })
 })
