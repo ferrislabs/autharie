@@ -3,6 +3,8 @@ use autharie_macros::transactional;
 use chrono::Duration;
 use serde_json::json;
 
+use autharie_domain::dataplane::value_objects::DeploymentResources;
+
 use crate::{
     AutharieService, CoreError,
     action::{
@@ -57,12 +59,22 @@ impl Serving {
     }
 }
 
+impl Serving {
+    fn database_instance(self, deployment: &Deployment) -> DeploymentResources {
+        match self {
+            Self::OneTenant => deployment.resources,
+            Self::PooledCell => autharie_domain::cells::CELL_DATABASE_INSTANCE,
+        }
+    }
+}
+
 pub(crate) fn deployment_payload(
     deployment: &Deployment,
     serving: Serving,
     archive: Option<serde_json::Value>,
     hostname: Option<String>,
 ) -> serde_json::Value {
+    let database = serving.database_instance(deployment);
     let mut payload = json!({
         "deployment_id": deployment.id.0,
         "dataplane_id": deployment.dataplane_id.0,
@@ -75,9 +87,9 @@ pub(crate) fn deployment_payload(
         // The same numbers that reserved room on the data plane. Genesis used
         // to invent these, so what was reserved and what was deployed were
         // unrelated.
-        "cpu_millis": deployment.resources.cpu_millis,
-        "memory_mib": deployment.resources.memory_mib,
-        "storage_gib": deployment.resources.storage_gib,
+        "cpu_millis": database.cpu_millis,
+        "memory_mib": database.memory_mib,
+        "storage_gib": database.storage_gib,
         "replicas": deployment.topology.replicas(),
         "database_instances": deployment.topology.database_instances(),
         "pooled_cell": serving == Serving::PooledCell,
@@ -298,6 +310,7 @@ impl DeploymentService for AutharieService {
         )
         .delete_deployment(deployment_id)
         .await?;
+        crate::application::cells::refuse_if_a_cell_runs_on(&tx, deployment.id).await?;
         let serving = Serving::of(&tx, &deployment).await?;
 
         // Recorded in the same transaction as the soft delete, for the reason
@@ -347,6 +360,7 @@ impl DeploymentService for AutharieService {
         )
         .delete_deployment_for_organisation(identity, organisation_id, deployment_id)
         .await?;
+        crate::application::cells::refuse_if_a_cell_runs_on(&tx, deployment.id).await?;
         let serving = Serving::of(&tx, &deployment).await?;
 
         // Recorded in the same transaction as the soft delete, for the reason
@@ -461,7 +475,8 @@ impl DeploymentService for AutharieService {
         deployment_id: DeploymentId,
         command: UpdateDeploymentCommand,
     ) -> Result<Deployment, CoreError> {
-        DeploymentServiceImpl::new(
+        let renames = command.name.is_some();
+        let updated = DeploymentServiceImpl::new(
             deployment_repository,
             user_repository,
             data_plane_repository,
@@ -471,7 +486,12 @@ impl DeploymentService for AutharieService {
             AuthariePolicy::new(permissions_in(&tx)),
         )
         .update_deployment(deployment_id, command)
-        .await
+        .await?;
+        if renames {
+            crate::application::cells::refuse_if_a_cell_runs_on(&tx, deployment_id).await?;
+        }
+
+        Ok(updated)
     }
 
     #[transactional(deployment, user, data_plane, organisation)]
@@ -482,7 +502,8 @@ impl DeploymentService for AutharieService {
         deployment_id: DeploymentId,
         command: UpdateDeploymentCommand,
     ) -> Result<Deployment, CoreError> {
-        DeploymentServiceImpl::new(
+        let renames = command.name.is_some();
+        let updated = DeploymentServiceImpl::new(
             deployment_repository,
             user_repository,
             data_plane_repository,
@@ -492,7 +513,12 @@ impl DeploymentService for AutharieService {
             AuthariePolicy::new(permissions_in(&tx)),
         )
         .update_deployment_for_organisation(identity, organisation_id, deployment_id, command)
-        .await
+        .await?;
+        if renames {
+            crate::application::cells::refuse_if_a_cell_runs_on(&tx, deployment_id).await?;
+        }
+
+        Ok(updated)
     }
 }
 
@@ -572,6 +598,44 @@ mod tests {
             deployment_payload(&deployment, Serving::PooledCell, None, None)["pooled_cell"],
             true
         );
+    }
+
+    #[test]
+    fn every_payload_genesis_applies_whole_says_whether_it_is_a_cell() {
+        let deployment = sample_deployment();
+
+        for serving in [Serving::OneTenant, Serving::PooledCell] {
+            for archive in [None, Some(json!({"destination_path": "s3://bucket/a/b"}))] {
+                for hostname in [None, Some("auth.acme.autharie.fr".to_string())] {
+                    let payload =
+                        deployment_payload(&deployment, serving, archive.clone(), hostname);
+
+                    assert_eq!(
+                        payload["pooled_cell"],
+                        serving == Serving::PooledCell,
+                        "{serving:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_database_of_a_cell_is_sized_per_instance_while_the_cell_reserves_the_whole() {
+        use autharie_domain::{
+            cells::{CELL_DATABASE_INSTANCE, cell_reservation},
+            deployments::topology::Topology,
+        };
+
+        let mut deployment = sample_deployment();
+        deployment.topology = Topology::HIGH_AVAILABILITY;
+        deployment.resources = cell_reservation(Topology::HIGH_AVAILABILITY);
+        let payload = deployment_payload(&deployment, Serving::PooledCell, None, None);
+
+        assert_eq!(payload["cpu_millis"], CELL_DATABASE_INSTANCE.cpu_millis);
+        assert_eq!(payload["memory_mib"], CELL_DATABASE_INSTANCE.memory_mib);
+        assert_eq!(payload["storage_gib"], CELL_DATABASE_INSTANCE.storage_gib);
+        assert_eq!(payload["database_instances"], 2);
     }
 
     #[test]

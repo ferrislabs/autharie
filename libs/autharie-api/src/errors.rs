@@ -358,7 +358,8 @@ impl From<CoreError> for ApiError {
                 CellError::Full
                 | CellError::NotOpen
                 | CellError::InvalidTransition
-                | CellError::NoRelease,
+                | CellError::NoRelease
+                | CellError::InstanceInUse { .. },
             )
             | CoreError::Realm(RealmError::AlreadyExists) => ApiError::Conflict {
                 reason: value.to_string(),
@@ -467,6 +468,12 @@ mod tests {
         );
         assert_eq!(
             status(CoreError::Cell(CellError::NoRelease)),
+            StatusCode::CONFLICT
+        );
+        assert_eq!(
+            status(CoreError::Cell(CellError::InstanceInUse {
+                cell: uuid::Uuid::nil(),
+            })),
             StatusCode::CONFLICT
         );
         assert_eq!(

@@ -19,11 +19,48 @@ use crate::{
 
 use super::{Cell, CellError, CellId, CellPolicy, CellRepository, CellStatus, HighAvailability};
 
-pub const CELL_INSTANCE_RESOURCES: DeploymentResources = DeploymentResources {
+pub const CELL_DATABASE_INSTANCE: DeploymentResources = DeploymentResources {
     cpu_millis: 1000,
     memory_mib: 2048,
     storage_gib: 10,
 };
+
+pub const CELL_API_REPLICA: DeploymentResources = DeploymentResources {
+    cpu_millis: 250,
+    memory_mib: 256,
+    storage_gib: 0,
+};
+
+pub const CELL_WEBAPP_REPLICA: DeploymentResources = DeploymentResources {
+    cpu_millis: 50,
+    memory_mib: 64,
+    storage_gib: 0,
+};
+
+pub fn cell_reservation(topology: Topology) -> DeploymentResources {
+    let replicas = u32::from(topology.replicas());
+    let databases = u32::from(topology.database_instances());
+    let total =
+        |database: u32, api: u32, webapp: u32| database * databases + (api + webapp) * replicas;
+
+    DeploymentResources {
+        cpu_millis: total(
+            CELL_DATABASE_INSTANCE.cpu_millis,
+            CELL_API_REPLICA.cpu_millis,
+            CELL_WEBAPP_REPLICA.cpu_millis,
+        ),
+        memory_mib: total(
+            CELL_DATABASE_INSTANCE.memory_mib,
+            CELL_API_REPLICA.memory_mib,
+            CELL_WEBAPP_REPLICA.memory_mib,
+        ),
+        storage_gib: total(
+            CELL_DATABASE_INSTANCE.storage_gib,
+            CELL_API_REPLICA.storage_gib,
+            CELL_WEBAPP_REPLICA.storage_gib,
+        ),
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateCellCommand {
@@ -84,7 +121,7 @@ impl CreateCellCommand {
             Offer::Standard,
         )?
         .with_topology(Topology::HIGH_AVAILABILITY)
-        .sized_by_platform(CELL_INSTANCE_RESOURCES))
+        .sized_by_platform(cell_reservation(Topology::HIGH_AVAILABILITY)))
     }
 }
 
@@ -193,7 +230,10 @@ where
 
         match (&instance.status, HighAvailability::proven_by(instance)) {
             (_, Some(proof)) => cell.open(proof)?,
-            (DeploymentStatus::Failed, None) => cell.fail(),
+            (
+                DeploymentStatus::Failed | DeploymentStatus::Deleting | DeploymentStatus::Deleted,
+                None,
+            ) => cell.fail(),
             _ => return Ok(None),
         }
         self.cells.set_status(cell.id(), cell.status()).await?;
@@ -328,7 +368,10 @@ mod tests {
 
         assert_eq!(instance.kind, DeploymentKind::Ferriskey);
         assert_eq!(instance.topology(), Topology::HIGH_AVAILABILITY);
-        assert_eq!(instance.sizing(), Sizing::Platform(CELL_INSTANCE_RESOURCES));
+        assert_eq!(
+            instance.sizing(),
+            Sizing::Platform(cell_reservation(Topology::HIGH_AVAILABILITY))
+        );
         assert_eq!(instance.region.as_str(), "fr-par");
         assert!(instance.name.0.starts_with("cell-"), "{}", instance.name.0);
     }
@@ -423,6 +466,60 @@ mod tests {
 
         assert_eq!(settled.map(|cell| cell.status()), Some(CellStatus::Failed));
         assert_eq!(written, vec![CellStatus::Failed]);
+    }
+
+    #[test]
+    fn a_cell_reserves_every_database_instance_and_every_replica_of_its_instance() {
+        assert_eq!(
+            cell_reservation(Topology::HIGH_AVAILABILITY),
+            DeploymentResources {
+                cpu_millis: 2 * 1000 + 2 * (250 + 50),
+                memory_mib: 2 * 2048 + 2 * (256 + 64),
+                storage_gib: 2 * 10,
+            }
+        );
+        assert_eq!(
+            cell_reservation(Topology::new(3, 2).expect("a topology")).cpu_millis,
+            2 * 1000 + 3 * (250 + 50)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_provisioning_cell_whose_instance_is_torn_down_is_failed() {
+        let id = DeploymentId(Uuid::new_v4());
+
+        for status in [DeploymentStatus::Deleting, DeploymentStatus::Deleted] {
+            let (settled, written) = settle(
+                stored(CellStatus::Provisioning, id, 0),
+                &instance(id, status.clone(), Topology::HIGH_AVAILABILITY),
+            )
+            .await;
+
+            assert_eq!(
+                settled.map(|cell| cell.status()),
+                Some(CellStatus::Failed),
+                "{status:?}"
+            );
+            assert_eq!(written, vec![CellStatus::Failed]);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_cell_whose_instance_comes_up_later_stays_failed() {
+        let id = DeploymentId(Uuid::new_v4());
+
+        let (settled, written) = settle(
+            stored(CellStatus::Failed, id, 0),
+            &instance(
+                id,
+                DeploymentStatus::Successful,
+                Topology::HIGH_AVAILABILITY,
+            ),
+        )
+        .await;
+
+        assert_eq!(settled, None);
+        assert!(written.is_empty());
     }
 
     #[tokio::test]

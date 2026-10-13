@@ -38,7 +38,6 @@ pub struct RetireCellRoute {
 pub struct CreateCellRequest {
     pub region: String,
     #[serde(default)]
-    #[schema(minimum = 1, maximum = 200)]
     pub capacity: Option<u16>,
 }
 
@@ -83,7 +82,7 @@ impl CreateCellRequest {
     fn into_command(self) -> Result<CreateCellCommand, ApiError> {
         let region = self.region.trim();
         if region.is_empty() {
-            return Err(ApiError::BadRequest {
+            return Err(ApiError::Unprocessable {
                 reason: "a cell needs a region".to_string(),
             });
         }
@@ -104,11 +103,10 @@ impl CreateCellRequest {
     request_body = CreateCellRequest,
     responses(
         (status = 201, description = "The cell, provisioning", body = CellResponse),
-        (status = 400, description = "The request names no region", body = ApiError),
-        (status = 401, description = "Unauthorized", body = ApiError),
+                (status = 401, description = "Unauthorized", body = ApiError),
         (status = 403, description = "This needs the operate_fleet right", body = ApiError),
         (status = 409, description = "No FerrisKey release is available, or no data plane has room", body = ApiError),
-        (status = 422, description = "The capacity is not from 1 to 200", body = ApiError),
+        (status = 422, description = "The request names no region, or a capacity outside what a cell holds", body = ApiError),
         (status = 503, description = "Cells are not configured on this installation", body = ApiError),
         (status = 500, description = "Internal Server Error", body = ApiError)
     ),
@@ -244,7 +242,7 @@ mod tests {
         }
         .into_command();
 
-        assert!(matches!(refused, Err(ApiError::BadRequest { .. })));
+        assert!(matches!(refused, Err(ApiError::Unprocessable { .. })));
     }
 
     #[test]

@@ -2,11 +2,14 @@ use autharie_auth::Identity;
 use autharie_domain::{
     CoreError,
     catalog::ports::ReleaseRepository,
-    cells::{Cell, CellError, CellId, CellServiceImpl, CreateCellCommand, release_for_cells},
+    cells::{
+        Cell, CellError, CellId, CellRepository, CellServiceImpl, CellStatus, CreateCellCommand,
+        release_for_cells,
+    },
     deployments::{
         DeploymentId, DeploymentKind, ports::DeploymentRepository, service::DeploymentServiceImpl,
     },
-    user::UserId,
+    user::ports::UserRepository,
 };
 use autharie_macros::transactional;
 use autharie_persistence::SharedTx;
@@ -46,10 +49,11 @@ impl AutharieService {
         cells.authorise_creation(identity.clone()).await?;
 
         let organisation = self.cells_organisation().ok_or(CellError::NotConfigured)?;
-        let created_by = identity
-            .id()
-            .parse::<UserId>()
-            .map_err(|_| CoreError::InvalidIdentity)?;
+        let created_by = user_repository
+            .find_by_sub(identity.id())
+            .await?
+            .ok_or(CoreError::InvalidIdentity)?
+            .id;
         let releases = release_repository
             .list_for_kind(&DeploymentKind::Ferriskey)
             .await?;
@@ -64,7 +68,10 @@ impl AutharieService {
             self.placement_windows(),
             AuthariePolicy::new(permissions_in(&tx)),
         )
-        .place(command.instance(organisation, version, created_by)?)
+        .place_as(
+            created_by,
+            command.instance(organisation, version, created_by)?,
+        )
         .await?;
         let cell = cells.record(&command, &instance).await?;
         self.announce_new_deployment(
@@ -116,6 +123,22 @@ impl AutharieService {
         )
         .retire(identity, id)
         .await
+    }
+}
+
+pub(crate) async fn refuse_if_a_cell_runs_on(
+    tx: &SharedTx<'_>,
+    deployment: DeploymentId,
+) -> Result<(), CoreError> {
+    let cell = PostgresCellRepository::new(tx)
+        .find_by_instance(deployment)
+        .await?;
+
+    match cell {
+        Some(cell) if cell.status() != CellStatus::Retired => {
+            Err(CellError::InstanceInUse { cell: cell.id().0 }.into())
+        }
+        _ => Ok(()),
     }
 }
 

@@ -25,6 +25,9 @@ pub enum CellError {
 
     #[error("no FerrisKey release is available to build a cell: publish one first")]
     NoRelease,
+
+    #[error("this deployment is the instance of cell {cell}: retire the cell first")]
+    InstanceInUse { cell: Uuid },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

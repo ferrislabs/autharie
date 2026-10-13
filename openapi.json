@@ -6141,16 +6141,6 @@
               }
             }
           },
-          "400": {
-            "description": "The request names no region",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
           "401": {
             "description": "Unauthorized",
             "content": {
@@ -6182,7 +6172,7 @@
             }
           },
           "422": {
-            "description": "The capacity is not from 1 to 200",
+            "description": "The request names no region, or a capacity outside what a cell holds",
             "content": {
               "application/json": {
                 "schema": {
@@ -10076,8 +10066,7 @@
               "null"
             ],
             "format": "int32",
-            "maximum": 200,
-            "minimum": 1
+            "minimum": 0
           },
           "region": {
             "type": "string"

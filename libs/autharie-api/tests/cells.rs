@@ -11,7 +11,7 @@ use autharie_api::{
 use autharie_auth::{Client, Identity, User};
 use autharie_core::{
     AutharieService,
-    cells::CELL_INSTANCE_RESOURCES,
+    cells::{CELL_DATABASE_INSTANCE, cell_reservation},
     dataplane::{
         ports::DataPlaneService,
         value_objects::{Capacity, CreateDataplaneCommand, DataPlaneAllocation, Region},
@@ -328,12 +328,18 @@ async fn an_operator_creates_a_cell_sees_it_provisioning_then_open_then_drains_a
         assert_eq!(deployment.organisation_id.0, installation.organisation);
         assert_eq!(deployment.created_by.0, installation.operator);
         assert_eq!(deployment.topology, Topology::HIGH_AVAILABILITY);
-        assert_eq!(deployment.resources, CELL_INSTANCE_RESOURCES);
+        assert_eq!(
+            deployment.resources,
+            cell_reservation(Topology::HIGH_AVAILABILITY)
+        );
 
         let payload = create_deployment_payload(&installation.pool, instance).await;
         assert_eq!(payload["replicas"], 2);
         assert_eq!(payload["database_instances"], 2);
         assert_eq!(payload["pooled_cell"], true);
+        assert_eq!(payload["cpu_millis"], CELL_DATABASE_INSTANCE.cpu_millis);
+        assert_eq!(payload["memory_mib"], CELL_DATABASE_INSTANCE.memory_mib);
+        assert_eq!(payload["storage_gib"], CELL_DATABASE_INSTANCE.storage_gib);
 
         let (status, listed) = call(&app, Method::GET, "/platform/cells", None).await;
         assert_eq!(status, StatusCode::OK);
@@ -447,4 +453,187 @@ async fn somebody_without_a_platform_right_cannot_create_a_cell() {
 
     installation.forget().await;
     assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+async fn create_a_cell(app: &Router, region: &str) -> (String, Uuid) {
+    let (status, created) = call(
+        app,
+        Method::POST,
+        "/platform/cells",
+        Some(json!({"region": region})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+
+    (
+        created["data"]["id"].as_str().expect("an id").to_string(),
+        created["data"]["instance_deployment_id"]
+            .as_str()
+            .expect("an instance")
+            .parse()
+            .expect("a uuid"),
+    )
+}
+
+async fn grant(pool: &PgPool, subject: Uuid, rights: &[&str]) {
+    sqlx::query("INSERT INTO platform_operators (subject, rights) VALUES ($1, $2)")
+        .bind(subject.to_string())
+        .bind(rights)
+        .execute(pool)
+        .await
+        .expect("a grant");
+}
+
+async fn revoke(pool: &PgPool, subject: Uuid) {
+    sqlx::query("DELETE FROM platform_operators WHERE subject = $1")
+        .bind(subject.to_string())
+        .execute(pool)
+        .await
+        .expect("cleanup");
+}
+
+fn status_of(error: autharie_core::CoreError) -> StatusCode {
+    use axum::response::IntoResponse;
+
+    autharie_api::errors::ApiError::from(error)
+        .into_response()
+        .status()
+}
+
+#[tokio::test]
+async fn reading_the_cells_needs_view_estate_and_changing_them_needs_operate_fleet() {
+    let Some(pool) = pool().await else {
+        return;
+    };
+    let installation = Installation::seed(pool.clone()).await;
+    installation.serve_region().await;
+    let operator_app = app(installation.service(), operator(installation.operator));
+    let (cell_id, _) = create_a_cell(&operator_app, &installation.region).await;
+    let reader = Uuid::new_v4();
+    let stranger = Uuid::new_v4();
+    grant(&pool, reader, &["view_estate"]).await;
+
+    let routes = [
+        (Method::GET, "/platform/cells".to_string(), None),
+        (Method::GET, format!("/platform/cells/{cell_id}"), None),
+        (
+            Method::POST,
+            "/platform/cells".to_string(),
+            Some(json!({"region": installation.region})),
+        ),
+        (
+            Method::POST,
+            format!("/platform/cells/{cell_id}/drain"),
+            None,
+        ),
+        (
+            Method::POST,
+            format!("/platform/cells/{cell_id}/retire"),
+            None,
+        ),
+    ];
+    let for_a_reader = [
+        StatusCode::OK,
+        StatusCode::OK,
+        StatusCode::FORBIDDEN,
+        StatusCode::FORBIDDEN,
+        StatusCode::FORBIDDEN,
+    ];
+
+    let mut answers = Vec::new();
+    for (who, expected) in [
+        (reader, for_a_reader),
+        (stranger, [StatusCode::FORBIDDEN; 5]),
+    ] {
+        let app = app(installation.service(), operator(who));
+        for ((method, uri, body), expected) in routes.iter().zip(expected) {
+            let (status, _) = call(&app, method.clone(), uri, body.clone()).await;
+            answers.push((who == reader, method.clone(), uri.clone(), status, expected));
+        }
+    }
+
+    revoke(&pool, reader).await;
+    installation.forget().await;
+    for (reader, method, uri, status, expected) in answers {
+        assert_eq!(status, expected, "reader={reader} {method} {uri}");
+    }
+}
+
+/// @spec-fpr-11
+#[tokio::test]
+async fn a_cell_whose_instance_serves_without_two_database_instances_stays_provisioning() {
+    let Some(pool) = pool().await else {
+        return;
+    };
+    let installation = Installation::seed(pool.clone()).await;
+    installation.serve_region().await;
+    let service = installation.service();
+    let app = app(service.clone(), operator(installation.operator));
+    let (cell_id, instance) = create_a_cell(&app, &installation.region).await;
+
+    sqlx::query("UPDATE deployments SET database_instances = 1 WHERE id = $1")
+        .bind(instance)
+        .execute(&pool)
+        .await
+        .expect("a topology that is not highly available");
+    report(&service, &installation, instance).await;
+    let (_, read) = call(
+        &app,
+        Method::GET,
+        &format!("/platform/cells/{cell_id}"),
+        None,
+    )
+    .await;
+
+    installation.forget().await;
+    assert_eq!(read["data"]["status"], "provisioning", "{read}");
+}
+
+#[tokio::test]
+async fn the_instance_of_a_live_cell_cannot_be_deleted_or_renamed_until_the_cell_is_retired() {
+    use autharie_core::deployments::{DeploymentName, commands::UpdateDeploymentCommand};
+
+    let Some(pool) = pool().await else {
+        return;
+    };
+    let installation = Installation::seed(pool).await;
+    installation.serve_region().await;
+    let service = installation.service();
+    let app = app(service.clone(), operator(installation.operator));
+    let (cell_id, instance) = create_a_cell(&app, &installation.region).await;
+    let rename = || {
+        UpdateDeploymentCommand::new()
+            .with_name(DeploymentName("renamed-cell".to_string()))
+            .expect("a name")
+    };
+
+    let deleted = service.delete_deployment(DeploymentId(instance)).await;
+    let renamed = service
+        .update_deployment(DeploymentId(instance), rename())
+        .await;
+    let still_named = service
+        .get_deployment(DeploymentId(instance))
+        .await
+        .expect("read")
+        .map(|deployment| deployment.name.0);
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        &format!("/platform/cells/{cell_id}/retire"),
+        None,
+    )
+    .await;
+    let deleted_once_retired = service.delete_deployment(DeploymentId(instance)).await;
+
+    installation.forget().await;
+    for refused in [deleted.map(|_| ()), renamed.map(|_| ())] {
+        let error = refused.expect_err("the instance of a live cell changed");
+        assert_eq!(status_of(error), StatusCode::CONFLICT);
+    }
+    assert!(
+        still_named.is_some_and(|name| name.starts_with("cell-")),
+        "the instance kept its name"
+    );
+    assert_eq!(status, StatusCode::OK);
+    assert!(deleted_once_retired.is_ok(), "{deleted_once_retired:?}");
 }

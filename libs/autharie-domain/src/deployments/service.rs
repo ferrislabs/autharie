@@ -360,6 +360,14 @@ where
             .await?
             .ok_or(CoreError::InvalidIdentity)?;
 
+        self.place_as(user.id, command).await
+    }
+
+    pub async fn place_as(
+        &self,
+        creator: crate::user::UserId,
+        command: CreateDeploymentCommand,
+    ) -> Result<Deployment, CoreError> {
         // Read before anything is placed. An offer the organisation's tier does
         // not open must be refused before a cluster is chosen for it, and
         // certainly before one is provisioned.
@@ -443,7 +451,7 @@ where
             offer: Some(command.offer),
             restored_from: command.recovery.as_ref().map(|recovery| recovery.backup),
             resources,
-            created_by: user.id,
+            created_by: creator,
             created_at: now,
             updated_at: now,
             deployed_at: None,
