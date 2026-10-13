@@ -304,6 +304,10 @@ mod tests {
     }
 
     impl OrganisationRepository for StubOrganisations {
+        async fn lock_instance_count(&self, _: &OrganisationId) -> Result<(), CoreError> {
+            Ok(())
+        }
+
         async fn find_by_id(&self, _: &OrganisationId) -> Result<Option<Organisation>, CoreError> {
             Ok(Some(organisation()))
         }

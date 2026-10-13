@@ -406,6 +406,10 @@ mod tests {
     struct Organisations(Store);
 
     impl OrganisationRepository for Organisations {
+        async fn lock_instance_count(&self, _: &OrganisationId) -> Result<(), CoreError> {
+            Ok(())
+        }
+
         async fn find_member(
             &self,
             organisation_id: &OrganisationId,

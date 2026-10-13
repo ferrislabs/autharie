@@ -335,18 +335,16 @@ impl DeploymentService for AutharieService {
         );
 
         if command.offer.is_pooled() {
-            let zone = self
-                .deployment_domain()
-                .ok_or(PlacementError::NoTenantZone)?;
+            let zone = self.deployment_domain();
             let deployment = deployments
-                .create_pooled(identity, command, &cell_repository)
+                .create_pooled(identity, command, &cell_repository, zone)
                 .await?;
             RealmRequests::new(
                 cell_repository,
                 PostgresDeploymentRepository::new(&tx),
                 action_repository,
             )
-            .create(&deployment, zone)
+            .create(&deployment, zone.ok_or(PlacementError::NoTenantZone)?)
             .await?;
 
             return Ok(deployment);

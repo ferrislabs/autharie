@@ -294,7 +294,7 @@ where
             // do is reserve room for a deployment that no longer exists.
             let live: Vec<&Deployment> = placed
                 .iter()
-                .filter(|deployment| deployment.deleted_at.is_none())
+                .filter(|deployment| deployment.deleted_at.is_none() && !deployment.is_pooled())
                 .collect();
 
             let used = live.iter().fold(
@@ -458,7 +458,7 @@ where
         // certainly before one is provisioned.
         let organisation = self.organisation_of(&command).await?;
 
-        if command.sizing() == Sizing::Offer {
+        if command.sizing() == Sizing::Offer && command.recovery.is_none() {
             refuse_closed_offer(command.offer, organisation.plan)?;
         }
 
@@ -544,10 +544,12 @@ where
         identity: Identity,
         command: CreateDeploymentCommand,
         cells: &C,
+        zone: Option<&str>,
     ) -> Result<Deployment, CoreError> {
         self.policy
             .can_create_deployments(identity, command.organisation_id)
             .await?;
+        zone.ok_or(PlacementError::NoTenantZone)?;
         let creator = self
             .user_repository
             .find_by_sub(&command.created_by.to_string())
@@ -557,6 +559,9 @@ where
         let organisation = self.organisation_of(&command).await?;
         refuse_closed_offer(command.offer, organisation.plan)?;
         let realm = RealmName::try_from(slug(&command.name.0).as_str())?;
+        self.organisation_repository
+            .lock_instance_count(&organisation.id)
+            .await?;
 
         let cell =
             cells
@@ -776,6 +781,7 @@ where
         let deployment = self
             .get_deployment_for_organisation(identity, organisation_id, deployment_id)
             .await?;
+        deployment.refuse_if_pooled("changed: its name is its realm and the rest is its cell's")?;
 
         self.update_deployment(deployment.id, command).await
     }
@@ -984,6 +990,9 @@ mod tests {
         organisations
             .expect_find_by_id()
             .returning(move |_| Box::pin(std::future::ready(Ok(Some(an_organisation(plan))))));
+        organisations
+            .expect_lock_instance_count()
+            .returning(|_| Box::pin(std::future::ready(Ok(()))));
 
         organisations
     }
@@ -1741,6 +1750,41 @@ mod tests {
     /// stay that way: a shared deployment always has a pool to draw from, so
     /// nothing on this path may ever reach for it.
     #[tokio::test]
+    async fn a_free_organisation_can_restore_the_sandbox_it_already_holds() {
+        let mut mock_repo = MockDeploymentRepository::new();
+        mock_repo
+            .expect_insert()
+            .times(1)
+            .returning(|_| Box::pin(async { Ok(()) }));
+        let mut mock_dataplane_repo = MockDataPlaneRepository::new();
+        mock_dataplane_repo.expect_find_available().returning(|_| {
+            let dataplane = sample_dataplane();
+            Box::pin(async move { Ok(Some(dataplane)) })
+        });
+        let service = DeploymentServiceImpl::new(
+            mock_repo,
+            StubUserRepository,
+            mock_dataplane_repo,
+            organisations_on(crate::organisation::value_objects::Plan::Free),
+            no_provisioning(),
+            windows(),
+            Allowed,
+        );
+        let mut command = command_for("fr-par", DataPlaneMode::Shared);
+        command.offer = crate::offers::Offer::Sandbox;
+        let restoring = command.recovering(crate::deployments::commands::Recovery {
+            backup: crate::backups::BackupId(Uuid::new_v4()),
+            resources: crate::offers::Offer::Sandbox.resources(),
+            topology: Default::default(),
+        });
+
+        service
+            .place(restoring)
+            .await
+            .expect("a restore brings back what was already bought");
+    }
+
+    #[tokio::test]
     async fn a_shared_deployment_never_calls_the_provisioner() {
         let mut mock_repo = MockDeploymentRepository::new();
         mock_repo
@@ -2331,6 +2375,61 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn realms_in_a_cell_take_no_room_and_no_count_on_a_dedicated_plane() {
+        let organisation_id = OrganisationId(Uuid::new_v4());
+        let capacity = Capacity::new(2_000, 4_096, 20)
+            .unwrap()
+            .with_max_deployments(1)
+            .expect("non-zero bound");
+
+        let mut mock_repo = MockDeploymentRepository::new();
+        mock_repo
+            .expect_list_by_dataplane()
+            .times(1)
+            .returning(move |dataplane_id| {
+                let mut realm = sample_deployment(DeploymentId(Uuid::new_v4()), organisation_id);
+                realm.dataplane_id = *dataplane_id;
+                realm.resources = crate::offers::Offer::Private.resources();
+                realm.distribution = Distribution::Pooled {
+                    cell_id: crate::cells::CellId(Uuid::new_v4()),
+                    realm: RealmName::try_from("tenant").expect("valid"),
+                };
+                Box::pin(async move { Ok(vec![realm]) })
+            });
+        mock_repo
+            .expect_insert()
+            .times(1)
+            .returning(|_| Box::pin(async { Ok(()) }));
+
+        let mut mock_dataplane_repo = MockDataPlaneRepository::new();
+        mock_dataplane_repo
+            .expect_find_dedicated_for_organisation()
+            .times(1)
+            .returning(move |_, _| {
+                let dataplane = dedicated_dataplane(organisation_id, capacity);
+                Box::pin(async move { Ok(Some(dataplane)) })
+            });
+
+        let service = DeploymentServiceImpl::new(
+            mock_repo,
+            StubUserRepository,
+            mock_dataplane_repo,
+            organisations_on(crate::organisation::value_objects::Plan::Enterprise),
+            no_provisioning(),
+            windows(),
+            Allowed,
+        );
+
+        let mut command = command_for("eu-west", DataPlaneMode::Dedicated);
+        command.organisation_id = organisation_id;
+
+        service
+            .create_deployment(caller(), command)
+            .await
+            .expect("the realm reserves nothing on the plane");
+    }
+
     /// A plane with no count bound behaves exactly as it did before this
     /// issue -- the other half of #270's acceptance.
     #[tokio::test]
@@ -2762,6 +2861,7 @@ mod tests {
 
         const CELL: CellId = CellId(Uuid::from_u128(40));
         const CELL_PLANE: DataPlaneId = DataPlaneId(Uuid::from_u128(41));
+        const ZONE: Option<&str> = Some("autharie.test");
 
         fn an_open_cell() -> Cell {
             Cell::restore(
@@ -2847,6 +2947,7 @@ mod tests {
                     caller(),
                     a_free_command("My Tenant"),
                     &cells_placing(Some(an_open_cell())),
+                    ZONE,
                 )
                 .await
                 .expect("placed in the cell");
@@ -2870,7 +2971,7 @@ mod tests {
             deployments.expect_insert().never();
 
             let refused = service(deployments, Plan::Free)
-                .create_pooled(caller(), a_free_command("acme"), &cells_placing(None))
+                .create_pooled(caller(), a_free_command("acme"), &cells_placing(None), ZONE)
                 .await
                 .expect_err("no cell has room");
 
@@ -2890,7 +2991,7 @@ mod tests {
             cells.expect_place().never();
 
             let refused = service(MockDeploymentRepository::new(), Plan::Starter)
-                .create_pooled(caller(), a_free_command("acme"), &cells)
+                .create_pooled(caller(), a_free_command("acme"), &cells, ZONE)
                 .await
                 .expect_err("the free offer is for the free tier");
 
@@ -2913,6 +3014,7 @@ mod tests {
                     caller(),
                     a_free_command("acme"),
                     &cells_placing(Some(an_open_cell())),
+                    ZONE,
                 )
                 .await
                 .expect_err("one deployment on the free tier");
@@ -2947,6 +3049,7 @@ mod tests {
                     caller(),
                     a_free_command("acme"),
                     &cells_placing(Some(an_open_cell())),
+                    ZONE,
                 )
                 .await
                 .expect("the deleted one is gone");
@@ -2958,11 +3061,52 @@ mod tests {
             cells.expect_place().never();
 
             let refused = service(MockDeploymentRepository::new(), Plan::Free)
-                .create_pooled(caller(), a_free_command("master"), &cells)
+                .create_pooled(caller(), a_free_command("master"), &cells, ZONE)
                 .await
                 .expect_err("master is the administrator realm");
 
             assert!(matches!(refused, CoreError::Realm(_)), "{refused}");
+        }
+
+        #[tokio::test]
+        async fn a_caller_without_the_right_is_refused_before_the_zone_is_looked_at() {
+            let mut cells = MockCellRepository::new();
+            cells.expect_place().never();
+            let service = DeploymentServiceImpl::new(
+                MockDeploymentRepository::new(),
+                StubUserRepository,
+                MockDataPlaneRepository::new(),
+                organisations_on(Plan::Free),
+                no_provisioning(),
+                windows(),
+                Refused,
+            );
+
+            let refused = service
+                .create_pooled(caller(), a_free_command("acme"), &cells, None)
+                .await
+                .expect_err("no right to create");
+
+            assert!(
+                matches!(refused, CoreError::PermissionDenied { .. }),
+                "{refused}"
+            );
+        }
+
+        #[tokio::test]
+        async fn without_a_zone_a_free_deployment_is_refused_before_any_cell_is_chosen() {
+            let mut cells = MockCellRepository::new();
+            cells.expect_place().never();
+
+            let refused = service(MockDeploymentRepository::new(), Plan::Free)
+                .create_pooled(caller(), a_free_command("acme"), &cells, None)
+                .await
+                .expect_err("no zone to publish the realm under");
+
+            assert!(
+                matches!(refused, CoreError::Placement(PlacementError::NoTenantZone)),
+                "{refused}"
+            );
         }
 
         #[tokio::test]

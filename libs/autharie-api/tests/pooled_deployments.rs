@@ -19,11 +19,15 @@ use autharie_core::{
         value_objects::{Capacity, CreateDataplaneCommand, DataPlaneAllocation, Region},
     },
     deployments::{
-        DeploymentId,
-        commands::{DeploymentOutcome, ReportDeploymentOutcomeCommand},
+        DeploymentId, DeploymentKind, DeploymentName,
+        commands::{CreateDeploymentCommand, DeploymentOutcome, ReportDeploymentOutcomeCommand},
+        environment::Environment,
         ports::DeploymentService,
     },
+    offers::Offer,
     organisation::OrganisationId,
+    user::UserId,
+    version::Version,
 };
 use axum::{
     Extension, Router,
@@ -72,7 +76,6 @@ struct Installation {
     owner: Uuid,
     region: String,
     release: String,
-    herald: Uuid,
 }
 
 async fn a_user(pool: &PgPool, id: Uuid) {
@@ -112,7 +115,6 @@ impl Installation {
             owner: Uuid::new_v4(),
             region: format!("pooled-api-{}", Uuid::new_v4()),
             release: format!("0.0.{}", Uuid::new_v4().as_u128() as u32 % 1_000_000),
-            herald: Uuid::new_v4(),
         };
         let pool = &installation.pool;
 
@@ -146,6 +148,10 @@ impl Installation {
     }
 
     async fn serve_region(&self) -> Uuid {
+        self.serve(&self.region).await
+    }
+
+    async fn serve(&self, region: &str) -> Uuid {
         let service = self.service();
         service
             .ensure_first_operator(&self.operator.to_string())
@@ -155,7 +161,7 @@ impl Installation {
             .create_dataplane(
                 user(self.operator),
                 CreateDataplaneCommand {
-                    region: Region::new(self.region.clone()),
+                    region: Region::new(region.to_string()),
                     allocation: DataPlaneAllocation::Shared,
                     capacity: Capacity::new(64_000, 131_072, 2_000).expect("a capacity"),
                 },
@@ -168,7 +174,7 @@ impl Installation {
         )
         .bind(registered.dataplane.id.0)
         .bind(format!("herald-{}", registered.dataplane.id.0))
-        .bind(self.herald.to_string())
+        .bind(Uuid::new_v4().to_string())
         .bind(GATEWAY)
         .execute(&self.pool)
         .await
@@ -178,11 +184,15 @@ impl Installation {
     }
 
     async fn open_a_cell(&self) {
+        self.open_a_cell_in(&self.region).await
+    }
+
+    async fn open_a_cell_in(&self, region: &str) {
         let service = self.service();
         let cell = service
             .create_cell(
                 user(self.operator),
-                CreateCellCommand::new(Region::new(self.region.clone()), Some(20)).expect("a cell"),
+                CreateCellCommand::new(Region::new(region.to_string()), Some(20)).expect("a cell"),
             )
             .await
             .expect("a cell is created");
@@ -191,6 +201,15 @@ impl Installation {
     }
 
     async fn report(&self, deployment: DeploymentId, outcome: DeploymentOutcome) {
+        self.report_with(deployment, outcome, None).await
+    }
+
+    async fn report_with(
+        &self,
+        deployment: DeploymentId,
+        outcome: DeploymentOutcome,
+        reason: Option<&str>,
+    ) {
         let service = self.service();
         let dataplane_id = service
             .get_deployment(deployment)
@@ -198,16 +217,22 @@ impl Installation {
             .expect("read")
             .expect("the deployment exists")
             .dataplane_id;
+        let subject: String =
+            sqlx::query_scalar("SELECT herald_subject FROM data_planes WHERE id = $1")
+                .bind(dataplane_id.0)
+                .fetch_one(&self.pool)
+                .await
+                .expect("the herald of the plane");
 
         service
             .report_outcome(
-                herald(self.herald),
+                herald(subject.parse().expect("a uuid")),
                 ReportDeploymentOutcomeCommand {
                     observed_version: None,
                     dataplane_id,
                     deployment_id: deployment,
                     outcome,
-                    reason: None,
+                    reason: reason.map(str::to_string),
                 },
             )
             .await
@@ -281,8 +306,9 @@ impl Installation {
             }
         }
         for statement in [
-            "DELETE FROM actions WHERE dataplane_id IN (SELECT id FROM data_planes WHERE region = $1)",
-            "DELETE FROM data_planes WHERE region = $1",
+            "DELETE FROM actions WHERE dataplane_id IN \
+             (SELECT id FROM data_planes WHERE region LIKE $1 || '%')",
+            "DELETE FROM data_planes WHERE region LIKE $1 || '%'",
         ] {
             sqlx::query(statement)
                 .bind(&self.region)
@@ -594,7 +620,7 @@ async fn deleting_a_free_deployment_asks_its_cell_to_delete_the_realm_and_frees_
 }
 
 #[tokio::test]
-async fn a_free_deployment_cannot_be_renamed_because_its_name_is_its_realm() {
+async fn a_free_deployment_cannot_be_changed_through_the_update_route() {
     scenario(async |installation| {
         installation.serve_region().await;
         installation.open_a_cell().await;
@@ -618,7 +644,31 @@ async fn a_free_deployment_cannot_be_renamed_because_its_name_is_its_realm() {
         .await;
 
         assert_eq!(status, StatusCode::CONFLICT, "{refused}");
-        assert!(refused.to_string().contains("renamed"), "{refused}");
+        assert!(
+            refused.to_string().contains("its name is its realm"),
+            "{refused}"
+        );
+
+        for change in [
+            json!({"kind": "keycloak"}),
+            json!({"status": "successful"}),
+            json!({"namespace": "somewhere-else"}),
+            json!({"version": installation.release}),
+        ] {
+            let (status, refused) = call(
+                &app,
+                Method::PATCH,
+                &format!("{}/{id}", installation.deployments()),
+                Some(change.clone()),
+            )
+            .await;
+
+            assert_eq!(status, StatusCode::CONFLICT, "{change}: {refused}");
+            assert!(
+                refused.to_string().contains("realm in a shared cell"),
+                "{change}: {refused}"
+            );
+        }
     })
     .await;
 }
@@ -701,33 +751,122 @@ async fn a_free_deployment_shows_its_tenant_url_its_issuer_and_why_its_realm_was
         );
         assert_eq!(read["realm"]["refusal"], Value::Null);
 
-        let service = installation.service();
-        let deployment = DeploymentId(id.parse().expect("a uuid"));
-        let dataplane_id = service
-            .get_deployment(deployment)
-            .await
-            .expect("read")
-            .expect("exists")
-            .dataplane_id;
-        service
-            .report_outcome(
-                herald(installation.herald),
-                ReportDeploymentOutcomeCommand {
-                    observed_version: None,
-                    dataplane_id,
-                    deployment_id: deployment,
-                    outcome: DeploymentOutcome::Failed,
-                    reason: Some("the realm name was refused by the cell".to_string()),
-                },
+        installation
+            .report_with(
+                DeploymentId(id.parse().expect("a uuid")),
+                DeploymentOutcome::Failed,
+                Some("the realm name was refused by the cell"),
             )
-            .await
-            .expect("the refusal was recorded");
+            .await;
 
         let (_, refused) = call(&app, Method::GET, &path, None).await;
         assert_eq!(
             refused["realm"]["refusal"],
             "the realm name was refused by the cell"
         );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn two_free_deployments_asked_at_once_in_two_regions_leave_one() {
+    scenario(async |installation| {
+        let elsewhere = format!("{}-b", installation.region);
+        installation.serve_region().await;
+        installation.serve(&elsewhere).await;
+        installation.open_a_cell().await;
+        installation.open_a_cell_in(&elsewhere).await;
+
+        let create = |name: &str, region: &str| {
+            let service = installation.service();
+            let command = CreateDeploymentCommand::new(
+                OrganisationId(installation.tenant),
+                DeploymentName(name.to_string()),
+                DeploymentKind::Ferriskey,
+                Version::parse(&installation.release).expect("a version"),
+                UserId(installation.owner),
+                Environment::Production,
+                Region::new(region.to_string()),
+                Offer::Free,
+            )
+            .expect("a creatable name");
+            let caller = user(installation.owner);
+            async move { service.create_deployment(caller, command).await }
+        };
+
+        let (first, second) = tokio::join!(
+            create("racing-one", &installation.region),
+            create("racing-two", &elsewhere)
+        );
+
+        let outcomes = [first, second];
+        let created = outcomes.iter().filter(|outcome| outcome.is_ok()).count();
+        let refused: Vec<String> = outcomes
+            .iter()
+            .filter_map(|outcome| outcome.as_ref().err().map(ToString::to_string))
+            .collect();
+        assert_eq!(created, 1, "{refused:?}");
+        assert!(refused[0].contains("instances"), "{refused:?}");
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_free_deployment_waits_for_the_count_of_its_organisation() {
+    scenario(async |installation| {
+        installation.serve_region().await;
+        installation.open_a_cell().await;
+
+        let mut holder = installation.pool.begin().await.expect("a transaction");
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+            .bind(format!("org-instances:{}", installation.tenant))
+            .execute(&mut *holder)
+            .await
+            .expect("the organisation count is held");
+
+        let service = installation.service();
+        let command = CreateDeploymentCommand::new(
+            OrganisationId(installation.tenant),
+            DeploymentName("waiting".to_string()),
+            DeploymentKind::Ferriskey,
+            Version::parse(&installation.release).expect("a version"),
+            UserId(installation.owner),
+            Environment::Production,
+            Region::new(installation.region.clone()),
+            Offer::Free,
+        )
+        .expect("a creatable name");
+        let caller = user(installation.owner);
+        let creation =
+            tokio::spawn(async move { service.create_deployment(caller, command).await });
+
+        let mut waited = false;
+        for _ in 0..100 {
+            let waiting: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted \
+                 AND objid = (hashtext($1)::bigint & 4294967295)::oid",
+            )
+            .bind(format!("org-instances:{}", installation.tenant))
+            .fetch_one(&installation.pool)
+            .await
+            .expect("the locks");
+            if waiting > 0 {
+                waited = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(
+            waited,
+            "the creation never waited for the organisation count"
+        );
+        assert!(!creation.is_finished());
+
+        holder.rollback().await.expect("released");
+        creation
+            .await
+            .expect("joined")
+            .expect("created once the count is free");
     })
     .await;
 }
