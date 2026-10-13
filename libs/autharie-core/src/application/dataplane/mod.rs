@@ -5,6 +5,7 @@ use autharie_domain::{
         ActionPayload, ActionSource, ActionTarget, ActionType, ActionVersion, TargetKind,
         commands::RecordActionCommand, ports::ActionService, service::ActionServiceImpl,
     },
+    cells::PooledOutcomes,
     dataplane::value_objects::Region,
     dataplane::{
         entities::DataPlane,
@@ -24,8 +25,8 @@ use autharie_domain::{
 };
 use autharie_macros::transactional;
 use autharie_postgres::{
-    catalog::PostgresReleaseRepository, deployments::PostgresDeploymentRepository,
-    organisation::PostgresOrganisationRepository,
+    catalog::PostgresReleaseRepository, cells::PostgresCellRepository,
+    deployments::PostgresDeploymentRepository, organisation::PostgresOrganisationRepository,
 };
 use serde_json::json;
 
@@ -199,6 +200,8 @@ impl DataPlaneService for AutharieService {
         command: ReportDeploymentOutcomeCommand,
     ) -> Result<bool, CoreError> {
         let deployment_id = command.deployment_id;
+        let outcome = command.outcome;
+        let reason = command.reason.clone();
 
         let changed = DataPlaneServiceImpl::new(
             data_plane_repository,
@@ -217,6 +220,13 @@ impl DataPlaneService for AutharieService {
         if !changed {
             return Ok(false);
         }
+
+        PooledOutcomes::new(
+            PostgresCellRepository::new(&tx),
+            PostgresDeploymentRepository::new(&tx),
+        )
+        .settle(deployment_id, outcome, reason.as_deref())
+        .await?;
 
         // An upgrade of several versions moves one step at a time, and this is
         // where the next one starts: only once the data plane has reported the

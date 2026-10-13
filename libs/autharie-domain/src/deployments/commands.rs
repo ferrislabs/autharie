@@ -434,6 +434,7 @@ pub struct ReportDeploymentOutcomeCommand {
     pub dataplane_id: DataPlaneId,
     pub deployment_id: super::DeploymentId,
     pub outcome: DeploymentOutcome,
+    pub reason: Option<String>,
 }
 
 impl ReportDeploymentOutcomeCommand {
@@ -464,6 +465,17 @@ impl ReportDeploymentOutcomeCommand {
             deployment_id,
             outcome,
             observed_version,
+            reason: None,
         })
     }
+
+    pub fn with_reason(mut self, reason: Option<&str>) -> Self {
+        self.reason = reason
+            .map(str::trim)
+            .filter(|reason| !reason.is_empty())
+            .map(|reason| reason.chars().take(MAX_REASON_CHARS).collect());
+        self
+    }
 }
+
+const MAX_REASON_CHARS: usize = 500;

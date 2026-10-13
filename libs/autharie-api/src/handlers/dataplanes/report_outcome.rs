@@ -36,6 +36,10 @@ pub struct ReportOutcomeRequest {
     /// until the rollout replaces it.
     #[serde(default)]
     pub version: Option<String>,
+
+    /// Why the data plane gave up, sent with `failed` when it knows.
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 #[derive(Serialize, ToSchema, PartialEq)]
@@ -90,7 +94,8 @@ pub async fn report_outcome_handler(
         request.outcome.as_str(),
         request.version.as_deref(),
     )
-    .map_err(|reason| ApiError::BadRequest { reason })?;
+    .map_err(|reason| ApiError::BadRequest { reason })?
+    .with_reason(request.reason.as_deref());
 
     let recorded = state.service.report_outcome(identity, command).await?;
 
