@@ -1320,3 +1320,22 @@ async fn an_administrator_reported_by_another_data_plane_is_refused() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn a_key_manager_that_fails_never_stops_a_realm_from_being_reported_running() {
+    let broken = MockServer::start_async().await;
+    scenario(async |installation| {
+        installation
+            .keys
+            .set(broken.base_url())
+            .expect("keys set once");
+        let (path, deployment) = a_served_realm(installation, "unsealed").await;
+
+        report_running_with(installation, deployment, TEMPORARY_PASSWORD).await;
+
+        let (_, read) = call(&installation.app(), Method::GET, &path, None).await;
+        assert_eq!(read["data"]["status"], "successful", "{read}");
+        assert_eq!(read["realm"]["administrator"], Value::Null, "{read}");
+    })
+    .await;
+}

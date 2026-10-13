@@ -1,5 +1,6 @@
 use autharie_auth::Identity;
 use autharie_core::{
+    CoreError,
     cells::InitialAdministrator,
     dataplane::{credential::SecretString, ports::DataPlaneService, value_objects::DataPlaneId},
     deployments::{
@@ -127,10 +128,21 @@ pub async fn report_outcome_handler(
     if let Some(administrator) = administrator
         && command.outcome == DeploymentOutcome::Running
     {
-        state
+        match state
             .service
             .keep_tenant_administrator(identity.clone(), deployment_id, administrator)
-            .await?;
+            .await
+        {
+            Ok(_) => {}
+            Err(error @ CoreError::PermissionDenied { .. }) => return Err(error.into()),
+            Err(error) => {
+                tracing::error!(
+                    deployment_id = %deployment_id.0,
+                    %error,
+                    "the realm administrator could not be kept; the outcome is recorded without it"
+                );
+            }
+        }
     }
 
     let recorded = state.service.report_outcome(identity, command).await?;
