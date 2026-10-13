@@ -173,6 +173,11 @@ pub trait TenantRoutePort: Send + Sync {
         route: &TenantRoute,
     ) -> impl Future<Output = Result<Option<RouteOwner>, GenesisError>> + Send;
 
+    fn claims(
+        &self,
+        route: &TenantRoute,
+    ) -> impl Future<Output = Result<Vec<RouteOwner>, GenesisError>> + Send;
+
     fn delete(&self, route: &TenantRoute) -> impl Future<Output = Result<(), GenesisError>> + Send;
 }
 

@@ -18,6 +18,7 @@ const NO_TENANT_ZONE: &str = "realm_no_tenant_zone";
 const NOT_A_CELL: &str = "realm_not_a_cell";
 const ROUTE_NOT_OWNED: &str = "realm_route_not_owned";
 const DELETE_REFUSED: &str = "realm_delete_refused";
+const REALM_CLAIMED: &str = "realm_claimed_by_another_deployment";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RealmAction {
@@ -85,10 +86,27 @@ where
             "creating a realm"
         );
 
+        let route = payload.route();
+        let claims = self.routes.claims(&route).await?;
+        if let Some(holder) = claims.iter().find(|claim| !route.is_owned_by(claim)) {
+            warn!(
+                deployment_id = %payload.deployment_id,
+                holder = holder.deployment.as_deref().unwrap_or("unknown"),
+                realm = %payload.realm,
+                "another deployment still claims this realm"
+            );
+            return Err(GenesisError::Handler {
+                message: REALM_CLAIMED.to_string(),
+            });
+        }
+
+        self.routes.apply(&route, hostname).await?;
+
         match self.realms.create_realm(&cell, &payload.realm).await {
             Ok(()) | Err(RealmError::AlreadyExists) => {}
             Err(RealmError::Refused { reason }) => {
                 warn!(deployment_id = %payload.deployment_id, %reason, "the cell refused the realm");
+                self.routes.delete(&route).await?;
                 return self
                     .outcomes
                     .publish(DeploymentOutcomeReport::failed_because(
@@ -97,13 +115,15 @@ where
                     ))
                     .await;
             }
-            Err(RealmError::NotACell) => return refuse(payload.deployment_id, NOT_A_CELL),
+            Err(RealmError::NotACell) => {
+                self.routes.delete(&route).await?;
+                return refuse(payload.deployment_id, NOT_A_CELL);
+            }
             Err(error @ (RealmError::NotFound | RealmError::CellUnreachable { .. })) => {
                 return Err(retry(error));
             }
         }
 
-        self.routes.apply(&payload.route(), hostname).await?;
         self.outcomes
             .publish(DeploymentOutcomeReport::serving(payload.deployment_id))
             .await
@@ -240,11 +260,18 @@ mod tests {
     const CELL: Uuid = Uuid::from_u128(2);
     const ZONE: &str = "cells.example";
 
+    type Journal = Arc<Mutex<Vec<&'static str>>>;
+
+    fn entries(journal: &Journal) -> Vec<&'static str> {
+        journal.lock().expect("lock").clone()
+    }
+
     #[derive(Default)]
     struct FakeCell {
         realms: Mutex<BTreeSet<String>>,
         failure: Option<RealmError>,
         calls: Mutex<Vec<(IdentityInstanceRef, String)>>,
+        journal: Journal,
     }
 
     impl FakeCell {
@@ -287,6 +314,7 @@ mod tests {
             cell: &IdentityInstanceRef,
             realm: &RealmName,
         ) -> Result<(), RealmError> {
+            self.journal.lock().expect("lock").push("create realm");
             self.answer(cell, realm)?;
             if self.realms.lock().expect("lock").insert(realm.to_string()) {
                 Ok(())
@@ -300,6 +328,7 @@ mod tests {
             cell: &IdentityInstanceRef,
             realm: &RealmName,
         ) -> Result<(), RealmError> {
+            self.journal.lock().expect("lock").push("delete realm");
             self.answer(cell, realm)?;
             if self.realms.lock().expect("lock").remove(realm.as_str()) {
                 Ok(())
@@ -312,6 +341,7 @@ mod tests {
     #[derive(Default)]
     struct FakeRoutes {
         routes: Mutex<BTreeMap<String, (String, RouteOwner)>>,
+        journal: Journal,
     }
 
     impl FakeRoutes {
@@ -332,6 +362,7 @@ mod tests {
 
     impl TenantRoutePort for &FakeRoutes {
         async fn apply(&self, route: &TenantRoute, hostname: &str) -> Result<(), GenesisError> {
+            self.journal.lock().expect("lock").push("claim");
             self.routes.lock().expect("lock").insert(
                 route.name.clone(),
                 (
@@ -354,7 +385,19 @@ mod tests {
                 .map(|(_, owner)| owner.clone()))
         }
 
+        async fn claims(&self, route: &TenantRoute) -> Result<Vec<RouteOwner>, GenesisError> {
+            Ok(self
+                .routes
+                .lock()
+                .expect("lock")
+                .values()
+                .filter(|(_, owner)| owner.realm.as_deref() == Some(route.realm.as_str()))
+                .map(|(_, owner)| owner.clone())
+                .collect())
+        }
+
         async fn delete(&self, route: &TenantRoute) -> Result<(), GenesisError> {
+            self.journal.lock().expect("lock").push("release");
             self.routes.lock().expect("lock").remove(&route.name);
             Ok(())
         }
@@ -538,14 +581,16 @@ mod tests {
     async fn an_instance_that_is_not_a_cell_is_refused_without_retry_or_outcome() {
         let (cell, routes, reports) = (
             FakeCell::failing(RealmError::NotACell),
-            FakeRoutes::with(&route_name(), owner(TENANT, "acme")),
+            FakeRoutes::default(),
             Arc::new(Reports::default()),
         );
-
         creating(&cell, &routes, &reports)
             .handle(create_event())
             .await
             .expect("parked");
+        assert!(routes.routes().is_empty());
+
+        let routes = FakeRoutes::with(&route_name(), owner(TENANT, "acme"));
         deleting(&cell, &routes, &reports)
             .handle(delete_event())
             .await
@@ -553,6 +598,74 @@ mod tests {
 
         assert!(reports.all().is_empty());
         assert_eq!(routes.routes().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn the_claim_is_taken_before_the_realm_and_released_after_it() {
+        let journal = Journal::default();
+        let cell = FakeCell {
+            journal: Arc::clone(&journal),
+            ..FakeCell::default()
+        };
+        let routes = FakeRoutes {
+            journal: Arc::clone(&journal),
+            ..FakeRoutes::default()
+        };
+        let reports = Arc::new(Reports::default());
+
+        creating(&cell, &routes, &reports)
+            .handle(create_event())
+            .await
+            .expect("created");
+        deleting(&cell, &routes, &reports)
+            .handle(delete_event())
+            .await
+            .expect("deleted");
+
+        assert_eq!(
+            entries(&journal),
+            ["claim", "create realm", "delete realm", "release"]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_stale_create_leaves_a_realm_another_deployment_claims_and_is_retried() {
+        let other = Uuid::from_u128(77);
+        let (cell, routes, reports) = (
+            FakeCell::holding("acme"),
+            FakeRoutes::with(&format!("realm-{other}"), owner(other, "acme")),
+            Arc::new(Reports::default()),
+        );
+
+        let result = creating(&cell, &routes, &reports)
+            .handle(create_event())
+            .await;
+
+        assert!(matches!(result, Err(GenesisError::Handler { .. })));
+        assert_eq!(cell.calls(), 0);
+        assert_eq!(cell.realms(), BTreeSet::from(["acme".to_string()]));
+        assert_eq!(routes.routes().len(), 1);
+        assert!(reports.all().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_compensating_delete_behind_another_claim_never_reaches_the_realm() {
+        let other = Uuid::from_u128(77);
+        let (cell, routes, reports) = (
+            FakeCell::holding("acme"),
+            FakeRoutes::with(&format!("realm-{other}"), owner(other, "acme")),
+            Arc::new(Reports::default()),
+        );
+
+        deleting(&cell, &routes, &reports)
+            .handle(delete_event())
+            .await
+            .expect("deleted");
+
+        assert_eq!(cell.calls(), 0);
+        assert_eq!(cell.realms(), BTreeSet::from(["acme".to_string()]));
+        assert_eq!(routes.routes().len(), 1);
+        assert_eq!(reports.all(), [DeploymentOutcomeReport::deleted(TENANT)]);
     }
 
     /// @spec-fpr-8
@@ -585,7 +698,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_tenant_without_a_route_is_deleted_without_calling_the_cell() {
+    async fn a_delete_before_the_create_applied_anything_never_calls_the_cell() {
         let (cell, routes, reports) = (
             FakeCell::holding("acme"),
             FakeRoutes::default(),

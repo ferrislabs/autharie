@@ -1,4 +1,4 @@
-use kube::api::{DeleteParams, DynamicObject, Patch, PatchParams};
+use kube::api::{DeleteParams, DynamicObject, ListParams, Patch, PatchParams};
 use kube::core::{ApiResource, GroupVersionKind};
 use kube::{Api, Client};
 use serde_json::{Value, json};
@@ -121,6 +121,19 @@ impl TenantRoutePort for KubeTenantRoutes {
             .await
             .map_err(kube_error)?;
         Ok(found.map(|found| route_owner(found.metadata.labels.as_ref())))
+    }
+
+    async fn claims(&self, route: &TenantRoute) -> Result<Vec<RouteOwner>, GenesisError> {
+        let selector = format!("{REALM_LABEL}={}", route.realm);
+        let found = httproutes(self.client.clone(), &route.cell.namespace)
+            .list(&ListParams::default().labels(&selector))
+            .await
+            .map_err(kube_error)?;
+        Ok(found
+            .items
+            .iter()
+            .map(|found| route_owner(found.metadata.labels.as_ref()))
+            .collect())
     }
 
     async fn delete(&self, route: &TenantRoute) -> Result<(), GenesisError> {
