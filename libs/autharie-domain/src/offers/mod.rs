@@ -34,6 +34,7 @@ use crate::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Offer {
+    Free,
     /// Enough to try the product against, on a cluster shared with others.
     Sandbox,
     /// The ordinary one.
@@ -50,7 +51,13 @@ impl Offer {
     /// Kept here rather than derived, and the exhaustiveness test below walks
     /// it: an offer missing from this list is one a customer can hold and no
     /// screen can show.
-    pub const ALL: [Self; 4] = [Self::Sandbox, Self::Standard, Self::Scale, Self::Private];
+    pub const ALL: [Self; 5] = [
+        Self::Free,
+        Self::Sandbox,
+        Self::Standard,
+        Self::Scale,
+        Self::Private,
+    ];
 
     /// What an instance on this offer is given.
     ///
@@ -60,6 +67,7 @@ impl Offer {
     /// finds out about that from a restart, not from a release note.
     pub fn resources(self) -> DeploymentResources {
         match self {
+            Self::Free => REALM_SHARE,
             Self::Sandbox => DeploymentResources {
                 cpu_millis: 250,
                 memory_mib: 512,
@@ -86,7 +94,7 @@ impl Offer {
     /// would need translating in both directions for ever.
     pub fn mode(self) -> DataPlaneMode {
         match self {
-            Self::Sandbox | Self::Standard | Self::Scale => DataPlaneMode::Shared,
+            Self::Free | Self::Sandbox | Self::Standard | Self::Scale => DataPlaneMode::Shared,
             Self::Private => DataPlaneMode::Dedicated,
         }
     }
@@ -98,7 +106,8 @@ impl Offer {
     /// disagree.
     pub fn open_to(self) -> &'static [Plan] {
         match self {
-            Self::Sandbox => &[Plan::Free, Plan::Starter, Plan::Business, Plan::Enterprise],
+            Self::Free => &[Plan::Free],
+            Self::Sandbox => &[Plan::Starter, Plan::Business, Plan::Enterprise],
             Self::Standard => &[Plan::Starter, Plan::Business, Plan::Enterprise],
             Self::Scale => &[Plan::Business, Plan::Enterprise],
             Self::Private => &[Plan::Enterprise],
@@ -108,6 +117,10 @@ impl Offer {
     /// Whether this tier may choose this offer.
     pub fn is_open_to(self, plan: Plan) -> bool {
         self.open_to().contains(&plan)
+    }
+
+    pub fn is_pooled(self) -> bool {
+        self == Self::Free
     }
 
     /// The cheapest offer placed the same way.
@@ -121,7 +134,7 @@ impl Offer {
         // `ALL` is written cheapest first, and the test below holds that.
         Self::ALL
             .into_iter()
-            .find(|offer| offer.mode() == mode)
+            .find(|offer| !offer.is_pooled() && offer.mode() == mode)
             .unwrap_or(Self::Private)
     }
 
@@ -138,6 +151,7 @@ impl Offer {
 impl fmt::Display for Offer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Free => write!(f, "free"),
             Self::Sandbox => write!(f, "sandbox"),
             Self::Standard => write!(f, "standard"),
             Self::Scale => write!(f, "scale"),
@@ -151,6 +165,7 @@ impl std::str::FromStr for Offer {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value.to_lowercase().as_str() {
+            "free" => Ok(Self::Free),
             "sandbox" => Ok(Self::Sandbox),
             "standard" => Ok(Self::Standard),
             "scale" => Ok(Self::Scale),
@@ -161,6 +176,12 @@ impl std::str::FromStr for Offer {
         }
     }
 }
+
+const REALM_SHARE: DeploymentResources = DeploymentResources {
+    cpu_millis: 1,
+    memory_mib: 1,
+    storage_gib: 1,
+};
 
 impl Plan {
     /// What this organisation may choose from.
@@ -234,6 +255,27 @@ mod tests {
         );
     }
 
+    #[test]
+    fn the_free_tier_is_pooled_only() {
+        assert_eq!(Plan::Free.offers(), vec![Offer::Free]);
+        assert!(!Offer::Sandbox.is_open_to(Plan::Free));
+    }
+
+    #[test]
+    fn only_the_free_tier_opens_the_pooled_offer() {
+        for plan in [Plan::Starter, Plan::Business, Plan::Enterprise] {
+            assert!(
+                !plan.offers().iter().any(|offer| offer.is_pooled()),
+                "{plan}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_deployment_with_no_offer_never_falls_back_to_a_realm_in_a_cell() {
+        assert!(!Offer::cheapest_with_mode(DataPlaneMode::Shared).is_pooled());
+    }
+
     /// Every tier can put something somewhere. A tier that opens nothing is a
     /// customer who has paid and cannot deploy.
     #[test]
@@ -243,15 +285,18 @@ mod tests {
         }
     }
 
-    /// Paying more never takes an offer away.
     #[test]
-    fn a_higher_tier_opens_everything_a_lower_one_does() {
+    fn a_higher_tier_opens_every_dedicated_instance_a_lower_one_does() {
         let ladder = [Plan::Free, Plan::Starter, Plan::Business, Plan::Enterprise];
 
         for pair in ladder.windows(2) {
             let (lower, higher) = (pair[0], pair[1]);
 
-            for offer in lower.offers() {
+            for offer in lower
+                .offers()
+                .into_iter()
+                .filter(|offer| !offer.is_pooled())
+            {
                 assert!(
                     offer.is_open_to(higher),
                     "{higher} does not open {offer}, which {lower} does"
@@ -264,7 +309,8 @@ mod tests {
     /// cheapest one has to be first in the list rather than merely present.
     #[test]
     fn the_cheapest_tier_is_the_one_a_refusal_names() {
-        assert_eq!(Offer::Sandbox.cheapest_tier(), Plan::Free);
+        assert_eq!(Offer::Free.cheapest_tier(), Plan::Free);
+        assert_eq!(Offer::Sandbox.cheapest_tier(), Plan::Starter);
         assert_eq!(Offer::Standard.cheapest_tier(), Plan::Starter);
         assert_eq!(Offer::Scale.cheapest_tier(), Plan::Business);
         assert_eq!(Offer::Private.cheapest_tier(), Plan::Enterprise);
@@ -275,6 +321,7 @@ mod tests {
     /// shows up as a pod that never schedules.
     #[test]
     fn a_bigger_offer_gives_more_than_a_smaller_one() {
+        assert!(Offer::Free.resources().memory_mib < Offer::Sandbox.resources().memory_mib);
         assert!(Offer::Sandbox.resources().memory_mib < Offer::Standard.resources().memory_mib);
         assert!(Offer::Standard.resources().memory_mib < Offer::Scale.resources().memory_mib);
     }

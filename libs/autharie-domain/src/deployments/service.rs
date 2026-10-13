@@ -1,26 +1,30 @@
 use crate::{
     CoreError,
+    cells::{CellRepository, PlacementError, RealmName},
     dataplane::{
         credential::CloudCredentialId,
         entities::DataPlane,
         ports::DataPlaneRepository,
         provisioner::{ClusterProvisioner, ProvisionRequest, ProvisionTarget},
         value_objects::{
-            Capacity, DataPlaneAllocation, DataPlaneMode, DataPlaneStatus, DeploymentResources,
-            PlacementPolicy, PlacementRequest, PlacementWindows, Region,
+            Capacity, DataPlaneAllocation, DataPlaneId, DataPlaneMode, DataPlaneStatus,
+            DeploymentResources, PlacementPolicy, PlacementRequest, PlacementWindows, Region,
         },
     },
     deployments::{
         Deployment, DeploymentId, DeploymentStatus,
         commands::{CreateDeploymentCommand, Sizing, UpdateDeploymentCommand},
         distribution::Distribution,
-        environment::namespace_for,
+        environment::{namespace_for, slug},
         network::NetworkAccess,
         ports::{DeploymentPolicy, DeploymentRepository, DeploymentService},
         provisioning::Provisioning,
     },
-    organisation::{OrganisationId, ports::OrganisationRepository},
-    user::ports::UserRepository,
+    offers::Offer,
+    organisation::{
+        Organisation, OrganisationId, ports::OrganisationRepository, value_objects::Plan,
+    },
+    user::{UserId, ports::UserRepository},
 };
 use autharie_auth::Identity;
 use chrono::{Duration, Utc};
@@ -38,6 +42,68 @@ fn refuse_if_busy(deployment: &Deployment, operation: &str) -> Result<(), CoreEr
         status: deployment.status.to_string(),
         operation: operation.to_string(),
     })
+}
+
+fn refuse_closed_offer(offer: Offer, plan: Plan) -> Result<(), CoreError> {
+    if offer.is_open_to(plan) {
+        return Ok(());
+    }
+
+    Err(CoreError::OfferNotOpenToPlan {
+        offer: offer.to_string(),
+        plan: plan.to_string(),
+        opened_by: offer.cheapest_tier().to_string(),
+    })
+}
+
+struct Placement {
+    id: DeploymentId,
+    dataplane_id: DataPlaneId,
+    distribution: Distribution,
+    resources: DeploymentResources,
+}
+
+fn draft(
+    command: &CreateDeploymentCommand,
+    organisation: &Organisation,
+    creator: UserId,
+    placement: Placement,
+) -> Deployment {
+    let now = Utc::now();
+    Deployment {
+        id: placement.id,
+        organisation_id: command.organisation_id,
+        dataplane_id: placement.dataplane_id,
+        name: command.name.clone(),
+        kind: command.kind.clone(),
+        version: command.version.clone(),
+        // Pending, always. A caller declaring its own deployment
+        // successful was never a feature: the platform reports what
+        // happened to it.
+        status: DeploymentStatus::Pending,
+        environment: command.environment,
+        namespace: namespace_for(organisation.slug.as_str(), &command.name.0),
+        offer: Some(command.offer),
+        restored_from: command.recovery.as_ref().map(|recovery| recovery.backup),
+        resources: placement.resources,
+        created_by: creator,
+        created_at: now,
+        updated_at: now,
+        deployed_at: None,
+        deleted_at: None,
+        auto_upgrade: Default::default(),
+        maintenance_window: None,
+        // Reachable from anywhere until someone restricts it. A new
+        // deployment nobody can reach is not a safe default, it is a
+        // deployment that looks broken.
+        network_access: NetworkAccess::Open,
+        last_verified_restore_at: None,
+        last_restore_drill_seconds: None,
+        log_shipping_enabled: false,
+        iam_settings: Default::default(),
+        distribution: placement.distribution,
+        topology: command.topology(),
+    }
 }
 
 #[derive(Debug)]
@@ -363,31 +429,37 @@ where
         self.place_as(user.id, command).await
     }
 
-    pub async fn place_as(
+    async fn organisation_of(
         &self,
-        creator: crate::user::UserId,
-        command: CreateDeploymentCommand,
-    ) -> Result<Deployment, CoreError> {
-        // Read before anything is placed. An offer the organisation's tier does
-        // not open must be refused before a cluster is chosen for it, and
-        // certainly before one is provisioned.
-        let organisation = self
-            .organisation_repository
+        command: &CreateDeploymentCommand,
+    ) -> Result<Organisation, CoreError> {
+        self.organisation_repository
             .find_by_id(&command.organisation_id)
             .await?
             .ok_or(CoreError::OrganisationNotFound {
                 id: command.organisation_id.0,
-            })?;
+            })
+    }
 
-        if command.sizing() == Sizing::Offer && !command.offer.is_open_to(organisation.plan) {
-            return Err(CoreError::OfferNotOpenToPlan {
-                offer: command.offer.to_string(),
-                plan: organisation.plan.to_string(),
-                // Named, so the answer is actionable. A refusal saying only
-                // that this is not allowed leaves the customer to guess which
-                // of four tiers would change it.
-                opened_by: command.offer.cheapest_tier().to_string(),
-            });
+    pub async fn place_as(
+        &self,
+        creator: UserId,
+        command: CreateDeploymentCommand,
+    ) -> Result<Deployment, CoreError> {
+        if command.offer.is_pooled() {
+            return Err(CoreError::InternalError(
+                "the free offer is placed in a cell by create_pooled, not on a data plane"
+                    .to_string(),
+            ));
+        }
+
+        // Read before anything is placed. An offer the organisation's tier does
+        // not open must be refused before a cluster is chosen for it, and
+        // certainly before one is provisioned.
+        let organisation = self.organisation_of(&command).await?;
+
+        if command.sizing() == Sizing::Offer {
+            refuse_closed_offer(command.offer, organisation.plan)?;
         }
 
         // Both read from the offer, so what reserves room on a data plane and
@@ -418,8 +490,7 @@ where
             }
             (Distribution::Pooled { .. }, _) => {
                 return Err(CoreError::InternalError(
-                    "a pooled deployment cannot be created: its creation path is not implemented"
-                        .to_string(),
+                    "a pooled deployment is placed by its offer, not by a distribution".to_string(),
                 ));
             }
             (_, DataPlaneMode::Shared) => {
@@ -432,43 +503,17 @@ where
             }
         };
 
-        let distribution = command.distribution().clone();
-        let topology = command.topology();
-        let now = chrono::Utc::now();
-        let deployment = Deployment {
-            id,
-            organisation_id: command.organisation_id,
-            dataplane_id: dataplane.id,
-            name: command.name.clone(),
-            kind: command.kind,
-            version: command.version,
-            // Pending, always. A caller declaring its own deployment
-            // successful was never a feature: the platform reports what
-            // happened to it.
-            status: DeploymentStatus::Pending,
-            environment: command.environment,
-            namespace: namespace_for(organisation.slug.as_str(), &command.name.0),
-            offer: Some(command.offer),
-            restored_from: command.recovery.as_ref().map(|recovery| recovery.backup),
-            resources,
-            created_by: creator,
-            created_at: now,
-            updated_at: now,
-            deployed_at: None,
-            deleted_at: None,
-            auto_upgrade: Default::default(),
-            maintenance_window: None,
-            // Reachable from anywhere until someone restricts it. A new
-            // deployment nobody can reach is not a safe default, it is a
-            // deployment that looks broken.
-            network_access: NetworkAccess::Open,
-            last_verified_restore_at: None,
-            last_restore_drill_seconds: None,
-            log_shipping_enabled: false,
-            iam_settings: Default::default(),
-            distribution,
-            topology,
-        };
+        let deployment = draft(
+            &command,
+            &organisation,
+            creator,
+            Placement {
+                id,
+                dataplane_id: dataplane.id,
+                distribution: command.distribution().clone(),
+                resources,
+            },
+        );
 
         info!(
             "try create new deployment {:?} kind: {}",
@@ -492,6 +537,71 @@ where
         }
 
         Ok(deployment)
+    }
+
+    pub async fn create_pooled<C: CellRepository>(
+        &self,
+        identity: Identity,
+        command: CreateDeploymentCommand,
+        cells: &C,
+    ) -> Result<Deployment, CoreError> {
+        self.policy
+            .can_create_deployments(identity, command.organisation_id)
+            .await?;
+        let creator = self
+            .user_repository
+            .find_by_sub(&command.created_by.to_string())
+            .await?
+            .ok_or(CoreError::InvalidIdentity)?
+            .id;
+        let organisation = self.organisation_of(&command).await?;
+        refuse_closed_offer(command.offer, organisation.plan)?;
+        let realm = RealmName::try_from(slug(&command.name.0).as_str())?;
+
+        let cell =
+            cells
+                .place(&command.region)
+                .await?
+                .ok_or_else(|| PlacementError::NoOpenCell {
+                    region: command.region.as_str().to_string(),
+                })?;
+        self.refuse_past_instance_limit(&organisation).await?;
+
+        let deployment = draft(
+            &command,
+            &organisation,
+            creator,
+            Placement {
+                id: DeploymentId(uuid::Uuid::new_v4()),
+                dataplane_id: cell.data_plane_id(),
+                distribution: Distribution::Pooled {
+                    cell_id: cell.id(),
+                    realm,
+                }
+                .checked_for(&command.kind)?,
+                resources: command.offer.resources(),
+            },
+        );
+        self.deployment_repository
+            .insert(deployment.clone())
+            .await?;
+
+        Ok(deployment)
+    }
+
+    async fn refuse_past_instance_limit(
+        &self,
+        organisation: &Organisation,
+    ) -> Result<(), CoreError> {
+        let live = self
+            .deployment_repository
+            .list_by_organisation(organisation.id)
+            .await?
+            .iter()
+            .filter(|deployment| deployment.deleted_at.is_none())
+            .count();
+
+        organisation.check_instance_limit(live)
     }
 }
 
@@ -2634,6 +2744,248 @@ mod tests {
             .expect_err("no right to look");
 
             assert!(matches!(error, CoreError::PermissionDenied { .. }));
+        }
+    }
+
+    mod pooled {
+        use super::*;
+        use crate::{
+            cells::{Cell, CellId, CellStatus, MockCellRepository},
+            organisation::value_objects::Plan,
+        };
+
+        const CELL: CellId = CellId(Uuid::from_u128(40));
+        const CELL_PLANE: DataPlaneId = DataPlaneId(Uuid::from_u128(41));
+
+        fn an_open_cell() -> Cell {
+            Cell::restore(
+                CELL,
+                Region::new("fr-par"),
+                CELL_PLANE,
+                DeploymentId(Uuid::from_u128(42)),
+                CellStatus::Open,
+                200,
+                3,
+                Utc::now(),
+            )
+            .expect("an open cell")
+        }
+
+        fn cells_placing(cell: Option<Cell>) -> MockCellRepository {
+            let mut cells = MockCellRepository::new();
+            cells.expect_place().times(1).returning(move |_| {
+                let cell = cell.clone();
+                Box::pin(async move { Ok(cell) })
+            });
+            cells
+        }
+
+        fn a_free_command(name: &str) -> CreateDeploymentCommand {
+            CreateDeploymentCommand::new(
+                OrganisationId(Uuid::nil()),
+                DeploymentName(name.to_string()),
+                DeploymentKind::Ferriskey,
+                crate::version::Version::new(26, 0, 1),
+                UserId(Uuid::from_u128(9)),
+                crate::deployments::environment::Environment::Production,
+                Region::new("fr-par"),
+                Offer::Free,
+            )
+            .expect("a creatable name")
+        }
+
+        fn holding(live: Vec<Deployment>) -> MockDeploymentRepository {
+            let mut deployments = MockDeploymentRepository::new();
+            deployments
+                .expect_list_by_organisation()
+                .returning(move |_| {
+                    let live = live.clone();
+                    Box::pin(async move { Ok(live) })
+                });
+            deployments
+        }
+
+        fn service(
+            deployments: MockDeploymentRepository,
+            plan: Plan,
+        ) -> DeploymentServiceImpl<
+            MockDeploymentRepository,
+            StubUserRepository,
+            MockDataPlaneRepository,
+            crate::organisation::ports::MockOrganisationRepository,
+            MockClusterProvisioner,
+            Allowed,
+        > {
+            DeploymentServiceImpl::new(
+                deployments,
+                StubUserRepository,
+                MockDataPlaneRepository::new(),
+                organisations_on(plan),
+                no_provisioning(),
+                windows(),
+                Allowed,
+            )
+        }
+
+        /// @spec-fpr-1
+        #[tokio::test]
+        async fn a_free_deployment_is_a_realm_named_after_its_hostname_on_the_plane_of_its_cell() {
+            let mut deployments = holding(Vec::new());
+            deployments
+                .expect_insert()
+                .times(1)
+                .returning(|_| Box::pin(async { Ok(()) }));
+
+            let created = service(deployments, Plan::Free)
+                .create_pooled(
+                    caller(),
+                    a_free_command("My Tenant"),
+                    &cells_placing(Some(an_open_cell())),
+                )
+                .await
+                .expect("placed in the cell");
+
+            assert_eq!(
+                created.distribution,
+                Distribution::Pooled {
+                    cell_id: CELL,
+                    realm: RealmName::try_from("my-tenant").expect("valid"),
+                }
+            );
+            assert_eq!(created.dataplane_id, CELL_PLANE);
+            assert_eq!(created.offer, Some(Offer::Free));
+            assert_eq!(created.status, DeploymentStatus::Pending);
+        }
+
+        /// @spec-fpr-5
+        #[tokio::test]
+        async fn with_no_open_cell_the_creation_is_refused_and_nothing_is_recorded() {
+            let mut deployments = holding(Vec::new());
+            deployments.expect_insert().never();
+
+            let refused = service(deployments, Plan::Free)
+                .create_pooled(caller(), a_free_command("acme"), &cells_placing(None))
+                .await
+                .expect_err("no cell has room");
+
+            assert!(
+                matches!(
+                    refused,
+                    CoreError::Placement(PlacementError::NoOpenCell { ref region }) if region == "fr-par"
+                ),
+                "{refused}"
+            );
+        }
+
+        /// @spec-fpr-13
+        #[tokio::test]
+        async fn a_paying_organisation_is_refused_the_free_offer_before_any_cell_is_chosen() {
+            let mut cells = MockCellRepository::new();
+            cells.expect_place().never();
+
+            let refused = service(MockDeploymentRepository::new(), Plan::Starter)
+                .create_pooled(caller(), a_free_command("acme"), &cells)
+                .await
+                .expect_err("the free offer is for the free tier");
+
+            let CoreError::OfferNotOpenToPlan { opened_by, .. } = refused else {
+                panic!("got {refused}");
+            };
+            assert_eq!(opened_by, "free");
+        }
+
+        #[tokio::test]
+        async fn a_free_organisation_holding_a_live_deployment_cannot_create_a_second() {
+            let mut held =
+                sample_deployment(DeploymentId(Uuid::new_v4()), OrganisationId(Uuid::nil()));
+            held.deleted_at = None;
+            let mut deployments = holding(vec![held]);
+            deployments.expect_insert().never();
+
+            let refused = service(deployments, Plan::Free)
+                .create_pooled(
+                    caller(),
+                    a_free_command("acme"),
+                    &cells_placing(Some(an_open_cell())),
+                )
+                .await
+                .expect_err("one deployment on the free tier");
+
+            assert!(
+                matches!(
+                    refused,
+                    CoreError::OrganisationLimitReached {
+                        max: 1,
+                        current: 1,
+                        ..
+                    }
+                ),
+                "{refused}"
+            );
+        }
+
+        #[tokio::test]
+        async fn a_deployment_being_deleted_does_not_count_against_the_limit() {
+            let mut leaving =
+                sample_deployment(DeploymentId(Uuid::new_v4()), OrganisationId(Uuid::nil()));
+            leaving.status = DeploymentStatus::Deleting;
+            leaving.deleted_at = Some(Utc::now());
+            let mut deployments = holding(vec![leaving]);
+            deployments
+                .expect_insert()
+                .times(1)
+                .returning(|_| Box::pin(async { Ok(()) }));
+
+            service(deployments, Plan::Free)
+                .create_pooled(
+                    caller(),
+                    a_free_command("acme"),
+                    &cells_placing(Some(an_open_cell())),
+                )
+                .await
+                .expect("the deleted one is gone");
+        }
+
+        #[tokio::test]
+        async fn a_hostname_that_cannot_be_a_realm_is_refused_before_any_cell_is_chosen() {
+            let mut cells = MockCellRepository::new();
+            cells.expect_place().never();
+
+            let refused = service(MockDeploymentRepository::new(), Plan::Free)
+                .create_pooled(caller(), a_free_command("master"), &cells)
+                .await
+                .expect_err("master is the administrator realm");
+
+            assert!(matches!(refused, CoreError::Realm(_)), "{refused}");
+        }
+
+        #[tokio::test]
+        async fn the_free_offer_never_reaches_a_data_plane() {
+            let mut deployments = MockDeploymentRepository::new();
+            deployments.expect_insert().never();
+
+            let refused = service(deployments, Plan::Free)
+                .create_deployment(caller(), a_free_command("acme"))
+                .await
+                .expect_err("placed in a cell, not on a data plane");
+
+            assert!(matches!(refused, CoreError::InternalError(_)), "{refused}");
+        }
+
+        #[tokio::test]
+        async fn a_free_organisation_is_told_which_tier_opens_the_sandbox() {
+            let mut command = a_free_command("acme");
+            command.offer = Offer::Sandbox;
+
+            let refused = service(MockDeploymentRepository::new(), Plan::Free)
+                .create_deployment(caller(), command)
+                .await
+                .expect_err("the free tier is pooled only");
+
+            let CoreError::OfferNotOpenToPlan { opened_by, .. } = refused else {
+                panic!("got {refused}");
+            };
+            assert_eq!(opened_by, "starter");
         }
     }
 }

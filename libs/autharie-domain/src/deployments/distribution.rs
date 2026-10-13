@@ -33,6 +33,9 @@ pub enum DistributionError {
 
     #[error("a {kind} deployment cannot be hosted as a realm in a cell")]
     NotPoolable { kind: DeploymentKind },
+
+    #[error("the free offer is a realm in a shared cell: it cannot choose where it runs")]
+    PooledOfferPlacedElsewhere,
 }
 
 impl Distribution {
