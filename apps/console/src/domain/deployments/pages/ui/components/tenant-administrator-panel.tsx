@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Check, Copy, KeyRound, TriangleAlert } from 'lucide-react'
+import { Check, Copy, KeyRound, RefreshCw, TriangleAlert } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   ADMINISTRATOR_COPY,
@@ -10,8 +10,11 @@ import {
 interface Props {
   administrator: TenantAdministratorView
   revealed?: RevealedAdministrator
+  issuing: boolean
   revealing: boolean
   error?: string
+  confirming?: boolean
+  onIssue: () => void
   onReveal: () => void
 }
 
@@ -56,11 +59,72 @@ function Field({ label, value, copy }: { label: string; value: string; copy: str
   )
 }
 
+function Regenerate({
+  issuing,
+  confirming: initiallyConfirming,
+  onIssue,
+}: {
+  issuing: boolean
+  confirming: boolean
+  onIssue: () => void
+}) {
+  const [confirming, setConfirming] = useState(initiallyConfirming)
+
+  if (!confirming) {
+    return (
+      <Button type='button' variant='outline' onClick={() => setConfirming(true)} disabled={issuing}>
+        <RefreshCw className='h-4 w-4' />
+        {ADMINISTRATOR_COPY.regenerate}
+      </Button>
+    )
+  }
+
+  return (
+    <div className='space-y-2'>
+      <Warning>{ADMINISTRATOR_COPY.regenerateWarning}</Warning>
+      <div className='flex gap-2'>
+        <Button
+          type='button'
+          variant='destructive'
+          disabled={issuing}
+          onClick={() => {
+            setConfirming(false)
+            onIssue()
+          }}
+        >
+          {ADMINISTRATOR_COPY.confirmRegenerate}
+        </Button>
+        <Button type='button' variant='outline' onClick={() => setConfirming(false)}>
+          {ADMINISTRATOR_COPY.cancel}
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+function statusLine(administrator: TenantAdministratorView): string {
+  switch (administrator.credential) {
+    case 'none':
+      return ADMINISTRATOR_COPY.none
+    case 'issuing':
+      return administrator.stale ? ADMINISTRATOR_COPY.stale : ADMINISTRATOR_COPY.issuing
+    case 'ready':
+      return ADMINISTRATOR_COPY.ready
+    case 'revealed':
+      return ADMINISTRATOR_COPY.revealed
+    case 'expired':
+      return ADMINISTRATOR_COPY.expired
+  }
+}
+
 export function TenantAdministratorPanel({
   administrator,
   revealed,
+  issuing,
   revealing,
   error,
+  confirming = false,
+  onIssue,
   onReveal,
 }: Props) {
   if (revealed) {
@@ -83,30 +147,36 @@ export function TenantAdministratorPanel({
     )
   }
 
-  switch (administrator.credential) {
-    case 'pending':
-      return <p className='text-sm text-muted-foreground'>{ADMINISTRATOR_COPY.pending}</p>
-    case 'revealed':
-      return <p className='text-sm text-muted-foreground'>{ADMINISTRATOR_COPY.revealed}</p>
-    case 'expired':
-      return <p className='text-sm text-muted-foreground'>{ADMINISTRATOR_COPY.expired}</p>
-    case 'available':
-      return (
-        <div className='space-y-3'>
-          <p className='text-sm text-muted-foreground'>{ADMINISTRATOR_COPY.beforeReveal}</p>
-          {administrator.username && (
-            <p className='text-sm'>
-              <span className='text-muted-foreground'>{ADMINISTRATOR_COPY.username}: </span>
-              <span className='font-mono'>{administrator.username}</span>
-            </p>
-          )}
-          <Warning>{ADMINISTRATOR_COPY.shownOnce}</Warning>
-          {error && <p className='text-sm text-destructive'>{error}</p>}
+  const waiting = administrator.credential === 'issuing' && !administrator.stale
+
+  return (
+    <div className='space-y-3'>
+      <p className='text-sm text-muted-foreground'>{statusLine(administrator)}</p>
+      {administrator.username && (
+        <p className='text-sm'>
+          <span className='text-muted-foreground'>{ADMINISTRATOR_COPY.username}: </span>
+          <span className='font-mono'>{administrator.username}</span>
+        </p>
+      )}
+      {administrator.credential === 'ready' && <Warning>{ADMINISTRATOR_COPY.shownOnce}</Warning>}
+      {error && <p className='text-sm text-destructive'>{error}</p>}
+      <div className='flex flex-wrap gap-2'>
+        {administrator.credential === 'ready' && (
           <Button type='button' onClick={onReveal} disabled={revealing}>
             <KeyRound className='h-4 w-4' />
             {revealing ? ADMINISTRATOR_COPY.revealing : ADMINISTRATOR_COPY.reveal}
           </Button>
-        </div>
-      )
-  }
+        )}
+        {administrator.credential === 'none' && (
+          <Button type='button' onClick={onIssue} disabled={issuing}>
+            <KeyRound className='h-4 w-4' />
+            {ADMINISTRATOR_COPY.generate}
+          </Button>
+        )}
+        {administrator.credential !== 'none' && !waiting && (
+          <Regenerate issuing={issuing} confirming={confirming} onIssue={onIssue} />
+        )}
+      </div>
+    </div>
+  )
 }

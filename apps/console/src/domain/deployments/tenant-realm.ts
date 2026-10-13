@@ -1,10 +1,11 @@
 import type { Schemas } from '@/api/api.client'
 
-export type AdministratorCredentialState = 'pending' | 'available' | 'revealed' | 'expired'
+export type AdministratorCredentialState = 'none' | 'issuing' | 'ready' | 'revealed' | 'expired'
 
 export interface TenantAdministratorView {
-  username?: string
   credential: AdministratorCredentialState
+  stale: boolean
+  username?: string
   expiresAt?: string
 }
 
@@ -36,30 +37,39 @@ export const ADMINISTRATOR_COPY = {
   title: 'Administrator',
   username: 'Username',
   password: 'Temporary password',
-  reveal: 'Reveal the administrator credential',
+  generate: 'Generate the administrator credential',
+  regenerate: 'Regenerate',
+  confirmRegenerate: 'Replace the password',
+  cancel: 'Cancel',
+  regenerateWarning:
+    'A new temporary password replaces the current one: whoever signs in with the current administrator password will no longer be able to.',
+  reveal: 'Reveal',
   revealing: 'Revealing…',
   copyUsername: 'Copy username',
   copyPassword: 'Copy password',
+  none: 'Your realm has an administrator account named admin. Generate its credential to sign in to the administration console.',
+  issuing: 'The credential is being generated on your realm.',
+  stale: 'The credential has not arrived. Generate it again.',
+  ready: 'A credential is ready. It can be revealed once.',
   shownOnce:
     'The password is shown once and is not kept: copy it now. Your realm asks for a new one at the first sign-in.',
-  beforeReveal:
-    'The first administrator of your realm is ready. Its password can be revealed once, by an administrator of this organisation.',
-  pending: 'The first administrator of your realm is being created.',
   revealed:
-    'The administrator credential was already revealed. Sign in with the password chosen at the first sign-in.',
-  expired:
-    'The administrator credential expired before anyone revealed it and is no longer kept. Contact support to have it reset.',
+    'The credential was revealed. If it was lost, regenerate it: the current password stops working.',
+  expired: 'The credential expired before anyone revealed it. Regenerate it.',
+  unreadable:
+    'The credential was revealed but could not be read, and it is not kept. Regenerate it.',
 }
 
 function administratorView(
   administrator: Schemas.TenantAdministrator | null | undefined
 ): TenantAdministratorView {
-  if (!administrator) return { credential: 'pending' }
+  if (!administrator) return { credential: 'none', stale: false }
 
   return {
-    username: administrator.username,
     credential: administrator.credential,
-    expiresAt: administrator.expires_at,
+    stale: administrator.stale,
+    ...(administrator.username ? { username: administrator.username } : {}),
+    ...(administrator.expires_at ? { expiresAt: administrator.expires_at } : {}),
   }
 }
 

@@ -1,10 +1,5 @@
-import { useState } from 'react'
 import { useParams } from '@tanstack/react-router'
-import {
-  useGetDeployment,
-  useGetDeploymentActions,
-  useRevealTenantAdministrator,
-} from '@/api/deployment.api'
+import { useGetDeployment, useGetDeploymentActions } from '@/api/deployment.api'
 import { useGetDeploymentUptime } from '@/api/deployment-uptime.api'
 import { useHoldsPlatformRight } from '@/domain/organisations/hooks/use-is-operator'
 import { ClusterPanelFeature } from '@/domain/cloud-providers/pages/feature/cluster-panel-feature'
@@ -15,8 +10,8 @@ import {
 } from '@/domain/cloud-providers/resize'
 import { availabilityView } from '../../availability'
 import { useResolvedOrganisationId } from '@/domain/organisations/hooks/use-resolved-organisation-id'
-import { type RevealedAdministrator, tenantRealmView } from '../../tenant-realm'
-import { TenantAdministratorPanel } from '../ui/components/tenant-administrator-panel'
+import { tenantRealmView } from '../../tenant-realm'
+import { TenantAdministratorFeature } from './tenant-administrator-feature'
 import { PageDeploymentDetail } from '../ui/page-deployment-detail'
 
 export default function PageDeploymentDetailFeature() {
@@ -25,8 +20,6 @@ export default function PageDeploymentDetailFeature() {
   const deployment = useGetDeployment(deploymentId ?? null)
   const actions = useGetDeploymentActions(deploymentId ?? null)
   const organisationId = useResolvedOrganisationId()
-  const reveal = useRevealTenantAdministrator()
-  const [revealed, setRevealed] = useState<RevealedAdministrator>()
 
   const canViewEstate = useHoldsPlatformRight('view_estate')
   const uptime = useGetDeploymentUptime(deploymentId ?? null, canViewEstate)
@@ -59,14 +52,6 @@ export default function PageDeploymentDetailFeature() {
     subject && profile && credentialId && isResizable(subject, deployment.data?.provisioning)
 
   const realm = tenantRealmView(deployment.data?.realm)
-  const onReveal = () => {
-    if (!organisationId || !deploymentId) return
-    reveal.mutate(
-      { path: { organisation_id: organisationId, deployment_id: deploymentId } },
-      { onSuccess: async (answer) => setRevealed((await answer.json()).data) }
-    )
-  }
-
   return (
     <PageDeploymentDetail
       deployment={deployment.data?.data}
@@ -75,13 +60,12 @@ export default function PageDeploymentDetailFeature() {
       provisioning={deployment.data?.provisioning}
       realm={realm}
       administratorPanel={
-        realm?.administrator ? (
-          <TenantAdministratorPanel
+        realm?.administrator && deploymentId ? (
+          <TenantAdministratorFeature
+            key={deploymentId}
+            organisationId={organisationId ?? undefined}
+            deploymentId={deploymentId}
             administrator={realm.administrator}
-            revealed={revealed}
-            revealing={reveal.isPending}
-            error={reveal.error instanceof Error ? reveal.error.message : undefined}
-            onReveal={onReveal}
           />
         ) : undefined
       }

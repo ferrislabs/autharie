@@ -21,7 +21,7 @@ describe('the tenant realm of a deployment', () => {
       url: 'https://acme.autharie.fr',
       issuer: 'https://acme.autharie.fr/api/realms/acme',
       console: 'https://acme.autharie.fr/realms/acme/overview',
-      administrator: { credential: 'pending' },
+      administrator: { credential: 'none', stale: false },
     })
   })
 
@@ -46,6 +46,8 @@ describe('the tenant realm of a deployment', () => {
       administrator: {
         username: 'admin',
         credential: 'revealed',
+        stale: false,
+        requested_at: '2026-10-13T12:00:00Z',
         expires_at: '2026-10-20T12:00:00Z',
       },
     })
@@ -53,6 +55,7 @@ describe('the tenant realm of a deployment', () => {
     expect(view?.administrator).toEqual({
       username: 'admin',
       credential: 'revealed',
+      stale: false,
       expiresAt: '2026-10-20T12:00:00Z',
     })
   })

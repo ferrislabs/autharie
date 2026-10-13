@@ -5,11 +5,16 @@ import { TenantAdministratorPanel } from './tenant-administrator-panel'
 
 const noop = () => {}
 
-function render(administrator: TenantAdministratorView, overrides = {}) {
+function render(
+  administrator: TenantAdministratorView,
+  overrides: Partial<Parameters<typeof TenantAdministratorPanel>[0]> = {}
+) {
   return renderToStaticMarkup(
     <TenantAdministratorPanel
       administrator={administrator}
+      issuing={false}
       revealing={false}
+      onIssue={noop}
       onReveal={noop}
       {...overrides}
     />
@@ -17,17 +22,35 @@ function render(administrator: TenantAdministratorView, overrides = {}) {
 }
 
 describe('the administrator of a free realm', () => {
-  it('offers to reveal the credential once, and warns that it is shown once', () => {
-    const html = render({ username: 'admin', credential: 'available' })
+  it('offers to generate the credential the first time', () => {
+    const html = render({ credential: 'none', stale: false })
+
+    expect(html).toContain(ADMINISTRATOR_COPY.generate)
+    expect(html).not.toContain(ADMINISTRATOR_COPY.reveal)
+    expect(html).not.toContain(ADMINISTRATOR_COPY.regenerate)
+  })
+
+  it('waits while the credential is being generated, and offers again once it is stale', () => {
+    const waiting = render({ credential: 'issuing', stale: false })
+    expect(waiting).toContain(ADMINISTRATOR_COPY.issuing)
+    expect(waiting).not.toContain(ADMINISTRATOR_COPY.regenerate)
+
+    const stale = render({ credential: 'issuing', stale: true })
+    expect(stale).toContain(ADMINISTRATOR_COPY.stale)
+    expect(stale).toContain(ADMINISTRATOR_COPY.regenerate)
+  })
+
+  it('reveals a ready credential once and warns that it is shown once', () => {
+    const html = render({ credential: 'ready', stale: false, username: 'admin' })
 
     expect(html).toContain(ADMINISTRATOR_COPY.reveal)
     expect(html).toContain(ADMINISTRATOR_COPY.shownOnce)
-    expect(html).toContain('admin')
+    expect(html).toContain(ADMINISTRATOR_COPY.regenerate)
   })
 
   it('shows the revealed password with a way to copy it', () => {
     const html = render(
-      { username: 'admin', credential: 'available' },
+      { credential: 'ready', stale: false, username: 'admin' },
       { revealed: { username: 'admin', password: 'Tmp-Pass-42!' } }
     )
 
@@ -36,25 +59,32 @@ describe('the administrator of a free realm', () => {
     expect(html).not.toContain(ADMINISTRATOR_COPY.reveal)
   })
 
-  it('offers nothing to reveal once the credential was revealed, expired or is not there yet', () => {
+  it('offers to regenerate once revealed or expired, never to reveal again', () => {
     for (const [credential, says] of [
       ['revealed', ADMINISTRATOR_COPY.revealed],
       ['expired', ADMINISTRATOR_COPY.expired],
-      ['pending', ADMINISTRATOR_COPY.pending],
     ] as const) {
-      const html = render({ credential })
+      const html = render({ credential, stale: false })
 
       expect(html).toContain(says)
-      expect(html).not.toContain(ADMINISTRATOR_COPY.reveal)
+      expect(html).toContain(ADMINISTRATOR_COPY.regenerate)
+      expect(html).not.toContain(`>${ADMINISTRATOR_COPY.reveal}<`)
     }
   })
 
-  it('says why a reveal was refused', () => {
+  it('asks for confirmation before replacing the current password', () => {
+    const html = render({ credential: 'revealed', stale: false }, { confirming: true })
+
+    expect(html).toContain(ADMINISTRATOR_COPY.regenerateWarning)
+    expect(html).toContain(ADMINISTRATOR_COPY.confirmRegenerate)
+  })
+
+  it('says why an action was refused', () => {
     const html = render(
-      { username: 'admin', credential: 'available' },
-      { error: 'only an organisation administrator can reveal the realm administrator credential' }
+      { credential: 'ready', stale: false },
+      { error: ADMINISTRATOR_COPY.unreadable }
     )
 
-    expect(html).toContain('only an organisation administrator')
+    expect(html).toContain(ADMINISTRATOR_COPY.unreadable)
   })
 })
