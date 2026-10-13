@@ -8,7 +8,7 @@ use crate::domain::entities::identity_instance::{
 };
 use crate::domain::entities::outcome::DeploymentOutcomeReport;
 use crate::domain::entities::realm_payload::{RealmName, RouteOwner, TenantRoute};
-use crate::domain::entities::tenant_access::{AccessGrant, TenantAccess};
+use crate::domain::entities::tenant_access::{InitialAdministrator, TenantAccess};
 use crate::domain::error::{GenesisError, RealmError};
 use std::future::Future;
 use std::pin::Pin;
@@ -165,7 +165,13 @@ pub trait RealmPort: Send + Sync {
         &self,
         cell: &IdentityInstanceRef,
         access: &TenantAccess,
-    ) -> impl Future<Output = Result<AccessGrant, RealmError>> + Send;
+    ) -> impl Future<Output = Result<(), RealmError>> + Send;
+
+    fn issue_administrator(
+        &self,
+        cell: &IdentityInstanceRef,
+        access: &TenantAccess,
+    ) -> impl Future<Output = Result<InitialAdministrator, RealmError>> + Send;
 }
 
 pub trait TenantRoutePort: Send + Sync {

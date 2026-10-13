@@ -106,10 +106,14 @@ impl DeploymentOutcomeReport {
         }
     }
 
-    pub fn serving_with(deployment_id: Uuid, administrator: Option<InitialAdministrator>) -> Self {
+    pub fn administrator_issued(deployment_id: Uuid, administrator: InitialAdministrator) -> Self {
         Self {
-            administrator,
-            ..Self::serving(deployment_id)
+            deployment_id,
+            outcome: "administrator_issued".to_string(),
+            version: None,
+            duration_seconds: None,
+            reason: None,
+            administrator: Some(administrator),
         }
     }
 
@@ -217,22 +221,23 @@ mod tests {
 
     #[test]
     fn debug_never_shows_the_password() {
-        let report = DeploymentOutcomeReport::serving_with(
+        let report = DeploymentOutcomeReport::administrator_issued(
             DEPLOYMENT,
-            Some(InitialAdministrator::new("admin", "hunter2-Secret")),
+            InitialAdministrator::new("admin", "hunter2-Secret"),
         );
 
         let shown = format!("{report:?}");
 
         assert!(!shown.contains("hunter2-Secret"), "{shown}");
         assert!(shown.contains("<redacted>"));
+        assert_eq!(report.outcome, "administrator_issued");
     }
 
     #[test]
     fn the_administrator_round_trips_through_json() {
-        let report = DeploymentOutcomeReport::serving_with(
+        let report = DeploymentOutcomeReport::administrator_issued(
             DEPLOYMENT,
-            Some(InitialAdministrator::new("admin", "hunter2-Secret")),
+            InitialAdministrator::new("admin", "hunter2-Secret"),
         );
 
         let value = serde_json::to_value(&report).expect("serialised");

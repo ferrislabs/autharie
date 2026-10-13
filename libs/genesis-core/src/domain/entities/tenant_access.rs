@@ -96,11 +96,6 @@ impl TenantAccess {
     }
 }
 
-pub enum AccessGrant {
-    Issued(InitialAdministrator),
-    AlreadyIssued,
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;

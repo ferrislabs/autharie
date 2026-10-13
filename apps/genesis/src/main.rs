@@ -114,6 +114,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             outcomes.clone(),
             args.tenant_zone.clone(),
         )),
+        Arc::new(RealmEventHandler::issue(
+            FerriskeyRealms::new(kube.clone())?,
+            KubeTenantRoutes::new(kube.clone()),
+            outcomes.clone(),
+            args.tenant_zone.clone(),
+        )),
     ];
 
     let dispatcher = Arc::new(EventDispatcher::new(handlers));

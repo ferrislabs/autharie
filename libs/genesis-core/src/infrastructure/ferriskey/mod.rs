@@ -9,8 +9,8 @@ use serde_json::{Value, json};
 use crate::domain::entities::identity_instance::IdentityInstanceRef;
 use crate::domain::entities::realm_payload::RealmName;
 use crate::domain::entities::tenant_access::{
-    ADMINISTRATOR_USERNAME, AccessGrant, CONSOLE_CLIENT, InitialAdministrator, TENANT_PERMISSIONS,
-    TENANT_ROLE, TENANT_ROLE_DESCRIPTION, TenantAccess,
+    ADMINISTRATOR_USERNAME, CONSOLE_CLIENT, InitialAdministrator, TENANT_PERMISSIONS, TENANT_ROLE,
+    TENANT_ROLE_DESCRIPTION, TenantAccess,
 };
 use crate::domain::error::{GenesisError, RealmError};
 use crate::domain::ports::RealmPort;
@@ -99,19 +99,55 @@ impl FerriskeyAdmin {
         base_url: &str,
         credentials: &AdminCredentials,
         access: &TenantAccess,
-    ) -> Result<AccessGrant, RealmError> {
+    ) -> Result<(), RealmError> {
         let token = self.token(base_url, credentials).await?;
+        self.ensure_access(base_url, access, &token).await
+    }
+
+    pub async fn issue_administrator(
+        &self,
+        base_url: &str,
+        credentials: &AdminCredentials,
+        access: &TenantAccess,
+    ) -> Result<InitialAdministrator, RealmError> {
+        let token = self.token(base_url, credentials).await?;
+        self.ensure_access(base_url, access, &token).await?;
+
+        let administrator = InitialAdministrator::generate(ADMINISTRATOR_USERNAME);
+        let user = format!(
+            "{base_url}/realms/{}/users/{}",
+            access.realm, access.administrator_id
+        );
+        self.write(
+            self.http.put(format!("{user}/reset-password")),
+            json!({
+                "temporary": true,
+                "credential_type": "password",
+                "value": administrator.password(),
+            }),
+            &token,
+            STEP_PASSWORD,
+        )
+        .await?;
+        Ok(administrator)
+    }
+
+    async fn ensure_access(
+        &self,
+        base_url: &str,
+        access: &TenantAccess,
+        token: &str,
+    ) -> Result<(), RealmError> {
         let realm = format!("{base_url}/realms/{}", access.realm);
         let user = format!("{realm}/users/{}", access.administrator_id);
 
-        let client_id = self.console_client(&realm, &token).await?;
-        self.ensure_redirect(&realm, &client_id, &access.console_callback, &token)
+        let client_id = self.console_client(&realm, token).await?;
+        self.ensure_redirect(&realm, &client_id, &access.console_callback, token)
             .await?;
-        let role_id = self.ensure_role(&realm, &token).await?;
-        self.ensure_administrator(&realm, &user, access, &token)
+        let role_id = self.ensure_role(&realm, token).await?;
+        self.ensure_administrator(&realm, &user, access, token)
             .await?;
-        self.ensure_assignment(&user, &role_id, &token).await?;
-        self.issue_password(&user, &token).await
+        self.ensure_assignment(&user, &role_id, token).await
     }
 
     async fn exchange(
@@ -296,32 +332,6 @@ impl FerriskeyAdmin {
         succeeded(STEP_ASSIGN, status)
     }
 
-    async fn issue_password(&self, user: &str, token: &str) -> Result<AccessGrant, RealmError> {
-        let credentials = self
-            .read(format!("{user}/credentials"), token, STEP_CREDENTIALS)
-            .await?;
-        if items(&credentials)
-            .iter()
-            .any(|credential| credential["credential_type"].as_str() == Some("password"))
-        {
-            return Ok(AccessGrant::AlreadyIssued);
-        }
-
-        let administrator = InitialAdministrator::generate(ADMINISTRATOR_USERNAME);
-        self.write(
-            self.http.put(format!("{user}/reset-password")),
-            json!({
-                "temporary": true,
-                "credential_type": "password",
-                "value": administrator.password(),
-            }),
-            token,
-            STEP_PASSWORD,
-        )
-        .await?;
-        Ok(AccessGrant::Issued(administrator))
-    }
-
     async fn token(
         &self,
         base_url: &str,
@@ -388,7 +398,6 @@ const STEP_USER: &str = "the administrator lookup";
 const STEP_USER_ADD: &str = "the administrator creation";
 const STEP_ASSIGNMENTS: &str = "the role assignment lookup";
 const STEP_ASSIGN: &str = "the role assignment";
-const STEP_CREDENTIALS: &str = "the credential lookup";
 const STEP_PASSWORD: &str = "the password reset";
 
 fn items(value: &Value) -> &[Value] {
@@ -551,10 +560,21 @@ impl RealmPort for FerriskeyRealms {
         &self,
         cell: &IdentityInstanceRef,
         access: &TenantAccess,
-    ) -> Result<AccessGrant, RealmError> {
+    ) -> Result<(), RealmError> {
         let credentials = self.credentials(cell).await?;
         self.admin
             .open_access(&api_base_url(cell), &credentials, access)
+            .await
+    }
+
+    async fn issue_administrator(
+        &self,
+        cell: &IdentityInstanceRef,
+        access: &TenantAccess,
+    ) -> Result<InitialAdministrator, RealmError> {
+        let credentials = self.credentials(cell).await?;
+        self.admin
+            .issue_administrator(&api_base_url(cell), &credentials, access)
             .await
     }
 }
@@ -826,8 +846,6 @@ mod tests {
     const USER_ABSENT: (u16, &str) = (404, r#"{"message":"no user"}"#);
     const ASSIGNED_NONE: (u16, &str) = (200, r#"{"data":[]}"#);
     const ASSIGNED_KNOWN: (u16, &str) = (200, r#"{"data":[{"id":"r1"}]}"#);
-    const CREDENTIALS_NONE: (u16, &str) = (200, r#"{"data":[]}"#);
-    const CREDENTIALS_SET: (u16, &str) = (200, r#"{"data":[{"credential_type":"password"}]}"#);
     const OK_EMPTY: (u16, &str) = (200, "{}");
     const CREATED_EMPTY: (u16, &str) = (201, "{}");
 
@@ -856,9 +874,7 @@ mod tests {
             .collect()
     }
 
-    async fn open(
-        script: Vec<(u16, &'static str)>,
-    ) -> (Result<AccessGrant, RealmError>, Vec<Recorded>) {
+    async fn open(script: Vec<(u16, &'static str)>) -> (Result<(), RealmError>, Vec<Recorded>) {
         let (url, server) = serve(script);
         let result = FerriskeyAdmin::new()
             .expect("built")
@@ -873,28 +889,47 @@ mod tests {
         USER.replacen("/api-less", "", 1) + suffix
     }
 
-    #[tokio::test]
-    async fn the_first_run_opens_the_access_in_order_and_issues_a_temporary_password() {
-        let (result, seen) = open(vec![
-            TOKEN_OK,
-            CLIENTS,
-            REDIRECTS_EMPTY,
-            CREATED_EMPTY,
-            ROLES_EMPTY,
-            ROLE_CREATED,
-            USER_ABSENT,
-            CREATED_EMPTY,
-            ASSIGNED_NONE,
-            OK_EMPTY,
-            CREDENTIALS_NONE,
-            OK_EMPTY,
-        ])
-        .await;
+    const FIRST_RUN: [(u16, &str); 10] = [
+        TOKEN_OK,
+        CLIENTS,
+        REDIRECTS_EMPTY,
+        CREATED_EMPTY,
+        ROLES_EMPTY,
+        ROLE_CREATED,
+        USER_ABSENT,
+        CREATED_EMPTY,
+        ASSIGNED_NONE,
+        OK_EMPTY,
+    ];
+    const ALL_EXIST: [(u16, &str); 6] = [
+        TOKEN_OK,
+        CLIENTS,
+        REDIRECTS_KNOWN,
+        ROLES_KNOWN,
+        USER_KNOWN,
+        ASSIGNED_KNOWN,
+    ];
 
-        let Ok(AccessGrant::Issued(administrator)) = result else {
-            panic!("expected an issued credential");
-        };
-        assert_eq!(administrator.username(), "admin");
+    fn json_of(seen: &[Recorded], at: usize) -> Value {
+        serde_json::from_str::<Value>(&seen[at].body).expect("json")
+    }
+
+    async fn issue(
+        script: Vec<(u16, &'static str)>,
+    ) -> (Result<InitialAdministrator, RealmError>, Vec<Recorded>) {
+        let (url, server) = serve(script);
+        let result = FerriskeyAdmin::new()
+            .expect("built")
+            .issue_administrator(&url, &credentials(), &tenant_access())
+            .await;
+        (result, server.join().expect("served"))
+    }
+
+    #[tokio::test]
+    async fn the_first_run_opens_the_access_in_order_and_sets_no_password() {
+        let (result, seen) = open(FIRST_RUN.to_vec()).await;
+
+        assert_eq!(result, Ok(()));
         assert_eq!(
             lines(&seen),
             [
@@ -907,10 +942,14 @@ mod tests {
                 "POST /realms/acme/users".to_string(),
                 format!("GET {}", user_path("/roles")),
                 format!("POST {}", user_path("/roles/r1")),
-                format!("GET {}", user_path("/credentials")),
-                format!("PUT {}", user_path("/reset-password")),
             ]
         );
+        assert!(
+            !lines(&seen)
+                .iter()
+                .any(|line| line.contains("reset-password"))
+        );
+        assert!(!lines(&seen).iter().any(|line| line.starts_with("PUT ")));
         for recorded in &seen[1..] {
             assert!(
                 recorded
@@ -919,38 +958,75 @@ mod tests {
                     .contains("authorization: bearer fake-token")
             );
         }
-        let json_of = |at: usize| serde_json::from_str::<Value>(&seen[at].body).expect("json");
         assert_eq!(
-            json_of(3),
+            json_of(&seen, 3),
             json!({"value": "https://acme.cells.example/realms/acme/authentication/callback", "enabled": true})
         );
         assert_eq!(
-            json_of(7),
+            json_of(&seen, 7),
             json!({"id": "00000000-0000-0000-0000-000000000001", "username": "admin"})
         );
-        let reset = json_of(11);
-        assert_eq!(reset["temporary"], json!(true));
-        assert_eq!(reset["credential_type"], json!("password"));
-        assert_eq!(reset["value"].as_str(), Some(administrator.password()));
     }
 
     /// @spec-fpr-6
     #[tokio::test]
-    async fn a_run_where_everything_exists_writes_nothing_and_keeps_the_password() {
-        let (result, seen) = open(vec![
-            TOKEN_OK,
-            CLIENTS,
-            REDIRECTS_KNOWN,
-            ROLES_KNOWN,
-            USER_KNOWN,
-            ASSIGNED_KNOWN,
-            CREDENTIALS_SET,
-        ])
-        .await;
+    async fn a_run_where_everything_exists_writes_nothing() {
+        let (result, seen) = open(ALL_EXIST.to_vec()).await;
 
-        assert!(matches!(result, Ok(AccessGrant::AlreadyIssued)));
+        assert_eq!(result, Ok(()));
         assert!(lines(&seen).iter().all(|line| line.starts_with("GET ")));
-        assert_eq!(seen.len(), 7);
+        assert_eq!(seen.len(), 6);
+    }
+
+    #[tokio::test]
+    async fn an_issue_repairs_what_is_missing_then_resets_the_password_as_temporary() {
+        let mut script = FIRST_RUN.to_vec();
+        script.push(OK_EMPTY);
+
+        let (result, seen) = issue(script).await;
+
+        let administrator = result.expect("issued");
+        assert_eq!(administrator.username(), "admin");
+        let sent = lines(&seen);
+        assert_eq!(sent.len(), 10);
+        assert_eq!(
+            sent.last().map(String::as_str),
+            Some(format!("PUT {}", user_path("/reset-password")).as_str())
+        );
+        assert!(sent.contains(&"POST /realms/acme/roles".to_string()));
+        let reset = json_of(&seen, 10);
+        assert_eq!(reset["temporary"], json!(true));
+        assert_eq!(reset["credential_type"], json!("password"));
+        assert_eq!(reset["value"].as_str(), Some(administrator.password()));
+        assert!(
+            seen[10]
+                .head
+                .to_ascii_lowercase()
+                .contains("authorization: bearer fake-token")
+        );
+    }
+
+    #[tokio::test]
+    async fn every_issue_replaces_the_previous_password() {
+        let mut script = ALL_EXIST.to_vec();
+        script.push(OK_EMPTY);
+
+        let (first, first_seen) = issue(script.clone()).await;
+        let (second, second_seen) = issue(script).await;
+
+        let (first, second) = (first.expect("first"), second.expect("second"));
+        assert_ne!(first.password(), second.password());
+        for (seen, administrator) in [(&first_seen, &first), (&second_seen, &second)] {
+            let puts = lines(seen)
+                .into_iter()
+                .filter(|line| line.starts_with("PUT "))
+                .count();
+            assert_eq!(puts, 1);
+            assert_eq!(
+                json_of(seen, 6)["value"].as_str(),
+                Some(administrator.password())
+            );
+        }
     }
 
     /// @spec-fpr-6
@@ -964,7 +1040,6 @@ mod tests {
             ROLE_CREATED,
             USER_KNOWN,
             ASSIGNED_KNOWN,
-            CREDENTIALS_SET,
         ])
         .await;
 
@@ -983,7 +1058,6 @@ mod tests {
             USER_KNOWN,
             ASSIGNED_NONE,
             OK_EMPTY,
-            CREDENTIALS_SET,
         ])
         .await;
 
@@ -1003,7 +1077,6 @@ mod tests {
             ROLES_KNOWN,
             USER_KNOWN,
             ASSIGNED_KNOWN,
-            CREDENTIALS_SET,
         ])
         .await;
 
@@ -1025,11 +1098,10 @@ mod tests {
             ROLE_CREATED,
             USER_KNOWN,
             ASSIGNED_KNOWN,
-            CREDENTIALS_SET,
         ])
         .await;
 
-        let body = serde_json::from_str::<Value>(&seen[4].body).expect("json");
+        let body = json_of(&seen, 4);
         assert_eq!(body["name"], json!("tenant-admin"));
         let permissions = body["permissions"].as_array().expect("a list");
         assert_eq!(permissions.len(), 15);
@@ -1064,8 +1136,6 @@ mod tests {
                 REDIRECTS_KNOWN,
                 ROLES_KNOWN,
                 USER_KNOWN,
-                ASSIGNED_KNOWN,
-                CREDENTIALS_NONE,
                 (500, echo),
             ],
             vec![
@@ -1086,6 +1156,29 @@ mod tests {
             assert!(!shown.contains(PASSWORD), "{shown}");
             assert!(!shown.contains("upstream"), "{shown}");
         }
+    }
+
+    /// @spec-fpr-14
+    #[tokio::test]
+    async fn a_failing_issue_names_neither_the_password_nor_the_body() {
+        let echo: &'static str =
+            Box::leak(format!(r#"{{"message":"{PASSWORD} upstream"}}"#).into_boxed_str());
+        let mut script = ALL_EXIST.to_vec();
+        script.push((500, echo));
+
+        let (result, seen) = issue(script).await;
+
+        let Err(error) = result else {
+            panic!("expected a failure");
+        };
+        let shown = format!("{error} {error:?}");
+        let sent = json_of(&seen, 6)["value"]
+            .as_str()
+            .expect("sent")
+            .to_string();
+        assert!(!shown.contains(PASSWORD), "{shown}");
+        assert!(!shown.contains("upstream"), "{shown}");
+        assert!(!shown.contains(&sent), "{shown}");
     }
 
     #[test]

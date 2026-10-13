@@ -5,14 +5,16 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::domain::entities::action_event::ActionEvent;
+use crate::domain::entities::identity_instance::IdentityInstanceRef;
 use crate::domain::entities::outcome::DeploymentOutcomeReport;
-use crate::domain::entities::realm_payload::RealmPayloadV1;
-use crate::domain::entities::tenant_access::{AccessGrant, InitialAdministrator, TenantAccess};
+use crate::domain::entities::realm_payload::{RealmPayloadV1, TenantRoute};
+use crate::domain::entities::tenant_access::TenantAccess;
 use crate::domain::error::{GenesisError, RealmError};
 use crate::domain::ports::{BoxFuture, EventHandler, OutcomePublisher, RealmPort, TenantRoutePort};
 
 pub const REALM_CREATE: &str = "realm.create";
 pub const REALM_DELETE: &str = "realm.delete";
+pub const REALM_ADMINISTRATOR_ISSUE: &str = "realm.administrator.issue";
 pub const MAX_REFUSED_DELETES: u32 = 8;
 
 const NO_TENANT_ZONE: &str = "realm_no_tenant_zone";
@@ -20,11 +22,13 @@ const NOT_A_CELL: &str = "realm_not_a_cell";
 const ROUTE_NOT_OWNED: &str = "realm_route_not_owned";
 const DELETE_REFUSED: &str = "realm_delete_refused";
 const REALM_CLAIMED: &str = "realm_claimed_by_another_deployment";
+const REALM_NOT_CLAIMED: &str = "realm_not_claimed";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RealmAction {
     Create,
     Delete,
+    Issue,
 }
 
 pub struct RealmEventHandler<R, T> {
@@ -34,7 +38,6 @@ pub struct RealmEventHandler<R, T> {
     outcomes: Arc<dyn OutcomePublisher>,
     zone: Option<String>,
     refused_deletes: Mutex<HashMap<Uuid, u32>>,
-    pending: Mutex<HashMap<Uuid, InitialAdministrator>>,
 }
 
 impl<R, T> RealmEventHandler<R, T>
@@ -60,6 +63,15 @@ where
         Self::new(RealmAction::Delete, realms, routes, outcomes, zone)
     }
 
+    pub fn issue(
+        realms: R,
+        routes: T,
+        outcomes: Arc<dyn OutcomePublisher>,
+        zone: Option<String>,
+    ) -> Self {
+        Self::new(RealmAction::Issue, realms, routes, outcomes, zone)
+    }
+
     fn new(
         action: RealmAction,
         realms: R,
@@ -74,7 +86,6 @@ where
             outcomes,
             zone: zone.filter(|zone| !zone.is_empty()),
             refused_deletes: Mutex::default(),
-            pending: Mutex::default(),
         }
     }
 
@@ -129,34 +140,66 @@ where
 
         let deployment_id = payload.deployment_id;
         let access = TenantAccess::for_realm(&payload, hostname);
-        let administrator = match self.realms.open_access(&cell, &access).await {
-            Ok(AccessGrant::Issued(administrator)) => {
-                self.pending_lock()
-                    .insert(deployment_id, administrator.clone());
-                Some(administrator)
-            }
-            Ok(AccessGrant::AlreadyIssued) => self.pending_lock().get(&deployment_id).cloned(),
-            Err(RealmError::NotACell) => {
-                self.routes.delete(&route).await?;
-                return refuse(deployment_id, NOT_A_CELL);
-            }
+        match self.realms.open_access(&cell, &access).await {
+            Ok(()) => {}
+            Err(RealmError::NotACell) => return self.compensate(&route, &cell, &payload).await,
             Err(error) => return Err(retry(error)),
-        };
+        }
 
         self.outcomes
-            .publish(DeploymentOutcomeReport::serving_with(
-                deployment_id,
-                administrator,
-            ))
-            .await?;
-        self.pending_lock().remove(&deployment_id);
-        Ok(())
+            .publish(DeploymentOutcomeReport::serving(deployment_id))
+            .await
     }
 
-    fn pending_lock(&self) -> std::sync::MutexGuard<'_, HashMap<Uuid, InitialAdministrator>> {
-        self.pending
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    async fn compensate(
+        &self,
+        route: &TenantRoute,
+        cell: &IdentityInstanceRef,
+        payload: &RealmPayloadV1,
+    ) -> Result<(), GenesisError> {
+        match self.realms.delete_realm(cell, &payload.realm).await {
+            Ok(()) | Err(RealmError::NotFound) => self.routes.delete(route).await?,
+            Err(_) => error!(
+                deployment_id = %payload.deployment_id,
+                "the cell lost its marker and its new realm could not be removed, the route is kept"
+            ),
+        }
+        refuse(payload.deployment_id, NOT_A_CELL)
+    }
+
+    async fn issue_administrator(
+        &self,
+        payload: RealmPayloadV1,
+        zone: &str,
+    ) -> Result<(), GenesisError> {
+        let hostname = payload.hostname_in(zone)?;
+        let cell = payload.cell();
+        let route = payload.route();
+        info!(
+            deployment_id = %payload.deployment_id,
+            realm = %payload.realm,
+            cell = %cell.name,
+            "issuing the realm administrator"
+        );
+
+        match self.routes.owner(&route).await? {
+            Some(owner) if route.is_owned_by(&owner) => {}
+            _ => return refuse(payload.deployment_id, REALM_NOT_CLAIMED),
+        }
+
+        let access = TenantAccess::for_realm(&payload, hostname);
+        match self.realms.issue_administrator(&cell, &access).await {
+            Ok(administrator) => {
+                self.outcomes
+                    .publish(DeploymentOutcomeReport::administrator_issued(
+                        payload.deployment_id,
+                        administrator,
+                    ))
+                    .await
+            }
+            Err(RealmError::NotACell) => refuse(payload.deployment_id, NOT_A_CELL),
+            Err(error) => Err(retry(error)),
+        }
     }
 
     async fn delete_realm(
@@ -258,6 +301,7 @@ where
         match self.action {
             RealmAction::Create => REALM_CREATE,
             RealmAction::Delete => REALM_DELETE,
+            RealmAction::Issue => REALM_ADMINISTRATOR_ISSUE,
         }
     }
 
@@ -270,6 +314,7 @@ where
             match self.action {
                 RealmAction::Create => self.create_realm(payload, zone).await,
                 RealmAction::Delete => self.delete_realm(event.action_id, payload).await,
+                RealmAction::Issue => self.issue_administrator(payload, zone).await,
             }
         })
     }
@@ -283,8 +328,8 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::domain::entities::identity_instance::IdentityInstanceRef;
-    use crate::domain::entities::realm_payload::{RealmName, RouteOwner, TenantRoute};
+    use crate::domain::entities::realm_payload::{RealmName, RouteOwner};
+    use crate::domain::entities::tenant_access::InitialAdministrator;
 
     const TENANT: Uuid = Uuid::from_u128(1);
     const CELL: Uuid = Uuid::from_u128(2);
@@ -304,6 +349,9 @@ mod tests {
         journal: Journal,
         access_failure: Option<RealmError>,
         accesses: Mutex<Vec<TenantAccess>>,
+        delete_failure: Option<RealmError>,
+        issue_failure: Option<RealmError>,
+        issued: Mutex<Vec<InitialAdministrator>>,
     }
 
     impl FakeCell {
@@ -312,6 +360,17 @@ mod tests {
                 access_failure: Some(failure),
                 ..Self::default()
             }
+        }
+
+        fn failing_issue(failure: RealmError) -> Self {
+            Self {
+                issue_failure: Some(failure),
+                ..Self::default()
+            }
+        }
+
+        fn issued(&self) -> Vec<InitialAdministrator> {
+            self.issued.lock().expect("lock").clone()
         }
 
         fn accesses(&self) -> Vec<TenantAccess> {
@@ -373,6 +432,9 @@ mod tests {
         ) -> Result<(), RealmError> {
             self.journal.lock().expect("lock").push("delete realm");
             self.answer(cell, realm)?;
+            if let Some(failure) = &self.delete_failure {
+                return Err(failure.clone());
+            }
             if self.realms.lock().expect("lock").remove(realm.as_str()) {
                 Ok(())
             } else {
@@ -384,18 +446,33 @@ mod tests {
             &self,
             _cell: &IdentityInstanceRef,
             access: &TenantAccess,
-        ) -> Result<AccessGrant, RealmError> {
+        ) -> Result<(), RealmError> {
             self.journal.lock().expect("lock").push("open access");
-            let mut accesses = self.accesses.lock().expect("lock");
-            accesses.push(access.clone());
-            if let Some(failure) = &self.access_failure {
+            self.accesses.lock().expect("lock").push(access.clone());
+            match &self.access_failure {
+                Some(failure) => Err(failure.clone()),
+                None => Ok(()),
+            }
+        }
+
+        async fn issue_administrator(
+            &self,
+            _cell: &IdentityInstanceRef,
+            _access: &TenantAccess,
+        ) -> Result<InitialAdministrator, RealmError> {
+            self.journal
+                .lock()
+                .expect("lock")
+                .push("issue administrator");
+            if let Some(failure) = &self.issue_failure {
                 return Err(failure.clone());
             }
-            if accesses.len() == 1 {
-                Ok(AccessGrant::Issued(administrator()))
-            } else {
-                Ok(AccessGrant::AlreadyIssued)
-            }
+            let administrator = InitialAdministrator::generate("admin");
+            self.issued
+                .lock()
+                .expect("lock")
+                .push(administrator.clone());
+            Ok(administrator)
         }
     }
 
@@ -464,10 +541,6 @@ mod tests {
         }
     }
 
-    fn administrator() -> InitialAdministrator {
-        InitialAdministrator::new("admin", "first-issued-Passw0rd!")
-    }
-
     #[derive(Default)]
     struct Reports {
         sent: Mutex<Vec<DeploymentOutcomeReport>>,
@@ -526,6 +599,10 @@ mod tests {
         event(REALM_CREATE, Some("acme.cells.example"))
     }
 
+    fn issue_event() -> ActionEvent {
+        event(REALM_ADMINISTRATOR_ISSUE, Some("acme.cells.example"))
+    }
+
     fn delete_event() -> ActionEvent {
         event(REALM_DELETE, None)
     }
@@ -553,6 +630,14 @@ mod tests {
         reports: &Arc<Reports>,
     ) -> Handler<'a> {
         RealmEventHandler::create(cell, routes, reports.clone(), zone())
+    }
+
+    fn issuing<'a>(
+        cell: &'a FakeCell,
+        routes: &'a FakeRoutes,
+        reports: &Arc<Reports>,
+    ) -> Handler<'a> {
+        RealmEventHandler::issue(cell, routes, reports.clone(), zone())
     }
 
     fn deleting<'a>(
@@ -589,18 +674,12 @@ mod tests {
                 ("acme.cells.example".to_string(), owner(TENANT, "acme"))
             )])
         );
-        assert_eq!(
-            reports.all(),
-            [DeploymentOutcomeReport::serving_with(
-                TENANT,
-                Some(administrator())
-            )]
-        );
+        assert_eq!(reports.all(), [DeploymentOutcomeReport::serving(TENANT)]);
     }
 
     /// @spec-fpr-6
     #[tokio::test]
-    async fn creating_the_realm_twice_leaves_one_realm_and_succeeds_twice() {
+    async fn creating_the_realm_twice_leaves_one_realm_and_reports_serving_twice() {
         let (cell, routes, reports) = (
             FakeCell::default(),
             FakeRoutes::default(),
@@ -613,18 +692,43 @@ mod tests {
 
         assert_eq!(cell.realms().len(), 1);
         assert_eq!(routes.routes().len(), 1);
+        assert_eq!(cell.accesses().len(), 2);
+        assert!(cell.issued().is_empty());
         assert_eq!(
             reports.all(),
             [
-                DeploymentOutcomeReport::serving_with(TENANT, Some(administrator())),
-                DeploymentOutcomeReport::serving_with(TENANT, None)
+                DeploymentOutcomeReport::serving(TENANT),
+                DeploymentOutcomeReport::serving(TENANT)
             ]
         );
     }
 
-    /// @spec-fpr-6
     #[tokio::test]
-    async fn a_publish_that_failed_once_carries_the_same_credential_on_redelivery() {
+    async fn a_create_never_issues_a_password_and_publishes_no_administrator() {
+        let journal = Journal::default();
+        let cell = FakeCell {
+            journal: Arc::clone(&journal),
+            ..FakeCell::default()
+        };
+        let (routes, reports) = (FakeRoutes::default(), Arc::new(Reports::default()));
+
+        creating(&cell, &routes, &reports)
+            .handle(create_event())
+            .await
+            .expect("created");
+
+        assert!(!entries(&journal).contains(&"issue administrator"));
+        assert!(cell.issued().is_empty());
+        assert!(
+            reports
+                .all()
+                .iter()
+                .all(|report| report.administrator.is_none())
+        );
+    }
+
+    #[tokio::test]
+    async fn a_publish_that_failed_once_is_published_on_redelivery() {
         let (cell, routes, reports) = (
             FakeCell::default(),
             FakeRoutes::default(),
@@ -636,15 +740,220 @@ mod tests {
         assert!(matches!(first, Err(GenesisError::MessageBus { .. })));
         assert!(reports.all().is_empty());
         handler.handle(create_event()).await.expect("redelivered");
-        handler.handle(create_event()).await.expect("again");
 
+        assert_eq!(reports.all(), [DeploymentOutcomeReport::serving(TENANT)]);
+    }
+
+    #[tokio::test]
+    async fn an_instance_that_loses_its_marker_after_the_realm_is_compensated() {
+        let journal = Journal::default();
+        let cell = FakeCell {
+            journal: Arc::clone(&journal),
+            access_failure: Some(RealmError::NotACell),
+            ..FakeCell::default()
+        };
+        let routes = FakeRoutes {
+            journal: Arc::clone(&journal),
+            ..FakeRoutes::default()
+        };
+        let reports = Arc::new(Reports::default());
+
+        creating(&cell, &routes, &reports)
+            .handle(create_event())
+            .await
+            .expect("parked");
+
+        assert!(cell.realms().is_empty());
+        assert!(routes.routes().is_empty());
         assert_eq!(
-            reports.all(),
+            entries(&journal),
             [
-                DeploymentOutcomeReport::serving_with(TENANT, Some(administrator())),
-                DeploymentOutcomeReport::serving_with(TENANT, None)
+                "claim",
+                "create realm",
+                "open access",
+                "delete realm",
+                "release"
             ]
         );
+        assert!(reports.all().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_failed_compensation_keeps_the_route_and_publishes_nothing() {
+        let cell = FakeCell {
+            access_failure: Some(RealmError::NotACell),
+            delete_failure: Some(RealmError::CellUnreachable {
+                message: "the cell is unreachable".to_string(),
+            }),
+            ..FakeCell::default()
+        };
+        let (routes, reports) = (FakeRoutes::default(), Arc::new(Reports::default()));
+
+        creating(&cell, &routes, &reports)
+            .handle(create_event())
+            .await
+            .expect("parked");
+
+        assert_eq!(routes.routes().len(), 1);
+        assert_eq!(cell.realms().len(), 1);
+        assert!(reports.all().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_compensation_that_finds_no_realm_still_releases_the_route() {
+        let cell = FakeCell {
+            access_failure: Some(RealmError::NotACell),
+            delete_failure: Some(RealmError::NotFound),
+            ..FakeCell::default()
+        };
+        let (routes, reports) = (FakeRoutes::default(), Arc::new(Reports::default()));
+
+        creating(&cell, &routes, &reports)
+            .handle(create_event())
+            .await
+            .expect("parked");
+
+        assert!(routes.routes().is_empty());
+        assert!(reports.all().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_issue_on_an_owned_route_publishes_a_fresh_administrator() {
+        let (cell, routes, reports) = (
+            FakeCell::default(),
+            FakeRoutes::with(&route_name(), owner(TENANT, "acme")),
+            Arc::new(Reports::default()),
+        );
+
+        issuing(&cell, &routes, &reports)
+            .handle(issue_event())
+            .await
+            .expect("issued");
+
+        let issued = cell.issued();
+        assert_eq!(issued.len(), 1);
+        assert_eq!(
+            reports.all(),
+            [DeploymentOutcomeReport::administrator_issued(
+                TENANT,
+                issued[0].clone()
+            )]
+        );
+        assert_eq!(reports.all()[0].outcome, "administrator_issued");
+    }
+
+    #[tokio::test]
+    async fn two_issues_produce_two_different_passwords() {
+        let (cell, routes, reports) = (
+            FakeCell::default(),
+            FakeRoutes::with(&route_name(), owner(TENANT, "acme")),
+            Arc::new(Reports::default()),
+        );
+        let handler = issuing(&cell, &routes, &reports);
+
+        handler.handle(issue_event()).await.expect("first");
+        handler.handle(issue_event()).await.expect("second");
+
+        let issued = cell.issued();
+        assert_eq!(issued.len(), 2);
+        assert_ne!(issued[0].password(), issued[1].password());
+        assert_eq!(reports.all().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn an_issue_without_an_owned_route_makes_no_realm_call_and_no_outcome() {
+        for routes in [
+            FakeRoutes::default(),
+            FakeRoutes::with(&route_name(), owner(CELL, "acme")),
+            FakeRoutes::with(&route_name(), owner(TENANT, "other")),
+            FakeRoutes::with(&route_name(), RouteOwner::default()),
+        ] {
+            let (cell, reports) = (FakeCell::default(), Arc::new(Reports::default()));
+
+            issuing(&cell, &routes, &reports)
+                .handle(issue_event())
+                .await
+                .expect("parked");
+
+            assert!(cell.issued().is_empty());
+            assert_eq!(cell.calls(), 0);
+            assert!(reports.all().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn an_issue_error_is_retried_and_publishes_nothing() {
+        let (cell, routes, reports) = (
+            FakeCell::failing_issue(RealmError::CellUnreachable {
+                message: "the cell is unreachable".to_string(),
+            }),
+            FakeRoutes::with(&route_name(), owner(TENANT, "acme")),
+            Arc::new(Reports::default()),
+        );
+
+        let result = issuing(&cell, &routes, &reports)
+            .handle(issue_event())
+            .await;
+
+        assert!(matches!(result, Err(GenesisError::Handler { .. })));
+        assert!(reports.all().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_issue_on_a_lost_cell_is_parked() {
+        let (cell, routes, reports) = (
+            FakeCell::failing_issue(RealmError::NotACell),
+            FakeRoutes::with(&route_name(), owner(TENANT, "acme")),
+            Arc::new(Reports::default()),
+        );
+
+        issuing(&cell, &routes, &reports)
+            .handle(issue_event())
+            .await
+            .expect("parked");
+
+        assert!(reports.all().is_empty());
+        assert_eq!(routes.routes().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn an_issue_error_never_carries_a_password_or_a_server_body() {
+        let (cell, routes, reports) = (
+            FakeCell::failing_issue(RealmError::CellUnreachable {
+                message: "the password reset answered 500".to_string(),
+            }),
+            FakeRoutes::with(&route_name(), owner(TENANT, "acme")),
+            Arc::new(Reports::default()),
+        );
+
+        let error = issuing(&cell, &routes, &reports)
+            .handle(issue_event())
+            .await
+            .expect_err("retried");
+
+        let shown = format!("{error} {error:?}");
+        assert!(shown.contains("the password reset answered 500"));
+        assert!(!shown.contains("value"));
+        assert!(cell.issued().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_issue_outside_the_tenant_zone_never_reaches_the_cell() {
+        let (cell, routes, reports) = (
+            FakeCell::default(),
+            FakeRoutes::with(&route_name(), owner(TENANT, "acme")),
+            Arc::new(Reports::default()),
+        );
+        let handler = issuing(&cell, &routes, &reports);
+
+        for hostname in [None, Some("acme.elsewhere.example")] {
+            let result = handler
+                .handle(event(REALM_ADMINISTRATOR_ISSUE, hostname))
+                .await;
+            assert!(matches!(result, Err(GenesisError::InvalidPayload { .. })));
+        }
+        assert_eq!(cell.calls(), 0);
+        assert!(cell.issued().is_empty());
     }
 
     #[tokio::test]
@@ -945,6 +1254,7 @@ mod tests {
         for handler in [
             RealmEventHandler::create(&cell, &routes, reports.clone(), None),
             RealmEventHandler::delete(&cell, &routes, reports.clone(), Some(String::new())),
+            RealmEventHandler::issue(&cell, &routes, reports.clone(), None),
         ] {
             let key = handler.routing_key().to_string();
             let event = event(&key, Some("acme.cells.example"));
@@ -986,6 +1296,10 @@ mod tests {
         assert_eq!(
             deleting(&cell, &routes, &reports).routing_key(),
             "realm.delete"
+        );
+        assert_eq!(
+            issuing(&cell, &routes, &reports).routing_key(),
+            "realm.administrator.issue"
         );
     }
 }
