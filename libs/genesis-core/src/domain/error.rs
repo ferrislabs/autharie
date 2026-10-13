@@ -45,4 +45,7 @@ pub enum RealmError {
 
     #[error("the cell could not be reached: {message}")]
     CellUnreachable { message: String },
+
+    #[error("the payload does not name a FerrisKey cell instance")]
+    NotACell,
 }

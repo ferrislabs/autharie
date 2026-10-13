@@ -1,12 +1,14 @@
 use std::time::Duration;
 
+use autharie_crds::v1alpha::identity_instance::{IdentityInstance, IdentityProvider};
 use k8s_openapi::api::core::v1::Secret;
 use kube::{Api, Client};
-use reqwest::{StatusCode, header::CONTENT_TYPE};
+use reqwest::{StatusCode, header::CONTENT_TYPE, redirect::Policy};
 use serde_json::{Value, json};
 
 use crate::domain::entities::identity_instance::IdentityInstanceRef;
-use crate::domain::error::RealmError;
+use crate::domain::entities::realm_payload::RealmName;
+use crate::domain::error::{GenesisError, RealmError};
 use crate::domain::ports::RealmPort;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -14,7 +16,6 @@ const ADMIN_REALM: &str = "master";
 const ADMIN_CLIENT: &str = "admin-cli";
 const API_PORT: u16 = 3333;
 const API_ROOT_PATH: &str = "/api";
-const REDACTED: &str = "[redacted]";
 
 pub struct AdminCredentials {
     username: String,
@@ -28,13 +29,6 @@ impl AdminCredentials {
             password: password.into(),
         }
     }
-
-    fn redact(&self, text: &str) -> String {
-        if self.password.is_empty() {
-            return text.to_string();
-        }
-        text.replace(&self.password, REDACTED)
-    }
 }
 
 enum Call {
@@ -46,26 +40,23 @@ pub struct FerriskeyAdmin {
     http: reqwest::Client,
 }
 
-impl Default for FerriskeyAdmin {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl FerriskeyAdmin {
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self, GenesisError> {
         let http = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
+            .redirect(Policy::none())
             .build()
-            .unwrap_or_default();
-        Self { http }
+            .map_err(|error| GenesisError::Internal {
+                message: format!("the FerrisKey admin client could not be built: {error}"),
+            })?;
+        Ok(Self { http })
     }
 
     pub async fn create_realm(
         &self,
         base_url: &str,
         credentials: &AdminCredentials,
-        realm: &str,
+        realm: &RealmName,
     ) -> Result<(), RealmError> {
         let token = self.token(base_url, credentials).await?;
         let response = self
@@ -73,19 +64,19 @@ impl FerriskeyAdmin {
             .post(format!("{base_url}/realms"))
             .bearer_auth(token)
             .header(CONTENT_TYPE, "application/json")
-            .body(json!({ "name": realm }).to_string())
+            .body(json!({ "name": realm.as_str() }).to_string())
             .send()
             .await
             .map_err(unreachable)?;
 
-        answer(Call::Create, response, credentials).await
+        answer(Call::Create, response.status())
     }
 
     pub async fn delete_realm(
         &self,
         base_url: &str,
         credentials: &AdminCredentials,
-        realm: &str,
+        realm: &RealmName,
     ) -> Result<(), RealmError> {
         let token = self.token(base_url, credentials).await?;
         let response = self
@@ -96,7 +87,7 @@ impl FerriskeyAdmin {
             .await
             .map_err(unreachable)?;
 
-        answer(Call::Delete, response, credentials).await
+        answer(Call::Delete, response.status())
     }
 
     async fn token(
@@ -122,7 +113,7 @@ impl FerriskeyAdmin {
         let status = response.status();
         if !status.is_success() {
             return Err(RealmError::CellUnreachable {
-                message: format!("FerrisKey refused an admin token (status {status})"),
+                message: format!("admin token refused by the cell ({})", status.as_u16()),
             });
         }
 
@@ -131,35 +122,28 @@ impl FerriskeyAdmin {
             .ok()
             .and_then(|value| value["access_token"].as_str().map(ToOwned::to_owned))
             .ok_or_else(|| RealmError::CellUnreachable {
-                message: "FerrisKey answered the token request without a token".to_string(),
+                message: "the cell answered the token request without a token".to_string(),
             })
     }
 }
 
-async fn answer(
-    call: Call,
-    response: reqwest::Response,
-    credentials: &AdminCredentials,
-) -> Result<(), RealmError> {
-    let status = response.status();
+fn answer(call: Call, status: StatusCode) -> Result<(), RealmError> {
     if status.is_success() {
         return Ok(());
     }
 
+    let code = status.as_u16();
     match (call, status) {
-        (Call::Create, StatusCode::CONFLICT) => return Err(RealmError::AlreadyExists),
-        (Call::Delete, StatusCode::NOT_FOUND) => return Err(RealmError::NotFound),
-        _ => {}
-    }
-
-    let message = credentials.redact(&error_message(
-        status.as_u16(),
-        &response.text().await.unwrap_or_default(),
-    ));
-    if status.is_server_error() || matches!(status.as_u16(), 401 | 408 | 429) {
-        Err(RealmError::CellUnreachable { message })
-    } else {
-        Err(RealmError::Refused { reason: message })
+        (Call::Create, StatusCode::CONFLICT) => Err(RealmError::AlreadyExists),
+        (Call::Delete, StatusCode::NOT_FOUND) => Err(RealmError::NotFound),
+        (_, StatusCode::BAD_REQUEST | StatusCode::UNPROCESSABLE_ENTITY) => {
+            Err(RealmError::Refused {
+                reason: format!("realm refused by the cell ({code})"),
+            })
+        }
+        _ => Err(RealmError::CellUnreachable {
+            message: format!("the cell answered {code}"),
+        }),
     }
 }
 
@@ -170,16 +154,8 @@ fn unreachable(error: reqwest::Error) -> RealmError {
         "unreachable"
     };
     RealmError::CellUnreachable {
-        message: format!("FerrisKey is {state}"),
+        message: format!("the cell is {state}"),
     }
-}
-
-fn error_message(status: u16, body: &str) -> String {
-    serde_json::from_str::<Value>(body)
-        .ok()
-        .and_then(|value| value["message"].as_str().map(ToOwned::to_owned))
-        .map(|message| format!("FerrisKey answered {status}: {message}"))
-        .unwrap_or_else(|| format!("FerrisKey answered {status}"))
 }
 
 fn api_base_url(cell: &IdentityInstanceRef) -> String {
@@ -193,16 +169,55 @@ fn admin_secret_name(cell: &IdentityInstanceRef) -> String {
     format!("{}-api-admin", cell.name)
 }
 
+struct FoundInstance<'a> {
+    name: Option<&'a str>,
+    namespace: Option<&'a str>,
+    provider: &'a IdentityProvider,
+}
+
+impl<'a> From<&'a IdentityInstance> for FoundInstance<'a> {
+    fn from(instance: &'a IdentityInstance) -> Self {
+        Self {
+            name: instance.metadata.name.as_deref(),
+            namespace: instance.metadata.namespace.as_deref(),
+            provider: &instance.spec.provider,
+        }
+    }
+}
+
+fn is_ferriskey_cell(found: FoundInstance<'_>, cell: &IdentityInstanceRef) -> bool {
+    found.name == Some(cell.name.as_str())
+        && found.namespace == Some(cell.namespace.as_str())
+        && *found.provider == IdentityProvider::Ferriskey
+}
+
 pub struct FerriskeyRealms {
     client: Client,
     admin: FerriskeyAdmin,
 }
 
 impl FerriskeyRealms {
-    pub fn new(client: Client) -> Self {
-        Self {
+    pub fn new(client: Client) -> Result<Self, GenesisError> {
+        Ok(Self {
             client,
-            admin: FerriskeyAdmin::new(),
+            admin: FerriskeyAdmin::new()?,
+        })
+    }
+
+    async fn ensure_cell(&self, cell: &IdentityInstanceRef) -> Result<(), RealmError> {
+        let instances: Api<IdentityInstance> =
+            Api::namespaced(self.client.clone(), &cell.namespace);
+        let instance =
+            instances
+                .get_opt(&cell.name)
+                .await
+                .map_err(|_| RealmError::CellUnreachable {
+                    message: "the cell instance could not be read".to_string(),
+                })?;
+
+        match instance {
+            Some(instance) if is_ferriskey_cell(FoundInstance::from(&instance), cell) => Ok(()),
+            _ => Err(RealmError::NotACell),
         }
     }
 
@@ -210,6 +225,8 @@ impl FerriskeyRealms {
         &self,
         cell: &IdentityInstanceRef,
     ) -> Result<AdminCredentials, RealmError> {
+        self.ensure_cell(cell).await?;
+
         let secrets: Api<Secret> = Api::namespaced(self.client.clone(), &cell.namespace);
         let secret = secrets
             .get_opt(&admin_secret_name(cell))
@@ -239,7 +256,7 @@ impl RealmPort for FerriskeyRealms {
     async fn create_realm(
         &self,
         cell: &IdentityInstanceRef,
-        realm: &str,
+        realm: &RealmName,
     ) -> Result<(), RealmError> {
         let credentials = self.credentials(cell).await?;
         self.admin
@@ -250,7 +267,7 @@ impl RealmPort for FerriskeyRealms {
     async fn delete_realm(
         &self,
         cell: &IdentityInstanceRef,
-        realm: &str,
+        realm: &RealmName,
     ) -> Result<(), RealmError> {
         let credentials = self.credentials(cell).await?;
         self.admin
@@ -284,7 +301,7 @@ mod tests {
                     let (mut stream, _) = listener.accept().expect("accepted");
                     let recorded = read_request(&mut stream);
                     let response = format!(
-                        "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nLocation: /elsewhere\r\nConnection: close\r\n\r\n{body}",
                         body.len()
                     );
                     stream.write_all(response.as_bytes()).expect("written");
@@ -332,12 +349,17 @@ mod tests {
         AdminCredentials::new("admin", PASSWORD)
     }
 
+    fn acme() -> RealmName {
+        RealmName::try_from("acme").expect("valid")
+    }
+
     #[tokio::test]
     async fn a_realm_is_created_with_a_master_admin_token() {
         let (url, server) = serve(vec![TOKEN_OK, (201, "{}")]);
 
         FerriskeyAdmin::new()
-            .create_realm(&url, &credentials(), "acme")
+            .expect("built")
+            .create_realm(&url, &credentials(), &acme())
             .await
             .expect("created");
 
@@ -367,7 +389,8 @@ mod tests {
         let (url, server) = serve(vec![TOKEN_OK, (409, r#"{"message":"exists"}"#)]);
 
         let result = FerriskeyAdmin::new()
-            .create_realm(&url, &credentials(), "acme")
+            .expect("built")
+            .create_realm(&url, &credentials(), &acme())
             .await;
 
         assert_eq!(result, Err(RealmError::AlreadyExists));
@@ -380,7 +403,8 @@ mod tests {
         let (url, server) = serve(vec![TOKEN_OK, (404, r#"{"message":"no realm"}"#)]);
 
         let result = FerriskeyAdmin::new()
-            .delete_realm(&url, &credentials(), "acme")
+            .expect("built")
+            .delete_realm(&url, &credentials(), &acme())
             .await;
 
         assert_eq!(result, Err(RealmError::NotFound));
@@ -390,37 +414,74 @@ mod tests {
 
     /// @spec-fpr-7
     #[tokio::test]
-    async fn a_client_error_is_a_refusal_with_the_message_from_ferriskey() {
-        let (url, server) = serve(vec![TOKEN_OK, (400, r#"{"message":"invalid name"}"#)]);
+    async fn only_a_bad_request_or_an_unprocessable_name_is_a_refusal() {
+        for status in [400, 422] {
+            let (url, server) = serve(vec![TOKEN_OK, (status, r#"{"message":"invalid name"}"#)]);
+
+            let result = FerriskeyAdmin::new()
+                .expect("built")
+                .create_realm(&url, &credentials(), &acme())
+                .await;
+
+            assert_eq!(
+                result,
+                Err(RealmError::Refused {
+                    reason: format!("realm refused by the cell ({status})")
+                })
+            );
+            server.join().expect("served");
+        }
+    }
+
+    #[tokio::test]
+    async fn any_other_answer_is_a_cell_fault_and_is_retried() {
+        for status in [401, 403, 404, 405, 408, 415, 418, 429, 500, 503] {
+            let (url, server) = serve(vec![TOKEN_OK, (status, "{}")]);
+
+            let result = FerriskeyAdmin::new()
+                .expect("built")
+                .create_realm(&url, &credentials(), &acme())
+                .await;
+
+            assert_eq!(
+                result,
+                Err(RealmError::CellUnreachable {
+                    message: format!("the cell answered {status}")
+                })
+            );
+            server.join().expect("served");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_redirect_is_never_followed() {
+        let (url, server) = serve(vec![TOKEN_OK, (307, "{}")]);
 
         let result = FerriskeyAdmin::new()
-            .create_realm(&url, &credentials(), "acme")
+            .expect("built")
+            .delete_realm(&url, &credentials(), &acme())
             .await;
 
         assert_eq!(
             result,
-            Err(RealmError::Refused {
-                reason: "FerrisKey answered 400: invalid name".to_string()
+            Err(RealmError::CellUnreachable {
+                message: "the cell answered 307".to_string()
             })
         );
-        server.join().expect("served");
+        assert_eq!(server.join().expect("served").len(), 2);
     }
 
     #[tokio::test]
-    async fn a_server_error_or_a_refused_token_is_retried() {
-        for script in [
-            vec![TOKEN_OK, (503, "{}")],
-            vec![(401, r#"{"message":"bad credentials"}"#)],
-        ] {
-            let (url, server) = serve(script);
+    async fn a_refused_token_is_retried() {
+        let (url, server) = serve(vec![(401, r#"{"message":"bad credentials"}"#)]);
 
-            let result = FerriskeyAdmin::new()
-                .create_realm(&url, &credentials(), "acme")
-                .await;
+        let result = FerriskeyAdmin::new()
+            .expect("built")
+            .create_realm(&url, &credentials(), &acme())
+            .await;
 
-            assert!(matches!(result, Err(RealmError::CellUnreachable { .. })));
-            server.join().expect("served");
-        }
+        assert!(matches!(result, Err(RealmError::CellUnreachable { .. })));
+        assert_eq!(server.join().expect("served").len(), 1);
     }
 
     #[tokio::test]
@@ -430,7 +491,8 @@ mod tests {
         drop(listener);
 
         let result = FerriskeyAdmin::new()
-            .delete_realm(&url, &credentials(), "acme")
+            .expect("built")
+            .delete_realm(&url, &credentials(), &acme())
             .await;
 
         assert!(matches!(result, Err(RealmError::CellUnreachable { .. })));
@@ -438,9 +500,10 @@ mod tests {
 
     /// @spec-fpr-14
     #[tokio::test]
-    async fn the_cell_password_never_reaches_an_error() {
-        let echo: &'static str =
-            Box::leak(format!(r#"{{"message":"bad password {PASSWORD}"}}"#).into_boxed_str());
+    async fn nothing_the_cell_answers_reaches_an_error() {
+        let echo: &'static str = Box::leak(
+            format!(r#"{{"message":"bad password {PASSWORD} from upstream"}}"#).into_boxed_str(),
+        );
         for script in [
             vec![TOKEN_OK, (400, echo)],
             vec![TOKEN_OK, (500, echo)],
@@ -449,16 +512,44 @@ mod tests {
             let (url, server) = serve(script);
 
             let error = FerriskeyAdmin::new()
-                .create_realm(&url, &credentials(), "acme")
+                .expect("built")
+                .create_realm(&url, &credentials(), &acme())
                 .await
                 .expect_err("failed");
 
-            assert!(
-                !format!("{error} {error:?}").contains(PASSWORD),
-                "{error:?}"
-            );
+            let shown = format!("{error} {error:?}");
+            assert!(!shown.contains(PASSWORD), "{shown}");
+            assert!(!shown.contains("upstream"), "{shown}");
             server.join().expect("served");
         }
+    }
+
+    #[test]
+    fn only_a_ferriskey_instance_with_the_payload_name_and_namespace_is_a_cell() {
+        let cell = IdentityInstanceRef::for_deployment(Uuid::from_u128(2), "cells-one");
+        let found = |name, namespace, provider| FoundInstance {
+            name: Some(name),
+            namespace: Some(namespace),
+            provider,
+        };
+        let name = cell.name.as_str();
+
+        assert!(is_ferriskey_cell(
+            found(name, "cells-one", &IdentityProvider::Ferriskey),
+            &cell
+        ));
+        assert!(!is_ferriskey_cell(
+            found(name, "cells-one", &IdentityProvider::Keycloak),
+            &cell
+        ));
+        assert!(!is_ferriskey_cell(
+            found(name, "other", &IdentityProvider::Ferriskey),
+            &cell
+        ));
+        assert!(!is_ferriskey_cell(
+            found("deployment-x", "cells-one", &IdentityProvider::Ferriskey),
+            &cell
+        ));
     }
 
     #[test]

@@ -103,14 +103,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             outcomes.clone(),
         )),
         Arc::new(RealmEventHandler::create(
-            FerriskeyRealms::new(kube.clone()),
+            FerriskeyRealms::new(kube.clone())?,
             KubeTenantRoutes::new(kube.clone()),
             outcomes.clone(),
+            args.tenant_zone.clone(),
         )),
         Arc::new(RealmEventHandler::delete(
-            FerriskeyRealms::new(kube.clone()),
+            FerriskeyRealms::new(kube.clone())?,
             KubeTenantRoutes::new(kube.clone()),
             outcomes.clone(),
+            args.tenant_zone.clone(),
         )),
     ];
 

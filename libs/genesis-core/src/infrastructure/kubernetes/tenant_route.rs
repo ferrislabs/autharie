@@ -3,7 +3,9 @@ use kube::core::{ApiResource, GroupVersionKind};
 use kube::{Api, Client};
 use serde_json::{Value, json};
 
-use crate::domain::entities::realm_payload::TenantRoute;
+use std::collections::BTreeMap;
+
+use crate::domain::entities::realm_payload::{RouteOwner, TenantRoute};
 use crate::domain::error::GenesisError;
 use crate::domain::ports::TenantRoutePort;
 
@@ -11,6 +13,9 @@ const FIELD_MANAGER: &str = "genesis";
 const GROUP: &str = "gateway.networking.k8s.io";
 const VERSION: &str = "v1";
 const NOT_FOUND: u16 = 404;
+const CELL_LABEL: &str = "autharie.fr/cell";
+const DEPLOYMENT_LABEL: &str = "autharie.fr/deployment";
+const REALM_LABEL: &str = "autharie.fr/realm";
 
 fn httproutes(client: Client, namespace: &str) -> Api<DynamicObject> {
     let resource = ApiResource::from_gvk(&GroupVersionKind::gvk(GROUP, VERSION, "HTTPRoute"));
@@ -38,7 +43,9 @@ pub fn tenant_route(
         "namespace": route.cell.namespace,
         "labels": {
             "app.kubernetes.io/managed-by": FIELD_MANAGER,
-            "autharie.fr/cell": route.cell.name,
+            CELL_LABEL: route.cell.name,
+            DEPLOYMENT_LABEL: route.deployment_id.to_string(),
+            REALM_LABEL: route.realm.as_str(),
         },
     });
     if let Some(owners) = cell_route["metadata"].get("ownerReferences") {
@@ -55,6 +62,14 @@ pub fn tenant_route(
             "rules": spec["rules"],
         },
     }))
+}
+
+pub fn route_owner(labels: Option<&BTreeMap<String, String>>) -> RouteOwner {
+    let label = |key: &str| labels.and_then(|labels| labels.get(key)).cloned();
+    RouteOwner {
+        deployment: label(DEPLOYMENT_LABEL),
+        realm: label(REALM_LABEL),
+    }
 }
 
 pub struct KubeTenantRoutes {
@@ -100,6 +115,14 @@ impl TenantRoutePort for KubeTenantRoutes {
         Ok(())
     }
 
+    async fn owner(&self, route: &TenantRoute) -> Result<Option<RouteOwner>, GenesisError> {
+        let found = httproutes(self.client.clone(), &route.cell.namespace)
+            .get_opt(&route.name)
+            .await
+            .map_err(kube_error)?;
+        Ok(found.map(|found| route_owner(found.metadata.labels.as_ref())))
+    }
+
     async fn delete(&self, route: &TenantRoute) -> Result<(), GenesisError> {
         let routes = httproutes(self.client.clone(), &route.cell.namespace);
         match routes.delete(&route.name, &DeleteParams::default()).await {
@@ -116,11 +139,14 @@ mod tests {
 
     use super::*;
     use crate::domain::entities::identity_instance::IdentityInstanceRef;
+    use crate::domain::entities::realm_payload::RealmName;
 
     fn route() -> TenantRoute {
         TenantRoute {
             name: format!("realm-{}", Uuid::from_u128(1)),
             cell: IdentityInstanceRef::for_deployment(Uuid::from_u128(2), "cells-one"),
+            deployment_id: Uuid::from_u128(1),
+            realm: RealmName::try_from("acme").expect("valid"),
         }
     }
 
@@ -176,6 +202,25 @@ mod tests {
             built["metadata"]["ownerReferences"],
             cell["metadata"]["ownerReferences"]
         );
+    }
+
+    #[test]
+    fn a_tenant_route_is_labelled_with_its_deployment_and_realm_and_read_back() {
+        let built = tenant_route(&cell_route(), &route(), "acme.cells.example").expect("built");
+        let labels: BTreeMap<String, String> =
+            serde_json::from_value(built["metadata"]["labels"].clone()).expect("labels");
+
+        let owner = route_owner(Some(&labels));
+
+        assert_eq!(
+            owner,
+            RouteOwner {
+                deployment: Some(Uuid::from_u128(1).to_string()),
+                realm: Some("acme".to_string()),
+            }
+        );
+        assert!(route().is_owned_by(&owner));
+        assert_eq!(route_owner(None), RouteOwner::default());
     }
 
     #[test]

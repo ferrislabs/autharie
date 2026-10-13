@@ -7,7 +7,7 @@ use crate::domain::entities::identity_instance::{
     DesiredIdentityInstance, DesiredUpgrade, IdentityInstanceRef, InFlightUpgrade, UpgradeRef,
 };
 use crate::domain::entities::outcome::DeploymentOutcomeReport;
-use crate::domain::entities::realm_payload::TenantRoute;
+use crate::domain::entities::realm_payload::{RealmName, RouteOwner, TenantRoute};
 use crate::domain::error::{GenesisError, RealmError};
 use std::future::Future;
 use std::pin::Pin;
@@ -151,13 +151,13 @@ pub trait RealmPort: Send + Sync {
     fn create_realm(
         &self,
         cell: &IdentityInstanceRef,
-        realm: &str,
+        realm: &RealmName,
     ) -> impl Future<Output = Result<(), RealmError>> + Send;
 
     fn delete_realm(
         &self,
         cell: &IdentityInstanceRef,
-        realm: &str,
+        realm: &RealmName,
     ) -> impl Future<Output = Result<(), RealmError>> + Send;
 }
 
@@ -167,6 +167,11 @@ pub trait TenantRoutePort: Send + Sync {
         route: &TenantRoute,
         hostname: &str,
     ) -> impl Future<Output = Result<(), GenesisError>> + Send;
+
+    fn owner(
+        &self,
+        route: &TenantRoute,
+    ) -> impl Future<Output = Result<Option<RouteOwner>, GenesisError>> + Send;
 
     fn delete(&self, route: &TenantRoute) -> impl Future<Output = Result<(), GenesisError>> + Send;
 }
