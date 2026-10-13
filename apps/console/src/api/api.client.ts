@@ -704,7 +704,11 @@ export namespace Schemas {
   }
   export type ReportDrillOutcomeResponseData = Record<string, unknown>
   export type ReportDrillOutcomeResponse = { data: ReportDrillOutcomeResponseData }
-  export type ReportOutcomeRequest = { outcome: string; version?: (string | null) | undefined }
+  export type ReportOutcomeRequest = {
+    outcome: string
+    reason?: (string | null) | undefined
+    version?: (string | null) | undefined
+  }
   export type ReportOutcomeResponseData = { recorded: boolean }
   export type ReportOutcomeResponse = { data: ReportOutcomeResponseData }
   export type ReportedMetricPoint = { bucket: string; metric: string; value: number }
