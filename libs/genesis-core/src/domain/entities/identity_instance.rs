@@ -115,6 +115,8 @@ pub struct DesiredIdentityInstance {
 
     pub replicas: i32,
 
+    pub pooled_cell: bool,
+
     /// Where this instance archives. `None` is an installation that archives
     /// nowhere, and it leaves an existing schedule alone: the control plane
     /// saying nothing is not the same as it saying stop.
@@ -200,6 +202,7 @@ impl DesiredIdentityInstance {
                 database_instances,
             ),
             replicas,
+            pooled_cell: payload.pooled_cell,
             archive: payload.archive.as_ref().map(|archive| DesiredArchive {
                 destination_path: archive.destination_path.clone(),
                 encryption: archive.encryption.clone(),
@@ -222,6 +225,23 @@ impl DesiredIdentityInstance {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_payload_that_says_nothing_is_no_pooled_cell_and_one_that_says_so_is() {
+        assert!(
+            !DesiredIdentityInstance::from_payload(&payload())
+                .unwrap()
+                .pooled_cell
+        );
+
+        let mut cell = payload();
+        cell.pooled_cell = true;
+        assert!(
+            DesiredIdentityInstance::from_payload(&cell)
+                .unwrap()
+                .pooled_cell
+        );
+    }
+
     fn payload() -> DeploymentPayloadV1 {
         DeploymentPayloadV1 {
             restore: None,
@@ -240,6 +260,7 @@ mod tests {
             hostname: None,
             replicas: None,
             database_instances: None,
+            pooled_cell: false,
         }
     }
 

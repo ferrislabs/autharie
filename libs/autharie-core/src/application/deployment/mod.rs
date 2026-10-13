@@ -7,7 +7,9 @@ use crate::{
     AutharieService, CoreError,
     action::{
         ActionPayload, ActionSource, ActionTarget, ActionType, ActionVersion, TargetKind,
-        commands::RecordActionCommand, ports::ActionService, service::ActionServiceImpl,
+        commands::RecordActionCommand,
+        ports::{ActionRepository, ActionService},
+        service::ActionServiceImpl,
     },
     backups::{
         ArchiveDestination, BackupSchedule, StoreEncryption, ports::BackupScheduleRepository,
@@ -31,8 +33,33 @@ use crate::{infrastructure::role::permissions_in, policy::AuthariePolicy};
 /// key: a delete built from a smaller subset failed on `missing field kind`
 /// and was retried until somebody read the log. Two literals could drift
 /// again; one cannot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Serving {
+    OneTenant,
+    PooledCell,
+}
+
+impl Serving {
+    pub(crate) async fn of(
+        tx: &autharie_persistence::SharedTx<'_>,
+        deployment: &Deployment,
+    ) -> Result<Self, CoreError> {
+        use autharie_domain::cells::CellRepository;
+
+        let cell = autharie_postgres::cells::PostgresCellRepository::new(tx)
+            .find_by_instance(deployment.id)
+            .await?;
+
+        Ok(match cell {
+            Some(_) => Self::PooledCell,
+            None => Self::OneTenant,
+        })
+    }
+}
+
 pub(crate) fn deployment_payload(
     deployment: &Deployment,
+    serving: Serving,
     archive: Option<serde_json::Value>,
     hostname: Option<String>,
 ) -> serde_json::Value {
@@ -53,6 +80,7 @@ pub(crate) fn deployment_payload(
         "storage_gib": deployment.resources.storage_gib,
         "replicas": deployment.topology.replicas(),
         "database_instances": deployment.topology.database_instances(),
+        "pooled_cell": serving == Serving::PooledCell,
     });
 
     if let Some(archive) = archive {
@@ -127,26 +155,19 @@ fn archive_destination_for(
     }
 }
 
-impl DeploymentService for AutharieService {
-    #[transactional(deployment, user, data_plane, action, backup_schedule, organisation)]
-    async fn create_deployment(
+impl AutharieService {
+    pub(crate) async fn announce_new_deployment<S, A>(
         &self,
-        identity: Identity,
-        command: CreateDeploymentCommand,
-    ) -> Result<Deployment, CoreError> {
-        let deployment = DeploymentServiceImpl::new(
-            deployment_repository,
-            user_repository,
-            data_plane_repository,
-            organisation_repository,
-            LocalClusterProvisioner,
-            self.placement_windows(),
-            AuthariePolicy::new(permissions_in(&tx)),
-        )
-        .create_deployment(identity, command)
-        .await?;
-
-        let hostname = deployment_hostname(self.deployment_domain(), &deployment);
+        deployment: &Deployment,
+        serving: Serving,
+        backup_schedule_repository: S,
+        action_repository: A,
+    ) -> Result<(), CoreError>
+    where
+        S: BackupScheduleRepository,
+        A: ActionRepository,
+    {
+        let hostname = deployment_hostname(self.deployment_domain(), deployment);
 
         // A deployment starts backed up. The alternative is a platform where
         // the first thing anybody learns about backups is that they did not
@@ -156,7 +177,7 @@ impl DeploymentService for AutharieService {
         // Written only when there is somewhere to archive to. A schedule on an
         // installation with no bucket is a row promising something nothing
         // will carry out.
-        let destination = archive_destination_for(self.archive_config(), &deployment);
+        let destination = archive_destination_for(self.archive_config(), deployment);
         let archive = match destination {
             None => None,
             Some(destination) => {
@@ -188,7 +209,7 @@ impl DeploymentService for AutharieService {
                     id: deployment.id.0,
                 },
                 ActionPayload {
-                    data: deployment_payload(&deployment, archive, hostname),
+                    data: deployment_payload(deployment, serving, archive, hostname),
                 },
                 ActionVersion(1),
                 ActionSource::User {
@@ -196,6 +217,37 @@ impl DeploymentService for AutharieService {
                 },
             ))
             .await?;
+
+        Ok(())
+    }
+}
+
+impl DeploymentService for AutharieService {
+    #[transactional(deployment, user, data_plane, action, backup_schedule, organisation)]
+    async fn create_deployment(
+        &self,
+        identity: Identity,
+        command: CreateDeploymentCommand,
+    ) -> Result<Deployment, CoreError> {
+        let deployment = DeploymentServiceImpl::new(
+            deployment_repository,
+            user_repository,
+            data_plane_repository,
+            organisation_repository,
+            LocalClusterProvisioner,
+            self.placement_windows(),
+            AuthariePolicy::new(permissions_in(&tx)),
+        )
+        .create_deployment(identity, command)
+        .await?;
+
+        self.announce_new_deployment(
+            &deployment,
+            Serving::OneTenant,
+            backup_schedule_repository,
+            action_repository,
+        )
+        .await?;
 
         Ok(deployment)
     }
@@ -246,6 +298,7 @@ impl DeploymentService for AutharieService {
         )
         .delete_deployment(deployment_id)
         .await?;
+        let serving = Serving::of(&tx, &deployment).await?;
 
         // Recorded in the same transaction as the soft delete, for the reason
         // the create path records one: an action that outlives a rolled-back
@@ -266,7 +319,7 @@ impl DeploymentService for AutharieService {
                     id: deployment.id.0,
                 },
                 ActionPayload {
-                    data: deployment_payload(&deployment, None, None),
+                    data: deployment_payload(&deployment, serving, None, None),
                 },
                 ActionVersion(1),
                 ActionSource::System,
@@ -294,6 +347,7 @@ impl DeploymentService for AutharieService {
         )
         .delete_deployment_for_organisation(identity, organisation_id, deployment_id)
         .await?;
+        let serving = Serving::of(&tx, &deployment).await?;
 
         // Recorded in the same transaction as the soft delete, for the reason
         // the create path records one: an action that outlives a rolled-back
@@ -314,7 +368,7 @@ impl DeploymentService for AutharieService {
                     id: deployment.id.0,
                 },
                 ActionPayload {
-                    data: deployment_payload(&deployment, None, None),
+                    data: deployment_payload(&deployment, serving, None, None),
                 },
                 ActionVersion(1),
                 ActionSource::System,
@@ -475,7 +529,7 @@ mod tests {
     #[test]
     fn the_action_payload_carries_every_field_genesis_requires() {
         let deployment = sample_deployment();
-        let payload = deployment_payload(&deployment, None, None);
+        let payload = deployment_payload(&deployment, Serving::OneTenant, None, None);
 
         for field in [
             "deployment_id",
@@ -499,7 +553,7 @@ mod tests {
     #[test]
     fn the_action_payload_carries_the_resources_placement_reserved() {
         let deployment = sample_deployment();
-        let payload = deployment_payload(&deployment, None, None);
+        let payload = deployment_payload(&deployment, Serving::OneTenant, None, None);
 
         assert_eq!(payload["cpu_millis"], 500);
         assert_eq!(payload["memory_mib"], 1024);
@@ -507,8 +561,22 @@ mod tests {
     }
 
     #[test]
+    fn only_the_instance_of_a_cell_says_it_is_a_pooled_cell() {
+        let deployment = sample_deployment();
+
+        assert_eq!(
+            deployment_payload(&deployment, Serving::OneTenant, None, None)["pooled_cell"],
+            false
+        );
+        assert_eq!(
+            deployment_payload(&deployment, Serving::PooledCell, None, None)["pooled_cell"],
+            true
+        );
+    }
+
+    #[test]
     fn a_default_deployment_sends_one_replica_and_one_database_instance() {
-        let payload = deployment_payload(&sample_deployment(), None, None);
+        let payload = deployment_payload(&sample_deployment(), Serving::OneTenant, None, None);
 
         assert_eq!(payload["replicas"], 1);
         assert_eq!(payload["database_instances"], 1);
@@ -518,7 +586,7 @@ mod tests {
     fn the_action_payload_carries_the_topology_of_the_deployment() {
         let mut deployment = sample_deployment();
         deployment.topology = crate::deployments::topology::Topology::new(3, 2).unwrap();
-        let payload = deployment_payload(&deployment, None, None);
+        let payload = deployment_payload(&deployment, Serving::OneTenant, None, None);
 
         assert_eq!(payload["replicas"], 3);
         assert_eq!(payload["database_instances"], 2);
@@ -543,6 +611,7 @@ mod tests {
 
         let payload = deployment_payload(
             &deployment,
+            Serving::OneTenant,
             Some(archive_section(
                 &destination,
                 &StoreEncryption::Managed,
@@ -624,7 +693,7 @@ mod tests {
                 .is_none()
         );
         assert!(
-            deployment_payload(&deployment, None, None)
+            deployment_payload(&deployment, Serving::OneTenant, None, None)
                 .get("archive")
                 .is_none()
         );
@@ -638,7 +707,7 @@ mod tests {
         let deployment = sample_deployment();
 
         assert!(
-            deployment_payload(&deployment, None, None)
+            deployment_payload(&deployment, Serving::OneTenant, None, None)
                 .get("hostname")
                 .is_none()
         );
@@ -650,8 +719,12 @@ mod tests {
     fn the_action_payload_carries_the_hostname_it_was_given() {
         let deployment = sample_deployment();
 
-        let payload =
-            deployment_payload(&deployment, None, Some("auth.acme.autharie.fr".to_string()));
+        let payload = deployment_payload(
+            &deployment,
+            Serving::OneTenant,
+            None,
+            Some("auth.acme.autharie.fr".to_string()),
+        );
 
         assert_eq!(payload["hostname"], json!("auth.acme.autharie.fr"));
     }
