@@ -6,15 +6,18 @@ use genesis_core::application::handlers::deployment::DeploymentEventHandler;
 use genesis_core::application::handlers::drill::DrillEventHandler;
 use genesis_core::application::handlers::iam_settings::IamSettingsEventHandler;
 use genesis_core::application::handlers::network_access::NetworkAccessEventHandler;
+use genesis_core::application::handlers::realm::RealmEventHandler;
 use genesis_core::application::handlers::upgrade::UpgradeEventHandler;
 use genesis_core::domain::ports::{
     DatabaseProbe, DataplaneUpgradePort, EventConsumer, EventHandler, IdentityInstancePort,
     IdentityInstanceUpgradePort, OutcomePublisher,
 };
+use genesis_core::infrastructure::ferriskey::FerriskeyRealms;
 use genesis_core::infrastructure::kubernetes::dataplane_upgrade::KubeDataplaneUpgradePort;
 use genesis_core::infrastructure::kubernetes::identity_instance::KubeIdentityInstancePort;
 use genesis_core::infrastructure::kubernetes::identity_instance_upgrade::KubeIdentityInstanceUpgradePort;
 use genesis_core::infrastructure::kubernetes::status_watcher::IdentityInstanceStatusWatcher;
+use genesis_core::infrastructure::kubernetes::tenant_route::KubeTenantRoutes;
 use genesis_core::infrastructure::postgres::database_probe::SqlxDatabaseProbe;
 use genesis_core::infrastructure::rabbitmq::consumer::ACTIONS_EXCHANGE;
 use genesis_core::infrastructure::rabbitmq::consumer::RabbitMqConsumer;
@@ -97,6 +100,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::new(DrillEventHandler::new(
             identity_instances.clone(),
             database,
+            outcomes.clone(),
+        )),
+        Arc::new(RealmEventHandler::create(
+            FerriskeyRealms::new(kube.clone()),
+            KubeTenantRoutes::new(kube.clone()),
+            outcomes.clone(),
+        )),
+        Arc::new(RealmEventHandler::delete(
+            FerriskeyRealms::new(kube.clone()),
+            KubeTenantRoutes::new(kube.clone()),
             outcomes.clone(),
         )),
     ];
