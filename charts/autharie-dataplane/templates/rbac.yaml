@@ -71,6 +71,12 @@ rules:
   # A pooled tenant's hostname reaches its cell through a route of its own,
   # copied from the cell's route and removed with the realm. The cell's
   # route is read, never written: it stays the operator's.
+  #
+  # Cluster-wide and without resourceNames: each tenant route is named after
+  # its deployment and lives in its cell's namespace, neither known when the
+  # chart is installed, and `create` cannot be limited by name at all.
+  # Genesis only deletes a route whose labels name the deployment and realm
+  # of the action it is handling.
   - apiGroups: ["gateway.networking.k8s.io"]
     resources: ["httproutes"]
     verbs: ["get", "create", "patch", "delete"]
