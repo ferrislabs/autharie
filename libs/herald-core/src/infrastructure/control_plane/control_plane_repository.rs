@@ -345,16 +345,19 @@ impl ControlPlaneRepository for HttpControlPlaneRepository {
         dp_id: &DataPlaneId,
         report: &DeploymentOutcomeReport,
     ) -> Result<(), HeraldError> {
+        let mut body = serde_json::json!({
+            "outcome": report.outcome,
+            "version": report.version,
+            "reason": report.reason,
+        });
+        if let Some(administrator) = &report.administrator {
+            body["administrator"] = serde_json::json!(administrator);
+        }
         let response = self
             .client
             .post(self.outcome_url(dp_id, &report.deployment_id))
             .bearer_auth(self.auth.bearer().await?)
-            .json(&serde_json::json!({
-                "outcome": report.outcome,
-                "version": report.version,
-                "reason": report.reason,
-                "administrator": report.administrator,
-            }))
+            .json(&body)
             .send()
             .await
             .map_err(|e| HeraldError::ControlPlane {
@@ -562,7 +565,7 @@ mod tests {
         let dataplane_id = DataPlaneId::new("dp-1");
         let report: DeploymentOutcomeReport = serde_json::from_value(json!({
             "deployment_id": "44444444-4444-4444-4444-444444444444",
-            "outcome": "running",
+            "outcome": "administrator_issued",
             "administrator": { "username": "admin", "password": "Tmp-Pass-1!" },
         }))
         .expect("a report");
@@ -571,11 +574,37 @@ mod tests {
             when.method(POST)
                 .path("/dataplanes/dp-1/deployments/44444444-4444-4444-4444-444444444444/outcome")
                 .json_body(json!({
-                    "outcome": "running",
+                    "outcome": "administrator_issued",
                     "version": null,
                     "reason": null,
                     "administrator": { "username": "admin", "password": "Tmp-Pass-1!" },
                 }));
+            then.status(200)
+                .json_body(json!({ "data": { "recorded": true } }));
+        });
+
+        repo(&server)
+            .report_outcome(&dataplane_id, &report)
+            .await
+            .expect("reported");
+
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn an_outcome_without_an_administrator_sends_no_administrator_key() {
+        let server = MockServer::start();
+        let dataplane_id = DataPlaneId::new("dp-1");
+        let report: DeploymentOutcomeReport = serde_json::from_value(json!({
+            "deployment_id": "44444444-4444-4444-4444-444444444444",
+            "outcome": "running",
+        }))
+        .expect("a report");
+
+        let mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/dataplanes/dp-1/deployments/44444444-4444-4444-4444-444444444444/outcome")
+                .json_body(json!({ "outcome": "running", "version": null, "reason": null }));
             then.status(200)
                 .json_body(json!({ "data": { "recorded": true } }));
         });
