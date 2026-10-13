@@ -68,6 +68,12 @@ rules:
   - apiGroups: ["autharie.fr"]
     resources: ["identityinstancebackupschedules", "identityinstancebackups"]
     verbs: ["get", "list", "watch", "create", "update", "patch"]
+  # A pooled tenant's hostname reaches its cell through a route of its own,
+  # copied from the cell's route and removed with the realm. The cell's
+  # route is read, never written: it stays the operator's.
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["httproutes"]
+    verbs: ["get", "create", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
