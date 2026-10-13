@@ -4,6 +4,11 @@ use utoipa::OpenApi;
 
 use crate::{
     handlers::platform::{
+        cells::{
+            __path_create_cell_handler, __path_drain_cell_handler, __path_get_cell_handler,
+            __path_list_cells_handler, __path_retire_cell_handler, create_cell_handler,
+            drain_cell_handler, get_cell_handler, list_cells_handler, retire_cell_handler,
+        },
         dataplane_upgrades::{
             __path_list_dataplane_upgrades_handler, __path_upgrade_dataplanes_handler,
             list_dataplane_upgrades_handler, upgrade_dataplanes_handler,
@@ -33,6 +38,7 @@ use crate::{
     state::AppState,
 };
 
+pub mod cells;
 pub mod dataplane_upgrades;
 pub mod deployment_downtime;
 pub mod deployment_uptime;
@@ -60,7 +66,12 @@ pub mod signals;
         my_rights_handler,
         list_operators_handler,
         grant_operator_handler,
-        revoke_operator_handler
+        revoke_operator_handler,
+        create_cell_handler,
+        list_cells_handler,
+        get_cell_handler,
+        drain_cell_handler,
+        retire_cell_handler
     ),
     tags(
         (name = "platform", description = "What the installation runs, for whoever runs it.")
@@ -84,6 +95,11 @@ pub fn platform_routes(app_state: AppState) -> Router<AppState> {
         .typed_get(list_operators_handler)
         .typed_put(grant_operator_handler)
         .typed_delete(revoke_operator_handler)
+        .typed_post(create_cell_handler)
+        .typed_get(list_cells_handler)
+        .typed_get(get_cell_handler)
+        .typed_post(drain_cell_handler)
+        .typed_post(retire_cell_handler)
         .layer(from_fn_with_state(
             app_state.clone(),
             service_auth_middleware,

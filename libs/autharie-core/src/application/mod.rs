@@ -19,6 +19,7 @@ mod audit;
 mod auth;
 mod backup;
 mod catalog;
+mod cells;
 pub mod cloud_credentials;
 pub mod customer_clusters;
 mod dataplane;
@@ -80,6 +81,8 @@ pub struct AutharieService {
     resizers: ClusterResizers,
 
     credential_keys: Option<Arc<TransitKeyProvider>>,
+
+    cells_organisation: Option<autharie_domain::organisation::OrganisationId>,
 }
 
 /// How long a data plane may go without reporting before placement stops
@@ -124,6 +127,7 @@ impl AutharieService {
             cloud: CloudProviders::default(),
             resizers: ClusterResizers::default(),
             credential_keys: None,
+            cells_organisation: None,
         }
     }
 
@@ -156,6 +160,20 @@ impl AutharieService {
     pub fn with_cluster_resizers(mut self, resizers: ClusterResizers) -> Self {
         self.resizers = resizers;
         self
+    }
+
+    pub fn with_cells_organisation(
+        mut self,
+        organisation: Option<autharie_domain::organisation::OrganisationId>,
+    ) -> Self {
+        self.cells_organisation = organisation;
+        self
+    }
+
+    pub(crate) fn cells_organisation(
+        &self,
+    ) -> Option<autharie_domain::organisation::OrganisationId> {
+        self.cells_organisation
     }
 
     pub(crate) fn cluster_resizers(&self) -> &ClusterResizers {

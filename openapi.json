@@ -6058,6 +6058,420 @@
         ]
       }
     },
+    "/platform/cells": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "list the cells",
+        "operationId": "list_cells_handler",
+        "responses": {
+          "200": {
+            "description": "Every cell, with its status and how many realms it holds",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CellsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "This needs the view_estate right",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "create a cell",
+        "description": "Creates a highly available FerrisKey instance owned by the cells organisation, and a cell on it that opens once the instance serves two replicas on two database instances.",
+        "operationId": "create_cell_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateCellRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The cell, provisioning",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CellResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request names no region",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "This needs the operate_fleet right",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No FerrisKey release is available, or no data plane has room",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The capacity is not from 1 to 200",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Cells are not configured on this installation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/platform/cells/{cell_id}": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "get a cell",
+        "operationId": "get_cell_handler",
+        "parameters": [
+          {
+            "name": "cell_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The cell",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CellResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "This needs the view_estate right",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such cell",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/platform/cells/{cell_id}/drain": {
+      "post": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "drain a cell",
+        "description": "An open or full cell stops receiving tenants. The tenants it holds stay.",
+        "operationId": "drain_cell_handler",
+        "parameters": [
+          {
+            "name": "cell_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The cell, draining",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CellResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "This needs the operate_fleet right",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such cell",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The cell is not open or full",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/platform/cells/{cell_id}/retire": {
+      "post": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "retire a cell",
+        "description": "A draining cell that holds no realm is retired.",
+        "operationId": "retire_cell_handler",
+        "parameters": [
+          {
+            "name": "cell_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The cell, retired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CellResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "This needs the operate_fleet right",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such cell",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The cell is not draining, or still holds realms",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/platform/dataplanes/upgrade": {
       "post": {
         "tags": [
@@ -9328,6 +9742,89 @@
         "type": "string",
         "format": "uuid"
       },
+      "CellResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/CellView"
+          }
+        }
+      },
+      "CellStatus": {
+        "type": "string",
+        "enum": [
+          "provisioning",
+          "open",
+          "full",
+          "draining",
+          "retired",
+          "failed"
+        ]
+      },
+      "CellView": {
+        "type": "object",
+        "required": [
+          "id",
+          "region",
+          "data_plane_id",
+          "instance_deployment_id",
+          "status",
+          "capacity",
+          "realms",
+          "created_at"
+        ],
+        "properties": {
+          "capacity": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "data_plane_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "instance_deployment_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "realms": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "region": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CellStatus"
+          }
+        }
+      },
+      "CellsResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CellView"
+            }
+          }
+        }
+      },
       "CertificatePayload": {
         "type": "object",
         "description": "A certificate crossing the wire, PEM-encoded -- the same shape a\nKubernetes `kubernetes.io/tls` Secret holds it in, on both ends of this\ntrip.",
@@ -9564,6 +10061,26 @@
           },
           "min": {
             "$ref": "#/components/schemas/Money"
+          }
+        }
+      },
+      "CreateCellRequest": {
+        "type": "object",
+        "required": [
+          "region"
+        ],
+        "properties": {
+          "capacity": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "maximum": 200,
+            "minimum": 1
+          },
+          "region": {
+            "type": "string"
           }
         }
       },
