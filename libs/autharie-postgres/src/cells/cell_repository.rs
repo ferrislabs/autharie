@@ -256,7 +256,10 @@ impl CellRepository for PostgresCellRepository<'_> {
                        (SELECT count(*) FROM deployments d
                         WHERE d.cell_id = cells.id AND d.cell_slot_held) AS realms
                 FROM cells
-                WHERE cells.region = $1 AND cells.status = 'open'
+                JOIN deployments instance ON instance.id = cells.instance_deployment_id
+                WHERE cells.region = $1
+                  AND cells.status = 'open'
+                  AND instance.status = 'successful'
             ) c
             WHERE c.realms < c.capacity
             ORDER BY c.realms DESC, c.created_at, c.id
@@ -270,10 +273,13 @@ impl CellRepository for PostgresCellRepository<'_> {
         for id in candidates {
             let locked = sqlx::query_scalar!(
                 r#"
-                SELECT id
+                SELECT cells.id
                 FROM cells
-                WHERE id = $1 AND status = 'open'
-                FOR UPDATE
+                JOIN deployments instance ON instance.id = cells.instance_deployment_id
+                WHERE cells.id = $1
+                  AND cells.status = 'open'
+                  AND instance.status = 'successful'
+                FOR UPDATE OF cells
                 "#,
                 id
             )

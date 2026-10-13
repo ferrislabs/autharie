@@ -865,6 +865,45 @@ async fn a_cell_is_found_by_its_instance_and_an_instance_holds_one_cell() {
     .await;
 }
 
+#[tokio::test]
+async fn an_open_cell_whose_instance_stops_serving_is_skipped_until_it_serves_again() {
+    scratch(async |tx| {
+        let world = seed_world(&tx).await?;
+        let cells = PostgresCellRepository::new(&tx);
+        let deployments = PostgresDeploymentRepository::new(&tx);
+        let fuller = open_cell(&tx, &world, &world.region, 5, 0).await?;
+        fill(&deployments, &world, fuller, 3).await?;
+        let emptier = open_cell(&tx, &world, &world.region, 5, 1).await?;
+        let instance = cells
+            .find(fuller)
+            .await?
+            .expect("the cell exists")
+            .instance();
+        let set_instance = async |status: DeploymentStatus| -> Result<(), CoreError> {
+            let mut deployment = deployments
+                .get_by_id(instance)
+                .await?
+                .expect("the instance exists");
+            deployment.status = status;
+            deployments.update(deployment).await
+        };
+
+        assert_eq!(placed(&cells, &world.region).await, Some(fuller));
+
+        set_instance(DeploymentStatus::Failed).await?;
+        assert_eq!(placed(&cells, &world.region).await, Some(emptier));
+        assert_eq!(
+            cells.find(fuller).await?.map(|cell| cell.status()),
+            Some(CellStatus::Open)
+        );
+
+        set_instance(DeploymentStatus::Successful).await?;
+        assert_eq!(placed(&cells, &world.region).await, Some(fuller));
+        Ok(())
+    })
+    .await;
+}
+
 struct Committed {
     pool: PgPool,
     world: World,

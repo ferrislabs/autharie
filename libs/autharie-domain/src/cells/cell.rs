@@ -166,8 +166,8 @@ impl Cell {
         self.created_at
     }
 
-    fn takes_tenants(&self) -> bool {
-        self.status == CellStatus::Open && self.realms < self.capacity
+    fn takes_tenants(&self, instance_serving: bool) -> bool {
+        instance_serving && self.status == CellStatus::Open && self.realms < self.capacity
     }
 
     pub fn reserve(&mut self) -> Result<(), CellError> {
@@ -227,7 +227,11 @@ impl Cell {
     }
 
     pub fn retire(&mut self) -> Result<(), CellError> {
-        if self.status != CellStatus::Draining || self.realms != 0 {
+        let retirable = matches!(
+            self.status,
+            CellStatus::Draining | CellStatus::Failed | CellStatus::Provisioning
+        );
+        if !retirable || self.realms != 0 {
             return Err(CellError::InvalidTransition);
         }
         self.status = CellStatus::Retired;
@@ -241,10 +245,16 @@ impl Cell {
     }
 }
 
-pub fn choose<'a>(cells: &'a [Cell], region: &Region) -> Option<&'a Cell> {
+pub fn choose<'a>(
+    cells: &'a [Cell],
+    region: &Region,
+    instance_serving: impl Fn(DeploymentId) -> bool,
+) -> Option<&'a Cell> {
     cells
         .iter()
-        .filter(|cell| cell.region == *region && cell.takes_tenants())
+        .filter(|cell| {
+            cell.region == *region && cell.takes_tenants(instance_serving(cell.instance))
+        })
         .min_by_key(|cell| (Reverse(cell.realms), cell.created_at))
 }
 
@@ -277,6 +287,10 @@ mod tests {
         cell_in(region(), status, capacity, realms, age)
     }
 
+    fn every_instance_serves(_: DeploymentId) -> bool {
+        true
+    }
+
     fn ids(cells: &[Cell]) -> Vec<CellId> {
         cells.iter().map(Cell::id).collect()
     }
@@ -303,7 +317,10 @@ mod tests {
     fn choose_takes_an_open_cell_of_the_region() {
         let cells = [cell(CellStatus::Open, 200, 3, 0)];
 
-        assert_eq!(choose(&cells, &region()).map(Cell::id), Some(cells[0].id()));
+        assert_eq!(
+            choose(&cells, &region(), every_instance_serves).map(Cell::id),
+            Some(cells[0].id())
+        );
     }
 
     /// @spec-fpr-1
@@ -311,8 +328,8 @@ mod tests {
     fn choose_is_empty_when_the_region_has_no_cell() {
         let cells = [cell_in(Region::new("us-east"), CellStatus::Open, 200, 3, 0)];
 
-        assert_eq!(choose(&cells, &region()), None);
-        assert_eq!(choose(&[], &region()), None);
+        assert_eq!(choose(&cells, &region(), every_instance_serves), None);
+        assert_eq!(choose(&[], &region(), every_instance_serves), None);
     }
 
     /// @spec-fpr-2
@@ -325,7 +342,7 @@ mod tests {
         ];
 
         assert_eq!(
-            choose(&cells, &region()).map(Cell::id),
+            choose(&cells, &region(), every_instance_serves).map(Cell::id),
             Some(ids(&cells)[1])
         );
     }
@@ -339,7 +356,7 @@ mod tests {
         ];
 
         assert_eq!(
-            choose(&cells, &region()).map(Cell::id),
+            choose(&cells, &region(), every_instance_serves).map(Cell::id),
             Some(ids(&cells)[1])
         );
     }
@@ -353,7 +370,7 @@ mod tests {
         ];
 
         assert_eq!(
-            choose(&cells, &region()).map(Cell::id),
+            choose(&cells, &region(), every_instance_serves).map(Cell::id),
             Some(ids(&cells)[1])
         );
     }
@@ -367,12 +384,18 @@ mod tests {
         ];
         let first = cells[0].id();
 
-        assert_eq!(choose(&cells, &region()).map(Cell::id), Some(first));
+        assert_eq!(
+            choose(&cells, &region(), every_instance_serves).map(Cell::id),
+            Some(first)
+        );
         cells[0].reserve().expect("the 200th slot");
 
         assert_eq!(cells[0].status(), CellStatus::Full);
         assert_eq!(cells[0].realms(), 200);
-        assert_eq!(choose(&cells, &region()).map(Cell::id), Some(cells[1].id()));
+        assert_eq!(
+            choose(&cells, &region(), every_instance_serves).map(Cell::id),
+            Some(cells[1].id())
+        );
         assert_eq!(cells[0].reserve(), Err(CellError::Full));
     }
 
@@ -422,7 +445,14 @@ mod tests {
             let held = if status == CellStatus::Full { 200 } else { 0 };
             let mut closed = cell(status, 200, held, 0);
 
-            assert_eq!(choose(std::slice::from_ref(&closed), &region()), None);
+            assert_eq!(
+                choose(
+                    std::slice::from_ref(&closed),
+                    &region(),
+                    every_instance_serves
+                ),
+                None
+            );
             assert_eq!(closed.reserve(), Err(error), "{status:?}");
             assert_eq!(closed.realms(), held);
         }
@@ -442,7 +472,6 @@ mod tests {
         let mut cell = cell(CellStatus::Provisioning, 200, 0, 0);
         let proof = proof_for(&cell);
 
-        assert_eq!(cell.retire(), Err(CellError::InvalidTransition));
         cell.open(proof).expect("opens");
         assert_eq!(cell.status(), CellStatus::Open);
         assert_eq!(cell.open(proof), Err(CellError::InvalidTransition));
@@ -578,5 +607,45 @@ mod tests {
 
         assert_eq!(cell.open(other), Err(CellError::InvalidTransition));
         assert_eq!(cell.status(), CellStatus::Provisioning);
+    }
+
+    #[test]
+    fn a_cell_whose_instance_does_not_serve_takes_no_tenant_until_it_serves_again() {
+        let cells = [
+            cell(CellStatus::Open, 200, 150, 0),
+            cell(CellStatus::Open, 200, 10, 1),
+        ];
+        let unhealthy = cells[0].instance();
+
+        assert_eq!(
+            choose(&cells, &region(), |instance| instance != unhealthy).map(Cell::id),
+            Some(cells[1].id())
+        );
+        assert_eq!(choose(&cells[..1], &region(), |_| false), None);
+        assert_eq!(
+            choose(&cells, &region(), every_instance_serves).map(Cell::id),
+            Some(cells[0].id())
+        );
+    }
+
+    #[test]
+    fn a_failed_or_provisioning_cell_without_realms_retires_and_an_open_one_does_not() {
+        for status in [
+            CellStatus::Failed,
+            CellStatus::Provisioning,
+            CellStatus::Draining,
+        ] {
+            let mut retiring = cell(status, 200, 0, 0);
+            assert_eq!(retiring.retire(), Ok(()), "{status:?}");
+            assert_eq!(retiring.status(), CellStatus::Retired);
+        }
+        for status in [CellStatus::Open, CellStatus::Retired] {
+            let mut kept = cell(status, 200, 0, 0);
+            assert_eq!(
+                kept.retire(),
+                Err(CellError::InvalidTransition),
+                "{status:?}"
+            );
+        }
     }
 }
