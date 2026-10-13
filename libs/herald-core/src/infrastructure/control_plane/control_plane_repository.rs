@@ -353,6 +353,7 @@ impl ControlPlaneRepository for HttpControlPlaneRepository {
                 "outcome": report.outcome,
                 "version": report.version,
                 "reason": report.reason,
+                "administrator": report.administrator,
             }))
             .send()
             .await
@@ -553,6 +554,38 @@ mod tests {
             !deployments[0].log_shipping_enabled,
             "absent on the wire must mean off, not a decode failure"
         );
+    }
+
+    #[tokio::test]
+    async fn an_outcome_carries_the_realm_administrator_to_the_control_plane() {
+        let server = MockServer::start();
+        let dataplane_id = DataPlaneId::new("dp-1");
+        let report: DeploymentOutcomeReport = serde_json::from_value(json!({
+            "deployment_id": "44444444-4444-4444-4444-444444444444",
+            "outcome": "running",
+            "administrator": { "username": "admin", "password": "Tmp-Pass-1!" },
+        }))
+        .expect("a report");
+
+        let mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/dataplanes/dp-1/deployments/44444444-4444-4444-4444-444444444444/outcome")
+                .json_body(json!({
+                    "outcome": "running",
+                    "version": null,
+                    "reason": null,
+                    "administrator": { "username": "admin", "password": "Tmp-Pass-1!" },
+                }));
+            then.status(200)
+                .json_body(json!({ "data": { "recorded": true } }));
+        });
+
+        repo(&server)
+            .report_outcome(&dataplane_id, &report)
+            .await
+            .expect("reported");
+
+        mock.assert();
     }
 
     #[tokio::test]
