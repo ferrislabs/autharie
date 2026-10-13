@@ -11,9 +11,9 @@ mod service;
 mod tenant_realm;
 
 pub use administrator::{
-    ADMINISTRATOR_CREDENTIAL_LIFETIME, AdministratorCredential, AdministratorCredentialError,
-    AdministratorVault, InitialAdministrator, SealedAdministrator, Taken, TenantAdministrator,
-    TenantAdministratorRepository, credential_state,
+    ADMINISTRATOR_CREDENTIAL_LIFETIME, ADMINISTRATOR_ISSUE_STALE_AFTER, AdministratorCredential,
+    AdministratorCredentialError, AdministratorVault, InitialAdministrator, IssueRecord,
+    SealedAdministrator, Taken, TenantAdministrator, TenantAdministratorRepository,
 };
 pub use cell::{Cell, CellId, CellStatus, HighAvailability, choose};
 pub use errors::{CellError, PlacementError, RealmError};
@@ -23,7 +23,8 @@ pub use ports::CellRepository;
 pub use ports::MockCellRepository;
 pub use realm_name::RealmName;
 pub use realms::{
-    HAND_OFF_FAILED, PooledOutcomes, REALM_CREATE, REALM_DELETE, RealmRequests, Settlement,
+    HAND_OFF_FAILED, PooledOutcomes, REALM_ADMINISTRATOR_ISSUE, REALM_CREATE, REALM_DELETE,
+    RealmRequests, Settlement,
 };
 pub use service::{
     CELL_API_REPLICA, CELL_DATABASE_INSTANCE, CELL_MIN_FERRISKEY, CELL_WEBAPP_REPLICA,

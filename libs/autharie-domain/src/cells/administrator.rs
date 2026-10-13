@@ -9,6 +9,7 @@ use crate::{
 };
 
 pub const ADMINISTRATOR_CREDENTIAL_LIFETIME: Duration = Duration::days(7);
+pub const ADMINISTRATOR_ISSUE_STALE_AFTER: Duration = Duration::minutes(10);
 pub const MAX_ADMINISTRATOR_USERNAME_CHARS: usize = 255;
 
 pub struct InitialAdministrator {
@@ -47,22 +48,63 @@ impl InitialAdministrator {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AdministratorCredential {
-    Available,
+    Issuing,
+    Ready,
     Revealed,
     Expired,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct TenantAdministrator {
-    pub username: String,
     pub credential: AdministratorCredential,
-    pub expires_at: DateTime<Utc>,
+    pub stale: bool,
+    pub username: Option<String>,
+    pub requested_at: DateTime<Utc>,
+    pub expires_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IssueRecord {
+    pub requested_at: DateTime<Utc>,
+    pub issued_at: Option<DateTime<Utc>>,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub revealed: bool,
+}
+
+impl IssueRecord {
+    pub fn state(&self, now: DateTime<Utc>) -> (AdministratorCredential, bool) {
+        let credential = match (self.issued_at, self.expires_at) {
+            (None, _) | (_, None) => AdministratorCredential::Issuing,
+            _ if self.revealed => AdministratorCredential::Revealed,
+            (_, Some(expires_at)) if expires_at <= now => AdministratorCredential::Expired,
+            _ => AdministratorCredential::Ready,
+        };
+        let stale = credential == AdministratorCredential::Issuing
+            && now - self.requested_at > ADMINISTRATOR_ISSUE_STALE_AFTER;
+        (credential, stale)
+    }
+
+    pub fn describe(&self, username: Option<String>, now: DateTime<Utc>) -> TenantAdministrator {
+        let (credential, stale) = self.state(now);
+        TenantAdministrator {
+            credential,
+            stale,
+            username,
+            requested_at: self.requested_at,
+            expires_at: self.expires_at,
+        }
+    }
+
+    pub fn may_issue_again(&self, now: DateTime<Utc>) -> bool {
+        !matches!(self.state(now), (AdministratorCredential::Issuing, false))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SealedAdministrator {
     pub username: String,
     pub sealed: SealedSecret,
+    pub issued_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
 }
 
@@ -76,14 +118,18 @@ pub enum Taken {
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum AdministratorCredentialError {
-    #[error("the administrator of this realm has not been created yet")]
+    #[error("no administrator credential is ready to reveal: generate one first")]
     NotIssued,
+    #[error("an administrator credential is already being generated")]
+    AlreadyIssuing,
     #[error("the administrator credential was already revealed and is not kept")]
     AlreadyRevealed,
     #[error("the administrator credential expired before it was revealed and is not kept")]
     Expired,
-    #[error("only an organisation administrator can reveal the realm administrator credential")]
+    #[error("only an organisation administrator can manage the realm administrator credential")]
     NotAnAdministrator,
+    #[error("this deployment has no realm administrator to manage")]
+    NotARealm,
 }
 
 impl AdministratorCredentialError {
@@ -104,7 +150,18 @@ impl Taken {
 }
 
 pub trait TenantAdministratorRepository: Send + Sync {
-    fn insert_if_absent(
+    fn issue_record(
+        &self,
+        deployment: DeploymentId,
+    ) -> impl Future<Output = Result<Option<IssueRecord>, CoreError>> + Send;
+
+    fn request_issue(
+        &self,
+        deployment: DeploymentId,
+        now: DateTime<Utc>,
+    ) -> impl Future<Output = Result<(), CoreError>> + Send;
+
+    fn store_issued(
         &self,
         deployment: DeploymentId,
         administrator: &SealedAdministrator,
@@ -143,20 +200,6 @@ pub trait AdministratorVault: Send + Sync {
     ) -> impl Future<Output = Result<InitialAdministrator, CoreError>> + Send;
 }
 
-pub fn credential_state(
-    revealed: bool,
-    expires_at: DateTime<Utc>,
-    now: DateTime<Utc>,
-) -> AdministratorCredential {
-    if revealed {
-        AdministratorCredential::Revealed
-    } else if expires_at <= now {
-        AdministratorCredential::Expired
-    } else {
-        AdministratorCredential::Available
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -166,22 +209,55 @@ mod tests {
         Utc.with_ymd_and_hms(2026, 10, 13, 12, 0, 0).unwrap()
     }
 
+    fn issued(revealed: bool, expires_at: DateTime<Utc>) -> IssueRecord {
+        IssueRecord {
+            requested_at: now() - Duration::hours(1),
+            issued_at: Some(now() - Duration::minutes(59)),
+            expires_at: Some(expires_at),
+            revealed,
+        }
+    }
+
     #[test]
-    fn a_credential_is_available_until_it_is_revealed_or_expires() {
+    fn a_requested_credential_is_issuing_until_it_arrives_and_stale_after_ten_minutes() {
+        let fresh = IssueRecord {
+            requested_at: now() - Duration::minutes(9),
+            issued_at: None,
+            expires_at: None,
+            revealed: false,
+        };
+        let old = IssueRecord {
+            requested_at: now() - Duration::minutes(11),
+            ..fresh
+        };
+
+        assert_eq!(
+            fresh.state(now()),
+            (AdministratorCredential::Issuing, false)
+        );
+        assert_eq!(old.state(now()), (AdministratorCredential::Issuing, true));
+        assert!(!fresh.may_issue_again(now()));
+        assert!(old.may_issue_again(now()));
+    }
+
+    #[test]
+    fn an_issued_credential_is_ready_until_revealed_or_expired() {
         let later = now() + ADMINISTRATOR_CREDENTIAL_LIFETIME;
 
         assert_eq!(
-            credential_state(false, later, now()),
-            AdministratorCredential::Available
+            issued(false, later).state(now()).0,
+            AdministratorCredential::Ready
         );
         assert_eq!(
-            credential_state(true, later, now()),
+            issued(true, later).state(now()).0,
             AdministratorCredential::Revealed
         );
         assert_eq!(
-            credential_state(false, now(), now()),
+            issued(false, now()).state(now()).0,
             AdministratorCredential::Expired
         );
+        assert!(issued(true, later).may_issue_again(now()));
+        assert!(issued(false, later).may_issue_again(now()));
     }
 
     #[test]
@@ -199,7 +275,7 @@ mod tests {
         assert!(AdministratorCredentialError::AlreadyRevealed.is_gone());
         assert!(AdministratorCredentialError::Expired.is_gone());
         assert!(!AdministratorCredentialError::NotIssued.is_gone());
-        assert!(!AdministratorCredentialError::NotAnAdministrator.is_gone());
+        assert!(!AdministratorCredentialError::AlreadyIssuing.is_gone());
     }
 
     #[test]

@@ -1,0 +1,77 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            WITH taken AS (\n                SELECT deployment_id, username, ciphertext, nonce, wrapped_dek,\n                       key_provider, key_name, key_version, issued_at, expires_at,\n                       revealed_at IS NOT NULL AS revealed\n                FROM tenant_administrators\n                WHERE deployment_id = $1\n                FOR UPDATE\n            ), wiped AS (\n                UPDATE tenant_administrators t\n                SET ciphertext = NULL, nonce = NULL, wrapped_dek = NULL,\n                    key_provider = NULL, key_name = NULL, key_version = NULL,\n                    revealed_at = CASE WHEN taken.expires_at > $2 THEN $2 ELSE t.revealed_at END\n                FROM taken\n                WHERE t.deployment_id = taken.deployment_id\n                  AND t.revealed_at IS NULL\n                  AND t.issued_at IS NOT NULL\n            )\n            SELECT username, ciphertext, nonce, wrapped_dek, key_provider, key_name, key_version,\n                   issued_at, expires_at,\n                   revealed AS \"revealed!\"\n            FROM taken\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "username",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "ciphertext",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 2,
+        "name": "nonce",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 3,
+        "name": "wrapped_dek",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "key_provider",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "key_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "key_version",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 7,
+        "name": "issued_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "expires_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "revealed!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      null
+    ]
+  },
+  "hash": "298185570ef82d718b5ce4ba64869d2fc99a40434f22cdcf440edd8d8d917c76"
+}

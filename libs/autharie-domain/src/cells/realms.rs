@@ -19,6 +19,7 @@ use crate::dns::hostname_for;
 
 pub const REALM_CREATE: &str = "realm.create";
 pub const REALM_DELETE: &str = "realm.delete";
+pub const REALM_ADMINISTRATOR_ISSUE: &str = "realm.administrator.issue";
 
 const UNSTATED_REFUSAL: &str = "the cell refused the realm";
 pub const HAND_OFF_FAILED: &str = "the realm request could not be handed to the data plane";
@@ -76,6 +77,27 @@ where
             with_hostname(payload, &hostname),
             ActionSource::User {
                 user_id: deployment.created_by.0,
+            },
+        )
+        .await
+    }
+
+    pub async fn issue_administrator(
+        &self,
+        deployment: &Deployment,
+        zone: &str,
+        requested_by: crate::user::UserId,
+    ) -> Result<Action, CoreError> {
+        let (cell_id, realm) = pooled(deployment)?;
+        let hostname = realm_hostname(deployment, realm, zone)?;
+
+        let payload = self.payload(deployment, cell_id, realm).await?;
+        self.record(
+            deployment,
+            REALM_ADMINISTRATOR_ISSUE,
+            with_hostname(payload, &hostname),
+            ActionSource::User {
+                user_id: requested_by.0,
             },
         )
         .await
@@ -368,6 +390,40 @@ mod tests {
 
     fn recorded_count(recorded: &Recorded) -> usize {
         recorded.lock().expect("not poisoned").len()
+    }
+
+    #[tokio::test]
+    async fn an_administrator_issue_carries_the_realm_and_no_secret() {
+        let (requests, recorded) = requests(Some(cell(PLANE)));
+        let asker = crate::user::UserId(uuid::Uuid::from_u128(99));
+
+        let action = requests
+            .issue_administrator(
+                &tenant(DeploymentStatus::Successful),
+                "cells.example",
+                asker,
+            )
+            .await
+            .expect("recorded");
+
+        assert_eq!(
+            action.action_type,
+            ActionType(REALM_ADMINISTRATOR_ISSUE.to_string())
+        );
+        assert_eq!(
+            action.metadata.source,
+            ActionSource::User { user_id: asker.0 }
+        );
+        assert_eq!(
+            action.payload.data,
+            json!({
+                "deployment_id": TENANT.0,
+                "cell": { "deployment_id": INSTANCE.0, "namespace": "cells-cell-one" },
+                "realm": "acme",
+                "hostname": "acme.cells.example",
+            })
+        );
+        assert_eq!(recorded_count(&recorded), 1);
     }
 
     #[tokio::test]

@@ -1,12 +1,8 @@
 use autharie_auth::Identity;
 use autharie_core::{
-    CoreError,
     cells::InitialAdministrator,
     dataplane::{credential::SecretString, ports::DataPlaneService, value_objects::DataPlaneId},
-    deployments::{
-        DeploymentId,
-        commands::{DeploymentOutcome, ReportDeploymentOutcomeCommand},
-    },
+    deployments::{DeploymentId, commands::ReportDeploymentOutcomeCommand},
 };
 use axum::{Extension, Json, extract::State};
 use axum_extra::routing::TypedPath;
@@ -14,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
 use crate::{errors::ApiError, response::Response, state::AppState};
+
+const ADMINISTRATOR_ISSUED: &str = "administrator_issued";
 
 #[derive(TypedPath, IntoParams, Deserialize)]
 #[typed_path("/dataplanes/{dataplane_id}/deployments/{deployment_id}/outcome")]
@@ -24,7 +22,8 @@ pub struct ReportOutcomeRoute {
 
 #[derive(Deserialize, ToSchema)]
 pub struct ReportOutcomeRequest {
-    /// What the data plane observed: `running`, `failed` or `deleted`.
+    /// What the data plane observed: `running`, `failed` or `deleted`, or
+    /// `administrator_issued` for a realm administrator issued on request.
     ///
     /// All three are things a component saw rather than inferred -- the
     /// operator wrote `Running`/`ready` or `Failed` onto the resource, and
@@ -46,9 +45,9 @@ pub struct ReportOutcomeRequest {
     #[serde(default)]
     pub reason: Option<String>,
 
-    /// The first administrator of a tenant realm, sent once with the `running`
-    /// report of the realm that created it. Kept sealed until an organisation
-    /// administrator reveals it.
+    /// The realm administrator Genesis issued, sent only with the
+    /// `administrator_issued` outcome, which never changes a deployment's
+    /// status. Kept sealed until an organisation administrator reveals it.
     #[serde(default)]
     pub administrator: Option<ReportedAdministrator>,
 }
@@ -112,6 +111,21 @@ pub async fn report_outcome_handler(
     Extension(identity): Extension<Identity>,
     Json(request): Json<ReportOutcomeRequest>,
 ) -> Result<Response<ReportOutcomeResponse>, ApiError> {
+    if request.outcome == ADMINISTRATOR_ISSUED {
+        let Some(administrator) = request.administrator else {
+            return Ok(Response::OK(ReportOutcomeResponse {
+                data: ReportOutcomeResponseData { recorded: false },
+            }));
+        };
+        let recorded = state
+            .service
+            .keep_tenant_administrator(identity, deployment_id, administrator.into_administrator()?)
+            .await?;
+        return Ok(Response::OK(ReportOutcomeResponse {
+            data: ReportOutcomeResponseData { recorded },
+        }));
+    }
+
     let command = ReportDeploymentOutcomeCommand::parse(
         dataplane_id,
         deployment_id,
@@ -120,30 +134,6 @@ pub async fn report_outcome_handler(
     )
     .map_err(|reason| ApiError::BadRequest { reason })?
     .with_reason(request.reason.as_deref());
-
-    let administrator = request
-        .administrator
-        .map(ReportedAdministrator::into_administrator)
-        .transpose()?;
-    if let Some(administrator) = administrator
-        && command.outcome == DeploymentOutcome::Running
-    {
-        match state
-            .service
-            .keep_tenant_administrator(identity.clone(), deployment_id, administrator)
-            .await
-        {
-            Ok(_) => {}
-            Err(error @ CoreError::PermissionDenied { .. }) => return Err(error.into()),
-            Err(error) => {
-                tracing::error!(
-                    deployment_id = %deployment_id.0,
-                    %error,
-                    "the realm administrator could not be kept; the outcome is recorded without it"
-                );
-            }
-        }
-    }
 
     let recorded = state.service.report_outcome(identity, command).await?;
 

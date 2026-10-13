@@ -2,8 +2,7 @@ use autharie_domain::{
     CoreError,
     backups::keys::{KeyName, KeyRef, KeyVersion, ProviderName, WrappedDek},
     cells::{
-        SealedAdministrator, Taken, TenantAdministrator, TenantAdministratorRepository,
-        credential_state,
+        IssueRecord, SealedAdministrator, Taken, TenantAdministrator, TenantAdministratorRepository,
     },
     dataplane::credential_repository::SealedSecret,
     deployments::DeploymentId,
@@ -12,23 +11,29 @@ use autharie_persistence::SharedTx;
 use chrono::{DateTime, Utc};
 
 struct TakenRow {
-    username: String,
+    username: Option<String>,
     ciphertext: Option<Vec<u8>>,
     nonce: Option<Vec<u8>>,
     wrapped_dek: Option<String>,
     key_provider: Option<String>,
     key_name: Option<String>,
     key_version: Option<i32>,
-    expires_at: DateTime<Utc>,
+    issued_at: Option<DateTime<Utc>>,
+    expires_at: Option<DateTime<Utc>>,
     revealed: bool,
 }
 
 impl TakenRow {
     fn into_taken(self, deployment: DeploymentId, now: DateTime<Utc>) -> Result<Taken, CoreError> {
+        let (Some(issued_at), Some(expires_at), Some(username)) =
+            (self.issued_at, self.expires_at, self.username)
+        else {
+            return Ok(Taken::Absent);
+        };
         if self.revealed {
             return Ok(Taken::Revealed);
         }
-        if self.expires_at <= now {
+        if expires_at <= now {
             return Ok(Taken::Expired);
         }
 
@@ -58,7 +63,7 @@ impl TakenRow {
         let version = u32::try_from(key_version).map_err(|_| unreadable())?;
 
         Ok(Taken::Sealed(SealedAdministrator {
-            username: self.username,
+            username,
             sealed: SealedSecret {
                 ciphertext,
                 nonce,
@@ -69,7 +74,8 @@ impl TakenRow {
                     KeyVersion::new(version),
                 ),
             },
-            expires_at: self.expires_at,
+            issued_at,
+            expires_at,
         }))
     }
 }
@@ -94,7 +100,59 @@ impl<'tx> PostgresTenantAdministratorRepository<'tx> {
 
 #[cfg_attr(coverage_nightly, coverage(off))]
 impl TenantAdministratorRepository for PostgresTenantAdministratorRepository<'_> {
-    async fn insert_if_absent(
+    async fn issue_record(
+        &self,
+        deployment: DeploymentId,
+    ) -> Result<Option<IssueRecord>, CoreError> {
+        let mut tx = self.tx.lock().await;
+        let row = sqlx::query!(
+            r#"
+            SELECT requested_at, issued_at, expires_at, revealed_at IS NOT NULL AS "revealed!"
+            FROM tenant_administrators
+            WHERE deployment_id = $1
+            FOR UPDATE
+            "#,
+            deployment.0,
+        )
+        .fetch_optional(&mut ***tx)
+        .await
+        .map_err(database_error("read the administrator issue of a realm"))?;
+
+        Ok(row.map(|row| IssueRecord {
+            requested_at: row.requested_at,
+            issued_at: row.issued_at,
+            expires_at: row.expires_at,
+            revealed: row.revealed,
+        }))
+    }
+
+    async fn request_issue(
+        &self,
+        deployment: DeploymentId,
+        now: DateTime<Utc>,
+    ) -> Result<(), CoreError> {
+        let mut tx = self.tx.lock().await;
+        sqlx::query!(
+            r#"
+            INSERT INTO tenant_administrators (deployment_id, requested_at)
+            VALUES ($1, $2)
+            ON CONFLICT (deployment_id) DO UPDATE
+            SET requested_at = EXCLUDED.requested_at,
+                username = NULL, ciphertext = NULL, nonce = NULL, wrapped_dek = NULL,
+                key_provider = NULL, key_name = NULL, key_version = NULL,
+                issued_at = NULL, expires_at = NULL, revealed_at = NULL
+            "#,
+            deployment.0,
+            now,
+        )
+        .execute(&mut ***tx)
+        .await
+        .map_err(database_error("ask for a realm administrator"))?;
+
+        Ok(())
+    }
+
+    async fn store_issued(
         &self,
         deployment: DeploymentId,
         administrator: &SealedAdministrator,
@@ -105,14 +163,13 @@ impl TenantAdministratorRepository for PostgresTenantAdministratorRepository<'_>
             })?;
 
         let mut tx = self.tx.lock().await;
-        let inserted = sqlx::query!(
+        let stored = sqlx::query!(
             r#"
-            INSERT INTO tenant_administrators (
-                deployment_id, username, ciphertext, nonce, wrapped_dek,
-                key_provider, key_name, key_version, expires_at
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            ON CONFLICT (deployment_id) DO NOTHING
+            UPDATE tenant_administrators
+            SET username = $2, ciphertext = $3, nonce = $4, wrapped_dek = $5,
+                key_provider = $6, key_name = $7, key_version = $8,
+                issued_at = $9, expires_at = $10, revealed_at = NULL
+            WHERE deployment_id = $1 AND issued_at IS NULL
             "#,
             deployment.0,
             administrator.username,
@@ -122,6 +179,7 @@ impl TenantAdministratorRepository for PostgresTenantAdministratorRepository<'_>
             administrator.sealed.key.provider.as_str(),
             administrator.sealed.key.name.as_str(),
             key_version,
+            administrator.issued_at,
             administrator.expires_at,
         )
         .execute(&mut ***tx)
@@ -131,7 +189,7 @@ impl TenantAdministratorRepository for PostgresTenantAdministratorRepository<'_>
         ))?
         .rows_affected();
 
-        Ok(inserted > 0)
+        Ok(stored > 0)
     }
 
     async fn take(&self, deployment: DeploymentId, now: DateTime<Utc>) -> Result<Taken, CoreError> {
@@ -141,7 +199,7 @@ impl TenantAdministratorRepository for PostgresTenantAdministratorRepository<'_>
             r#"
             WITH taken AS (
                 SELECT deployment_id, username, ciphertext, nonce, wrapped_dek,
-                       key_provider, key_name, key_version, expires_at,
+                       key_provider, key_name, key_version, issued_at, expires_at,
                        revealed_at IS NOT NULL AS revealed
                 FROM tenant_administrators
                 WHERE deployment_id = $1
@@ -154,10 +212,10 @@ impl TenantAdministratorRepository for PostgresTenantAdministratorRepository<'_>
                 FROM taken
                 WHERE t.deployment_id = taken.deployment_id
                   AND t.revealed_at IS NULL
+                  AND t.issued_at IS NOT NULL
             )
-            SELECT username AS "username!",
-                   ciphertext, nonce, wrapped_dek, key_provider, key_name, key_version,
-                   expires_at AS "expires_at!",
+            SELECT username, ciphertext, nonce, wrapped_dek, key_provider, key_name, key_version,
+                   issued_at, expires_at,
                    revealed AS "revealed!"
             FROM taken
             "#,
@@ -184,7 +242,8 @@ impl TenantAdministratorRepository for PostgresTenantAdministratorRepository<'_>
         let mut tx = self.tx.lock().await;
         let row = sqlx::query!(
             r#"
-            SELECT username, expires_at, revealed_at IS NOT NULL AS "revealed!"
+            SELECT username, requested_at, issued_at, expires_at,
+                   revealed_at IS NOT NULL AS "revealed!"
             FROM tenant_administrators
             WHERE deployment_id = $1
             "#,
@@ -194,10 +253,14 @@ impl TenantAdministratorRepository for PostgresTenantAdministratorRepository<'_>
         .await
         .map_err(database_error("describe the administrator of a realm"))?;
 
-        Ok(row.map(|row| TenantAdministrator {
-            username: row.username,
-            credential: credential_state(row.revealed, row.expires_at, now),
-            expires_at: row.expires_at,
+        Ok(row.map(|row| {
+            IssueRecord {
+                requested_at: row.requested_at,
+                issued_at: row.issued_at,
+                expires_at: row.expires_at,
+                revealed: row.revealed,
+            }
+            .describe(row.username, now)
         }))
     }
 

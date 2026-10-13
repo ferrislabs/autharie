@@ -58,7 +58,7 @@ where
         let (ciphertext, nonce) = seal(&dek, deployment.0.as_bytes(), administrator.password())?;
 
         self.repository
-            .insert_if_absent(
+            .store_issued(
                 deployment,
                 &SealedAdministrator {
                     username: administrator.username().to_string(),
@@ -68,6 +68,7 @@ where
                         wrapped_dek,
                         key,
                     },
+                    issued_at: now,
                     expires_at: now + ADMINISTRATOR_CREDENTIAL_LIFETIME,
                 },
             )
@@ -98,7 +99,7 @@ mod tests {
 
     use autharie_domain::{
         backups::keys::{DataKey, Dek, KeyError, KeyRef, KeyVersion, ProviderName, WrappedDek},
-        cells::{AdministratorCredentialError, Taken, TenantAdministrator},
+        cells::{AdministratorCredentialError, IssueRecord, Taken, TenantAdministrator},
         dataplane::credential::SecretString,
     };
     use chrono::TimeZone;
@@ -115,20 +116,41 @@ mod tests {
 
     #[derive(Default)]
     struct Rows {
+        requested: Mutex<bool>,
         row: Mutex<Option<(SealedAdministrator, bool)>>,
     }
 
+    impl Rows {
+        fn requested() -> Self {
+            Self {
+                requested: Mutex::new(true),
+                ..Self::default()
+            }
+        }
+    }
+
     impl TenantAdministratorRepository for &Rows {
-        async fn insert_if_absent(
+        async fn issue_record(&self, _: DeploymentId) -> Result<Option<IssueRecord>, CoreError> {
+            Ok(None)
+        }
+
+        async fn request_issue(&self, _: DeploymentId, _: DateTime<Utc>) -> Result<(), CoreError> {
+            *self.requested.lock().unwrap() = true;
+            *self.row.lock().unwrap() = None;
+            Ok(())
+        }
+
+        async fn store_issued(
             &self,
             _: DeploymentId,
             administrator: &SealedAdministrator,
         ) -> Result<bool, CoreError> {
-            let mut row = self.row.lock().unwrap();
-            if row.is_some() {
+            let mut requested = self.requested.lock().unwrap();
+            if !*requested {
                 return Ok(false);
             }
-            *row = Some((administrator.clone(), false));
+            *requested = false;
+            *self.row.lock().unwrap() = Some((administrator.clone(), false));
             Ok(true)
         }
 
@@ -194,7 +216,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_kept_administrator_is_stored_sealed_and_revealed_once() {
-        let rows = Rows::default();
+        let rows = Rows::requested();
         let vault = EnvelopeAdministratorVault::new(&rows, &FixedKeys).unwrap();
 
         assert!(vault.keep(DEPLOYMENT, admin(), now()).await.unwrap());
@@ -222,21 +244,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_second_credential_never_replaces_the_first() {
+    async fn a_credential_nobody_asked_for_is_not_kept() {
         let rows = Rows::default();
         let vault = EnvelopeAdministratorVault::new(&rows, &FixedKeys).unwrap();
 
-        assert!(vault.keep(DEPLOYMENT, admin(), now()).await.unwrap());
-        let other = InitialAdministrator::new("admin", SecretString::new("another-one"));
-        assert!(!vault.keep(DEPLOYMENT, other, now()).await.unwrap());
+        assert!(!vault.keep(DEPLOYMENT, admin(), now()).await.unwrap());
+        assert!(rows.row.lock().unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_new_issue_replaces_the_credential_before_it() {
+        let rows = Rows::requested();
+        let vault = EnvelopeAdministratorVault::new(&rows, &FixedKeys).unwrap();
+        vault.keep(DEPLOYMENT, admin(), now()).await.unwrap();
+
+        (&rows).request_issue(DEPLOYMENT, now()).await.unwrap();
+        let newer = InitialAdministrator::new("admin", SecretString::new("Newer-Pass-7!"));
+        assert!(vault.keep(DEPLOYMENT, newer, now()).await.unwrap());
 
         let revealed = vault.reveal(DEPLOYMENT, now()).await.unwrap();
-        assert_eq!(revealed.password().expose(), PASSWORD);
+        assert_eq!(revealed.password().expose(), "Newer-Pass-7!");
     }
 
     #[tokio::test]
     async fn a_credential_cannot_be_opened_under_another_deployment() {
-        let rows = Rows::default();
+        let rows = Rows::requested();
         let vault = EnvelopeAdministratorVault::new(&rows, &FixedKeys).unwrap();
         vault.keep(DEPLOYMENT, admin(), now()).await.unwrap();
 
@@ -247,7 +279,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_expired_or_missing_credential_is_never_opened() {
-        let rows = Rows::default();
+        let rows = Rows::requested();
         let vault = EnvelopeAdministratorVault::new(&rows, &FixedKeys).unwrap();
         assert!(matches!(
             vault.reveal(DEPLOYMENT, now()).await,

@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE tenant_administrators\n            SET username = $2, ciphertext = $3, nonce = $4, wrapped_dek = $5,\n                key_provider = $6, key_name = $7, key_version = $8,\n                issued_at = $9, expires_at = $10, revealed_at = NULL\n            WHERE deployment_id = $1 AND issued_at IS NULL\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Bytea",
+        "Bytea",
+        "Text",
+        "Text",
+        "Text",
+        "Int4",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "aecccd66b4e8107be7fe68560ce38e16cc0430e5788fcdfa23b1cc0c967e406e"
+}

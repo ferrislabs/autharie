@@ -9,10 +9,12 @@ use autharie_api::{
     handlers::{
         dataplanes::report_outcome::report_outcome_handler,
         deployments::{
-            backups::ask_for_backup_handler, create_deployment::create_deployment_handler,
-            delete_deployment::delete_deployment_handler, get_deployment::get_deployment_handler,
+            backups::ask_for_backup_handler,
+            create_deployment::create_deployment_handler,
+            delete_deployment::delete_deployment_handler,
+            get_deployment::get_deployment_handler,
             network_access::set_network_access_handler,
-            tenant_administrator::reveal_administrator_handler,
+            tenant_administrator::{issue_administrator_handler, reveal_administrator_handler},
             update_deployment::update_deployment_handler,
             upgrade_deployment::upgrade_deployment_handler,
         },
@@ -321,6 +323,7 @@ impl Installation {
             .typed_post(upgrade_deployment_handler)
             .typed_post(ask_for_backup_handler)
             .typed_post(report_outcome_handler)
+            .typed_post(issue_administrator_handler)
             .typed_post(reveal_administrator_handler)
             .layer(Extension(identity))
             .with_state(AppState {
@@ -435,6 +438,10 @@ fn user(sub: Uuid) -> Identity {
         name: None,
         roles: vec![],
     })
+}
+
+fn herald_identity(subject: Uuid) -> Identity {
+    herald(subject)
 }
 
 fn herald(subject: Uuid) -> Identity {
@@ -1116,21 +1123,24 @@ async fn a_served_realm(installation: &Installation, name: &str) -> (String, Dep
     assert_eq!(status, StatusCode::CREATED, "{created}");
     let id = created["data"]["id"].as_str().expect("an id").to_string();
     let deployment = DeploymentId(id.parse().expect("a uuid"));
+    installation
+        .report(deployment, DeploymentOutcome::Running)
+        .await;
     (format!("{}/{id}", installation.deployments()), deployment)
 }
 
-async fn report_running_with(
+async fn report_issued(
     installation: &Installation,
     deployment: DeploymentId,
+    herald: Identity,
     password: &str,
-) -> StatusCode {
-    let herald = installation.herald_of(deployment).await;
+) -> (StatusCode, Value) {
     let dataplane: Uuid = sqlx::query_scalar("SELECT dataplane_id FROM deployments WHERE id = $1")
         .bind(deployment.0)
         .fetch_one(&installation.pool)
         .await
         .expect("the plane");
-    let (status, body) = call(
+    call(
         &installation.app_as(herald),
         Method::POST,
         &format!(
@@ -1138,25 +1148,47 @@ async fn report_running_with(
             deployment.0
         ),
         Some(json!({
-            "outcome": "running",
+            "outcome": "administrator_issued",
             "administrator": { "username": "admin", "password": password },
         })),
     )
-    .await;
-    assert!(status.is_success(), "{status} {body}");
-    status
+    .await
 }
 
-#[tokio::test]
-async fn the_first_administrator_of_a_free_realm_is_revealed_once_to_an_organisation_administrator()
+async fn issue(app: &Router, path: &str) -> (StatusCode, Value) {
+    call(
+        app,
+        Method::POST,
+        &format!("{path}/administrator/issue"),
+        None,
+    )
+    .await
+}
+
+async fn credential_of(app: &Router, path: &str) -> Value {
+    let (_, read) = call(app, Method::GET, path, None).await;
+    read["realm"]["administrator"].clone()
+}
+
+async fn with_keys<F>(body: F)
+where
+    F: AsyncFnOnce(&Installation),
 {
-    let logs = captured_logs();
     let server = key_manager().await;
     scenario(async |installation| {
         installation
             .keys
             .set(server.base_url())
             .expect("keys set once");
+        body(installation).await
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn an_organisation_administrator_issues_then_reveals_the_realm_administrator_once() {
+    let logs = captured_logs();
+    with_keys(async |installation| {
         let (path, deployment) = a_served_realm(installation, "revealed").await;
         let app = installation.app();
 
@@ -1167,17 +1199,34 @@ async fn the_first_administrator_of_a_free_realm_is_revealed_once_to_an_organisa
             format!("https://revealed.{ZONE}/realms/revealed/overview")
         );
 
-        report_running_with(installation, deployment, TEMPORARY_PASSWORD).await;
+        let (status, issuing) = issue(&app, &path).await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{issuing}");
+        assert_eq!(issuing["data"]["credential"], "issuing");
+        assert_eq!(issuing["data"]["stale"], false);
+        let (again, _) = issue(&app, &path).await;
+        assert_eq!(again, StatusCode::CONFLICT);
+        let actions = installation.actions_of(&deployment.0.to_string()).await;
+        let (_, payload) = actions
+            .iter()
+            .find(|(kind, _)| kind == "realm.administrator.issue")
+            .expect("the issue action");
+        assert_eq!(payload["realm"], "revealed");
+        assert_eq!(payload["hostname"], format!("revealed.{ZONE}"));
+        assert_eq!(payload.get("password"), None);
 
-        let (_, shown) = call(&app, Method::GET, &path, None).await;
-        assert_eq!(shown["realm"]["administrator"]["username"], "admin");
-        assert_eq!(shown["realm"]["administrator"]["credential"], "available");
-        assert!(!shown.to_string().contains(TEMPORARY_PASSWORD));
+        let herald = installation.herald_of(deployment).await;
+        let (status, _) = report_issued(installation, deployment, herald, TEMPORARY_PASSWORD).await;
+        assert_eq!(status, StatusCode::OK);
+        let shown = credential_of(&app, &path).await;
+        assert_eq!(shown["credential"], "ready", "{shown}");
+        assert_eq!(shown["username"], "admin");
+        let (_, deployment_read) = call(&app, Method::GET, &path, None).await;
+        assert_eq!(deployment_read["data"]["status"], "successful");
+        assert!(!deployment_read.to_string().contains(TEMPORARY_PASSWORD));
 
-        let reveal = format!("{path}/administrator/reveal");
         let request = Request::builder()
             .method(Method::POST)
-            .uri(&reveal)
+            .uri(format!("{path}/administrator/reveal"))
             .body(Body::empty())
             .expect("a request");
         let response = app.clone().oneshot(request).await.expect("a response");
@@ -1196,16 +1245,10 @@ async fn the_first_administrator_of_a_free_realm_is_revealed_once_to_an_organisa
         assert_eq!(revealed["data"]["username"], "admin");
         assert_eq!(revealed["data"]["password"], TEMPORARY_PASSWORD);
 
-        let (again, gone) = call(&app, Method::POST, &reveal, None).await;
-        assert_eq!(again, StatusCode::GONE, "{gone}");
-        assert!(!gone.to_string().contains(TEMPORARY_PASSWORD));
-
-        let (_, after) = call(&app, Method::GET, &path, None).await;
-        assert_eq!(after["realm"]["administrator"]["credential"], "revealed");
-
-        report_running_with(installation, deployment, "Another-Pass-1!").await;
-        let (still, _) = call(&app, Method::POST, &reveal, None).await;
-        assert_eq!(still, StatusCode::GONE);
+        let reveal = format!("{path}/administrator/reveal");
+        let (gone, body) = call(&app, Method::POST, &reveal, None).await;
+        assert_eq!(gone, StatusCode::GONE, "{body}");
+        assert_eq!(credential_of(&app, &path).await["credential"], "revealed");
 
         let sealed_left: bool = sqlx::query_scalar(
             "SELECT ciphertext IS NOT NULL FROM tenant_administrators WHERE deployment_id = $1",
@@ -1230,40 +1273,68 @@ async fn the_first_administrator_of_a_free_realm_is_revealed_once_to_an_organisa
 }
 
 #[tokio::test]
-async fn a_member_who_is_not_an_organisation_administrator_cannot_reveal_the_realm_administrator() {
-    let server = key_manager().await;
-    scenario(async |installation| {
-        installation
-            .keys
-            .set(server.base_url())
-            .expect("keys set once");
-        let (path, deployment) = a_served_realm(installation, "guarded").await;
-        report_running_with(installation, deployment, TEMPORARY_PASSWORD).await;
-        let viewer = installation.a_member_with(1 << 2).await;
+async fn a_lost_credential_is_replaced_by_issuing_again() {
+    with_keys(async |installation| {
+        let (path, deployment) = a_served_realm(installation, "reissued").await;
+        let app = installation.app();
+        let herald = installation.herald_of(deployment).await;
 
-        let (status, refused) = call(
-            &installation.app_as(user(viewer)),
+        issue(&app, &path).await;
+        report_issued(
+            installation,
+            deployment,
+            herald.clone(),
+            "First-Lost-Pass-1!",
+        )
+        .await;
+        let (status, _) = issue(&app, &path).await;
+        assert_eq!(status, StatusCode::ACCEPTED);
+        assert_eq!(credential_of(&app, &path).await["credential"], "issuing");
+
+        report_issued(installation, deployment, herald, TEMPORARY_PASSWORD).await;
+        let (_, revealed) = call(
+            &app,
             Method::POST,
             &format!("{path}/administrator/reveal"),
             None,
         )
         .await;
-        assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
-
-        let (_, shown) = call(&installation.app(), Method::GET, &path, None).await;
-        assert_eq!(shown["realm"]["administrator"]["credential"], "available");
+        assert_eq!(revealed["data"]["password"], TEMPORARY_PASSWORD);
     })
     .await;
 }
 
 #[tokio::test]
-async fn a_realm_whose_administrator_has_not_arrived_has_nothing_to_reveal() {
-    let server = key_manager().await;
-    scenario(async |installation| {
-        installation
-            .keys
-            .set(server.base_url())
-            .expect("keys set once");
+async fn a_member_who_is_not_an_organisation_administrator_cannot_issue_or_reveal() {
+    with_keys(async |installation| {
+        let (path, deployment) = a_served_realm(installation, "guarded").await;
+        issue(&installation.app(), &path).await;
+        let herald = installation.herald_of(deployment).await;
+        report_issued(installation, deployment, herald, TEMPORARY_PASSWORD).await;
+        let viewer = installation.app_as(user(installation.a_member_with(1 << 2).await));
+
+        let (issued, _) = issue(&viewer, &path).await;
+        let (revealed, _) = call(
+            &viewer,
+            Method::POST,
+            &format!("{path}/administrator/reveal"),
+            None,
+        )
+        .await;
+
+        assert_eq!(issued, StatusCode::FORBIDDEN);
+        assert_eq!(revealed, StatusCode::FORBIDDEN);
+        assert_eq!(
+            credential_of(&installation.app(), &path).await["credential"],
+            "ready"
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn nothing_is_revealed_before_an_administrator_was_issued() {
+    with_keys(async |installation| {
         let (path, _) = a_served_realm(installation, "pending").await;
 
         let (status, body) = call(
@@ -1279,50 +1350,33 @@ async fn a_realm_whose_administrator_has_not_arrived_has_nothing_to_reveal() {
 }
 
 #[tokio::test]
-async fn an_administrator_reported_by_another_data_plane_is_refused() {
-    let server = key_manager().await;
-    scenario(async |installation| {
-        installation
-            .keys
-            .set(server.base_url())
-            .expect("keys set once");
-        let (_, deployment) = a_served_realm(installation, "spoofed").await;
-        let dataplane: Uuid =
-            sqlx::query_scalar("SELECT dataplane_id FROM deployments WHERE id = $1")
-                .bind(deployment.0)
-                .fetch_one(&installation.pool)
-                .await
-                .expect("the plane");
+async fn an_administrator_reported_by_another_data_plane_or_never_asked_for_is_not_kept() {
+    with_keys(async |installation| {
+        let (path, deployment) = a_served_realm(installation, "spoofed").await;
+        let app = installation.app();
 
-        let (status, _) = call(
-            &installation.app_as(herald(Uuid::new_v4())),
-            Method::POST,
-            &format!(
-                "/dataplanes/{dataplane}/deployments/{}/outcome",
-                deployment.0
-            ),
-            Some(json!({
-                "outcome": "running",
-                "administrator": { "username": "admin", "password": TEMPORARY_PASSWORD },
-            })),
+        let herald = installation.herald_of(deployment).await;
+        let (status, body) =
+            report_issued(installation, deployment, herald, TEMPORARY_PASSWORD).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["data"]["recorded"], false);
+
+        issue(&app, &path).await;
+        let (status, _) = report_issued(
+            installation,
+            deployment,
+            herald_identity(Uuid::new_v4()),
+            TEMPORARY_PASSWORD,
         )
         .await;
-        assert!(!status.is_success(), "{status}");
-
-        let kept: bool = sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM tenant_administrators WHERE deployment_id = $1)",
-        )
-        .bind(deployment.0)
-        .fetch_one(&installation.pool)
-        .await
-        .expect("the row");
-        assert!(!kept);
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(credential_of(&app, &path).await["credential"], "issuing");
     })
     .await;
 }
 
 #[tokio::test]
-async fn a_key_manager_that_fails_never_stops_a_realm_from_being_reported_running() {
+async fn an_issued_administrator_that_cannot_be_sealed_is_refused_not_swallowed() {
     let broken = MockServer::start_async().await;
     scenario(async |installation| {
         installation
@@ -1330,12 +1384,18 @@ async fn a_key_manager_that_fails_never_stops_a_realm_from_being_reported_runnin
             .set(broken.base_url())
             .expect("keys set once");
         let (path, deployment) = a_served_realm(installation, "unsealed").await;
+        let app = installation.app();
+        issue(&app, &path).await;
 
-        report_running_with(installation, deployment, TEMPORARY_PASSWORD).await;
+        let herald = installation.herald_of(deployment).await;
+        let (status, body) =
+            report_issued(installation, deployment, herald, TEMPORARY_PASSWORD).await;
 
-        let (_, read) = call(&installation.app(), Method::GET, &path, None).await;
+        assert!(status.is_server_error(), "{status} {body}");
+        assert!(!body.to_string().contains(TEMPORARY_PASSWORD));
+        let (_, read) = call(&app, Method::GET, &path, None).await;
         assert_eq!(read["data"]["status"], "successful", "{read}");
-        assert_eq!(read["realm"]["administrator"], Value::Null, "{read}");
+        assert_eq!(read["realm"]["administrator"]["credential"], "issuing");
     })
     .await;
 }

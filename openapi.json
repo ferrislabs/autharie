@@ -2693,6 +2693,93 @@
         ]
       }
     },
+    "/organisations/{organisation_id}/deployments/{deployment_id}/administrator/issue": {
+      "post": {
+        "tags": [
+          "deployments"
+        ],
+        "summary": "issue a new administrator credential for a free deployment's realm",
+        "description": "Asks the cell to set a new temporary password on the realm's administrator. The password in force so far stops working. The new one can be revealed once it has arrived.",
+        "operationId": "issue_administrator_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "The credential is being issued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueAdministratorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an organisation administrator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Already being issued, or not a serving realm",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/organisations/{organisation_id}/deployments/{deployment_id}/administrator/reveal": {
       "post": {
         "tags": [
@@ -9026,7 +9113,8 @@
       "AdministratorCredential": {
         "type": "string",
         "enum": [
-          "available",
+          "issuing",
+          "ready",
           "revealed",
           "expired"
         ]
@@ -11902,6 +11990,17 @@
         "description": "The address an invitation is written to.\n\nLowercased, because that is how it is matched against whoever turns up\nholding the link. Two spellings of one address being treated as two\naddresses is how an invitation stops working for the person it was for.",
         "example": "colleague@acme.com"
       },
+      "IssueAdministratorResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TenantAdministrator"
+          }
+        }
+      },
       "KeyName": {
         "type": "string",
         "description": "The key inside its manager.",
@@ -13443,13 +13542,13 @@
               },
               {
                 "$ref": "#/components/schemas/ReportedAdministrator",
-                "description": "The first administrator of a tenant realm, sent once with the `running`\nreport of the realm that created it. Kept sealed until an organisation\nadministrator reveals it."
+                "description": "The realm administrator Genesis issued, sent only with the\n`administrator_issued` outcome, which never changes a deployment's\nstatus. Kept sealed until an organisation administrator reveals it."
               }
             ]
           },
           "outcome": {
             "type": "string",
-            "description": "What the data plane observed: `running`, `failed` or `deleted`.\n\nAll three are things a component saw rather than inferred -- the\noperator wrote `Running`/`ready` or `Failed` onto the resource, and\ndeletion is reported by whatever removed it. None of them is a timeout,\nwhich is why none needs a policy about when to give up."
+            "description": "What the data plane observed: `running`, `failed` or `deleted`, or\n`administrator_issued` for a realm administrator issued on request.\n\nAll three are things a component saw rather than inferred -- the\noperator wrote `Running`/`ready` or `Failed` onto the resource, and\ndeletion is reported by whatever removed it. None of them is a timeout,\nwhich is why none needs a policy about when to give up."
           },
           "reason": {
             "type": [
@@ -14275,20 +14374,33 @@
       "TenantAdministrator": {
         "type": "object",
         "required": [
-          "username",
           "credential",
-          "expires_at"
+          "stale",
+          "requested_at"
         ],
         "properties": {
           "credential": {
             "$ref": "#/components/schemas/AdministratorCredential"
           },
           "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "requested_at": {
             "type": "string",
             "format": "date-time"
           },
+          "stale": {
+            "type": "boolean"
+          },
           "username": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },

@@ -366,6 +366,10 @@ impl From<CoreError> for ApiError {
                 AdministratorCredentialError::NotAnAdministrator => ApiError::Forbidden {
                     reason: error.to_string(),
                 },
+                AdministratorCredentialError::AlreadyIssuing
+                | AdministratorCredentialError::NotARealm => ApiError::Conflict {
+                    reason: error.to_string(),
+                },
                 AdministratorCredentialError::AlreadyRevealed
                 | AdministratorCredentialError::Expired => ApiError::Gone {
                     reason: error.to_string(),
@@ -1022,6 +1026,14 @@ mod tests {
                 StatusCode::GONE,
             ),
             (AdministratorCredentialError::Expired, StatusCode::GONE),
+            (
+                AdministratorCredentialError::AlreadyIssuing,
+                StatusCode::CONFLICT,
+            ),
+            (
+                AdministratorCredentialError::NotARealm,
+                StatusCode::CONFLICT,
+            ),
         ];
 
         for (error, status) in cases {
