@@ -433,8 +433,12 @@ impl Deployment {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    pub(crate) fn a_deployment() -> Deployment {
+        deployment(DeploymentStatus::Pending)
+    }
 
     fn deployment(status: DeploymentStatus) -> Deployment {
         let at = Utc::now();

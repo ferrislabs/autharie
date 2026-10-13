@@ -11271,6 +11271,17 @@
                 "$ref": "#/components/schemas/Provisioning"
               }
             ]
+          },
+          "realm": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TenantRealm",
+                "description": "The tenant realm, for a deployment hosted as a realm in a shared cell."
+              }
+            ]
           }
         }
       },
@@ -14080,6 +14091,35 @@
           },
           "organisation": {
             "$ref": "#/components/schemas/Organisation"
+          }
+        }
+      },
+      "TenantRealm": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "issuer": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "$ref": "#/components/schemas/RealmName"
+          },
+          "refusal": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },

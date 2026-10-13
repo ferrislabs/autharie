@@ -472,9 +472,16 @@ export namespace Schemas {
     status: ProvisioningStatus
     step?: (null | ProvisioningStep) | undefined
   }
+  export type TenantRealm = {
+    issuer?: (string | null) | undefined
+    name: RealmName
+    refusal?: (string | null) | undefined
+    url?: (string | null) | undefined
+  }
   export type GetDeploymentResponse = {
     data: Deployment
     provisioning?: (null | Provisioning) | undefined
+    realm?: (null | TenantRealm) | undefined
   }
   export type UsageBucketResponse = { bucket: string; value: number }
   export type GetDeploymentUsageResponse = { data: Array<UsageBucketResponse> }

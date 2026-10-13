@@ -672,3 +672,62 @@ async fn a_free_deployment_refuses_what_only_a_dedicated_instance_can_do() {
     })
     .await;
 }
+
+/// @spec-fpr-7
+#[tokio::test]
+async fn a_free_deployment_shows_its_tenant_url_its_issuer_and_why_its_realm_was_refused() {
+    scenario(async |installation| {
+        installation.serve_region().await;
+        installation.open_a_cell().await;
+        let app = installation.app();
+
+        let (_, created) = call(
+            &app,
+            Method::POST,
+            &installation.deployments(),
+            Some(installation.free("shown", "ferriskey")),
+        )
+        .await;
+        let id = created["data"]["id"].as_str().expect("an id").to_string();
+        let path = format!("{}/{id}", installation.deployments());
+
+        let (status, read) = call(&app, Method::GET, &path, None).await;
+        assert_eq!(status, StatusCode::OK, "{read}");
+        assert_eq!(read["realm"]["name"], "shown");
+        assert_eq!(read["realm"]["url"], format!("https://shown.{ZONE}"));
+        assert_eq!(
+            read["realm"]["issuer"],
+            format!("https://shown.{ZONE}/api/realms/shown")
+        );
+        assert_eq!(read["realm"]["refusal"], Value::Null);
+
+        let service = installation.service();
+        let deployment = DeploymentId(id.parse().expect("a uuid"));
+        let dataplane_id = service
+            .get_deployment(deployment)
+            .await
+            .expect("read")
+            .expect("exists")
+            .dataplane_id;
+        service
+            .report_outcome(
+                herald(installation.herald),
+                ReportDeploymentOutcomeCommand {
+                    observed_version: None,
+                    dataplane_id,
+                    deployment_id: deployment,
+                    outcome: DeploymentOutcome::Failed,
+                    reason: Some("the realm name was refused by the cell".to_string()),
+                },
+            )
+            .await
+            .expect("the refusal was recorded");
+
+        let (_, refused) = call(&app, Method::GET, &path, None).await;
+        assert_eq!(
+            refused["realm"]["refusal"],
+            "the realm name was refused by the cell"
+        );
+    })
+    .await;
+}

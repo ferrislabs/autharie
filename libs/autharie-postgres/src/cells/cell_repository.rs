@@ -360,4 +360,17 @@ impl CellRepository for PostgresCellRepository<'_> {
 
         Ok(affected > 0)
     }
+
+    async fn realm_refusal(&self, deployment: DeploymentId) -> Result<Option<String>, CoreError> {
+        let mut tx = self.tx.lock().await;
+        let refusal = sqlx::query_scalar!(
+            r#"SELECT realm_refusal FROM deployments WHERE id = $1"#,
+            deployment.0
+        )
+        .fetch_optional(&mut ***tx)
+        .await
+        .map_err(database_error("read the refusal of a realm"))?;
+
+        Ok(refusal.flatten())
+    }
 }

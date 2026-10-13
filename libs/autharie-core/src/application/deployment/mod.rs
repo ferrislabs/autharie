@@ -16,7 +16,7 @@ use crate::{
     backups::{
         ArchiveDestination, BackupSchedule, StoreEncryption, ports::BackupScheduleRepository,
     },
-    cells::{PlacementError, RealmRequests},
+    cells::{CellRepository, PlacementError, RealmRequests, TenantRealm},
     deployments::{
         Deployment, DeploymentId,
         commands::{CreateDeploymentCommand, UpdateDeploymentCommand},
@@ -233,6 +233,38 @@ impl AutharieService {
             .await?;
 
         Ok(())
+    }
+}
+
+impl AutharieService {
+    #[transactional(deployment, user, data_plane, organisation, cell)]
+    pub async fn tenant_realm_for_organisation(
+        &self,
+        identity: Identity,
+        organisation_id: OrganisationId,
+        deployment_id: DeploymentId,
+    ) -> Result<Option<TenantRealm>, CoreError> {
+        let deployment = DeploymentServiceImpl::new(
+            deployment_repository,
+            user_repository,
+            data_plane_repository,
+            organisation_repository,
+            LocalClusterProvisioner,
+            self.placement_windows(),
+            AuthariePolicy::new(permissions_in(&tx)),
+        )
+        .get_deployment_for_organisation(identity, organisation_id, deployment_id)
+        .await?;
+        if !deployment.is_pooled() {
+            return Ok(None);
+        }
+
+        let refusal = cell_repository.realm_refusal(deployment.id).await?;
+        Ok(TenantRealm::of(
+            &deployment,
+            self.deployment_domain(),
+            refusal,
+        ))
     }
 }
 
