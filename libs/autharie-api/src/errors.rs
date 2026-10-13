@@ -319,6 +319,7 @@ impl From<CoreError> for ApiError {
             },
             CoreError::DeploymentNameTaken
             | CoreError::DeploymentNameBeingReleased
+            | CoreError::NotForPooledDeployment { .. }
             | CoreError::OrganisationLimitReached { .. } => ApiError::Conflict {
                 reason: value.to_string(),
             },

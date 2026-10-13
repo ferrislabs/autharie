@@ -722,6 +722,12 @@ where
             })?;
 
         refuse_if_busy(&deployment, "changed")?;
+        if command.name.is_some() {
+            deployment.refuse_if_pooled("renamed: its name is its realm and its address")?;
+        }
+        if command.log_shipping_enabled.is_some() {
+            deployment.refuse_if_pooled("given log shipping: its logs are those of the cell")?;
+        }
 
         if let Some(name) = command.name {
             deployment.name = name;

@@ -264,6 +264,20 @@ impl Deployment {
         environment::slug(&self.name.0)
     }
 
+    pub fn is_pooled(&self) -> bool {
+        matches!(self.distribution, distribution::Distribution::Pooled { .. })
+    }
+
+    pub fn refuse_if_pooled(&self, operation: &str) -> Result<(), crate::CoreError> {
+        if !self.is_pooled() {
+            return Ok(());
+        }
+
+        Err(crate::CoreError::NotForPooledDeployment {
+            operation: operation.to_string(),
+        })
+    }
+
     /// Records that the work has been handed to a data plane.
     ///
     /// Returns whether anything changed, so a caller can skip a write.

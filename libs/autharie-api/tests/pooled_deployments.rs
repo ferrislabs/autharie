@@ -521,3 +521,99 @@ async fn a_free_organisation_is_refused_the_sandbox_and_told_which_tier_opens_it
     })
     .await;
 }
+
+/// @spec-fpr-8
+#[tokio::test]
+async fn deleting_a_free_deployment_asks_its_cell_to_delete_the_realm_and_frees_the_name_once_done()
+{
+    scenario(async |installation| {
+        installation.serve_region().await;
+        installation.open_a_cell().await;
+        let app = installation.app();
+
+        let (status, created) = call(
+            &app,
+            Method::POST,
+            &installation.deployments(),
+            Some(installation.free("leaving", "ferriskey")),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{created}");
+        let id = created["data"]["id"].as_str().expect("an id").to_string();
+
+        let (status, deleted) = call(
+            &app,
+            Method::DELETE,
+            &format!("{}/{id}", installation.deployments()),
+            None,
+        )
+        .await;
+        assert!(status.is_success(), "{status} {deleted}");
+        let kinds: Vec<String> = installation
+            .actions_of(&id)
+            .await
+            .into_iter()
+            .map(|(kind, _)| kind)
+            .collect();
+        assert_eq!(kinds, ["realm.create", "realm.delete"]);
+
+        let (status, refused) = call(
+            &app,
+            Method::POST,
+            &installation.deployments(),
+            Some(installation.free("leaving", "ferriskey")),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+        assert!(
+            refused.to_string().contains("still being released"),
+            "{refused}"
+        );
+
+        installation
+            .report(
+                DeploymentId(id.parse().expect("a uuid")),
+                DeploymentOutcome::Deleted,
+            )
+            .await;
+        let (status, again) = call(
+            &app,
+            Method::POST,
+            &installation.deployments(),
+            Some(installation.free("leaving", "ferriskey")),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{again}");
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_free_deployment_cannot_be_renamed_because_its_name_is_its_realm() {
+    scenario(async |installation| {
+        installation.serve_region().await;
+        installation.open_a_cell().await;
+        let app = installation.app();
+
+        let (_, created) = call(
+            &app,
+            Method::POST,
+            &installation.deployments(),
+            Some(installation.free("fixed-name", "ferriskey")),
+        )
+        .await;
+        let id = created["data"]["id"].as_str().expect("an id").to_string();
+
+        let (status, refused) = call(
+            &app,
+            Method::PATCH,
+            &format!("{}/{id}", installation.deployments()),
+            Some(json!({"name": "another-name"})),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+        assert!(refused.to_string().contains("renamed"), "{refused}");
+    })
+    .await;
+}
