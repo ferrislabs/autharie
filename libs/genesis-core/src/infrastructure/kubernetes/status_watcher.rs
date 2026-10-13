@@ -113,6 +113,7 @@ impl IdentityInstanceStatusWatcher {
                 duration_seconds: None,
                 reason: None,
                 administrator: None,
+                request_id: None,
             };
 
             match self.outcomes.publish(report).await {

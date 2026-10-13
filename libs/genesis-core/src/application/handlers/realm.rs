@@ -173,12 +173,18 @@ where
         zone: &str,
     ) -> Result<(), GenesisError> {
         let hostname = payload.hostname_in(zone)?;
+        let Some(request_id) = payload.request_id else {
+            return Err(GenesisError::InvalidPayload {
+                message: "an administrator issue names its request".to_string(),
+            });
+        };
         let cell = payload.cell();
         let route = payload.route();
         info!(
             deployment_id = %payload.deployment_id,
             realm = %payload.realm,
             cell = %cell.name,
+            %request_id,
             "issuing the realm administrator"
         );
 
@@ -193,6 +199,7 @@ where
                 self.outcomes
                     .publish(DeploymentOutcomeReport::administrator_issued(
                         payload.deployment_id,
+                        request_id,
                         administrator,
                     ))
                     .await
@@ -332,6 +339,7 @@ mod tests {
     use crate::domain::entities::tenant_access::InitialAdministrator;
 
     const TENANT: Uuid = Uuid::from_u128(1);
+    const REQUEST: Uuid = Uuid::from_u128(5);
     const CELL: Uuid = Uuid::from_u128(2);
     const ZONE: &str = "cells.example";
 
@@ -590,6 +598,7 @@ mod tests {
                 "cell": { "deployment_id": CELL, "namespace": "cells-one" },
                 "realm": "acme",
                 "hostname": hostname,
+                "request_id": REQUEST,
             }),
             occurred_at: Utc::now(),
         }
@@ -836,6 +845,7 @@ mod tests {
             reports.all(),
             [DeploymentOutcomeReport::administrator_issued(
                 TENANT,
+                REQUEST,
                 issued[0].clone()
             )]
         );
@@ -1279,6 +1289,27 @@ mod tests {
             assert!(matches!(result, Err(GenesisError::InvalidPayload { .. })));
         }
         assert_eq!(cell.calls(), 0);
+    }
+
+    #[tokio::test]
+    async fn an_issue_that_names_no_request_reaches_no_realm() {
+        let (cell, routes, reports) = (
+            FakeCell::default(),
+            FakeRoutes::with(&route_name(), owner(TENANT, "acme")),
+            Arc::new(Reports::default()),
+        );
+        let mut event = issue_event();
+        event
+            .payload
+            .as_object_mut()
+            .expect("an object")
+            .remove("request_id");
+
+        let result = issuing(&cell, &routes, &reports).handle(event).await;
+
+        assert!(matches!(result, Err(GenesisError::InvalidPayload { .. })));
+        assert!(cell.issued().is_empty());
+        assert!(reports.all().is_empty());
     }
 
     #[test]

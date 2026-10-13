@@ -738,6 +738,7 @@ mod tests {
                     duration_seconds: None,
                     reason: None,
                     administrator: None,
+                    request_id: None,
                 }])
             })
         });
@@ -794,6 +795,7 @@ mod tests {
                     duration_seconds: Some(212),
                     reason: None,
                     administrator: None,
+                    request_id: None,
                 }])
             })
         });
@@ -853,6 +855,7 @@ mod tests {
                     duration_seconds: None,
                     reason: None,
                     administrator: None,
+                    request_id: None,
                 }])
             })
         });

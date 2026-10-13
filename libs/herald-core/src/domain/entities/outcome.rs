@@ -31,6 +31,9 @@ pub struct DeploymentOutcomeReport {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub administrator: Option<RelayedAdministrator>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<Uuid>,
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
@@ -51,6 +54,7 @@ impl fmt::Debug for DeploymentOutcomeReport {
                 "administrator",
                 &self.administrator.as_ref().map(|_| "<redacted>"),
             )
+            .field("request_id", &self.request_id)
             .finish()
     }
 }

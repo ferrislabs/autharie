@@ -47,6 +47,9 @@ pub struct DeploymentOutcomeReport {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub administrator: Option<InitialAdministrator>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<Uuid>,
 }
 
 impl fmt::Debug for DeploymentOutcomeReport {
@@ -59,6 +62,7 @@ impl fmt::Debug for DeploymentOutcomeReport {
             .field("duration_seconds", &self.duration_seconds)
             .field("reason", &self.reason)
             .field("administrator", &administrator)
+            .field("request_id", &self.request_id)
             .finish()
     }
 }
@@ -76,6 +80,7 @@ impl DeploymentOutcomeReport {
             duration_seconds: None,
             reason: None,
             administrator: None,
+            request_id: None,
         }
     }
 
@@ -92,6 +97,7 @@ impl DeploymentOutcomeReport {
             duration_seconds: None,
             reason: None,
             administrator: None,
+            request_id: None,
         }
     }
 
@@ -103,10 +109,15 @@ impl DeploymentOutcomeReport {
             duration_seconds: None,
             reason: None,
             administrator: None,
+            request_id: None,
         }
     }
 
-    pub fn administrator_issued(deployment_id: Uuid, administrator: InitialAdministrator) -> Self {
+    pub fn administrator_issued(
+        deployment_id: Uuid,
+        request_id: Uuid,
+        administrator: InitialAdministrator,
+    ) -> Self {
         Self {
             deployment_id,
             outcome: "administrator_issued".to_string(),
@@ -114,6 +125,7 @@ impl DeploymentOutcomeReport {
             duration_seconds: None,
             reason: None,
             administrator: Some(administrator),
+            request_id: Some(request_id),
         }
     }
 
@@ -132,6 +144,7 @@ impl DeploymentOutcomeReport {
             duration_seconds: None,
             reason: None,
             administrator: None,
+            request_id: None,
         }
     }
 
@@ -146,6 +159,7 @@ impl DeploymentOutcomeReport {
             duration_seconds: Some(duration_seconds),
             reason: None,
             administrator: None,
+            request_id: None,
         }
     }
 
@@ -164,6 +178,7 @@ impl DeploymentOutcomeReport {
             duration_seconds,
             reason: Some(reason.into()),
             administrator: None,
+            request_id: None,
         }
     }
 }
@@ -223,6 +238,7 @@ mod tests {
     fn debug_never_shows_the_password() {
         let report = DeploymentOutcomeReport::administrator_issued(
             DEPLOYMENT,
+            Uuid::from_u128(9),
             InitialAdministrator::new("admin", "hunter2-Secret"),
         );
 
@@ -237,6 +253,7 @@ mod tests {
     fn the_administrator_round_trips_through_json() {
         let report = DeploymentOutcomeReport::administrator_issued(
             DEPLOYMENT,
+            Uuid::from_u128(9),
             InitialAdministrator::new("admin", "hunter2-Secret"),
         );
 
@@ -244,6 +261,7 @@ mod tests {
 
         assert_eq!(value["administrator"]["username"], "admin");
         assert_eq!(value["administrator"]["password"], "hunter2-Secret");
+        assert_eq!(value["request_id"], serde_json::json!(Uuid::from_u128(9)));
         let back: DeploymentOutcomeReport = serde_json::from_value(value).expect("read back");
         assert_eq!(back, report);
     }

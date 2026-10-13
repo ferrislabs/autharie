@@ -353,6 +353,9 @@ impl ControlPlaneRepository for HttpControlPlaneRepository {
         if let Some(administrator) = &report.administrator {
             body["administrator"] = serde_json::json!(administrator);
         }
+        if let Some(request_id) = report.request_id {
+            body["request_id"] = serde_json::json!(request_id);
+        }
         let response = self
             .client
             .post(self.outcome_url(dp_id, &report.deployment_id))
@@ -567,6 +570,7 @@ mod tests {
             "deployment_id": "44444444-4444-4444-4444-444444444444",
             "outcome": "administrator_issued",
             "administrator": { "username": "admin", "password": "Tmp-Pass-1!" },
+            "request_id": "55555555-5555-5555-5555-555555555555",
         }))
         .expect("a report");
 
@@ -578,6 +582,7 @@ mod tests {
                     "version": null,
                     "reason": null,
                     "administrator": { "username": "admin", "password": "Tmp-Pass-1!" },
+                    "request_id": "55555555-5555-5555-5555-555555555555",
                 }));
             then.status(200)
                 .json_body(json!({ "data": { "recorded": true } }));
