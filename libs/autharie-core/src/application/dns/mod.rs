@@ -17,7 +17,7 @@
 use autharie_domain::{
     CoreError,
     dataplane::{ports::DataPlaneRepository, value_objects::DataPlaneId},
-    deployments::{Deployment, DeploymentStatus, ports::DeploymentRepository},
+    deployments::{Deployment, ports::DeploymentRepository},
 };
 use autharie_macros::transactional;
 
@@ -60,7 +60,7 @@ impl AutharieService {
                 .await?;
 
             for deployment in deployments {
-                if deployment.status == DeploymentStatus::Deleting {
+                if !deployment.deserves_a_dns_record() {
                     continue;
                 }
 

@@ -782,6 +782,17 @@ async fn a_free_deployment_shows_its_tenant_url_its_issuer_and_why_its_realm_was
             refused["realm"]["refusal"],
             "the realm name was refused by the cell"
         );
+        let targets = installation
+            .service()
+            .dns_targets()
+            .await
+            .expect("the DNS targets");
+        assert!(
+            !targets
+                .iter()
+                .any(|(target, _)| target.id.0.to_string() == id),
+            "a refused realm keeps no DNS record"
+        );
     })
     .await;
 }
