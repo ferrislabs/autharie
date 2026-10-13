@@ -2365,7 +2365,7 @@
           "deployments"
         ],
         "summary": "update deployment",
-        "description": "Update a deployment within the specified organisation.",
+        "description": "Update the settings of a deployment within the specified organisation: its name and its log shipping. Any other field is refused with a 422.",
         "operationId": "update_deployment_handler",
         "parameters": [
           {
@@ -2420,6 +2420,16 @@
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The body carries a field that is not a deployment setting",
             "content": {
               "application/json": {
                 "schema": {
@@ -13718,18 +13728,6 @@
       "UpdateDeploymentRequest": {
         "type": "object",
         "properties": {
-          "deployed_at": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "kind": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "log_shipping_enabled": {
             "type": [
               "boolean",
@@ -13742,26 +13740,9 @@
               "string",
               "null"
             ]
-          },
-          "namespace": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "status": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "version": {
-            "type": [
-              "string",
-              "null"
-            ]
           }
-        }
+        },
+        "additionalProperties": false
       },
       "UpdateDeploymentResponse": {
         "type": "object",

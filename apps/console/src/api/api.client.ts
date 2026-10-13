@@ -785,13 +785,8 @@ export namespace Schemas {
     total_hits: number
   }
   export type UpdateDeploymentRequest = Partial<{
-    deployed_at: string | null
-    kind: string | null
     log_shipping_enabled: boolean | null
     name: string | null
-    namespace: string | null
-    status: string | null
-    version: string | null
   }>
   export type UpdateDeploymentResponse = { data: Deployment }
   export type UpdateRoleRequest = Partial<{
