@@ -12,7 +12,7 @@ use crate::{
     },
     deployments::{
         Deployment, DeploymentId, DeploymentStatus,
-        commands::{CreateDeploymentCommand, UpdateDeploymentCommand},
+        commands::{CreateDeploymentCommand, Sizing, UpdateDeploymentCommand},
         distribution::Distribution,
         environment::namespace_for,
         network::NetworkAccess,
@@ -371,7 +371,7 @@ where
                 id: command.organisation_id.0,
             })?;
 
-        if !command.offer.is_open_to(organisation.plan) {
+        if command.sizing() == Sizing::Offer && !command.offer.is_open_to(organisation.plan) {
             return Err(CoreError::OfferNotOpenToPlan {
                 offer: command.offer.to_string(),
                 plan: organisation.plan.to_string(),
@@ -389,9 +389,10 @@ where
         // bringing back: an offer revised since then could size it smaller
         // than the archive it has to hold.
         let mode = command.offer.mode();
-        let resources = match command.recovery.as_ref() {
-            Some(recovery) => recovery.resources,
-            None => command.offer.resources(),
+        let resources = match (command.recovery.as_ref(), command.sizing()) {
+            (Some(recovery), _) => recovery.resources,
+            (None, Sizing::Platform(resources)) => resources,
+            (None, Sizing::Offer) => command.offer.resources(),
         };
 
         let id = DeploymentId(uuid::Uuid::new_v4());
@@ -1027,6 +1028,17 @@ mod tests {
     }
 
     async fn created_with(command: CreateDeploymentCommand) -> Deployment {
+        created_on(
+            crate::organisation::value_objects::Plan::Enterprise,
+            command,
+        )
+        .await
+    }
+
+    async fn created_on(
+        plan: crate::organisation::value_objects::Plan,
+        command: CreateDeploymentCommand,
+    ) -> Deployment {
         let mut mock_repo = MockDeploymentRepository::new();
         let mut mock_dataplane_repo = MockDataPlaneRepository::new();
         mock_repo
@@ -1045,7 +1057,7 @@ mod tests {
             mock_repo,
             StubUserRepository,
             mock_dataplane_repo,
-            organisations_on(crate::organisation::value_objects::Plan::Enterprise),
+            organisations_on(plan),
             no_provisioning(),
             windows(),
             Allowed,
@@ -1077,6 +1089,19 @@ mod tests {
             created.topology,
             crate::deployments::topology::Topology::SINGLE
         );
+    }
+
+    #[tokio::test]
+    async fn a_deployment_sized_by_the_platform_takes_its_resources_whatever_the_plan() {
+        use crate::{
+            dataplane::value_objects::DeploymentResources, organisation::value_objects::Plan,
+        };
+
+        let resources = DeploymentResources::new(1000, 2048, 10).expect("resources");
+        let created = created_on(Plan::Free, a_create_command().sized_by_platform(resources)).await;
+
+        assert_eq!(created.resources, resources);
+        assert_eq!(created.offer, Some(crate::offers::Offer::Standard));
     }
 
     #[tokio::test]

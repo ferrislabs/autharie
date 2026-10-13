@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::{
     dataplane::value_objects::{DataPlaneId, Region},
-    deployments::DeploymentId,
+    deployments::{Deployment, DeploymentId, DeploymentStatus},
 };
 
 use super::{CellError, CellPolicy};
@@ -30,6 +30,22 @@ pub enum CellStatus {
     Draining,
     Retired,
     Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub struct HighAvailability {
+    instance: DeploymentId,
+}
+
+impl HighAvailability {
+    pub fn proven_by(instance: &Deployment) -> Option<Self> {
+        let serving = instance.status == DeploymentStatus::Successful;
+
+        (serving && instance.topology.is_highly_available()).then_some(Self {
+            instance: instance.id,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -182,7 +198,11 @@ impl Cell {
         }
     }
 
-    pub fn open(&mut self) -> Result<(), CellError> {
+    pub fn open(&mut self, proof: HighAvailability) -> Result<(), CellError> {
+        if proof.instance != self.instance {
+            return Err(CellError::InvalidTransition);
+        }
+
         match self.status {
             CellStatus::Provisioning => {
                 self.status = if self.realms >= self.capacity {
@@ -233,6 +253,7 @@ mod tests {
     use chrono::Duration;
 
     use super::*;
+    use crate::{cells::fixtures::instance, deployments::topology::Topology};
 
     fn region() -> Region {
         Region::new("eu-west")
@@ -407,14 +428,24 @@ mod tests {
         }
     }
 
+    fn proof_for(cell: &Cell) -> HighAvailability {
+        HighAvailability::proven_by(&instance(
+            cell.instance(),
+            DeploymentStatus::Successful,
+            Topology::HIGH_AVAILABILITY,
+        ))
+        .expect("a highly available instance")
+    }
+
     #[test]
     fn a_cell_goes_from_provisioning_to_open_to_draining_to_retired() {
         let mut cell = cell(CellStatus::Provisioning, 200, 0, 0);
+        let proof = proof_for(&cell);
 
         assert_eq!(cell.retire(), Err(CellError::InvalidTransition));
-        cell.open().expect("opens");
+        cell.open(proof).expect("opens");
         assert_eq!(cell.status(), CellStatus::Open);
-        assert_eq!(cell.open(), Err(CellError::InvalidTransition));
+        assert_eq!(cell.open(proof), Err(CellError::InvalidTransition));
         cell.drain().expect("drains");
         assert_eq!(cell.status(), CellStatus::Draining);
         cell.retire().expect("retires");
@@ -503,5 +534,49 @@ mod tests {
             );
         }
         assert!(restore(CellStatus::Draining, 5, 5).is_ok());
+    }
+    /// @spec-fpr-11
+    #[test]
+    fn only_a_serving_instance_of_two_replicas_on_two_database_instances_proves_high_availability()
+    {
+        let id = DeploymentId(Uuid::new_v4());
+        let proven = |status, replicas, databases| {
+            HighAvailability::proven_by(&instance(
+                id,
+                status,
+                Topology::new(replicas, databases).expect("a topology"),
+            ))
+            .is_some()
+        };
+
+        assert!(proven(DeploymentStatus::Successful, 2, 2));
+        assert!(proven(DeploymentStatus::Successful, 3, 2));
+        assert!(!proven(DeploymentStatus::Successful, 1, 2));
+        assert!(!proven(DeploymentStatus::Successful, 2, 1));
+        assert!(!proven(DeploymentStatus::Successful, 1, 1));
+        for status in [
+            DeploymentStatus::Pending,
+            DeploymentStatus::InProgress,
+            DeploymentStatus::Failed,
+            DeploymentStatus::Upgrading,
+            DeploymentStatus::Deleting,
+        ] {
+            assert!(!proven(status.clone(), 2, 2), "{status:?}");
+        }
+    }
+
+    /// @spec-fpr-11
+    #[test]
+    fn a_cell_does_not_open_on_the_proof_of_another_instance() {
+        let mut cell = cell(CellStatus::Provisioning, 200, 0, 0);
+        let other = HighAvailability::proven_by(&instance(
+            DeploymentId(Uuid::new_v4()),
+            DeploymentStatus::Successful,
+            Topology::HIGH_AVAILABILITY,
+        ))
+        .expect("a highly available instance");
+
+        assert_eq!(cell.open(other), Err(CellError::InvalidTransition));
+        assert_eq!(cell.status(), CellStatus::Provisioning);
     }
 }
