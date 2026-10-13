@@ -13557,6 +13557,14 @@
             ],
             "description": "Why the data plane gave up, sent with `failed` when it knows."
           },
+          "request_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The issue request an `administrator_issued` outcome answers. An\nanswer to an older request is ignored."
+          },
           "version": {
             "type": [
               "string",

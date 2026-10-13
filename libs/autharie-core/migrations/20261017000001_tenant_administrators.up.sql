@@ -1,6 +1,8 @@
 CREATE TABLE tenant_administrators (
     deployment_id UUID PRIMARY KEY REFERENCES deployments(id) ON DELETE CASCADE,
+    request_id UUID NOT NULL,
     requested_at TIMESTAMPTZ NOT NULL,
+    issued_request_id UUID NULL,
     username TEXT NULL,
     ciphertext BYTEA NULL,
     nonce BYTEA NULL,
@@ -18,8 +20,9 @@ CREATE TABLE tenant_administrators (
             AND key_provider IS NOT NULL AND key_name IS NOT NULL AND key_version IS NOT NULL)
     ),
     CONSTRAINT tenant_administrators_issued_whole CHECK (
-        (issued_at IS NULL AND expires_at IS NULL AND username IS NULL)
-        OR (issued_at IS NOT NULL AND expires_at IS NOT NULL AND username IS NOT NULL)
+        (issued_at IS NULL AND expires_at IS NULL AND username IS NULL AND issued_request_id IS NULL)
+        OR (issued_at IS NOT NULL AND expires_at IS NOT NULL AND username IS NOT NULL
+            AND issued_request_id IS NOT NULL)
     ),
     CONSTRAINT tenant_administrators_sealed_once_issued CHECK (ciphertext IS NULL OR issued_at IS NOT NULL),
     CONSTRAINT tenant_administrators_revealed_once_issued CHECK (revealed_at IS NULL OR issued_at IS NOT NULL),

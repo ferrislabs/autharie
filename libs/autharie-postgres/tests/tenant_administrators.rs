@@ -26,6 +26,9 @@ use autharie_postgres::{
 use chrono::{DateTime, Duration, Utc};
 use uuid::Uuid;
 
+const FIRST: Uuid = Uuid::from_u128(1);
+const SECOND: Uuid = Uuid::from_u128(2);
+
 mod support;
 use support::pool;
 
@@ -171,12 +174,12 @@ async fn an_issued_credential_is_kept_only_when_asked_for_and_handed_over_once()
 
         assert!(
             !repository
-                .store_issued(deployment, &sealed(b"unasked", now, later))
+                .store_issued(deployment, FIRST, &sealed(b"unasked", now, later))
                 .await?
         );
         assert_eq!(state(&repository, deployment, now).await?, None);
 
-        repository.request_issue(deployment, now).await?;
+        repository.request_issue(deployment, FIRST, now).await?;
         assert_eq!(
             state(&repository, deployment, now).await?,
             Some((AdministratorCredential::Issuing, false))
@@ -185,12 +188,12 @@ async fn an_issued_credential_is_kept_only_when_asked_for_and_handed_over_once()
 
         assert!(
             repository
-                .store_issued(deployment, &sealed(b"first", now, later))
+                .store_issued(deployment, FIRST, &sealed(b"first", now, later))
                 .await?
         );
         assert!(
             !repository
-                .store_issued(deployment, &sealed(b"late", now, later))
+                .store_issued(deployment, FIRST, &sealed(b"late", now, later))
                 .await?
         );
         assert_eq!(
@@ -216,33 +219,41 @@ async fn an_issued_credential_is_kept_only_when_asked_for_and_handed_over_once()
 }
 
 #[tokio::test]
-async fn a_new_issue_replaces_the_credential_before_it() {
+async fn a_new_issue_keeps_the_previous_credential_sealed_but_hides_it_until_the_new_one_arrives() {
     scratch(async |tx| {
         let deployment = a_deployment(&tx).await?;
         let repository = PostgresTenantAdministratorRepository::new(&tx);
         let now = Utc::now();
         let later = now + Duration::days(7);
 
-        repository.request_issue(deployment, now).await?;
+        repository.request_issue(deployment, FIRST, now).await?;
         repository
-            .store_issued(deployment, &sealed(b"first", now, later))
+            .store_issued(deployment, FIRST, &sealed(b"first", now, later))
             .await?;
-        repository.request_issue(deployment, now).await?;
-        assert!(!material_left(&tx, deployment).await?);
+        repository.request_issue(deployment, SECOND, now).await?;
 
-        repository
-            .store_issued(deployment, &sealed(b"second", now, later))
-            .await?;
-        let Taken::Sealed(taken) = repository.take(deployment, now).await? else {
-            panic!("the newer credential was there to take");
-        };
-        assert_eq!(taken.sealed.ciphertext, b"second");
-
-        repository.request_issue(deployment, now).await?;
+        assert!(material_left(&tx, deployment).await?);
         assert_eq!(
             state(&repository, deployment, now).await?,
             Some((AdministratorCredential::Issuing, false))
         );
+        assert_eq!(repository.take(deployment, now).await?, Taken::Absent);
+        assert!(material_left(&tx, deployment).await?);
+
+        assert!(
+            !repository
+                .store_issued(deployment, FIRST, &sealed(b"late", now, later))
+                .await?
+        );
+        assert!(
+            repository
+                .store_issued(deployment, SECOND, &sealed(b"second", now, later))
+                .await?
+        );
+        let Taken::Sealed(taken) = repository.take(deployment, now).await? else {
+            panic!("the newer credential was there to take");
+        };
+        assert_eq!(taken.sealed.ciphertext, b"second");
         Ok(())
     })
     .await;
@@ -255,7 +266,7 @@ async fn an_issue_that_never_arrives_turns_stale() {
         let repository = PostgresTenantAdministratorRepository::new(&tx);
         let asked = Utc::now() - Duration::minutes(11);
 
-        repository.request_issue(deployment, asked).await?;
+        repository.request_issue(deployment, FIRST, asked).await?;
 
         assert_eq!(
             state(&repository, deployment, Utc::now()).await?,
@@ -279,11 +290,12 @@ async fn an_expired_credential_is_never_handed_over_and_is_wiped() {
         let now = Utc::now();
 
         repository
-            .request_issue(deployment, now - Duration::days(8))
+            .request_issue(deployment, FIRST, now - Duration::days(8))
             .await?;
         repository
             .store_issued(
                 deployment,
+                FIRST,
                 &sealed(
                     b"stale",
                     now - Duration::days(8),
@@ -316,11 +328,12 @@ async fn the_purge_wipes_only_what_has_expired() {
             (current, now + Duration::days(7)),
         ] {
             repository
-                .request_issue(deployment, now - Duration::days(8))
+                .request_issue(deployment, FIRST, now - Duration::days(8))
                 .await?;
             repository
                 .store_issued(
                     deployment,
+                    FIRST,
                     &sealed(b"x", now - Duration::days(8), expires_at),
                 )
                 .await?;
@@ -358,9 +371,9 @@ async fn a_revealed_credential_cannot_hold_its_material_again() {
         let deployment = a_deployment(&tx).await?;
         let repository = PostgresTenantAdministratorRepository::new(&tx);
         let now = Utc::now();
-        repository.request_issue(deployment, now).await?;
+        repository.request_issue(deployment, FIRST, now).await?;
         repository
-            .store_issued(deployment, &sealed(b"first", now, now + Duration::days(7)))
+            .store_issued(deployment, FIRST, &sealed(b"first", now, now + Duration::days(7)))
             .await?;
         repository.take(deployment, now).await?;
 

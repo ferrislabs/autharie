@@ -1129,17 +1129,50 @@ async fn a_served_realm(installation: &Installation, name: &str) -> (String, Dep
     (format!("{}/{id}", installation.deployments()), deployment)
 }
 
+async fn latest_request(installation: &Installation, deployment: DeploymentId) -> Uuid {
+    sqlx::query_scalar("SELECT request_id FROM tenant_administrators WHERE deployment_id = $1")
+        .bind(deployment.0)
+        .fetch_optional(&installation.pool)
+        .await
+        .expect("the request")
+        .unwrap_or_else(Uuid::new_v4)
+}
+
+async fn plane_of(installation: &Installation, deployment: DeploymentId) -> Uuid {
+    sqlx::query_scalar("SELECT dataplane_id FROM deployments WHERE id = $1")
+        .bind(deployment.0)
+        .fetch_one(&installation.pool)
+        .await
+        .expect("the plane")
+}
+
 async fn report_issued(
     installation: &Installation,
     deployment: DeploymentId,
     herald: Identity,
     password: &str,
 ) -> (StatusCode, Value) {
-    let dataplane: Uuid = sqlx::query_scalar("SELECT dataplane_id FROM deployments WHERE id = $1")
-        .bind(deployment.0)
-        .fetch_one(&installation.pool)
-        .await
-        .expect("the plane");
+    let request = latest_request(installation, deployment).await;
+    let dataplane = plane_of(installation, deployment).await;
+    report_issued_for(
+        installation,
+        deployment,
+        herald,
+        password,
+        request,
+        dataplane,
+    )
+    .await
+}
+
+async fn report_issued_for(
+    installation: &Installation,
+    deployment: DeploymentId,
+    herald: Identity,
+    password: &str,
+    request: Uuid,
+    dataplane: Uuid,
+) -> (StatusCode, Value) {
     call(
         &installation.app_as(herald),
         Method::POST,
@@ -1150,6 +1183,7 @@ async fn report_issued(
         Some(json!({
             "outcome": "administrator_issued",
             "administrator": { "username": "admin", "password": password },
+            "request_id": request,
         })),
     )
     .await
@@ -1396,6 +1430,135 @@ async fn an_issued_administrator_that_cannot_be_sealed_is_refused_not_swallowed(
         let (_, read) = call(&app, Method::GET, &path, None).await;
         assert_eq!(read["data"]["status"], "successful", "{read}");
         assert_eq!(read["realm"]["administrator"]["credential"], "issuing");
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn an_administrator_issued_for_an_older_request_is_ignored() {
+    with_keys(async |installation| {
+        let (path, deployment) = a_served_realm(installation, "older").await;
+        let app = installation.app();
+        let herald = installation.herald_of(deployment).await;
+        let dataplane = plane_of(installation, deployment).await;
+
+        issue(&app, &path).await;
+        let older = latest_request(installation, deployment).await;
+        sqlx::query(
+            "UPDATE tenant_administrators SET requested_at = now() - interval '11 minutes' \
+             WHERE deployment_id = $1",
+        )
+        .bind(deployment.0)
+        .execute(&installation.pool)
+        .await
+        .expect("an old request");
+        assert_eq!(credential_of(&app, &path).await["stale"], true);
+        let (status, _) = issue(&app, &path).await;
+        assert_eq!(status, StatusCode::ACCEPTED);
+        let newer = latest_request(installation, deployment).await;
+        assert_ne!(older, newer);
+        let actions = installation.actions_of(&deployment.0.to_string()).await;
+        let issued: Vec<_> = actions
+            .iter()
+            .filter(|(kind, _)| kind == "realm.administrator.issue")
+            .map(|(_, payload)| payload["request_id"].clone())
+            .collect();
+        assert_eq!(issued, [json!(older), json!(newer)]);
+
+        let (_, ignored) = report_issued_for(
+            installation,
+            deployment,
+            herald.clone(),
+            "Older-Pass-1!",
+            older,
+            dataplane,
+        )
+        .await;
+        assert_eq!(ignored["data"]["recorded"], false);
+        assert_eq!(credential_of(&app, &path).await["credential"], "issuing");
+
+        let (_, kept) = report_issued_for(
+            installation,
+            deployment,
+            herald,
+            TEMPORARY_PASSWORD,
+            newer,
+            dataplane,
+        )
+        .await;
+        assert_eq!(kept["data"]["recorded"], true);
+        let (_, revealed) = call(
+            &app,
+            Method::POST,
+            &format!("{path}/administrator/reveal"),
+            None,
+        )
+        .await;
+        assert_eq!(revealed["data"]["password"], TEMPORARY_PASSWORD);
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn two_issues_asked_at_once_record_one_request() {
+    with_keys(async |installation| {
+        let (path, deployment) = a_served_realm(installation, "racing").await;
+        let app = installation.app();
+
+        let ((first, _), (second, _)) = tokio::join!(issue(&app, &path), issue(&app, &path));
+
+        let mut statuses = [first, second];
+        statuses.sort();
+        assert_eq!(statuses, [StatusCode::ACCEPTED, StatusCode::CONFLICT]);
+        let actions = installation.actions_of(&deployment.0.to_string()).await;
+        assert_eq!(
+            actions
+                .iter()
+                .filter(|(kind, _)| kind == "realm.administrator.issue")
+                .count(),
+            1
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn an_administrator_for_another_plane_or_a_deleted_realm_is_not_kept() {
+    with_keys(async |installation| {
+        let (path, deployment) = a_served_realm(installation, "elsewhere").await;
+        let app = installation.app();
+        issue(&app, &path).await;
+        let herald = installation.herald_of(deployment).await;
+        let request = latest_request(installation, deployment).await;
+
+        let (status, _) = report_issued_for(
+            installation,
+            deployment,
+            herald.clone(),
+            TEMPORARY_PASSWORD,
+            request,
+            Uuid::new_v4(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+
+        sqlx::query("UPDATE deployments SET deleted_at = now() WHERE id = $1")
+            .bind(deployment.0)
+            .execute(&installation.pool)
+            .await
+            .expect("deleted");
+        let (status, body) =
+            report_issued(installation, deployment, herald, TEMPORARY_PASSWORD).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["data"]["recorded"], false);
+        let kept: bool = sqlx::query_scalar(
+            "SELECT issued_at IS NOT NULL FROM tenant_administrators WHERE deployment_id = $1",
+        )
+        .bind(deployment.0)
+        .fetch_one(&installation.pool)
+        .await
+        .expect("the row");
+        assert!(!kept);
     })
     .await;
 }

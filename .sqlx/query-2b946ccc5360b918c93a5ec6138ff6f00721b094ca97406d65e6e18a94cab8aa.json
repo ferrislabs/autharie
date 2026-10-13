@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT requested_at, issued_at, expires_at, revealed_at IS NOT NULL AS \"revealed!\"\n            FROM tenant_administrators\n            WHERE deployment_id = $1\n            FOR UPDATE\n            ",
+  "query": "\n            SELECT requested_at, issued_at, expires_at, revealed_at IS NOT NULL AS \"revealed!\",\n                   issued_request_id IS NOT DISTINCT FROM request_id AS \"current!\"\n            FROM tenant_administrators\n            WHERE deployment_id = $1\n            FOR UPDATE\n            ",
   "describe": {
     "columns": [
       {
@@ -22,6 +22,11 @@
         "ordinal": 3,
         "name": "revealed!",
         "type_info": "Bool"
+      },
+      {
+        "ordinal": 4,
+        "name": "current!",
+        "type_info": "Bool"
       }
     ],
     "parameters": {
@@ -33,8 +38,9 @@
       false,
       true,
       true,
+      null,
       null
     ]
   },
-  "hash": "bc60b8b4ef7f1c39dee4f3a1598deb274d3578d746cbd8426cdcc5dc795e29f2"
+  "hash": "2b946ccc5360b918c93a5ec6138ff6f00721b094ca97406d65e6e18a94cab8aa"
 }

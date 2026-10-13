@@ -12,6 +12,7 @@ use autharie_domain::{
     deployments::DeploymentId,
 };
 use chrono::{DateTime, Utc};
+use uuid::Uuid;
 
 use super::envelope::{open, seal, store_failure};
 
@@ -41,6 +42,7 @@ where
     async fn keep(
         &self,
         deployment: DeploymentId,
+        request: Uuid,
         administrator: InitialAdministrator,
         now: DateTime<Utc>,
     ) -> Result<bool, CoreError> {
@@ -60,6 +62,7 @@ where
         self.repository
             .store_issued(
                 deployment,
+                request,
                 &SealedAdministrator {
                     username: administrator.username().to_string(),
                     sealed: SealedSecret {
@@ -103,7 +106,6 @@ mod tests {
         dataplane::credential::SecretString,
     };
     use chrono::TimeZone;
-    use uuid::Uuid;
 
     use super::*;
 
@@ -114,53 +116,69 @@ mod tests {
         Utc.with_ymd_and_hms(2026, 10, 13, 12, 0, 0).unwrap()
     }
 
+    const FIRST: Uuid = Uuid::from_u128(1);
+    const SECOND: Uuid = Uuid::from_u128(2);
+
     #[derive(Default)]
     struct Rows {
-        requested: Mutex<bool>,
-        row: Mutex<Option<(SealedAdministrator, bool)>>,
+        request: Mutex<Option<Uuid>>,
+        row: Mutex<Option<(SealedAdministrator, bool, Uuid)>>,
     }
 
     impl Rows {
         fn requested() -> Self {
             Self {
-                requested: Mutex::new(true),
+                request: Mutex::new(Some(FIRST)),
                 ..Self::default()
             }
         }
     }
 
     impl TenantAdministratorRepository for &Rows {
+        async fn lock(&self, _: DeploymentId) -> Result<(), CoreError> {
+            Ok(())
+        }
+
         async fn issue_record(&self, _: DeploymentId) -> Result<Option<IssueRecord>, CoreError> {
             Ok(None)
         }
 
-        async fn request_issue(&self, _: DeploymentId, _: DateTime<Utc>) -> Result<(), CoreError> {
-            *self.requested.lock().unwrap() = true;
-            *self.row.lock().unwrap() = None;
+        async fn request_issue(
+            &self,
+            _: DeploymentId,
+            request: Uuid,
+            _: DateTime<Utc>,
+        ) -> Result<(), CoreError> {
+            *self.request.lock().unwrap() = Some(request);
             Ok(())
         }
 
         async fn store_issued(
             &self,
             _: DeploymentId,
+            request: Uuid,
             administrator: &SealedAdministrator,
         ) -> Result<bool, CoreError> {
-            let mut requested = self.requested.lock().unwrap();
-            if !*requested {
+            let mut row = self.row.lock().unwrap();
+            let already = row
+                .as_ref()
+                .is_some_and(|(_, _, issued)| *issued == request);
+            if *self.request.lock().unwrap() != Some(request) || already {
                 return Ok(false);
             }
-            *requested = false;
-            *self.row.lock().unwrap() = Some((administrator.clone(), false));
+            *row = Some((administrator.clone(), false, request));
             Ok(true)
         }
 
         async fn take(&self, _: DeploymentId, now: DateTime<Utc>) -> Result<Taken, CoreError> {
+            let current = *self.request.lock().unwrap();
             let mut row = self.row.lock().unwrap();
             Ok(match row.as_mut() {
+                Some((_, _, issued)) if Some(*issued) != current => Taken::Absent,
                 None => Taken::Absent,
-                Some((_, true)) => Taken::Revealed,
-                Some((sealed, _)) if sealed.expires_at <= now => Taken::Expired,
-                Some((sealed, revealed)) => {
+                Some((_, true, _)) => Taken::Revealed,
+                Some((sealed, _, _)) if sealed.expires_at <= now => Taken::Expired,
+                Some((sealed, revealed, _)) => {
                     *revealed = true;
                     Taken::Sealed(sealed.clone())
                 }
@@ -219,8 +237,8 @@ mod tests {
         let rows = Rows::requested();
         let vault = EnvelopeAdministratorVault::new(&rows, &FixedKeys).unwrap();
 
-        assert!(vault.keep(DEPLOYMENT, admin(), now()).await.unwrap());
-        let (stored, _) = rows.row.lock().unwrap().clone().unwrap();
+        assert!(vault.keep(DEPLOYMENT, FIRST, admin(), now()).await.unwrap());
+        let (stored, _, _) = rows.row.lock().unwrap().clone().unwrap();
         assert!(
             !stored
                 .sealed
@@ -248,7 +266,7 @@ mod tests {
         let rows = Rows::default();
         let vault = EnvelopeAdministratorVault::new(&rows, &FixedKeys).unwrap();
 
-        assert!(!vault.keep(DEPLOYMENT, admin(), now()).await.unwrap());
+        assert!(!vault.keep(DEPLOYMENT, FIRST, admin(), now()).await.unwrap());
         assert!(rows.row.lock().unwrap().is_none());
     }
 
@@ -256,11 +274,23 @@ mod tests {
     async fn a_new_issue_replaces_the_credential_before_it() {
         let rows = Rows::requested();
         let vault = EnvelopeAdministratorVault::new(&rows, &FixedKeys).unwrap();
-        vault.keep(DEPLOYMENT, admin(), now()).await.unwrap();
+        vault.keep(DEPLOYMENT, FIRST, admin(), now()).await.unwrap();
 
-        (&rows).request_issue(DEPLOYMENT, now()).await.unwrap();
+        (&rows)
+            .request_issue(DEPLOYMENT, SECOND, now())
+            .await
+            .unwrap();
+        assert!(matches!(
+            vault.reveal(DEPLOYMENT, now()).await,
+            Err(CoreError::TenantAdministrator(
+                AdministratorCredentialError::NotIssued
+            ))
+        ));
+
+        let late = InitialAdministrator::new("admin", SecretString::new("Late-Pass-3!"));
+        assert!(!vault.keep(DEPLOYMENT, FIRST, late, now()).await.unwrap());
         let newer = InitialAdministrator::new("admin", SecretString::new("Newer-Pass-7!"));
-        assert!(vault.keep(DEPLOYMENT, newer, now()).await.unwrap());
+        assert!(vault.keep(DEPLOYMENT, SECOND, newer, now()).await.unwrap());
 
         let revealed = vault.reveal(DEPLOYMENT, now()).await.unwrap();
         assert_eq!(revealed.password().expose(), "Newer-Pass-7!");
@@ -270,7 +300,7 @@ mod tests {
     async fn a_credential_cannot_be_opened_under_another_deployment() {
         let rows = Rows::requested();
         let vault = EnvelopeAdministratorVault::new(&rows, &FixedKeys).unwrap();
-        vault.keep(DEPLOYMENT, admin(), now()).await.unwrap();
+        vault.keep(DEPLOYMENT, FIRST, admin(), now()).await.unwrap();
 
         let result = vault.reveal(DeploymentId(Uuid::from_u128(8)), now()).await;
 
@@ -288,7 +318,7 @@ mod tests {
             ))
         ));
 
-        vault.keep(DEPLOYMENT, admin(), now()).await.unwrap();
+        vault.keep(DEPLOYMENT, FIRST, admin(), now()).await.unwrap();
         let later = now() + ADMINISTRATOR_CREDENTIAL_LIFETIME;
         assert!(matches!(
             vault.reveal(DEPLOYMENT, later).await,

@@ -741,6 +741,7 @@ export namespace Schemas {
     administrator?: (null | ReportedAdministrator) | undefined
     outcome: string
     reason?: (string | null) | undefined
+    request_id?: (string | null) | undefined
     version?: (string | null) | undefined
   }
   export type ReportOutcomeResponseData = { recorded: boolean }

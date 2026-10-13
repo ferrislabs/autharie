@@ -87,15 +87,17 @@ where
         deployment: &Deployment,
         zone: &str,
         requested_by: crate::user::UserId,
+        request: uuid::Uuid,
     ) -> Result<Action, CoreError> {
         let (cell_id, realm) = pooled(deployment)?;
         let hostname = realm_hostname(deployment, realm, zone)?;
 
-        let payload = self.payload(deployment, cell_id, realm).await?;
+        let mut payload = with_hostname(self.payload(deployment, cell_id, realm).await?, &hostname);
+        payload["request_id"] = json!(request);
         self.record(
             deployment,
             REALM_ADMINISTRATOR_ISSUE,
-            with_hostname(payload, &hostname),
+            payload,
             ActionSource::User {
                 user_id: requested_by.0,
             },
@@ -402,6 +404,7 @@ mod tests {
                 &tenant(DeploymentStatus::Successful),
                 "cells.example",
                 asker,
+                uuid::Uuid::from_u128(5),
             )
             .await
             .expect("recorded");
@@ -421,6 +424,7 @@ mod tests {
                 "cell": { "deployment_id": INSTANCE.0, "namespace": "cells-cell-one" },
                 "realm": "acme",
                 "hostname": "acme.cells.example",
+                "request_id": uuid::Uuid::from_u128(5),
             })
         );
         assert_eq!(recorded_count(&recorded), 1);

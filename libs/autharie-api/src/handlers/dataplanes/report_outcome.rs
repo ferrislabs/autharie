@@ -3,6 +3,7 @@ use autharie_core::{
     cells::InitialAdministrator,
     dataplane::{credential::SecretString, ports::DataPlaneService, value_objects::DataPlaneId},
     deployments::{DeploymentId, commands::ReportDeploymentOutcomeCommand},
+    tenant_access::ReportedIssue,
 };
 use axum::{Extension, Json, extract::State};
 use axum_extra::routing::TypedPath;
@@ -50,6 +51,11 @@ pub struct ReportOutcomeRequest {
     /// status. Kept sealed until an organisation administrator reveals it.
     #[serde(default)]
     pub administrator: Option<ReportedAdministrator>,
+
+    /// The issue request an `administrator_issued` outcome answers. An
+    /// answer to an older request is ignored.
+    #[serde(default)]
+    pub request_id: Option<uuid::Uuid>,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -112,14 +118,23 @@ pub async fn report_outcome_handler(
     Json(request): Json<ReportOutcomeRequest>,
 ) -> Result<Response<ReportOutcomeResponse>, ApiError> {
     if request.outcome == ADMINISTRATOR_ISSUED {
-        let Some(administrator) = request.administrator else {
+        let (Some(administrator), Some(request_id)) = (request.administrator, request.request_id)
+        else {
             return Ok(Response::OK(ReportOutcomeResponse {
                 data: ReportOutcomeResponseData { recorded: false },
             }));
         };
         let recorded = state
             .service
-            .keep_tenant_administrator(identity, deployment_id, administrator.into_administrator()?)
+            .keep_tenant_administrator(
+                identity,
+                ReportedIssue {
+                    dataplane: dataplane_id,
+                    deployment: deployment_id,
+                    request: request_id,
+                },
+                administrator.into_administrator()?,
+            )
             .await?;
         return Ok(Response::OK(ReportOutcomeResponse {
             data: ReportOutcomeResponseData { recorded },

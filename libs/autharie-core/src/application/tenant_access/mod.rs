@@ -5,7 +5,7 @@ use autharie_domain::{
         AdministratorCredentialError, AdministratorVault, CellRepository, InitialAdministrator,
         RealmRequests, TenantAdministrator, TenantAdministratorRepository,
     },
-    dataplane::herald_identity::speaking_for,
+    dataplane::{herald_identity::speaking_for, value_objects::DataPlaneId},
     deployments::{
         Deployment, DeploymentId, DeploymentStatus,
         ports::{DeploymentRepository, DeploymentService},
@@ -26,6 +26,7 @@ use autharie_postgres::{
 };
 use chrono::Utc;
 use tracing::info;
+use uuid::Uuid;
 
 use crate::{
     AutharieService,
@@ -62,20 +63,29 @@ fn serving_realm(deployment: &Deployment) -> Result<(), CoreError> {
     }
 }
 
+pub struct ReportedIssue {
+    pub dataplane: DataPlaneId,
+    pub deployment: DeploymentId,
+    pub request: Uuid,
+}
+
 impl AutharieService {
     #[transactional(data_plane, deployment)]
     pub async fn keep_tenant_administrator(
         &self,
         identity: Identity,
-        deployment_id: DeploymentId,
+        reported: ReportedIssue,
         administrator: InitialAdministrator,
     ) -> Result<bool, CoreError> {
+        let deployment_id = reported.deployment;
         let speaking = speaking_for(&data_plane_repository, &identity).await?;
         let Some(deployment) = deployment_repository.get_by_id(deployment_id).await? else {
             return Ok(false);
         };
         speaking.is(deployment.dataplane_id)?;
-        if !deployment.is_pooled() {
+        speaking.is(reported.dataplane)?;
+        if serving_realm(&deployment).is_err() {
+            info!(%deployment_id, "an administrator for a realm that no longer serves was ignored");
             return Ok(false);
         }
 
@@ -87,10 +97,12 @@ impl AutharieService {
 
         let kept =
             EnvelopeAdministratorVault::new(PostgresTenantAdministratorRepository::new(&tx), keys)?
-                .keep(deployment_id, administrator, Utc::now())
+                .keep(deployment_id, reported.request, administrator, Utc::now())
                 .await?;
         if kept {
             info!(%deployment_id, "a realm administrator credential is kept until revealed");
+        } else {
+            info!(%deployment_id, "an administrator for an older or unknown request was ignored");
         }
         Ok(kept)
     }
@@ -124,6 +136,7 @@ impl AutharieService {
         };
 
         let administrators = PostgresTenantAdministratorRepository::new(&tx);
+        administrators.lock(deployment.id).await?;
         let now = Utc::now();
         if let Some(record) = administrators.issue_record(deployment.id).await?
             && !record.may_issue_again(now)
@@ -135,14 +148,17 @@ impl AutharieService {
             .find_by_sub(identity.id())
             .await?
             .ok_or(CoreError::InvalidIdentity)?;
+        let request = Uuid::new_v4();
         RealmRequests::new(
             cells,
             PostgresDeploymentRepository::new(&tx),
             PostgresActionRepository::new(&tx),
         )
-        .issue_administrator(&deployment, zone, asker.id)
+        .issue_administrator(&deployment, zone, asker.id, request)
         .await?;
-        administrators.request_issue(deployment.id, now).await?;
+        administrators
+            .request_issue(deployment.id, request, now)
+            .await?;
         info!(%deployment_id, "a realm administrator credential was asked for");
 
         administrators

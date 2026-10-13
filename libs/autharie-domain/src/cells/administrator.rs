@@ -2,6 +2,7 @@ use chrono::{DateTime, Duration, Utc};
 use serde::Serialize;
 use thiserror::Error;
 use utoipa::ToSchema;
+use uuid::Uuid;
 
 use crate::{
     CoreError, dataplane::credential::SecretString, dataplane::credential_repository::SealedSecret,
@@ -66,6 +67,7 @@ pub struct TenantAdministrator {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IssueRecord {
     pub requested_at: DateTime<Utc>,
+    pub current: bool,
     pub issued_at: Option<DateTime<Utc>>,
     pub expires_at: Option<DateTime<Utc>>,
     pub revealed: bool,
@@ -74,6 +76,7 @@ pub struct IssueRecord {
 impl IssueRecord {
     pub fn state(&self, now: DateTime<Utc>) -> (AdministratorCredential, bool) {
         let credential = match (self.issued_at, self.expires_at) {
+            _ if !self.current => AdministratorCredential::Issuing,
             (None, _) | (_, None) => AdministratorCredential::Issuing,
             _ if self.revealed => AdministratorCredential::Revealed,
             (_, Some(expires_at)) if expires_at <= now => AdministratorCredential::Expired,
@@ -150,6 +153,8 @@ impl Taken {
 }
 
 pub trait TenantAdministratorRepository: Send + Sync {
+    fn lock(&self, deployment: DeploymentId) -> impl Future<Output = Result<(), CoreError>> + Send;
+
     fn issue_record(
         &self,
         deployment: DeploymentId,
@@ -158,12 +163,14 @@ pub trait TenantAdministratorRepository: Send + Sync {
     fn request_issue(
         &self,
         deployment: DeploymentId,
+        request: Uuid,
         now: DateTime<Utc>,
     ) -> impl Future<Output = Result<(), CoreError>> + Send;
 
     fn store_issued(
         &self,
         deployment: DeploymentId,
+        request: Uuid,
         administrator: &SealedAdministrator,
     ) -> impl Future<Output = Result<bool, CoreError>> + Send;
 
@@ -189,6 +196,7 @@ pub trait AdministratorVault: Send + Sync {
     fn keep(
         &self,
         deployment: DeploymentId,
+        request: Uuid,
         administrator: InitialAdministrator,
         now: DateTime<Utc>,
     ) -> impl Future<Output = Result<bool, CoreError>> + Send;
@@ -212,6 +220,7 @@ mod tests {
     fn issued(revealed: bool, expires_at: DateTime<Utc>) -> IssueRecord {
         IssueRecord {
             requested_at: now() - Duration::hours(1),
+            current: true,
             issued_at: Some(now() - Duration::minutes(59)),
             expires_at: Some(expires_at),
             revealed,
@@ -222,6 +231,7 @@ mod tests {
     fn a_requested_credential_is_issuing_until_it_arrives_and_stale_after_ten_minutes() {
         let fresh = IssueRecord {
             requested_at: now() - Duration::minutes(9),
+            current: true,
             issued_at: None,
             expires_at: None,
             revealed: false,
@@ -238,6 +248,16 @@ mod tests {
         assert_eq!(old.state(now()), (AdministratorCredential::Issuing, true));
         assert!(!fresh.may_issue_again(now()));
         assert!(old.may_issue_again(now()));
+    }
+
+    #[test]
+    fn a_credential_from_an_older_request_is_issuing_until_the_newest_arrives() {
+        let older = IssueRecord {
+            current: false,
+            ..issued(false, now() + ADMINISTRATOR_CREDENTIAL_LIFETIME)
+        };
+
+        assert_eq!(older.state(now()), (AdministratorCredential::Issuing, true));
     }
 
     #[test]
