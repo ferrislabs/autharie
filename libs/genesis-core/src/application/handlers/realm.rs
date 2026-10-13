@@ -7,6 +7,7 @@ use uuid::Uuid;
 use crate::domain::entities::action_event::ActionEvent;
 use crate::domain::entities::outcome::DeploymentOutcomeReport;
 use crate::domain::entities::realm_payload::RealmPayloadV1;
+use crate::domain::entities::tenant_access::{AccessGrant, InitialAdministrator, TenantAccess};
 use crate::domain::error::{GenesisError, RealmError};
 use crate::domain::ports::{BoxFuture, EventHandler, OutcomePublisher, RealmPort, TenantRoutePort};
 
@@ -33,6 +34,7 @@ pub struct RealmEventHandler<R, T> {
     outcomes: Arc<dyn OutcomePublisher>,
     zone: Option<String>,
     refused_deletes: Mutex<HashMap<Uuid, u32>>,
+    pending: Mutex<HashMap<Uuid, InitialAdministrator>>,
 }
 
 impl<R, T> RealmEventHandler<R, T>
@@ -72,6 +74,7 @@ where
             outcomes,
             zone: zone.filter(|zone| !zone.is_empty()),
             refused_deletes: Mutex::default(),
+            pending: Mutex::default(),
         }
     }
 
@@ -124,9 +127,36 @@ where
             }
         }
 
+        let deployment_id = payload.deployment_id;
+        let access = TenantAccess::for_realm(&payload, hostname);
+        let administrator = match self.realms.open_access(&cell, &access).await {
+            Ok(AccessGrant::Issued(administrator)) => {
+                self.pending_lock()
+                    .insert(deployment_id, administrator.clone());
+                Some(administrator)
+            }
+            Ok(AccessGrant::AlreadyIssued) => self.pending_lock().get(&deployment_id).cloned(),
+            Err(RealmError::NotACell) => {
+                self.routes.delete(&route).await?;
+                return refuse(deployment_id, NOT_A_CELL);
+            }
+            Err(error) => return Err(retry(error)),
+        };
+
         self.outcomes
-            .publish(DeploymentOutcomeReport::serving(payload.deployment_id))
-            .await
+            .publish(DeploymentOutcomeReport::serving_with(
+                deployment_id,
+                administrator,
+            ))
+            .await?;
+        self.pending_lock().remove(&deployment_id);
+        Ok(())
+    }
+
+    fn pending_lock(&self) -> std::sync::MutexGuard<'_, HashMap<Uuid, InitialAdministrator>> {
+        self.pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     async fn delete_realm(
@@ -272,9 +302,22 @@ mod tests {
         failure: Option<RealmError>,
         calls: Mutex<Vec<(IdentityInstanceRef, String)>>,
         journal: Journal,
+        access_failure: Option<RealmError>,
+        accesses: Mutex<Vec<TenantAccess>>,
     }
 
     impl FakeCell {
+        fn failing_access(failure: RealmError) -> Self {
+            Self {
+                access_failure: Some(failure),
+                ..Self::default()
+            }
+        }
+
+        fn accesses(&self) -> Vec<TenantAccess> {
+            self.accesses.lock().expect("lock").clone()
+        }
+
         fn failing(failure: RealmError) -> Self {
             Self {
                 failure: Some(failure),
@@ -334,6 +377,24 @@ mod tests {
                 Ok(())
             } else {
                 Err(RealmError::NotFound)
+            }
+        }
+
+        async fn open_access(
+            &self,
+            _cell: &IdentityInstanceRef,
+            access: &TenantAccess,
+        ) -> Result<AccessGrant, RealmError> {
+            self.journal.lock().expect("lock").push("open access");
+            let mut accesses = self.accesses.lock().expect("lock");
+            accesses.push(access.clone());
+            if let Some(failure) = &self.access_failure {
+                return Err(failure.clone());
+            }
+            if accesses.len() == 1 {
+                Ok(AccessGrant::Issued(administrator()))
+            } else {
+                Ok(AccessGrant::AlreadyIssued)
             }
         }
     }
@@ -403,12 +464,26 @@ mod tests {
         }
     }
 
+    fn administrator() -> InitialAdministrator {
+        InitialAdministrator::new("admin", "first-issued-Passw0rd!")
+    }
+
     #[derive(Default)]
-    struct Reports(Mutex<Vec<DeploymentOutcomeReport>>);
+    struct Reports {
+        sent: Mutex<Vec<DeploymentOutcomeReport>>,
+        failing_first: Mutex<bool>,
+    }
 
     impl Reports {
         fn all(&self) -> Vec<DeploymentOutcomeReport> {
-            self.0.lock().expect("lock").clone()
+            self.sent.lock().expect("lock").clone()
+        }
+
+        fn failing_once() -> Self {
+            Self {
+                failing_first: Mutex::new(true),
+                ..Self::default()
+            }
         }
     }
 
@@ -417,7 +492,15 @@ mod tests {
             &'a self,
             report: DeploymentOutcomeReport,
         ) -> BoxFuture<'a, Result<(), GenesisError>> {
-            self.0.lock().expect("lock").push(report);
+            let failing = std::mem::take(&mut *self.failing_first.lock().expect("lock"));
+            if failing {
+                return Box::pin(async {
+                    Err(GenesisError::MessageBus {
+                        message: "the broker is away".to_string(),
+                    })
+                });
+            }
+            self.sent.lock().expect("lock").push(report);
             Box::pin(async { Ok(()) })
         }
     }
@@ -506,7 +589,13 @@ mod tests {
                 ("acme.cells.example".to_string(), owner(TENANT, "acme"))
             )])
         );
-        assert_eq!(reports.all(), [DeploymentOutcomeReport::serving(TENANT)]);
+        assert_eq!(
+            reports.all(),
+            [DeploymentOutcomeReport::serving_with(
+                TENANT,
+                Some(administrator())
+            )]
+        );
     }
 
     /// @spec-fpr-6
@@ -524,7 +613,82 @@ mod tests {
 
         assert_eq!(cell.realms().len(), 1);
         assert_eq!(routes.routes().len(), 1);
-        assert_eq!(reports.all().len(), 2);
+        assert_eq!(
+            reports.all(),
+            [
+                DeploymentOutcomeReport::serving_with(TENANT, Some(administrator())),
+                DeploymentOutcomeReport::serving_with(TENANT, None)
+            ]
+        );
+    }
+
+    /// @spec-fpr-6
+    #[tokio::test]
+    async fn a_publish_that_failed_once_carries_the_same_credential_on_redelivery() {
+        let (cell, routes, reports) = (
+            FakeCell::default(),
+            FakeRoutes::default(),
+            Arc::new(Reports::failing_once()),
+        );
+        let handler = creating(&cell, &routes, &reports);
+
+        let first = handler.handle(create_event()).await;
+        assert!(matches!(first, Err(GenesisError::MessageBus { .. })));
+        assert!(reports.all().is_empty());
+        handler.handle(create_event()).await.expect("redelivered");
+        handler.handle(create_event()).await.expect("again");
+
+        assert_eq!(
+            reports.all(),
+            [
+                DeploymentOutcomeReport::serving_with(TENANT, Some(administrator())),
+                DeploymentOutcomeReport::serving_with(TENANT, None)
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn an_access_error_is_retried_and_publishes_nothing() {
+        let (cell, routes, reports) = (
+            FakeCell::failing_access(RealmError::CellUnreachable {
+                message: "step answered 500".to_string(),
+            }),
+            FakeRoutes::default(),
+            Arc::new(Reports::default()),
+        );
+
+        let result = creating(&cell, &routes, &reports)
+            .handle(create_event())
+            .await;
+
+        assert!(matches!(result, Err(GenesisError::Handler { .. })));
+        assert_eq!(cell.accesses().len(), 1);
+        assert_eq!(routes.routes().len(), 1);
+        assert!(reports.all().is_empty());
+    }
+
+    #[tokio::test]
+    async fn access_is_opened_for_the_realm_on_its_hostname_after_the_realm_exists() {
+        let journal = Journal::default();
+        let cell = FakeCell {
+            journal: Arc::clone(&journal),
+            ..FakeCell::default()
+        };
+        let (routes, reports) = (FakeRoutes::default(), Arc::new(Reports::default()));
+
+        creating(&cell, &routes, &reports)
+            .handle(create_event())
+            .await
+            .expect("created");
+
+        assert_eq!(entries(&journal), ["create realm", "open access"]);
+        let access = &cell.accesses()[0];
+        assert_eq!(access.realm.as_str(), "acme");
+        assert_eq!(access.administrator_id, TENANT);
+        assert_eq!(
+            access.console_callback,
+            "https://acme.cells.example/realms/acme/authentication/callback"
+        );
     }
 
     /// @spec-fpr-7
@@ -624,7 +788,13 @@ mod tests {
 
         assert_eq!(
             entries(&journal),
-            ["claim", "create realm", "delete realm", "release"]
+            [
+                "claim",
+                "create realm",
+                "open access",
+                "delete realm",
+                "release"
+            ]
         );
     }
 

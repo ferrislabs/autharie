@@ -112,6 +112,7 @@ impl IdentityInstanceStatusWatcher {
                 version: Some(version.clone()),
                 duration_seconds: None,
                 reason: None,
+                administrator: None,
             };
 
             match self.outcomes.publish(report).await {

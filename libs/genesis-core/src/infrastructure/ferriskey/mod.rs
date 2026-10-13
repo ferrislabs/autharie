@@ -3,11 +3,15 @@ use std::time::Duration;
 use autharie_crds::v1alpha::identity_instance::{IdentityInstance, IdentityProvider};
 use k8s_openapi::api::core::v1::Secret;
 use kube::{Api, Client};
-use reqwest::{StatusCode, header::CONTENT_TYPE, redirect::Policy};
+use reqwest::{RequestBuilder, StatusCode, header::CONTENT_TYPE, redirect::Policy};
 use serde_json::{Value, json};
 
 use crate::domain::entities::identity_instance::IdentityInstanceRef;
 use crate::domain::entities::realm_payload::RealmName;
+use crate::domain::entities::tenant_access::{
+    ADMINISTRATOR_USERNAME, AccessGrant, CONSOLE_CLIENT, InitialAdministrator, TENANT_PERMISSIONS,
+    TENANT_ROLE, TENANT_ROLE_DESCRIPTION, TenantAccess,
+};
 use crate::domain::error::{GenesisError, RealmError};
 use crate::domain::ports::RealmPort;
 
@@ -90,6 +94,234 @@ impl FerriskeyAdmin {
         answer(Call::Delete, response.status())
     }
 
+    pub async fn open_access(
+        &self,
+        base_url: &str,
+        credentials: &AdminCredentials,
+        access: &TenantAccess,
+    ) -> Result<AccessGrant, RealmError> {
+        let token = self.token(base_url, credentials).await?;
+        let realm = format!("{base_url}/realms/{}", access.realm);
+        let user = format!("{realm}/users/{}", access.administrator_id);
+
+        let client_id = self.console_client(&realm, &token).await?;
+        self.ensure_redirect(&realm, &client_id, &access.console_callback, &token)
+            .await?;
+        let role_id = self.ensure_role(&realm, &token).await?;
+        self.ensure_administrator(&realm, &user, access, &token)
+            .await?;
+        self.ensure_assignment(&user, &role_id, &token).await?;
+        self.issue_password(&user, &token).await
+    }
+
+    async fn exchange(
+        &self,
+        request: RequestBuilder,
+        token: &str,
+        step: &'static str,
+    ) -> Result<(StatusCode, Value), RealmError> {
+        let response = request
+            .bearer_auth(token)
+            .send()
+            .await
+            .map_err(unreachable)?;
+        let status = response.status();
+        let body = response.text().await.map_err(unreachable)?;
+        if !status.is_success() || body.trim().is_empty() {
+            return Ok((status, Value::Null));
+        }
+        let value = serde_json::from_str(&body).map_err(|_| RealmError::CellUnreachable {
+            message: format!("{step} answered a body that is not JSON"),
+        })?;
+        Ok((status, value))
+    }
+
+    async fn read(
+        &self,
+        url: String,
+        token: &str,
+        step: &'static str,
+    ) -> Result<Value, RealmError> {
+        let (status, value) = self.exchange(self.http.get(url), token, step).await?;
+        succeeded(step, status)?;
+        Ok(value)
+    }
+
+    async fn write(
+        &self,
+        request: RequestBuilder,
+        body: Value,
+        token: &str,
+        step: &'static str,
+    ) -> Result<Value, RealmError> {
+        let request = request
+            .header(CONTENT_TYPE, "application/json")
+            .body(body.to_string());
+        let (status, value) = self.exchange(request, token, step).await?;
+        succeeded(step, status)?;
+        Ok(value)
+    }
+
+    async fn console_client(&self, realm: &str, token: &str) -> Result<String, RealmError> {
+        let found = self
+            .read(
+                format!("{realm}/clients?client_id_exact={CONSOLE_CLIENT}"),
+                token,
+                STEP_CLIENTS,
+            )
+            .await?;
+        items(&found)
+            .iter()
+            .find(|client| client["client_id"].as_str() == Some(CONSOLE_CLIENT))
+            .and_then(|client| client["id"].as_str())
+            .map(ToOwned::to_owned)
+            .ok_or_else(|| RealmError::CellUnreachable {
+                message: "the console client is not in the realm yet".to_string(),
+            })
+    }
+
+    async fn ensure_redirect(
+        &self,
+        realm: &str,
+        client_id: &str,
+        callback: &str,
+        token: &str,
+    ) -> Result<(), RealmError> {
+        let url = format!("{realm}/clients/{client_id}/redirects");
+        let known = self.read(url.clone(), token, STEP_REDIRECTS).await?;
+        if items(&known)
+            .iter()
+            .any(|redirect| redirect["value"].as_str() == Some(callback))
+        {
+            return Ok(());
+        }
+        self.write(
+            self.http.post(url),
+            json!({ "value": callback, "enabled": true }),
+            token,
+            STEP_REDIRECT_ADD,
+        )
+        .await
+        .map(drop)
+    }
+
+    async fn ensure_role(&self, realm: &str, token: &str) -> Result<String, RealmError> {
+        let found = self
+            .read(
+                format!("{realm}/roles?name={TENANT_ROLE}"),
+                token,
+                STEP_ROLES,
+            )
+            .await?;
+        let existing = items(&found)
+            .iter()
+            .find(|role| role["name"].as_str() == Some(TENANT_ROLE) && role["client_id"].is_null());
+        let id = match existing {
+            Some(role) => role["id"].as_str().map(ToOwned::to_owned),
+            None => {
+                let created = self
+                    .write(
+                        self.http.post(format!("{realm}/roles")),
+                        json!({
+                            "name": TENANT_ROLE,
+                            "description": TENANT_ROLE_DESCRIPTION,
+                            "permissions": TENANT_PERMISSIONS,
+                        }),
+                        token,
+                        STEP_ROLE_ADD,
+                    )
+                    .await?;
+                created["data"]["id"].as_str().map(ToOwned::to_owned)
+            }
+        };
+        id.ok_or_else(|| RealmError::CellUnreachable {
+            message: format!("{STEP_ROLES} answered a role without an id"),
+        })
+    }
+
+    async fn ensure_administrator(
+        &self,
+        realm: &str,
+        user: &str,
+        access: &TenantAccess,
+        token: &str,
+    ) -> Result<(), RealmError> {
+        let (status, _) = self.exchange(self.http.get(user), token, STEP_USER).await?;
+        if status.is_success() {
+            return Ok(());
+        }
+        if status != StatusCode::NOT_FOUND {
+            return Err(fault(STEP_USER, status));
+        }
+
+        let request = self
+            .http
+            .post(format!("{realm}/users"))
+            .header(CONTENT_TYPE, "application/json")
+            .body(
+                json!({ "id": access.administrator_id, "username": ADMINISTRATOR_USERNAME })
+                    .to_string(),
+            );
+        let (status, _) = self.exchange(request, token, STEP_USER_ADD).await?;
+        match status {
+            status if status.is_success() => Ok(()),
+            StatusCode::BAD_REQUEST => Err(RealmError::CellUnreachable {
+                message: format!("{STEP_USER_ADD} raced another attempt"),
+            }),
+            status => Err(fault(STEP_USER_ADD, status)),
+        }
+    }
+
+    async fn ensure_assignment(
+        &self,
+        user: &str,
+        role_id: &str,
+        token: &str,
+    ) -> Result<(), RealmError> {
+        let url = format!("{user}/roles");
+        let assigned = self.read(url.clone(), token, STEP_ASSIGNMENTS).await?;
+        if items(&assigned)
+            .iter()
+            .any(|role| role["id"].as_str() == Some(role_id))
+        {
+            return Ok(());
+        }
+        let (status, _) = self
+            .exchange(
+                self.http.post(format!("{url}/{role_id}")),
+                token,
+                STEP_ASSIGN,
+            )
+            .await?;
+        succeeded(STEP_ASSIGN, status)
+    }
+
+    async fn issue_password(&self, user: &str, token: &str) -> Result<AccessGrant, RealmError> {
+        let credentials = self
+            .read(format!("{user}/credentials"), token, STEP_CREDENTIALS)
+            .await?;
+        if items(&credentials)
+            .iter()
+            .any(|credential| credential["credential_type"].as_str() == Some("password"))
+        {
+            return Ok(AccessGrant::AlreadyIssued);
+        }
+
+        let administrator = InitialAdministrator::generate(ADMINISTRATOR_USERNAME);
+        self.write(
+            self.http.put(format!("{user}/reset-password")),
+            json!({
+                "temporary": true,
+                "credential_type": "password",
+                "value": administrator.password(),
+            }),
+            token,
+            STEP_PASSWORD,
+        )
+        .await?;
+        Ok(AccessGrant::Issued(administrator))
+    }
+
     async fn token(
         &self,
         base_url: &str,
@@ -144,6 +376,39 @@ fn answer(call: Call, status: StatusCode) -> Result<(), RealmError> {
         _ => Err(RealmError::CellUnreachable {
             message: format!("the cell answered {code}"),
         }),
+    }
+}
+
+const STEP_CLIENTS: &str = "the console client lookup";
+const STEP_REDIRECTS: &str = "the redirect lookup";
+const STEP_REDIRECT_ADD: &str = "the redirect registration";
+const STEP_ROLES: &str = "the role lookup";
+const STEP_ROLE_ADD: &str = "the role creation";
+const STEP_USER: &str = "the administrator lookup";
+const STEP_USER_ADD: &str = "the administrator creation";
+const STEP_ASSIGNMENTS: &str = "the role assignment lookup";
+const STEP_ASSIGN: &str = "the role assignment";
+const STEP_CREDENTIALS: &str = "the credential lookup";
+const STEP_PASSWORD: &str = "the password reset";
+
+fn items(value: &Value) -> &[Value] {
+    value
+        .as_array()
+        .or_else(|| value["data"].as_array())
+        .map_or(&[], Vec::as_slice)
+}
+
+fn fault(step: &str, status: StatusCode) -> RealmError {
+    RealmError::CellUnreachable {
+        message: format!("{step} answered {}", status.as_u16()),
+    }
+}
+
+fn succeeded(step: &str, status: StatusCode) -> Result<(), RealmError> {
+    if status.is_success() {
+        Ok(())
+    } else {
+        Err(fault(step, status))
     }
 }
 
@@ -279,6 +544,17 @@ impl RealmPort for FerriskeyRealms {
         let credentials = self.credentials(cell).await?;
         self.admin
             .delete_realm(&api_base_url(cell), &credentials, realm)
+            .await
+    }
+
+    async fn open_access(
+        &self,
+        cell: &IdentityInstanceRef,
+        access: &TenantAccess,
+    ) -> Result<AccessGrant, RealmError> {
+        let credentials = self.credentials(cell).await?;
+        self.admin
+            .open_access(&api_base_url(cell), &credentials, access)
             .await
     }
 }
@@ -528,6 +804,287 @@ mod tests {
             assert!(!shown.contains(PASSWORD), "{shown}");
             assert!(!shown.contains("upstream"), "{shown}");
             server.join().expect("served");
+        }
+    }
+
+    const CLIENTS: (u16, &str) = (
+        200,
+        r#"{"data":[{"id":"other","client_id":"x"},{"id":"c1","client_id":"security-admin-console"}],"metadata":{"total":2}}"#,
+    );
+    const REDIRECTS_EMPTY: (u16, &str) = (200, "[]");
+    const REDIRECTS_KNOWN: (u16, &str) = (
+        200,
+        r#"[{"id":"x","value":"https://acme.cells.example/realms/acme/authentication/callback","enabled":true}]"#,
+    );
+    const ROLES_EMPTY: (u16, &str) = (200, r#"{"data":[]}"#);
+    const ROLES_KNOWN: (u16, &str) = (
+        200,
+        r#"{"data":[{"id":"decoy","name":"tenant-admin","client_id":"c9"},{"id":"r1","name":"tenant-admin","client_id":null}],"metadata":{}}"#,
+    );
+    const ROLE_CREATED: (u16, &str) = (201, r#"{"data":{"id":"r1","name":"tenant-admin"}}"#);
+    const USER_KNOWN: (u16, &str) = (200, r#"{"data":{"username":"admin"}}"#);
+    const USER_ABSENT: (u16, &str) = (404, r#"{"message":"no user"}"#);
+    const ASSIGNED_NONE: (u16, &str) = (200, r#"{"data":[]}"#);
+    const ASSIGNED_KNOWN: (u16, &str) = (200, r#"{"data":[{"id":"r1"}]}"#);
+    const CREDENTIALS_NONE: (u16, &str) = (200, r#"{"data":[]}"#);
+    const CREDENTIALS_SET: (u16, &str) = (200, r#"{"data":[{"credential_type":"password"}]}"#);
+    const OK_EMPTY: (u16, &str) = (200, "{}");
+    const CREATED_EMPTY: (u16, &str) = (201, "{}");
+
+    fn tenant_access() -> TenantAccess {
+        let payload = crate::domain::entities::realm_payload::RealmPayloadV1::from_value(&json!({
+            "deployment_id": Uuid::from_u128(1),
+            "cell": { "deployment_id": Uuid::from_u128(2), "namespace": "cells-one" },
+            "realm": "acme",
+            "hostname": "acme.cells.example",
+        }))
+        .expect("a payload");
+        TenantAccess::for_realm(&payload, "acme.cells.example")
+    }
+
+    fn lines(seen: &[Recorded]) -> Vec<String> {
+        seen.iter()
+            .skip(1)
+            .map(|recorded| {
+                let mut words = recorded.head.split_whitespace();
+                format!(
+                    "{} {}",
+                    words.next().unwrap_or_default(),
+                    words.next().unwrap_or_default()
+                )
+            })
+            .collect()
+    }
+
+    async fn open(
+        script: Vec<(u16, &'static str)>,
+    ) -> (Result<AccessGrant, RealmError>, Vec<Recorded>) {
+        let (url, server) = serve(script);
+        let result = FerriskeyAdmin::new()
+            .expect("built")
+            .open_access(&url, &credentials(), &tenant_access())
+            .await;
+        (result, server.join().expect("served"))
+    }
+
+    const USER: &str = "/api-less/realms/acme/users/00000000-0000-0000-0000-000000000001";
+
+    fn user_path(suffix: &str) -> String {
+        USER.replacen("/api-less", "", 1) + suffix
+    }
+
+    #[tokio::test]
+    async fn the_first_run_opens_the_access_in_order_and_issues_a_temporary_password() {
+        let (result, seen) = open(vec![
+            TOKEN_OK,
+            CLIENTS,
+            REDIRECTS_EMPTY,
+            CREATED_EMPTY,
+            ROLES_EMPTY,
+            ROLE_CREATED,
+            USER_ABSENT,
+            CREATED_EMPTY,
+            ASSIGNED_NONE,
+            OK_EMPTY,
+            CREDENTIALS_NONE,
+            OK_EMPTY,
+        ])
+        .await;
+
+        let Ok(AccessGrant::Issued(administrator)) = result else {
+            panic!("expected an issued credential");
+        };
+        assert_eq!(administrator.username(), "admin");
+        assert_eq!(
+            lines(&seen),
+            [
+                "GET /realms/acme/clients?client_id_exact=security-admin-console".to_string(),
+                "GET /realms/acme/clients/c1/redirects".to_string(),
+                "POST /realms/acme/clients/c1/redirects".to_string(),
+                "GET /realms/acme/roles?name=tenant-admin".to_string(),
+                "POST /realms/acme/roles".to_string(),
+                format!("GET {}", user_path("")),
+                "POST /realms/acme/users".to_string(),
+                format!("GET {}", user_path("/roles")),
+                format!("POST {}", user_path("/roles/r1")),
+                format!("GET {}", user_path("/credentials")),
+                format!("PUT {}", user_path("/reset-password")),
+            ]
+        );
+        for recorded in &seen[1..] {
+            assert!(
+                recorded
+                    .head
+                    .to_ascii_lowercase()
+                    .contains("authorization: bearer fake-token")
+            );
+        }
+        let json_of = |at: usize| serde_json::from_str::<Value>(&seen[at].body).expect("json");
+        assert_eq!(
+            json_of(3),
+            json!({"value": "https://acme.cells.example/realms/acme/authentication/callback", "enabled": true})
+        );
+        assert_eq!(
+            json_of(7),
+            json!({"id": "00000000-0000-0000-0000-000000000001", "username": "admin"})
+        );
+        let reset = json_of(11);
+        assert_eq!(reset["temporary"], json!(true));
+        assert_eq!(reset["credential_type"], json!("password"));
+        assert_eq!(reset["value"].as_str(), Some(administrator.password()));
+    }
+
+    /// @spec-fpr-6
+    #[tokio::test]
+    async fn a_run_where_everything_exists_writes_nothing_and_keeps_the_password() {
+        let (result, seen) = open(vec![
+            TOKEN_OK,
+            CLIENTS,
+            REDIRECTS_KNOWN,
+            ROLES_KNOWN,
+            USER_KNOWN,
+            ASSIGNED_KNOWN,
+            CREDENTIALS_SET,
+        ])
+        .await;
+
+        assert!(matches!(result, Ok(AccessGrant::AlreadyIssued)));
+        assert!(lines(&seen).iter().all(|line| line.starts_with("GET ")));
+        assert_eq!(seen.len(), 7);
+    }
+
+    /// @spec-fpr-6
+    #[tokio::test]
+    async fn an_existing_redirect_is_not_added_twice() {
+        let (result, seen) = open(vec![
+            TOKEN_OK,
+            CLIENTS,
+            REDIRECTS_KNOWN,
+            ROLES_EMPTY,
+            ROLE_CREATED,
+            USER_KNOWN,
+            ASSIGNED_KNOWN,
+            CREDENTIALS_SET,
+        ])
+        .await;
+
+        assert!(result.is_ok());
+        assert!(!lines(&seen).contains(&"POST /realms/acme/clients/c1/redirects".to_string()));
+    }
+
+    /// @spec-fpr-6
+    #[tokio::test]
+    async fn an_existing_role_is_reused_and_a_client_role_of_that_name_is_not() {
+        let (result, seen) = open(vec![
+            TOKEN_OK,
+            CLIENTS,
+            REDIRECTS_KNOWN,
+            ROLES_KNOWN,
+            USER_KNOWN,
+            ASSIGNED_NONE,
+            OK_EMPTY,
+            CREDENTIALS_SET,
+        ])
+        .await;
+
+        assert!(result.is_ok());
+        let sent = lines(&seen);
+        assert!(!sent.contains(&"POST /realms/acme/roles".to_string()));
+        assert!(sent.contains(&format!("POST {}", user_path("/roles/r1"))));
+    }
+
+    /// @spec-fpr-6
+    #[tokio::test]
+    async fn an_existing_role_assignment_is_not_repeated() {
+        let (result, seen) = open(vec![
+            TOKEN_OK,
+            CLIENTS,
+            REDIRECTS_KNOWN,
+            ROLES_KNOWN,
+            USER_KNOWN,
+            ASSIGNED_KNOWN,
+            CREDENTIALS_SET,
+        ])
+        .await;
+
+        assert!(result.is_ok());
+        assert!(
+            !lines(&seen)
+                .iter()
+                .any(|line| line.starts_with("POST ") && line.contains("/roles/"))
+        );
+    }
+
+    #[tokio::test]
+    async fn the_permissions_sent_never_include_manage_realm() {
+        let (_, seen) = open(vec![
+            TOKEN_OK,
+            CLIENTS,
+            REDIRECTS_KNOWN,
+            ROLES_EMPTY,
+            ROLE_CREATED,
+            USER_KNOWN,
+            ASSIGNED_KNOWN,
+            CREDENTIALS_SET,
+        ])
+        .await;
+
+        let body = serde_json::from_str::<Value>(&seen[4].body).expect("json");
+        assert_eq!(body["name"], json!("tenant-admin"));
+        let permissions = body["permissions"].as_array().expect("a list");
+        assert_eq!(permissions.len(), 15);
+        assert!(!permissions.contains(&json!("manage_realm")));
+    }
+
+    #[tokio::test]
+    async fn a_user_created_concurrently_is_retried_not_failed() {
+        let (result, _) = open(vec![
+            TOKEN_OK,
+            CLIENTS,
+            REDIRECTS_KNOWN,
+            ROLES_KNOWN,
+            USER_ABSENT,
+            (400, "{}"),
+        ])
+        .await;
+
+        assert!(matches!(result, Err(RealmError::CellUnreachable { .. })));
+    }
+
+    /// @spec-fpr-14
+    #[tokio::test]
+    async fn a_failing_step_names_neither_the_password_nor_the_body() {
+        let echo: &'static str =
+            Box::leak(format!(r#"{{"message":"{PASSWORD} upstream"}}"#).into_boxed_str());
+        for script in [
+            vec![TOKEN_OK, (500, echo)],
+            vec![
+                TOKEN_OK,
+                CLIENTS,
+                REDIRECTS_KNOWN,
+                ROLES_KNOWN,
+                USER_KNOWN,
+                ASSIGNED_KNOWN,
+                CREDENTIALS_NONE,
+                (500, echo),
+            ],
+            vec![
+                TOKEN_OK,
+                CLIENTS,
+                REDIRECTS_KNOWN,
+                ROLES_KNOWN,
+                USER_KNOWN,
+                (200, "not json upstream"),
+            ],
+        ] {
+            let (result, _) = open(script).await;
+
+            let Err(error) = result else {
+                panic!("expected a failure");
+            };
+            let shown = format!("{error} {error:?}");
+            assert!(!shown.contains(PASSWORD), "{shown}");
+            assert!(!shown.contains("upstream"), "{shown}");
         }
     }
 
