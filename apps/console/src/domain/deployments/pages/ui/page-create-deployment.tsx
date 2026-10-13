@@ -17,11 +17,13 @@ import { Link, useNavigate } from '@tanstack/react-router'
 import { useMemo, useState, type ReactNode } from 'react'
 import { KIND_LABELS, type DeploymentKind, type Environment } from '../../types/deployment'
 import { type Offer, type OfferAvailability } from '../../offers'
+import { FREE_OFFER, FREE_OFFER_COPY, isFreeOnly } from '../../free-offer'
 import { offerFor, resolveOffer } from '../../pricing/offer-for'
 import { priceOf, type Hosting, type PlanId, type Selection } from '../../pricing/model'
 import { applyChange, STARTER_MOVED_NOTICE } from '../../pricing/selection'
 import { customerCloudAvailability } from '@/domain/cloud-providers/distribution'
 import { EnginePicker } from './components/engine-picker'
+import { FreeOfferSection } from './components/free-offer-section'
 import { HostingPicker } from './components/hosting-picker'
 import { KeycloakNotice } from './components/keycloak-notice'
 import { PlanPicker } from './components/plan-picker'
@@ -69,7 +71,9 @@ export default function PageCreateDeployment({
   const organisationPath = useOrganisationPath()
 
   const [name, setName] = useState('')
-  const [kind, setKind] = useState<DeploymentKind>('ferriskey')
+  const [picked, setKind] = useState<DeploymentKind>('ferriskey')
+  const freeOnly = isFreeOnly(offers)
+  const kind: DeploymentKind = freeOnly ? 'ferriskey' : picked
   const [environment, setEnvironment] = useState<Environment>('development')
   const [wantsCustomerCloud, setWantsCustomerCloud] = useState(false)
   const [plan, setPlan] = useState<PlanId>('business')
@@ -79,7 +83,7 @@ export default function PageCreateDeployment({
   const version = newestInstallable(releases[kind]) ?? ''
 
   const availability = customerCloudAvailability(kind, credentials)
-  const onCustomerCloud = wantsCustomerCloud && availability !== 'hidden'
+  const onCustomerCloud = !freeOnly && wantsCustomerCloud && availability !== 'hidden'
   const placement = onCustomerCloud ? (distribution ?? undefined) : undefined
   const hosting: Hosting = onCustomerCloud ? 'byoc' : 'managed'
 
@@ -90,7 +94,7 @@ export default function PageCreateDeployment({
   const price = priceOf(selection)
 
   const derived = offerFor(plan, hosting === 'byoc' ? null : volume)
-  const resolved = resolveOffer(derived, offers)
+  const resolved = freeOnly ? { offer: FREE_OFFER } : resolveOffer(derived, offers)
   const chosen = resolved.offer
 
   const commit = (patch: Partial<Selection>) => {
@@ -162,7 +166,11 @@ export default function PageCreateDeployment({
         </Section>
 
         <Section title='Identity provider'>
-          <EnginePicker engine={kind} onSelect={(engine) => commit({ engine })} />
+          {freeOnly ? (
+            <p className='text-sm text-muted-foreground'>{FREE_OFFER_COPY.engine}</p>
+          ) : (
+            <EnginePicker engine={kind} onSelect={(engine) => commit({ engine })} />
+          )}
 
           {kind === 'keycloak' && (
             <KeycloakNotice hosting={hosting} onSwitch={() => commit({ engine: 'ferriskey' })} />
@@ -189,48 +197,56 @@ export default function PageCreateDeployment({
           </div>
         </Section>
 
-        <Section title='Hosting'>
-          <HostingPicker
-            hosting={hosting}
-            onSelect={(next) => commit({ hosting: next })}
-            customerCloudAvailable={availability !== 'hidden'}
-          />
+        {freeOnly ? (
+          <Section title='Offer'>
+            <FreeOfferSection catalogue={offers} />
+          </Section>
+        ) : (
+          <>
+            <Section title='Hosting'>
+              <HostingPicker
+                hosting={hosting}
+                onSelect={(next) => commit({ hosting: next })}
+                customerCloudAvailable={availability !== 'hidden'}
+              />
 
-          {onCustomerCloud &&
-            (credentialsLoading ? (
-              <Skeleton className='h-24 w-full' />
-            ) : availability === 'needs_credentials' ? (
-              <p className='rounded-md border bg-muted/30 px-3 py-3 text-sm text-muted-foreground'>
-                No cloud account is registered yet.{' '}
-                <Link
-                  to={organisationPath('/cloud-accounts')}
-                  className='font-medium text-foreground underline'
-                >
-                  Add one on the Cloud accounts page
-                </Link>{' '}
-                to run a deployment in your own cloud.
-              </p>
-            ) : (
-              customerCloud
-            ))}
-        </Section>
+              {onCustomerCloud &&
+                (credentialsLoading ? (
+                  <Skeleton className='h-24 w-full' />
+                ) : availability === 'needs_credentials' ? (
+                  <p className='rounded-md border bg-muted/30 px-3 py-3 text-sm text-muted-foreground'>
+                    No cloud account is registered yet.{' '}
+                    <Link
+                      to={organisationPath('/cloud-accounts')}
+                      className='font-medium text-foreground underline'
+                    >
+                      Add one on the Cloud accounts page
+                    </Link>{' '}
+                    to run a deployment in your own cloud.
+                  </p>
+                ) : (
+                  customerCloud
+                ))}
+            </Section>
 
-        <Section title='Plan'>
-          <PlanPicker
-            selection={selection}
-            onSelect={(next) => commit({ plan: next })}
-            movedNotice={movedToBusiness ? STARTER_MOVED_NOTICE : undefined}
-          />
-        </Section>
+            <Section title='Plan'>
+              <PlanPicker
+                selection={selection}
+                onSelect={(next) => commit({ plan: next })}
+                movedNotice={movedToBusiness ? STARTER_MOVED_NOTICE : undefined}
+              />
+            </Section>
 
-        <Section title='Expected volume'>
-          <VolumePicker
-            hosting={hosting}
-            engine={kind}
-            volume={volume}
-            onChange={(next) => commit({ volume: next })}
-          />
-        </Section>
+            <Section title='Expected volume'>
+              <VolumePicker
+                hosting={hosting}
+                engine={kind}
+                volume={volume}
+                onChange={(next) => commit({ volume: next })}
+              />
+            </Section>
+          </>
+        )}
 
         {!offersLoading && offers.length === 0 && (
           <p className='rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive'>
@@ -251,7 +267,14 @@ export default function PageCreateDeployment({
         )}
 
         <div className='sticky bottom-0 -mx-2 space-y-4 border-t bg-background px-2 py-4'>
-          <PriceSummary hosting={hosting} price={price} clusterEstimate={clusterEstimate} />
+          {freeOnly ? (
+            <div className='flex items-baseline justify-between gap-4 rounded-lg border bg-muted/30 p-4'>
+              <span className='text-sm font-medium'>Monthly price</span>
+              <span className='text-xl font-semibold'>{FREE_OFFER_COPY.price}</span>
+            </div>
+          ) : (
+            <PriceSummary hosting={hosting} price={price} clusterEstimate={clusterEstimate} />
+          )}
           <div className='flex items-center justify-end gap-2'>
             <Button
               type='button'

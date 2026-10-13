@@ -7,6 +7,7 @@ import { ProvisioningNoticeBanner } from '@/domain/cloud-providers/pages/ui/prov
 import { describeDistribution } from '@/domain/cloud-providers/distribution'
 import { provisioningNotice } from '@/domain/cloud-providers/provisioning'
 import { KIND_LABELS } from '../../types/deployment'
+import { TENANT_REALM_COPY, type TenantRealmView } from '../../tenant-realm'
 import type { AvailabilityView } from '../../availability'
 import { AvailabilityCard } from './components/availability-card'
 import { DeploymentStatusBadge } from './components/deployment-status'
@@ -16,6 +17,7 @@ interface Props {
   actions: Schemas.Action[]
   availability: AvailabilityView
   provisioning?: Schemas.Provisioning | null
+  realm?: TenantRealmView
   clusterPanel?: React.ReactNode
   isLoading: boolean
 }
@@ -33,7 +35,47 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   )
 }
 
-export function PageDeploymentDetail({ deployment, actions, availability, provisioning, clusterPanel, isLoading }: Props) {
+function TenantRealmSection({ realm }: { realm: TenantRealmView }) {
+  return (
+    <Section title={TENANT_REALM_COPY.title}>
+      {realm.refusal && (
+        <p className='mb-4 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive'>
+          {TENANT_REALM_COPY.refused} {realm.refusal}
+        </p>
+      )}
+      {realm.url ? (
+        <dl className='space-y-2 text-sm'>
+          <div>
+            <dt className='text-muted-foreground'>{TENANT_REALM_COPY.url}</dt>
+            <dd>
+              <a href={realm.url} target='_blank' rel='noreferrer' className='font-mono underline'>
+                {realm.url}
+              </a>
+            </dd>
+          </div>
+          {realm.issuer && (
+            <div>
+              <dt className='text-muted-foreground'>{TENANT_REALM_COPY.issuer}</dt>
+              <dd className='break-all font-mono'>{realm.issuer}</dd>
+            </div>
+          )}
+        </dl>
+      ) : (
+        <p className='text-sm text-muted-foreground'>{TENANT_REALM_COPY.noAddress}</p>
+      )}
+    </Section>
+  )
+}
+
+export function PageDeploymentDetail({
+  deployment,
+  actions,
+  availability,
+  provisioning,
+  realm,
+  clusterPanel,
+  isLoading,
+}: Props) {
   if (isLoading || !deployment) {
     return (
       <Page>
@@ -71,6 +113,8 @@ export function PageDeploymentDetail({ deployment, actions, availability, provis
             value={`${formatDistanceToNow(new Date(deployment.created_at))} ago`}
           />
         </div>
+
+        {realm && <TenantRealmSection realm={realm} />}
 
         <AvailabilityCard view={availability} />
 

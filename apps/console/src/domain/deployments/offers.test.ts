@@ -18,7 +18,7 @@ describe('the copy', () => {
    * of four renders an empty card for the fourth, and nothing fails.
    */
   it('covers every offer the platform can send', () => {
-    const known: Offer[] = ['sandbox', 'standard', 'scale', 'private']
+    const known: Offer[] = ['free', 'sandbox', 'standard', 'scale', 'private']
 
     for (const offer of known) {
       expect(OFFER_COPY[offer], offer).toBeDefined()

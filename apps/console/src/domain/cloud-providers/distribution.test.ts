@@ -77,7 +77,7 @@ describe('reading a distribution back', () => {
       'Your cloud, standard, 2 to 4 nodes',
     )
     expect(describeDistribution({ pooled: { cell_id: 'c', realm: 'acme' } })).toBe(
-      'Shared cell',
+      'Realm acme on a shared FerrisKey',
     )
   })
 })
