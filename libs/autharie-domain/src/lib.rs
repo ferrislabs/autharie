@@ -287,6 +287,9 @@ pub enum CoreError {
     Realm(#[from] crate::cells::RealmError),
 
     #[error(transparent)]
+    TenantAdministrator(#[from] crate::cells::AdministratorCredentialError),
+
+    #[error(transparent)]
     ObjectStore(#[from] crate::backups::ObjectStoreError),
 
     #[error(transparent)]

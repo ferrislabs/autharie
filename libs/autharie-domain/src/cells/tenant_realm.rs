@@ -3,14 +3,16 @@ use utoipa::ToSchema;
 
 use crate::deployments::{Deployment, distribution::Distribution};
 
-use super::RealmName;
+use super::{RealmName, TenantAdministrator};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct TenantRealm {
     pub name: RealmName,
     pub url: Option<String>,
     pub issuer: Option<String>,
+    pub console: Option<String>,
     pub refusal: Option<String>,
+    pub administrator: Option<TenantAdministrator>,
 }
 
 impl TenantRealm {
@@ -27,9 +29,18 @@ impl TenantRealm {
         Some(Self {
             name: realm.clone(),
             issuer: url.as_ref().map(|url| format!("{url}/api/realms/{realm}")),
+            console: url
+                .as_ref()
+                .map(|url| format!("{url}/realms/{realm}/overview")),
             url,
             refusal,
+            administrator: None,
         })
+    }
+
+    pub fn with_administrator(mut self, administrator: Option<TenantAdministrator>) -> Self {
+        self.administrator = administrator;
+        self
     }
 }
 
@@ -59,10 +70,20 @@ mod tests {
     }
 
     #[test]
+    fn a_realm_is_administered_from_the_console_of_its_own_hostname() {
+        let realm = TenantRealm::of(&pooled("acme"), Some("autharie.fr"), None).expect("pooled");
+
+        assert_eq!(
+            realm.console.as_deref(),
+            Some("https://acme.autharie.fr/realms/acme/overview")
+        );
+    }
+
+    #[test]
     fn without_a_zone_a_realm_has_no_address_to_show() {
         let realm = TenantRealm::of(&pooled("acme"), None, None).expect("pooled");
 
-        assert_eq!((realm.url, realm.issuer), (None, None));
+        assert_eq!((realm.url, realm.issuer, realm.console), (None, None, None));
     }
 
     #[test]

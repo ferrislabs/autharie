@@ -1,12 +1,21 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    io::Write,
+    sync::{Arc, Mutex, OnceLock},
+    time::Duration,
+};
 
 use autharie_api::{
     args::Args,
-    handlers::deployments::{
-        backups::ask_for_backup_handler, create_deployment::create_deployment_handler,
-        delete_deployment::delete_deployment_handler, get_deployment::get_deployment_handler,
-        network_access::set_network_access_handler, update_deployment::update_deployment_handler,
-        upgrade_deployment::upgrade_deployment_handler,
+    handlers::{
+        dataplanes::report_outcome::report_outcome_handler,
+        deployments::{
+            backups::ask_for_backup_handler, create_deployment::create_deployment_handler,
+            delete_deployment::delete_deployment_handler, get_deployment::get_deployment_handler,
+            network_access::set_network_access_handler,
+            tenant_administrator::reveal_administrator_handler,
+            update_deployment::update_deployment_handler,
+            upgrade_deployment::upgrade_deployment_handler,
+        },
     },
     state::AppState,
 };
@@ -29,6 +38,7 @@ use autharie_core::{
     user::UserId,
     version::Version,
 };
+use autharie_transit::{TransitConfig, TransitKeyProvider};
 use axum::{
     Extension, Router,
     body::Body,
@@ -36,9 +46,11 @@ use axum::{
 };
 use axum_extra::routing::RouterExt;
 use futures::FutureExt;
+use httpmock::{Method::POST as MOCK_POST, MockServer};
 use serde_json::{Value, json};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use tower::ServiceExt;
+use tracing_subscriber::fmt::MakeWriter;
 use uuid::Uuid;
 
 const ZONE: &str = "tenants.autharie.test";
@@ -76,6 +88,8 @@ struct Installation {
     owner: Uuid,
     region: String,
     release: String,
+    keys: OnceLock<String>,
+    members: Mutex<Vec<Uuid>>,
 }
 
 async fn a_user(pool: &PgPool, id: Uuid) {
@@ -115,6 +129,8 @@ impl Installation {
             owner: Uuid::new_v4(),
             region: format!("pooled-api-{}", Uuid::new_v4()),
             release: format!("0.0.{}", Uuid::new_v4().as_u128() as u32 % 1_000_000),
+            keys: OnceLock::new(),
+            members: Mutex::default(),
         };
         let pool = &installation.pool;
 
@@ -146,6 +162,7 @@ impl Installation {
             .with_cells_organisation(Some(OrganisationId(self.cells_organisation)))
             .with_domain(Some(ZONE.to_string()))
             .with_platform_labels(vec!["control".to_string()])
+            .with_credential_keys(self.keys.get().map(|address| transit(address)))
     }
 
     async fn serve_region(&self) -> Uuid {
@@ -242,6 +259,56 @@ impl Installation {
     }
 
     fn app(&self) -> Router {
+        self.app_as(user(self.owner))
+    }
+
+    async fn herald_of(&self, deployment: DeploymentId) -> Identity {
+        let subject: String = sqlx::query_scalar(
+            "SELECT p.herald_subject FROM data_planes p \
+             JOIN deployments d ON d.dataplane_id = p.id WHERE d.id = $1",
+        )
+        .bind(deployment.0)
+        .fetch_one(&self.pool)
+        .await
+        .expect("the herald of the plane");
+        herald(subject.parse().expect("a uuid"))
+    }
+
+    async fn a_member_with(&self, permissions: i64) -> Uuid {
+        let member = Uuid::new_v4();
+        let role = Uuid::new_v4();
+        a_user(&self.pool, member).await;
+        self.members.lock().expect("lock").push(member);
+        sqlx::query(
+            "INSERT INTO roles (id, name, permissions, organisation_id) VALUES ($1, 'viewer', $2, $3)",
+        )
+        .bind(role)
+        .bind(permissions)
+        .bind(self.tenant)
+        .execute(&self.pool)
+        .await
+        .expect("a role");
+        sqlx::query(
+            "INSERT INTO members (id, user_id, organisation_id) VALUES (gen_random_uuid(), $1, $2)",
+        )
+        .bind(member)
+        .bind(self.tenant)
+        .execute(&self.pool)
+        .await
+        .expect("a member");
+        sqlx::query(
+            "INSERT INTO member_roles (member_id, role_id) \
+             SELECT id, $2 FROM members WHERE user_id = $1",
+        )
+        .bind(member)
+        .bind(role)
+        .execute(&self.pool)
+        .await
+        .expect("a member role");
+        member
+    }
+
+    fn app_as(&self, identity: Identity) -> Router {
         let mut args = Args::default();
         args.dataplane.default_region = self.region.clone();
 
@@ -253,7 +320,9 @@ impl Installation {
             .typed_put(set_network_access_handler)
             .typed_post(upgrade_deployment_handler)
             .typed_post(ask_for_backup_handler)
-            .layer(Extension(user(self.owner)))
+            .typed_post(report_outcome_handler)
+            .typed_post(reveal_administrator_handler)
+            .layer(Extension(identity))
             .with_state(AppState {
                 args: Arc::new(args),
                 service: self.service(),
@@ -289,6 +358,18 @@ impl Installation {
     }
 
     async fn forget(&self) {
+        for statement in [
+            "DELETE FROM member_roles WHERE member_id IN \
+             (SELECT id FROM members WHERE organisation_id = $1)",
+            "DELETE FROM members WHERE organisation_id = $1",
+            "DELETE FROM roles WHERE organisation_id = $1",
+        ] {
+            sqlx::query(statement)
+                .bind(self.tenant)
+                .execute(&self.pool)
+                .await
+                .expect("cleanup");
+        }
         for organisation in [self.tenant, self.cells_organisation] {
             for statement in [
                 "DELETE FROM actions WHERE deployment_id IN \
@@ -335,7 +416,8 @@ impl Installation {
                 .await
                 .expect("cleanup");
         }
-        for id in [self.operator, self.owner] {
+        let members = self.members.lock().expect("lock").clone();
+        for id in [self.operator, self.owner].into_iter().chain(members) {
             sqlx::query("DELETE FROM users WHERE id = $1")
                 .bind(id)
                 .execute(&self.pool)
@@ -933,6 +1015,308 @@ async fn a_free_deployment_cannot_take_a_platform_or_cell_hostname() {
                 "{name}: {refused}"
             );
         }
+    })
+    .await;
+}
+
+const KEY_32: &str = "QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=";
+const TEMPORARY_PASSWORD: &str = "Wq7-first-Admin-Pass!z9";
+
+fn transit(address: &str) -> TransitKeyProvider {
+    TransitKeyProvider::new(TransitConfig {
+        address: address.to_string(),
+        token: "root".to_string(),
+        mount: "transit".to_string(),
+        provider: autharie_core::backups::keys::ProviderName::platform(),
+    })
+    .expect("a provider")
+}
+
+async fn key_manager() -> MockServer {
+    let server = MockServer::start_async().await;
+    server.mock(|when, then| {
+        when.method(MOCK_POST).path("/v1/sys/mounts/transit");
+        then.status(204);
+    });
+    server.mock(|when, then| {
+        when.method(MOCK_POST)
+            .path("/v1/transit/keys/tenant-administrators");
+        then.status(204);
+    });
+    server.mock(|when, then| {
+        when.method(MOCK_POST)
+            .path("/v1/transit/datakey/plaintext/tenant-administrators");
+        then.status(200).json_body(json!({
+            "data": {"plaintext": KEY_32, "ciphertext": "vault:v1:wrapped", "key_version": 1}
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(MOCK_POST)
+            .path("/v1/transit/decrypt/tenant-administrators");
+        then.status(200)
+            .json_body(json!({"data": {"plaintext": KEY_32}}));
+    });
+    server
+}
+
+#[derive(Clone, Default)]
+struct Capture(Arc<Mutex<Vec<u8>>>);
+
+impl Capture {
+    fn text(&self) -> String {
+        String::from_utf8_lossy(&self.0.lock().expect("lock")).to_string()
+    }
+}
+
+fn captured_logs() -> Capture {
+    static CAPTURE: OnceLock<Capture> = OnceLock::new();
+
+    CAPTURE
+        .get_or_init(|| {
+            let capture = Capture::default();
+            let subscriber = tracing_subscriber::fmt()
+                .with_max_level(tracing::Level::TRACE)
+                .with_writer(capture.clone())
+                .finish();
+            tracing::subscriber::set_global_default(subscriber).expect("one global subscriber");
+            capture
+        })
+        .clone()
+}
+
+impl Write for Capture {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().expect("lock").extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> MakeWriter<'a> for Capture {
+    type Writer = Capture;
+
+    fn make_writer(&'a self) -> Capture {
+        self.clone()
+    }
+}
+
+async fn a_served_realm(installation: &Installation, name: &str) -> (String, DeploymentId) {
+    installation.serve_region().await;
+    installation.open_a_cell().await;
+    let (status, created) = call(
+        &installation.app(),
+        Method::POST,
+        &installation.deployments(),
+        Some(installation.free(name, "ferriskey")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let id = created["data"]["id"].as_str().expect("an id").to_string();
+    let deployment = DeploymentId(id.parse().expect("a uuid"));
+    (format!("{}/{id}", installation.deployments()), deployment)
+}
+
+async fn report_running_with(
+    installation: &Installation,
+    deployment: DeploymentId,
+    password: &str,
+) -> StatusCode {
+    let herald = installation.herald_of(deployment).await;
+    let dataplane: Uuid = sqlx::query_scalar("SELECT dataplane_id FROM deployments WHERE id = $1")
+        .bind(deployment.0)
+        .fetch_one(&installation.pool)
+        .await
+        .expect("the plane");
+    let (status, body) = call(
+        &installation.app_as(herald),
+        Method::POST,
+        &format!(
+            "/dataplanes/{dataplane}/deployments/{}/outcome",
+            deployment.0
+        ),
+        Some(json!({
+            "outcome": "running",
+            "administrator": { "username": "admin", "password": password },
+        })),
+    )
+    .await;
+    assert!(status.is_success(), "{status} {body}");
+    status
+}
+
+#[tokio::test]
+async fn the_first_administrator_of_a_free_realm_is_revealed_once_to_an_organisation_administrator()
+{
+    let logs = captured_logs();
+    let server = key_manager().await;
+    scenario(async |installation| {
+        installation
+            .keys
+            .set(server.base_url())
+            .expect("keys set once");
+        let (path, deployment) = a_served_realm(installation, "revealed").await;
+        let app = installation.app();
+
+        let (_, before) = call(&app, Method::GET, &path, None).await;
+        assert_eq!(before["realm"]["administrator"], Value::Null, "{before}");
+        assert_eq!(
+            before["realm"]["console"],
+            format!("https://revealed.{ZONE}/realms/revealed/overview")
+        );
+
+        report_running_with(installation, deployment, TEMPORARY_PASSWORD).await;
+
+        let (_, shown) = call(&app, Method::GET, &path, None).await;
+        assert_eq!(shown["realm"]["administrator"]["username"], "admin");
+        assert_eq!(shown["realm"]["administrator"]["credential"], "available");
+        assert!(!shown.to_string().contains(TEMPORARY_PASSWORD));
+
+        let reveal = format!("{path}/administrator/reveal");
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri(&reveal)
+            .body(Body::empty())
+            .expect("a request");
+        let response = app.clone().oneshot(request).await.expect("a response");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get("cache-control")
+                .map(|v| v.as_bytes()),
+            Some(&b"no-store"[..])
+        );
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("a body");
+        let revealed: Value = serde_json::from_slice(&bytes).expect("json");
+        assert_eq!(revealed["data"]["username"], "admin");
+        assert_eq!(revealed["data"]["password"], TEMPORARY_PASSWORD);
+
+        let (again, gone) = call(&app, Method::POST, &reveal, None).await;
+        assert_eq!(again, StatusCode::GONE, "{gone}");
+        assert!(!gone.to_string().contains(TEMPORARY_PASSWORD));
+
+        let (_, after) = call(&app, Method::GET, &path, None).await;
+        assert_eq!(after["realm"]["administrator"]["credential"], "revealed");
+
+        report_running_with(installation, deployment, "Another-Pass-1!").await;
+        let (still, _) = call(&app, Method::POST, &reveal, None).await;
+        assert_eq!(still, StatusCode::GONE);
+
+        let sealed_left: bool = sqlx::query_scalar(
+            "SELECT ciphertext IS NOT NULL FROM tenant_administrators WHERE deployment_id = $1",
+        )
+        .bind(deployment.0)
+        .fetch_one(&installation.pool)
+        .await
+        .expect("the row");
+        assert!(!sealed_left);
+        let in_actions: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM actions WHERE payload::text LIKE '%' || $1 || '%')",
+        )
+        .bind(TEMPORARY_PASSWORD)
+        .fetch_one(&installation.pool)
+        .await
+        .expect("the actions");
+        assert!(!in_actions);
+    })
+    .await;
+
+    assert!(!logs.text().contains(TEMPORARY_PASSWORD));
+}
+
+#[tokio::test]
+async fn a_member_who_is_not_an_organisation_administrator_cannot_reveal_the_realm_administrator() {
+    let server = key_manager().await;
+    scenario(async |installation| {
+        installation
+            .keys
+            .set(server.base_url())
+            .expect("keys set once");
+        let (path, deployment) = a_served_realm(installation, "guarded").await;
+        report_running_with(installation, deployment, TEMPORARY_PASSWORD).await;
+        let viewer = installation.a_member_with(1 << 2).await;
+
+        let (status, refused) = call(
+            &installation.app_as(user(viewer)),
+            Method::POST,
+            &format!("{path}/administrator/reveal"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
+
+        let (_, shown) = call(&installation.app(), Method::GET, &path, None).await;
+        assert_eq!(shown["realm"]["administrator"]["credential"], "available");
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_realm_whose_administrator_has_not_arrived_has_nothing_to_reveal() {
+    let server = key_manager().await;
+    scenario(async |installation| {
+        installation
+            .keys
+            .set(server.base_url())
+            .expect("keys set once");
+        let (path, _) = a_served_realm(installation, "pending").await;
+
+        let (status, body) = call(
+            &installation.app(),
+            Method::POST,
+            &format!("{path}/administrator/reveal"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn an_administrator_reported_by_another_data_plane_is_refused() {
+    let server = key_manager().await;
+    scenario(async |installation| {
+        installation
+            .keys
+            .set(server.base_url())
+            .expect("keys set once");
+        let (_, deployment) = a_served_realm(installation, "spoofed").await;
+        let dataplane: Uuid =
+            sqlx::query_scalar("SELECT dataplane_id FROM deployments WHERE id = $1")
+                .bind(deployment.0)
+                .fetch_one(&installation.pool)
+                .await
+                .expect("the plane");
+
+        let (status, _) = call(
+            &installation.app_as(herald(Uuid::new_v4())),
+            Method::POST,
+            &format!(
+                "/dataplanes/{dataplane}/deployments/{}/outcome",
+                deployment.0
+            ),
+            Some(json!({
+                "outcome": "running",
+                "administrator": { "username": "admin", "password": TEMPORARY_PASSWORD },
+            })),
+        )
+        .await;
+        assert!(!status.is_success(), "{status}");
+
+        let kept: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM tenant_administrators WHERE deployment_id = $1)",
+        )
+        .bind(deployment.0)
+        .fetch_one(&installation.pool)
+        .await
+        .expect("the row");
+        assert!(!kept);
     })
     .await;
 }

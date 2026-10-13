@@ -39,7 +39,7 @@ impl<'a, R, K> EnvelopeCredentialStore<'a, R, K> {
     }
 }
 
-fn store_failure(error: impl Display) -> CredentialError {
+pub(crate) fn store_failure(error: impl Display) -> CredentialError {
     CredentialError::Store(error.to_string())
 }
 
@@ -48,9 +48,9 @@ fn cipher(dek: &Dek) -> Result<Aes256Gcm, CredentialError> {
         .map_err(|_| store_failure("the data key is not a 256 bit key"))
 }
 
-fn seal(
+pub(crate) fn seal(
     dek: &Dek,
-    id: &CloudCredentialId,
+    aad: &[u8],
     secret: &SecretString,
 ) -> Result<(Vec<u8>, Vec<u8>), CredentialError> {
     let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
@@ -59,7 +59,7 @@ fn seal(
             &nonce,
             Payload {
                 msg: secret.expose().as_bytes(),
-                aad: id.0.as_bytes(),
+                aad,
             },
         )
         .map_err(|_| store_failure("the credential could not be encrypted"))?;
@@ -67,9 +67,9 @@ fn seal(
     Ok((ciphertext, nonce.to_vec()))
 }
 
-fn open(
+pub(crate) fn open(
     dek: &Dek,
-    id: &CloudCredentialId,
+    aad: &[u8],
     sealed: &SealedSecret,
 ) -> Result<SecretString, CredentialError> {
     if sealed.nonce.len() != NONCE_LEN {
@@ -82,7 +82,7 @@ fn open(
                 Nonce::from_slice(&sealed.nonce),
                 Payload {
                     msg: &sealed.ciphertext,
-                    aad: id.0.as_bytes(),
+                    aad,
                 },
             )
             .map_err(|_| store_failure("the stored credential cannot be decrypted"))?,
@@ -118,7 +118,7 @@ where
             .into_parts();
 
         let id = CloudCredentialId(generate_uuid_v7());
-        let (ciphertext, nonce) = seal(&dek, &id, &secret)?;
+        let (ciphertext, nonce) = seal(&dek, id.0.as_bytes(), &secret)?;
 
         self.repository
             .insert(&SealedCredential {
@@ -155,7 +155,7 @@ where
             .await
             .map_err(store_failure)?;
 
-        open(&dek, id, &stored.sealed)
+        open(&dek, id.0.as_bytes(), &stored.sealed)
     }
 
     async fn delete(&self, id: &CloudCredentialId) -> Result<(), CredentialError> {

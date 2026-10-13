@@ -38,6 +38,7 @@ mod platform;
 mod reachability;
 mod role;
 mod signals;
+mod tenant_access;
 mod traces;
 mod upgrade;
 mod user;

@@ -26,6 +26,7 @@ use crate::{
         },
         read_logs::{__path_read_logs_handler, read_logs_handler},
         resize_cluster::{__path_resize_cluster_handler, resize_cluster_handler},
+        tenant_administrator::{__path_reveal_administrator_handler, reveal_administrator_handler},
         update_deployment::{__path_update_deployment_handler, update_deployment_handler},
         upgrade_deployment::{__path_upgrade_deployment_handler, upgrade_deployment_handler},
         upgrade_in_flight::{__path_upgrade_in_flight_handler, upgrade_in_flight_handler},
@@ -45,6 +46,7 @@ pub mod list_deployments;
 pub mod network_access;
 pub mod read_logs;
 pub mod resize_cluster;
+pub mod tenant_administrator;
 pub mod update_deployment;
 pub mod upgrade_deployment;
 pub mod upgrade_in_flight;
@@ -73,6 +75,7 @@ pub mod upgrade_settings;
         ask_for_backup_handler,
         cutover_handler,
         resize_cluster_handler,
+        reveal_administrator_handler,
     ),
     tags(
         (name = "deployments", description = "Deployment management endpoints scoped to organisations.")
@@ -99,6 +102,7 @@ pub fn deployment_routes(app_state: AppState) -> Router<AppState> {
         .typed_post(ask_for_backup_handler)
         .typed_post(cutover_handler)
         .typed_put(resize_cluster_handler)
+        .typed_post(reveal_administrator_handler)
         .typed_get(get_deployment_handler)
         .typed_patch(update_deployment_handler)
         .typed_delete(delete_deployment_handler)

@@ -1,3 +1,4 @@
+mod administrator;
 mod cell;
 mod errors;
 #[cfg(test)]
@@ -9,6 +10,11 @@ mod realms;
 mod service;
 mod tenant_realm;
 
+pub use administrator::{
+    ADMINISTRATOR_CREDENTIAL_LIFETIME, AdministratorCredential, AdministratorCredentialError,
+    AdministratorVault, InitialAdministrator, SealedAdministrator, Taken, TenantAdministrator,
+    TenantAdministratorRepository, credential_state,
+};
 pub use cell::{Cell, CellId, CellStatus, HighAvailability, choose};
 pub use errors::{CellError, PlacementError, RealmError};
 pub use policy::CellPolicy;

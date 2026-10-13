@@ -76,6 +76,7 @@ export namespace Schemas {
     target: ActionTarget
     version: ActionVersion
   }
+  export type AdministratorCredential = 'available' | 'revealed' | 'expired'
   export type AllowList = Array<string>
   export type ApiError =
     | 'TokenNotFound'
@@ -85,6 +86,7 @@ export namespace Schemas {
     | { Forbidden: { reason: string } }
     | { Conflict: { reason: string } }
     | { NotFound: { reason: string } }
+    | { Gone: { reason: string } }
     | { Unprocessable: { reason: string } }
     | { BadGateway: { reason: string } }
     | { ServiceUnavailable: { reason: string } }
@@ -471,7 +473,14 @@ export namespace Schemas {
     status: ProvisioningStatus
     step?: (null | ProvisioningStep) | undefined
   }
+  export type TenantAdministrator = {
+    credential: AdministratorCredential
+    expires_at: string
+    username: string
+  }
   export type TenantRealm = {
+    administrator?: (null | TenantAdministrator) | undefined
+    console?: (string | null) | undefined
     issuer?: (string | null) | undefined
     name: RealmName
     refusal?: (string | null) | undefined
@@ -724,7 +733,9 @@ export namespace Schemas {
   }
   export type ReportDrillOutcomeResponseData = Record<string, unknown>
   export type ReportDrillOutcomeResponse = { data: ReportDrillOutcomeResponseData }
+  export type ReportedAdministrator = { password: string; username: string }
   export type ReportOutcomeRequest = {
+    administrator?: (null | ReportedAdministrator) | undefined
     outcome: string
     reason?: (string | null) | undefined
     version?: (string | null) | undefined
@@ -744,6 +755,8 @@ export namespace Schemas {
   export type ResizeClusterResponse = { data: ClusterProfile }
   export type RestoreBackupRequest = { name: string; region?: (string | null) | undefined }
   export type RestoreBackupResponse = { data: Deployment }
+  export type RevealedAdministrator = { password: string; username: string }
+  export type RevealAdministratorResponse = { data: RevealedAdministrator }
   export type ReviseReleaseRequest = {
     minimum_operator_version?: (string | null) | undefined
     notes?: string | undefined
@@ -1155,6 +1168,15 @@ export namespace Endpoints {
       path: { organisation_id: string; deployment_id: string }
     }
     response: Schemas.GetActiveUsersResponse
+  }
+  export type post_Reveal_administrator_handler = {
+    method: 'POST'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/administrator/reveal'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string }
+    }
+    response: Schemas.RevealAdministratorResponse
   }
   export type get_Get_backup_schedule_handler = {
     method: 'GET'
@@ -1877,6 +1899,7 @@ export type EndpointByMethod = {
     '/organisations/{organisation_id}/cloud-credentials': Endpoints.post_Register_cloud_credential_handler
     '/organisations/{organisation_id}/cluster-profiles/estimate': Endpoints.post_Estimate_cluster_profile_handler
     '/organisations/{organisation_id}/deployments': Endpoints.post_Create_deployment_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/administrator/reveal': Endpoints.post_Reveal_administrator_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/backups': Endpoints.post_Ask_for_backup_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/backups/{backup_id}/restore': Endpoints.post_Restore_backup_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/cutover': Endpoints.post_Cutover_handler

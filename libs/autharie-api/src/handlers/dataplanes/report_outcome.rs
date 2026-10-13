@@ -1,7 +1,11 @@
 use autharie_auth::Identity;
 use autharie_core::{
-    dataplane::{ports::DataPlaneService, value_objects::DataPlaneId},
-    deployments::{DeploymentId, commands::ReportDeploymentOutcomeCommand},
+    cells::InitialAdministrator,
+    dataplane::{credential::SecretString, ports::DataPlaneService, value_objects::DataPlaneId},
+    deployments::{
+        DeploymentId,
+        commands::{DeploymentOutcome, ReportDeploymentOutcomeCommand},
+    },
 };
 use axum::{Extension, Json, extract::State};
 use axum_extra::routing::TypedPath;
@@ -40,6 +44,25 @@ pub struct ReportOutcomeRequest {
     /// Why the data plane gave up, sent with `failed` when it knows.
     #[serde(default)]
     pub reason: Option<String>,
+
+    /// The first administrator of a tenant realm, sent once with the `running`
+    /// report of the realm that created it. Kept sealed until an organisation
+    /// administrator reveals it.
+    #[serde(default)]
+    pub administrator: Option<ReportedAdministrator>,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct ReportedAdministrator {
+    pub username: String,
+    pub password: String,
+}
+
+impl ReportedAdministrator {
+    fn into_administrator(self) -> Result<InitialAdministrator, ApiError> {
+        InitialAdministrator::parse(&self.username, SecretString::new(self.password))
+            .map_err(|reason| ApiError::BadRequest { reason })
+    }
 }
 
 #[derive(Serialize, ToSchema, PartialEq)]
@@ -97,6 +120,19 @@ pub async fn report_outcome_handler(
     .map_err(|reason| ApiError::BadRequest { reason })?
     .with_reason(request.reason.as_deref());
 
+    let administrator = request
+        .administrator
+        .map(ReportedAdministrator::into_administrator)
+        .transpose()?;
+    if let Some(administrator) = administrator
+        && command.outcome == DeploymentOutcome::Running
+    {
+        state
+            .service
+            .keep_tenant_administrator(identity.clone(), deployment_id, administrator)
+            .await?;
+    }
+
     let recorded = state.service.report_outcome(identity, command).await?;
 
     Ok(Response::OK(ReportOutcomeResponse {
@@ -137,5 +173,32 @@ mod tests {
                 "{outcome}"
             );
         }
+    }
+
+    #[test]
+    fn a_malformed_administrator_is_refused_without_repeating_its_password() {
+        let request: ReportOutcomeRequest = serde_json::from_value(serde_json::json!({
+            "outcome": "running",
+            "administrator": { "username": " ", "password": "Leaky-Pass-9!" },
+        }))
+        .expect("parsed");
+
+        let error = request
+            .administrator
+            .expect("present")
+            .into_administrator()
+            .err()
+            .expect("refused");
+
+        let shown = format!("{error} {error:?}");
+        assert!(!shown.contains("Leaky-Pass-9!"), "{shown}");
+    }
+
+    #[test]
+    fn an_outcome_without_an_administrator_still_parses() {
+        let request: ReportOutcomeRequest =
+            serde_json::from_value(serde_json::json!({ "outcome": "running" })).expect("parsed");
+
+        assert!(request.administrator.is_none());
     }
 }
