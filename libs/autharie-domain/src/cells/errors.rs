@@ -23,7 +23,7 @@ pub enum CellError {
     #[error("cells are not configured on this installation: set CELLS_ORGANISATION_ID")]
     NotConfigured,
 
-    #[error("no FerrisKey release is available to build a cell: publish one first")]
+    #[error("no FerrisKey release recent enough is available to build a cell: publish one first")]
     NoRelease,
 
     #[error("this deployment is the instance of cell {cell}: retire the cell first")]

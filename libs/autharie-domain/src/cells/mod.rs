@@ -26,7 +26,7 @@ pub use realms::{
     HAND_OFF_FAILED, PooledOutcomes, REALM_CREATE, REALM_DELETE, RealmRequests, Settlement,
 };
 pub use service::{
-    CELL_API_REPLICA, CELL_DATABASE_INSTANCE, CELL_WEBAPP_REPLICA, CellServiceImpl,
-    CreateCellCommand, cell_reservation, release_for_cells,
+    CELL_API_REPLICA, CELL_DATABASE_INSTANCE, CELL_MIN_FERRISKEY, CELL_WEBAPP_REPLICA,
+    CellServiceImpl, CreateCellCommand, cell_reservation, release_for_cells,
 };
 pub use tenant_realm::TenantRealm;

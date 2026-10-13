@@ -128,7 +128,7 @@ impl Installation {
             tenant: Uuid::new_v4(),
             owner: Uuid::new_v4(),
             region: format!("pooled-api-{}", Uuid::new_v4()),
-            release: format!("0.0.{}", Uuid::new_v4().as_u128() as u32 % 1_000_000),
+            release: format!("0.9.{}", Uuid::new_v4().as_u128() as u32 % 1_000_000),
             keys: OnceLock::new(),
             members: Mutex::default(),
         };

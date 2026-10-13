@@ -73,7 +73,7 @@ impl Installation {
     async fn seed(pool: PgPool) -> Self {
         let operator = Uuid::new_v4();
         let organisation = Uuid::new_v4();
-        let release = format!("0.0.{}", rand_patch());
+        let release = format!("0.9.{}", rand_patch());
 
         sqlx::query("INSERT INTO users (id, email, name, sub) VALUES ($1, $2, 'operator', $3)")
             .bind(operator)
