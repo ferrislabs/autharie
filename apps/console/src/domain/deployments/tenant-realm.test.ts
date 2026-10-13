@@ -7,31 +7,53 @@ describe('the tenant realm of a deployment', () => {
     expect(tenantRealmView(null)).toBeUndefined()
   })
 
-  it('carries the tenant URL and the issuer the platform built', () => {
+  it('carries the tenant URL, the issuer and the administration console the platform built', () => {
     expect(
       tenantRealmView({
         name: 'acme',
         url: 'https://acme.autharie.fr',
         issuer: 'https://acme.autharie.fr/api/realms/acme',
+        console: 'https://acme.autharie.fr/realms/acme/overview',
         refusal: null,
       })
     ).toEqual({
       realm: 'acme',
       url: 'https://acme.autharie.fr',
       issuer: 'https://acme.autharie.fr/api/realms/acme',
+      console: 'https://acme.autharie.fr/realms/acme/overview',
+      administrator: { credential: 'pending' },
     })
   })
 
-  it('says why the realm was refused', () => {
-    expect(tenantRealmView({ name: 'acme', refusal: 'the realm name is taken' })?.refusal).toBe(
-      'the realm name is taken'
-    )
+  it('says why the realm was refused, and offers no administrator for it', () => {
+    const view = tenantRealmView({ name: 'acme', refusal: 'the realm name is taken' })
+
+    expect(view?.refusal).toBe('the realm name is taken')
+    expect(view?.administrator).toBeUndefined()
   })
 
   it('has no address when the installation publishes none', () => {
-    const view = tenantRealmView({ name: 'acme', url: null, issuer: null })
+    const view = tenantRealmView({ name: 'acme', url: null, issuer: null, console: null })
 
     expect(view?.url).toBeUndefined()
     expect(view?.issuer).toBeUndefined()
+    expect(view?.console).toBeUndefined()
+  })
+
+  it('tells whether the administrator credential can still be revealed', () => {
+    const view = tenantRealmView({
+      name: 'acme',
+      administrator: {
+        username: 'admin',
+        credential: 'revealed',
+        expires_at: '2026-10-20T12:00:00Z',
+      },
+    })
+
+    expect(view?.administrator).toEqual({
+      username: 'admin',
+      credential: 'revealed',
+      expiresAt: '2026-10-20T12:00:00Z',
+    })
   })
 })

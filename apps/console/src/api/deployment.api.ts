@@ -93,3 +93,27 @@ export const useGetDeploymentActions = (deploymentId: string | null) => {
     enabled: !!organisationId && !!deploymentId && !!accessToken,
   })
 }
+
+/**
+ * Reveals the first administrator of a free deployment's realm. The control
+ * plane forgets the password as it answers, so the result lives in the
+ * component that asked and nowhere else.
+ */
+export const useRevealTenantAdministrator = () => {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    ...window.api.mutation(
+      'post',
+      '/organisations/{organisation_id}/deployments/{deployment_id}/administrator/reveal'
+    ).mutationOptions,
+    gcTime: 0,
+    onSettled: async (_, __, variables) => {
+      const keys = window.api.get('/organisations/{organisation_id}/deployments/{deployment_id}', {
+        path: variables.path,
+      }).queryKey
+
+      await queryClient.invalidateQueries({ queryKey: keys })
+    },
+  })
+}
