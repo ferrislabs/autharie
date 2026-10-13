@@ -1,8 +1,8 @@
 use autharie_domain::{
     CoreError,
     cells::{
-        Cell, CellError, CellId, CellPolicy, CellRepository, CellStatus, PooledOutcomes,
-        REALM_CREATE, REALM_DELETE, RealmName, RealmRequests,
+        Cell, CellError, CellId, CellPolicy, CellRepository, CellStatus, HAND_OFF_FAILED,
+        PooledOutcomes, REALM_CREATE, REALM_DELETE, RealmName, RealmRequests, Settlement,
     },
     dataplane::{
         entities::DataPlane,
@@ -724,8 +724,8 @@ async fn a_failed_report_on_a_pooled_deployment_releases_its_slot_with_the_reaso
             .settle(tenant.id, DeploymentOutcome::Failed, Some("invalid name"))
             .await?;
 
-        assert!(first);
-        assert!(!again);
+        assert_eq!(first, Settlement::Released);
+        assert_eq!(again, Settlement::Unchanged);
         assert!(!holds_slot(&tx, tenant.id).await?);
         assert_eq!(
             realm_refusal(&tx, tenant.id).await?.as_deref(),
@@ -756,10 +756,77 @@ async fn a_deleted_report_on_a_pooled_deployment_releases_its_slot_once() {
             .settle(tenant.id, DeploymentOutcome::Deleted, None)
             .await?;
 
-        assert!(first);
-        assert!(!again);
+        assert_eq!(first, Settlement::Released);
+        assert_eq!(again, Settlement::Unchanged);
         assert!(!holds_slot(&tx, tenant.id).await?);
         assert_eq!(realm_refusal(&tx, tenant.id).await?, None);
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_pooled_deployment_whose_hand_off_failed_gives_its_slot_back() {
+    scratch(async |tx| {
+        let world = seed_world(&tx).await?;
+        let cells = PostgresCellRepository::new(&tx);
+        let deployments = PostgresDeploymentRepository::new(&tx);
+        let cell = open_cell(&cells, &world, &world.region, 5, 0).await?;
+        let mut tenant = pooled_with_status(&tx, &world, cell, DeploymentStatus::Pending).await?;
+
+        assert!(tenant.fail_hand_off(Utc::now()));
+        deployments.update(tenant.clone()).await?;
+        let settled = PooledOutcomes::new(
+            PostgresCellRepository::new(&tx),
+            PostgresDeploymentRepository::new(&tx),
+        )
+        .settle(tenant.id, DeploymentOutcome::Failed, Some(HAND_OFF_FAILED))
+        .await?;
+
+        assert_eq!(settled, Settlement::Released);
+        assert!(!holds_slot(&tx, tenant.id).await?);
+        assert_eq!(
+            realm_refusal(&tx, tenant.id).await?.as_deref(),
+            Some(HAND_OFF_FAILED)
+        );
+        assert_eq!(cells.find(cell).await?.expect("exists").realms(), 0);
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_realm_reported_serving_after_its_tenant_was_deleted_is_deleted_again() {
+    scratch(async |tx| {
+        let world = seed_world(&tx).await?;
+        let cells = PostgresCellRepository::new(&tx);
+        let cell = open_cell(&cells, &world, &world.region, 5, 0).await?;
+        let tenant = pooled_with_status(&tx, &world, cell, DeploymentStatus::Deleted).await?;
+
+        let settled = PooledOutcomes::new(
+            PostgresCellRepository::new(&tx),
+            PostgresDeploymentRepository::new(&tx),
+        )
+        .settle(tenant.id, DeploymentOutcome::Running, None)
+        .await?;
+        let Settlement::RealmOutlivedTenant(stale) = settled else {
+            panic!("expected the realm to be named for removal, got {settled:?}");
+        };
+        RealmRequests::new(
+            PostgresCellRepository::new(&tx),
+            PostgresDeploymentRepository::new(&tx),
+            PostgresActionRepository::new(&tx),
+        )
+        .delete(&stale)
+        .await?;
+
+        let kinds: Vec<String> =
+            sqlx::query_scalar("SELECT action_type FROM actions WHERE deployment_id = $1")
+                .bind(tenant.id.0)
+                .fetch_all(&mut ***tx.lock().await)
+                .await
+                .map_err(db_error)?;
+        assert_eq!(kinds, [REALM_DELETE]);
         Ok(())
     })
     .await;
@@ -780,9 +847,7 @@ async fn a_recorded_realm_action_carries_no_credential() {
             PostgresActionRepository::new(&tx),
         );
 
-        requests
-            .create(&tenant, &format!("{realm}.cells.test"))
-            .await?;
+        requests.create(&tenant, "cells.test").await?;
         requests.delete(&tenant).await?;
 
         let stored: Vec<(String, serde_json::Value)> = sqlx::query_as(

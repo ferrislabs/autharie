@@ -5,7 +5,7 @@ use autharie_domain::{
         ActionPayload, ActionSource, ActionTarget, ActionType, ActionVersion, TargetKind,
         commands::RecordActionCommand, ports::ActionService, service::ActionServiceImpl,
     },
-    cells::PooledOutcomes,
+    cells::{PooledOutcomes, RealmRequests, Settlement},
     dataplane::value_objects::Region,
     dataplane::{
         entities::DataPlane,
@@ -25,8 +25,9 @@ use autharie_domain::{
 };
 use autharie_macros::transactional;
 use autharie_postgres::{
-    catalog::PostgresReleaseRepository, cells::PostgresCellRepository,
-    deployments::PostgresDeploymentRepository, organisation::PostgresOrganisationRepository,
+    action::PostgresActionRepository, catalog::PostgresReleaseRepository,
+    cells::PostgresCellRepository, deployments::PostgresDeploymentRepository,
+    organisation::PostgresOrganisationRepository,
 };
 use serde_json::json;
 
@@ -217,16 +218,25 @@ impl DataPlaneService for AutharieService {
         .await?;
 
         // A report that changed nothing says nothing about an upgrade either.
-        if !changed {
-            return Ok(false);
-        }
-
-        PooledOutcomes::new(
+        let settled = PooledOutcomes::new(
             PostgresCellRepository::new(&tx),
             PostgresDeploymentRepository::new(&tx),
         )
         .settle(deployment_id, outcome, reason.as_deref())
         .await?;
+        if let Settlement::RealmOutlivedTenant(tenant) = settled {
+            RealmRequests::new(
+                PostgresCellRepository::new(&tx),
+                PostgresDeploymentRepository::new(&tx),
+                PostgresActionRepository::new(&tx),
+            )
+            .delete(&tenant)
+            .await?;
+        }
+
+        if !changed {
+            return Ok(false);
+        }
 
         // An upgrade of several versions moves one step at a time, and this is
         // where the next one starts: only once the data plane has reported the
