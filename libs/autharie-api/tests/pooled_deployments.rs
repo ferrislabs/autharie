@@ -145,6 +145,7 @@ impl Installation {
         AutharieService::new(self.pool.clone())
             .with_cells_organisation(Some(OrganisationId(self.cells_organisation)))
             .with_domain(Some(ZONE.to_string()))
+            .with_platform_labels(vec!["control".to_string()])
     }
 
     async fn serve_region(&self) -> Uuid {
@@ -183,11 +184,11 @@ impl Installation {
         registered.dataplane.id.0
     }
 
-    async fn open_a_cell(&self) {
+    async fn open_a_cell(&self) -> DeploymentId {
         self.open_a_cell_in(&self.region).await
     }
 
-    async fn open_a_cell_in(&self, region: &str) {
+    async fn open_a_cell_in(&self, region: &str) -> DeploymentId {
         let service = self.service();
         let cell = service
             .create_cell(
@@ -198,6 +199,7 @@ impl Installation {
             .expect("a cell is created");
         self.report(cell.instance(), DeploymentOutcome::Running)
             .await;
+        cell.instance()
     }
 
     async fn report(&self, deployment: DeploymentId, outcome: DeploymentOutcome) {
@@ -867,6 +869,43 @@ async fn a_free_deployment_waits_for_the_count_of_its_organisation() {
             .await
             .expect("joined")
             .expect("created once the count is free");
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_free_deployment_cannot_take_a_platform_or_cell_hostname() {
+    scenario(async |installation| {
+        installation.serve_region().await;
+        let instance = installation.open_a_cell().await;
+        let instance_slug: String = sqlx::query_scalar(
+            "UPDATE deployments SET deleted_at = now() WHERE id = $1 RETURNING hostname_slug",
+        )
+        .bind(instance.0)
+        .fetch_one(&installation.pool)
+        .await
+        .expect("the cell instance hostname is no longer live");
+        let app = installation.app();
+
+        for name in ["control", "api-tenant", "support", instance_slug.as_str()] {
+            let (status, refused) = call(
+                &app,
+                Method::POST,
+                &installation.deployments(),
+                Some(installation.free(name, "ferriskey")),
+            )
+            .await;
+
+            assert_eq!(
+                status,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "{name}: {refused}"
+            );
+            assert!(
+                refused.to_string().contains("reserved"),
+                "{name}: {refused}"
+            );
+        }
     })
     .await;
 }

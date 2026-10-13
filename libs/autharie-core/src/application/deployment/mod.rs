@@ -237,6 +237,25 @@ impl AutharieService {
 }
 
 impl AutharieService {
+    async fn refuse_platform_hostname(
+        &self,
+        tx: &autharie_persistence::SharedTx<'_>,
+        deployment: &Deployment,
+    ) -> Result<(), CoreError> {
+        let label = deployment.hostname_slug();
+        let claimed = self.platform_labels().contains(&label)
+            || autharie_postgres::cells::PostgresCellRepository::new(tx)
+                .is_instance_hostname(&label)
+                .await?;
+        if claimed {
+            return Err(CoreError::DeploymentNameReserved {
+                name: deployment.name.0.clone(),
+            });
+        }
+
+        Ok(())
+    }
+
     #[transactional(deployment, user, data_plane, organisation, cell)]
     pub async fn tenant_realm_for_organisation(
         &self,
@@ -339,6 +358,7 @@ impl DeploymentService for AutharieService {
             let deployment = deployments
                 .create_pooled(identity, command, &cell_repository, zone)
                 .await?;
+            self.refuse_platform_hostname(&tx, &deployment).await?;
             RealmRequests::new(
                 cell_repository,
                 PostgresDeploymentRepository::new(&tx),
@@ -351,6 +371,7 @@ impl DeploymentService for AutharieService {
         }
 
         let deployment = deployments.create_deployment(identity, command).await?;
+        self.refuse_platform_hostname(&tx, &deployment).await?;
 
         self.announce_new_deployment(
             &deployment,
@@ -536,6 +557,7 @@ impl DeploymentService for AutharieService {
         .await?;
         if renames {
             crate::application::cells::refuse_if_a_cell_runs_on(&tx, deployment_id).await?;
+            self.refuse_platform_hostname(&tx, &updated).await?;
         }
 
         Ok(updated)
@@ -563,6 +585,7 @@ impl DeploymentService for AutharieService {
         .await?;
         if renames {
             crate::application::cells::refuse_if_a_cell_runs_on(&tx, deployment_id).await?;
+            self.refuse_platform_hostname(&tx, &updated).await?;
         }
 
         Ok(updated)

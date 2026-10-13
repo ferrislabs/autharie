@@ -361,6 +361,23 @@ impl CellRepository for PostgresCellRepository<'_> {
         Ok(affected > 0)
     }
 
+    async fn is_instance_hostname(&self, hostname_slug: &str) -> Result<bool, CoreError> {
+        let mut tx = self.tx.lock().await;
+        sqlx::query_scalar!(
+            r#"
+            SELECT EXISTS (
+                SELECT 1 FROM cells c
+                JOIN deployments d ON d.id = c.instance_deployment_id
+                WHERE d.hostname_slug = $1
+            ) AS "exists!"
+            "#,
+            hostname_slug
+        )
+        .fetch_one(&mut ***tx)
+        .await
+        .map_err(database_error("look up the hostname of a cell instance"))
+    }
+
     async fn realm_refusal(&self, deployment: DeploymentId) -> Result<Option<String>, CoreError> {
         let mut tx = self.tx.lock().await;
         let refusal = sqlx::query_scalar!(

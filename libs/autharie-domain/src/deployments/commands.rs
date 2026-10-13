@@ -323,7 +323,7 @@ mod tests {
     fn a_reserved_label_is_refused_however_the_name_is_written() {
         for name in ["WWW", " Api ", "A.P.I", "--www--", "Console!"] {
             let expected_reserved =
-                crate::dns::is_reserved_label(&crate::deployments::environment::slug(name));
+                crate::dns::is_refused_name(&crate::deployments::environment::slug(name));
             assert_eq!(
                 matches!(
                     create_named(name),
@@ -351,9 +351,12 @@ mod tests {
     }
 
     #[test]
-    fn demo_and_a_prefixed_reserved_label_are_creatable() {
+    fn demo_is_creatable_and_a_name_starting_like_a_platform_label_is_not() {
         assert!(create_named("demo").is_ok());
-        assert!(create_named("api-gateway").is_ok());
+        assert!(matches!(
+            create_named("api-gateway"),
+            Err(CoreError::DeploymentNameReserved { .. })
+        ));
     }
 
     #[test]

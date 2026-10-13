@@ -59,7 +59,7 @@ impl DeploymentName {
     /// through this, so a reserved label cannot reach the repository by
     /// either path.
     pub fn publishable(self) -> Result<Self, CoreError> {
-        if crate::dns::is_reserved_label(&environment::slug(&self.0)) {
+        if crate::dns::is_refused_name(&environment::slug(&self.0)) {
             return Err(CoreError::DeploymentNameReserved { name: self.0 });
         }
 

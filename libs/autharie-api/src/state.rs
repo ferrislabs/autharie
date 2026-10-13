@@ -99,6 +99,28 @@ pub fn customer_cluster_resizers(
     }
 }
 
+fn platform_labels(args: &Args) -> Vec<String> {
+    let Some(zone) = args.ovh.domain() else {
+        return Vec::new();
+    };
+
+    [
+        args.auth.issuer.as_str(),
+        args.realm.admin_url.as_str(),
+        args.customer_cloud.control_plane_url.as_str(),
+        args.customer_cloud
+            .herald_issuer
+            .as_deref()
+            .unwrap_or_default(),
+        args.quickwit.url.as_str(),
+        args.object_store.endpoint.as_deref().unwrap_or_default(),
+        args.key_manager.address.as_str(),
+    ]
+    .into_iter()
+    .filter_map(|url| autharie_core::dns::label_under_zone(url, &zone))
+    .collect()
+}
+
 pub async fn state(args: Arc<Args>) -> Result<AppState, ApiError> {
     let config: AutharieConfig = AutharieConfig::from(args.as_ref().clone());
     let keys = args
@@ -116,6 +138,7 @@ pub async fn state(args: Arc<Args>) -> Result<AppState, ApiError> {
         // so an installation that has none is visible in the wiring.
         .administering(args.realm.admin())
         .with_domain(args.ovh.domain())
+        .with_platform_labels(platform_labels(&args))
         .with_credential_keys(keys.clone())
         .with_cells_organisation(
             args.platform
@@ -282,5 +305,24 @@ mod tests {
 
         let result = timeout(Duration::from_millis(200), state(Arc::new(args))).await;
         assert!(matches!(result, Ok(Err(ApiError::InternalServerError { .. }))) || result.is_err());
+    }
+
+    #[test]
+    fn the_hostnames_the_platform_is_configured_with_are_kept_from_deployments() {
+        let mut args = Args::default();
+        args.ovh.zone = "autharie.fr".to_string();
+        args.auth.issuer = "https://id.autharie.fr/realms/autharie".to_string();
+        args.customer_cloud.control_plane_url = "https://control.autharie.fr".to_string();
+        args.quickwit.url = "http://quickwit.observability:7280".to_string();
+
+        assert_eq!(platform_labels(&args), ["id", "control"]);
+    }
+
+    #[test]
+    fn without_a_zone_no_hostname_is_kept() {
+        let mut args = Args::default();
+        args.auth.issuer = "https://id.autharie.fr/realms/autharie".to_string();
+
+        assert!(platform_labels(&args).is_empty());
     }
 }
