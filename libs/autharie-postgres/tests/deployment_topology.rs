@@ -21,7 +21,7 @@ use autharie_persistence::{SharedTx, in_scratch_tx};
 use autharie_postgres::{
     dataplane::PostgresDataPlaneRepository, deployments::PostgresDeploymentRepository,
 };
-use chrono::Utc;
+use chrono::{SubsecRound, Utc};
 use uuid::Uuid;
 
 mod support;
@@ -91,7 +91,8 @@ async fn seed_world(tx: &SharedTx<'_>) -> Result<World, CoreError> {
 }
 
 fn deployment(world: &World, topology: Topology) -> Deployment {
-    let at = Utc::now();
+    // Postgres keeps microseconds, so a nanosecond fixture never compares equal on Linux.
+    let at = Utc::now().trunc_subsecs(6);
     let name = format!("t{}", &Uuid::new_v4().simple().to_string()[..12]);
 
     Deployment {
