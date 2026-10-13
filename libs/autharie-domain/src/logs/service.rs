@@ -89,6 +89,7 @@ where
             .ok_or(CoreError::DeploymentNotFound {
                 id: command.deployment_id.0,
             })?;
+        deployment.refuse_if_pooled("asked for its logs: they are those of its cell")?;
 
         let actor = audit_actor(&identity, &self.user_repository).await?;
         let now = Utc::now();

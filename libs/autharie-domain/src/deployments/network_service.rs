@@ -91,6 +91,7 @@ where
             .await?;
 
         let mut deployment = self.deployment(organisation_id, deployment_id).await?;
+        deployment.refuse_if_pooled("given network rules: it shares the address of its cell")?;
 
         deployment.network_access = access;
         deployment.updated_at = chrono::Utc::now();

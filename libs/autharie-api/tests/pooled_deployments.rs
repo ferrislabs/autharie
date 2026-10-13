@@ -3,8 +3,10 @@ use std::{sync::Arc, time::Duration};
 use autharie_api::{
     args::Args,
     handlers::deployments::{
-        create_deployment::create_deployment_handler, delete_deployment::delete_deployment_handler,
-        get_deployment::get_deployment_handler, update_deployment::update_deployment_handler,
+        backups::ask_for_backup_handler, create_deployment::create_deployment_handler,
+        delete_deployment::delete_deployment_handler, get_deployment::get_deployment_handler,
+        network_access::set_network_access_handler, update_deployment::update_deployment_handler,
+        upgrade_deployment::upgrade_deployment_handler,
     },
     state::AppState,
 };
@@ -221,6 +223,9 @@ impl Installation {
             .typed_get(get_deployment_handler)
             .typed_delete(delete_deployment_handler)
             .typed_patch(update_deployment_handler)
+            .typed_put(set_network_access_handler)
+            .typed_post(upgrade_deployment_handler)
+            .typed_post(ask_for_backup_handler)
             .layer(Extension(user(self.owner)))
             .with_state(AppState {
                 args: Arc::new(args),
@@ -614,6 +619,56 @@ async fn a_free_deployment_cannot_be_renamed_because_its_name_is_its_realm() {
 
         assert_eq!(status, StatusCode::CONFLICT, "{refused}");
         assert!(refused.to_string().contains("renamed"), "{refused}");
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_free_deployment_refuses_what_only_a_dedicated_instance_can_do() {
+    scenario(async |installation| {
+        installation.serve_region().await;
+        installation.open_a_cell().await;
+        let app = installation.app();
+
+        let (_, created) = call(
+            &app,
+            Method::POST,
+            &installation.deployments(),
+            Some(installation.free("no-extras", "ferriskey")),
+        )
+        .await;
+        let deployment = format!(
+            "{}/{}",
+            installation.deployments(),
+            created["data"]["id"].as_str().expect("an id")
+        );
+
+        for (method, path, body) in [
+            (
+                Method::PUT,
+                format!("{deployment}/network-access"),
+                Some(json!({"allowed_cidrs": ["10.0.0.0/8"]})),
+            ),
+            (
+                Method::POST,
+                format!("{deployment}/upgrade"),
+                Some(json!({"version": installation.release})),
+            ),
+            (Method::POST, format!("{deployment}/backups"), None),
+            (
+                Method::PATCH,
+                deployment.clone(),
+                Some(json!({"log_shipping_enabled": true})),
+            ),
+        ] {
+            let (status, refused) = call(&app, method.clone(), &path, body).await;
+
+            assert_eq!(status, StatusCode::CONFLICT, "{method} {path}: {refused}");
+            assert!(
+                refused.to_string().contains("realm in a shared cell"),
+                "{method} {path}: {refused}"
+            );
+        }
     })
     .await;
 }
