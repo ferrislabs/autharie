@@ -163,6 +163,7 @@ impl TryFrom<&str> for DeploymentStatus {
 pub struct Deployment {
     pub id: DeploymentId,
     pub organisation_id: OrganisationId,
+    #[schema(required = false)]
     pub dataplane_id: DataPlaneId,
     pub name: DeploymentName,
 

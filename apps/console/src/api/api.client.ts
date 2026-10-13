@@ -182,7 +182,6 @@ export namespace Schemas {
     memory_mib: number
     storage_gib: number
   }
-  export type CellId = string
   export type CellStatus = 'provisioning' | 'open' | 'full' | 'draining' | 'retired' | 'failed'
   export type CellView = {
     capacity: number
@@ -279,7 +278,7 @@ export namespace Schemas {
     | 'shared'
     | 'self_hosted'
     | { customer_cloud: { credential_id: CloudCredentialId; profile: ClusterProfile } }
-    | { pooled: { cell_id: CellId; realm: RealmName } }
+    | { pooled: { realm: RealmName } }
   export type Environment = 'production' | 'staging' | 'development'
   export type IamSettings = Partial<{ branding: null | Branding }>
   export type MaintenanceWindow = { day: string; duration: number; start: string; timezone: string }
@@ -303,7 +302,7 @@ export namespace Schemas {
     auto_upgrade: AutoUpgradePolicy
     created_at: string
     created_by: UserId
-    dataplane_id: DataPlaneId
+    dataplane_id?: DataPlaneId | undefined
     deleted_at?: (string | null) | undefined
     deployed_at?: (string | null) | undefined
     distribution: Distribution

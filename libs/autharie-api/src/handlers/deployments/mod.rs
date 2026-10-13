@@ -119,3 +119,19 @@ mod tests {
         let _router = deployment_routes(state);
     }
 }
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TenantDeployment(pub autharie_core::deployments::Deployment);
+
+impl serde::Serialize for TenantDeployment {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut value = serde_json::to_value(&self.0).map_err(serde::ser::Error::custom)?;
+        if self.0.is_pooled()
+            && let Some(fields) = value.as_object_mut()
+        {
+            fields.remove("dataplane_id");
+        }
+
+        value.serialize(serializer)
+    }
+}

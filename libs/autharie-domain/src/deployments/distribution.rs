@@ -21,6 +21,8 @@ pub enum Distribution {
         profile: ClusterProfile,
     },
     Pooled {
+        #[serde(skip_serializing)]
+        #[schema(ignore)]
         cell_id: CellId,
         realm: RealmName,
     },
@@ -146,14 +148,13 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_pooled_distribution_serialises_in_snake_case() {
+    fn a_pooled_distribution_serialises_its_realm_and_not_its_cell() {
         let value = serde_json::to_value(pooled()).expect("serialises");
 
         assert_eq!(
             value,
             serde_json::json!({
                 "pooled": {
-                    "cell_id": "00000000-0000-0000-0000-000000000000",
                     "realm": "acme"
                 }
             })

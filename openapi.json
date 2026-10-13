@@ -9728,10 +9728,6 @@
           }
         }
       },
-      "CellId": {
-        "type": "string",
-        "format": "uuid"
-      },
       "CellResponse": {
         "type": "object",
         "required": [
@@ -10499,7 +10495,6 @@
         "required": [
           "id",
           "organisation_id",
-          "dataplane_id",
           "name",
           "kind",
           "version",
@@ -10819,13 +10814,9 @@
               "pooled": {
                 "type": "object",
                 "required": [
-                  "cell_id",
                   "realm"
                 ],
                 "properties": {
-                  "cell_id": {
-                    "$ref": "#/components/schemas/CellId"
-                  },
                   "realm": {
                     "$ref": "#/components/schemas/RealmName"
                   }

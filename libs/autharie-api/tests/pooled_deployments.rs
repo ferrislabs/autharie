@@ -422,7 +422,21 @@ async fn a_free_organisation_gets_a_realm_named_after_its_hostname_in_an_open_ce
         assert_eq!(status, StatusCode::CREATED, "{created}");
         let deployment = &created["data"];
         assert_eq!(deployment["distribution"]["pooled"]["realm"], "acme-login");
-        assert_eq!(deployment["dataplane_id"], cell_plane.to_string());
+        assert_eq!(deployment.get("dataplane_id"), None, "{deployment}");
+        assert_eq!(deployment["distribution"]["pooled"].get("cell_id"), None);
+        let placed_on: Uuid =
+            sqlx::query_scalar("SELECT dataplane_id FROM deployments WHERE id = $1")
+                .bind(
+                    deployment["id"]
+                        .as_str()
+                        .expect("an id")
+                        .parse::<Uuid>()
+                        .expect("a uuid"),
+                )
+                .fetch_one(&installation.pool)
+                .await
+                .expect("the stored plane");
+        assert_eq!(placed_on, cell_plane);
         assert_eq!(deployment["offer"], "free");
 
         let id = deployment["id"].as_str().expect("an id");
@@ -745,6 +759,8 @@ async fn a_free_deployment_shows_its_tenant_url_its_issuer_and_why_its_realm_was
 
         let (status, read) = call(&app, Method::GET, &path, None).await;
         assert_eq!(status, StatusCode::OK, "{read}");
+        assert_eq!(read["data"].get("dataplane_id"), None, "{read}");
+        assert_eq!(read["data"]["distribution"]["pooled"].get("cell_id"), None);
         assert_eq!(read["realm"]["name"], "shown");
         assert_eq!(read["realm"]["url"], format!("https://shown.{ZONE}"));
         assert_eq!(

@@ -9,11 +9,14 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
-use crate::{errors::ApiError, response::Response, state::AppState};
+use crate::{
+    errors::ApiError, handlers::deployments::TenantDeployment, response::Response, state::AppState,
+};
 
 #[derive(Serialize, ToSchema, PartialEq)]
 pub struct GetDeploymentResponse {
-    data: Deployment,
+    #[schema(value_type = Deployment)]
+    data: TenantDeployment,
     #[serde(skip_serializing_if = "Option::is_none")]
     provisioning: Option<Provisioning>,
     /// The tenant realm, for a deployment hosted as a realm in a shared cell.
@@ -70,7 +73,7 @@ pub async fn get_deployment_handler(
         .await?;
 
     Ok(Response::OK(GetDeploymentResponse {
-        data: deployment,
+        data: TenantDeployment(deployment),
         provisioning,
         realm,
     }))

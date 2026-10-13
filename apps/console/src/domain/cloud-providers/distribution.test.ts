@@ -76,7 +76,7 @@ describe('reading a distribution back', () => {
     expect(describeDistribution({ customer_cloud: { credential_id: 'c', profile } })).toBe(
       'Your cloud, standard, 2 to 4 nodes',
     )
-    expect(describeDistribution({ pooled: { cell_id: 'c', realm: 'acme' } })).toBe(
+    expect(describeDistribution({ pooled: { realm: 'acme' } })).toBe(
       'Realm acme on a shared FerrisKey',
     )
   })
