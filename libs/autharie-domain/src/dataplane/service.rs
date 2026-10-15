@@ -1493,6 +1493,7 @@ mod tests {
             dataplane_id,
             deployment_id: deployment.id,
             outcome: DeploymentOutcome::Deleted,
+            reason: None,
         };
         let service = outcome_service(Some(deployment), 1);
 
@@ -1515,6 +1516,7 @@ mod tests {
             dataplane_id,
             deployment_id: deployment.id,
             outcome: DeploymentOutcome::Deleted,
+            reason: None,
         };
         let service = outcome_service_speaking_elsewhere(Some(deployment));
 
@@ -1534,6 +1536,7 @@ mod tests {
             dataplane_id: DataPlaneId(Uuid::new_v4()),
             deployment_id: deployment.id,
             outcome: DeploymentOutcome::Deleted,
+            reason: None,
         };
         let service = outcome_service_speaking_elsewhere(Some(deployment));
 
@@ -1553,6 +1556,7 @@ mod tests {
             dataplane_id: DataPlaneId(Uuid::new_v4()),
             deployment_id: crate::deployments::DeploymentId(Uuid::new_v4()),
             outcome: DeploymentOutcome::Deleted,
+            reason: None,
         };
         let service = outcome_service(None, 0);
 

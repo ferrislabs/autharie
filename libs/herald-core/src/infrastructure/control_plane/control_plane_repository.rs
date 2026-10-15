@@ -352,6 +352,7 @@ impl ControlPlaneRepository for HttpControlPlaneRepository {
             .json(&serde_json::json!({
                 "outcome": report.outcome,
                 "version": report.version,
+                "reason": report.reason,
             }))
             .send()
             .await

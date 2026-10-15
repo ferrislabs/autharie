@@ -72,6 +72,23 @@ impl DeploymentOutcomeReport {
         }
     }
 
+    pub fn serving(deployment_id: Uuid) -> Self {
+        Self {
+            deployment_id,
+            outcome: "running".to_string(),
+            version: None,
+            duration_seconds: None,
+            reason: None,
+        }
+    }
+
+    pub fn failed_because(deployment_id: Uuid, reason: impl Into<String>) -> Self {
+        Self {
+            reason: Some(reason.into()),
+            ..Self::failed(deployment_id)
+        }
+    }
+
     pub fn failed(deployment_id: Uuid) -> Self {
         Self {
             deployment_id,

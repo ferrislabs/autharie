@@ -1,6 +1,9 @@
 use autharie_domain::{
     CoreError,
-    cells::{Cell, CellError, CellId, CellPolicy, CellRepository, CellStatus, RealmName},
+    cells::{
+        Cell, CellError, CellId, CellPolicy, CellRepository, CellStatus, HAND_OFF_FAILED,
+        PooledOutcomes, REALM_CREATE, REALM_DELETE, RealmName, RealmRequests, Settlement,
+    },
     dataplane::{
         entities::DataPlane,
         ports::DataPlaneRepository,
@@ -11,8 +14,8 @@ use autharie_domain::{
     },
     deployments::{
         Deployment, DeploymentId, DeploymentKind, DeploymentName, DeploymentStatus,
-        distribution::Distribution, environment::Environment, network::NetworkAccess,
-        ports::DeploymentRepository,
+        commands::DeploymentOutcome, distribution::Distribution, environment::Environment,
+        network::NetworkAccess, ports::DeploymentRepository,
     },
     organisation::OrganisationId,
     user::UserId,
@@ -20,8 +23,8 @@ use autharie_domain::{
 };
 use autharie_persistence::{SharedTx, in_scratch_tx, with_tx};
 use autharie_postgres::{
-    cells::PostgresCellRepository, dataplane::PostgresDataPlaneRepository,
-    deployments::PostgresDeploymentRepository,
+    action::PostgresActionRepository, cells::PostgresCellRepository,
+    dataplane::PostgresDataPlaneRepository, deployments::PostgresDeploymentRepository,
 };
 use chrono::{DateTime, Duration, Utc};
 use sqlx::{PgPool, postgres::PgPoolOptions};
@@ -645,6 +648,255 @@ async fn constraint_fired(tx: &SharedTx<'_>, statement: &str) -> Result<Option<S
             .as_database_error()
             .and_then(|db| db.constraint().map(str::to_owned))
     }))
+}
+
+async fn realm_refusal(tx: &SharedTx<'_>, id: DeploymentId) -> Result<Option<String>, CoreError> {
+    sqlx::query_scalar("SELECT realm_refusal FROM deployments WHERE id = $1")
+        .bind(id.0)
+        .fetch_one(&mut ***tx.lock().await)
+        .await
+        .map_err(db_error)
+}
+
+async fn holds_slot(tx: &SharedTx<'_>, id: DeploymentId) -> Result<bool, CoreError> {
+    sqlx::query_scalar("SELECT cell_slot_held FROM deployments WHERE id = $1")
+        .bind(id.0)
+        .fetch_one(&mut ***tx.lock().await)
+        .await
+        .map_err(db_error)
+}
+
+async fn pooled_with_status(
+    tx: &SharedTx<'_>,
+    world: &World,
+    cell: CellId,
+    status: DeploymentStatus,
+) -> Result<Deployment, CoreError> {
+    let mut tenant = pooled_in(world, cell, &unique("t"));
+    tenant.status = status;
+    PostgresDeploymentRepository::new(tx)
+        .insert(tenant.clone())
+        .await?;
+    Ok(tenant)
+}
+
+/// @spec-fpr-7
+#[tokio::test]
+async fn a_refused_realm_frees_its_slot_once_and_keeps_the_first_reason() {
+    scratch(async |tx| {
+        let world = seed_world(&tx).await?;
+        let cells = PostgresCellRepository::new(&tx);
+        let cell = open_cell(&tx, &world, &world.region, 5, 0).await?;
+        let tenant = pooled_with_status(&tx, &world, cell, DeploymentStatus::Failed).await?;
+
+        assert!(
+            cells
+                .release_refused(tenant.id, "name taken upstream")
+                .await?
+        );
+        assert!(!cells.release_refused(tenant.id, "a later report").await?);
+
+        assert!(!holds_slot(&tx, tenant.id).await?);
+        assert_eq!(
+            realm_refusal(&tx, tenant.id).await?.as_deref(),
+            Some("name taken upstream")
+        );
+        assert_eq!(cells.find(cell).await?.expect("exists").realms(), 0);
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn only_a_pooled_deployment_can_carry_a_realm_refusal() {
+    scratch(async |tx| {
+        let world = seed_world(&tx).await?;
+
+        let fired = constraint_fired(
+            &tx,
+            &format!(
+                "UPDATE deployments SET realm_refusal = 'no' WHERE id = '{}'",
+                world.instance.0
+            ),
+        )
+        .await?;
+
+        assert_eq!(
+            fired.as_deref(),
+            Some("deployments_realm_refusal_is_pooled")
+        );
+        Ok(())
+    })
+    .await;
+}
+
+/// @spec-fpr-7
+#[tokio::test]
+async fn a_failed_report_on_a_pooled_deployment_releases_its_slot_with_the_reason() {
+    scratch(async |tx| {
+        let world = seed_world(&tx).await?;
+        let cell = open_cell(&tx, &world, &world.region, 5, 0).await?;
+        let tenant = pooled_with_status(&tx, &world, cell, DeploymentStatus::Failed).await?;
+        let outcomes = PooledOutcomes::new(
+            PostgresCellRepository::new(&tx),
+            PostgresDeploymentRepository::new(&tx),
+        );
+
+        let first = outcomes
+            .settle(tenant.id, DeploymentOutcome::Failed, Some("invalid name"))
+            .await?;
+        let again = outcomes
+            .settle(tenant.id, DeploymentOutcome::Failed, Some("invalid name"))
+            .await?;
+
+        assert_eq!(first, Settlement::Released);
+        assert_eq!(again, Settlement::Unchanged);
+        assert!(!holds_slot(&tx, tenant.id).await?);
+        assert_eq!(
+            realm_refusal(&tx, tenant.id).await?.as_deref(),
+            Some("invalid name")
+        );
+        Ok(())
+    })
+    .await;
+}
+
+/// @spec-fpr-8
+#[tokio::test]
+async fn a_deleted_report_on_a_pooled_deployment_releases_its_slot_once() {
+    scratch(async |tx| {
+        let world = seed_world(&tx).await?;
+        let cell = open_cell(&tx, &world, &world.region, 5, 0).await?;
+        let tenant = pooled_with_status(&tx, &world, cell, DeploymentStatus::Deleted).await?;
+        let outcomes = PooledOutcomes::new(
+            PostgresCellRepository::new(&tx),
+            PostgresDeploymentRepository::new(&tx),
+        );
+
+        let first = outcomes
+            .settle(tenant.id, DeploymentOutcome::Deleted, None)
+            .await?;
+        let again = outcomes
+            .settle(tenant.id, DeploymentOutcome::Deleted, None)
+            .await?;
+
+        assert_eq!(first, Settlement::Released);
+        assert_eq!(again, Settlement::Unchanged);
+        assert!(!holds_slot(&tx, tenant.id).await?);
+        assert_eq!(realm_refusal(&tx, tenant.id).await?, None);
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_pooled_deployment_whose_hand_off_failed_gives_its_slot_back() {
+    scratch(async |tx| {
+        let world = seed_world(&tx).await?;
+        let cells = PostgresCellRepository::new(&tx);
+        let deployments = PostgresDeploymentRepository::new(&tx);
+        let cell = open_cell(&tx, &world, &world.region, 5, 0).await?;
+        let mut tenant = pooled_with_status(&tx, &world, cell, DeploymentStatus::Pending).await?;
+
+        assert!(tenant.fail_hand_off(Utc::now()));
+        deployments.update(tenant.clone()).await?;
+        let settled = PooledOutcomes::new(
+            PostgresCellRepository::new(&tx),
+            PostgresDeploymentRepository::new(&tx),
+        )
+        .settle(tenant.id, DeploymentOutcome::Failed, Some(HAND_OFF_FAILED))
+        .await?;
+
+        assert_eq!(settled, Settlement::Released);
+        assert!(!holds_slot(&tx, tenant.id).await?);
+        assert_eq!(
+            realm_refusal(&tx, tenant.id).await?.as_deref(),
+            Some(HAND_OFF_FAILED)
+        );
+        assert_eq!(cells.find(cell).await?.expect("exists").realms(), 0);
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_realm_reported_serving_after_its_tenant_was_deleted_is_deleted_again() {
+    scratch(async |tx| {
+        let world = seed_world(&tx).await?;
+        let cell = open_cell(&tx, &world, &world.region, 5, 0).await?;
+        let tenant = pooled_with_status(&tx, &world, cell, DeploymentStatus::Deleted).await?;
+
+        let settled = PooledOutcomes::new(
+            PostgresCellRepository::new(&tx),
+            PostgresDeploymentRepository::new(&tx),
+        )
+        .settle(tenant.id, DeploymentOutcome::Running, None)
+        .await?;
+        let Settlement::RealmOutlivedTenant(stale) = settled else {
+            panic!("expected the realm to be named for removal, got {settled:?}");
+        };
+        RealmRequests::new(
+            PostgresCellRepository::new(&tx),
+            PostgresDeploymentRepository::new(&tx),
+            PostgresActionRepository::new(&tx),
+        )
+        .delete(&stale)
+        .await?;
+
+        let kinds: Vec<String> =
+            sqlx::query_scalar("SELECT action_type FROM actions WHERE deployment_id = $1")
+                .bind(tenant.id.0)
+                .fetch_all(&mut ***tx.lock().await)
+                .await
+                .map_err(db_error)?;
+        assert_eq!(kinds, [REALM_DELETE]);
+        Ok(())
+    })
+    .await;
+}
+
+/// @spec-fpr-14
+#[tokio::test]
+async fn a_recorded_realm_action_carries_no_credential() {
+    scratch(async |tx| {
+        let world = seed_world(&tx).await?;
+        let cell = open_cell(&tx, &world, &world.region, 5, 0).await?;
+        let tenant = pooled_with_status(&tx, &world, cell, DeploymentStatus::Pending).await?;
+        let realm = tenant.hostname_slug();
+        let requests = RealmRequests::new(
+            PostgresCellRepository::new(&tx),
+            PostgresDeploymentRepository::new(&tx),
+            PostgresActionRepository::new(&tx),
+        );
+
+        requests.create(&tenant, "cells.test").await?;
+        requests.delete(&tenant).await?;
+
+        let stored: Vec<(String, serde_json::Value)> = sqlx::query_as(
+            "SELECT action_type, payload FROM actions \
+             WHERE deployment_id = $1 ORDER BY action_type",
+        )
+        .bind(tenant.id.0)
+        .fetch_all(&mut ***tx.lock().await)
+        .await
+        .map_err(db_error)?;
+
+        let kinds: Vec<&str> = stored.iter().map(|(kind, _)| kind.as_str()).collect();
+        assert_eq!(kinds, [REALM_CREATE, REALM_DELETE]);
+        for (_, payload) in &stored {
+            let text = payload.to_string().to_lowercase();
+            for word in ["password", "username", "secret", "token", "api-admin"] {
+                assert!(!text.contains(word), "{word} in {payload}");
+            }
+            assert_eq!(
+                payload["cell"]["deployment_id"],
+                serde_json::json!(world.instance.0)
+            );
+            assert_eq!(payload["realm"], serde_json::json!(realm));
+        }
+        Ok(())
+    })
+    .await;
 }
 
 #[tokio::test]
