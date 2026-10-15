@@ -77,6 +77,7 @@ mod tests {
     fn deployment(window: Option<MaintenanceWindow>) -> Deployment {
         let at = Utc.with_ymd_and_hms(2026, 1, 5, 0, 0, 0).unwrap(); // a Monday
         Deployment {
+            topology: Default::default(),
             id: DeploymentId(Uuid::new_v4()),
             organisation_id: OrganisationId(Uuid::new_v4()),
             dataplane_id: DataPlaneId(Uuid::new_v4()),

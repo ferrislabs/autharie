@@ -214,6 +214,7 @@ mod tests {
                 provider: IdentityProvider::Keycloak,
                 version: "25.0.0".to_string(),
                 hostname: "auth.acme.test".to_string(),
+                replicas: 1,
                 database: DatabaseConfig {
                     mode: DatabaseMode::ManagedCluster,
                     managed_cluster: ManagedClusterConfig {

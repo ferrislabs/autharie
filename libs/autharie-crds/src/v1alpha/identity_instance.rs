@@ -31,6 +31,12 @@ pub struct IdentityInstanceSpec {
 
     pub hostname: String,
 
+    /// Replicas of a FerrisKey instance (API and webapp), 1 to 5. Keycloak
+    /// always runs one.
+    #[serde(default = "default_replicas")]
+    #[schemars(range(min = 1, max = 5))]
+    pub replicas: i32,
+
     pub database: DatabaseConfig,
 
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -358,6 +364,10 @@ fn default_instances() -> i32 {
     1
 }
 
+fn default_replicas() -> i32 {
+    1
+}
+
 fn default_ingress_enabled() -> bool {
     true
 }
@@ -404,6 +414,7 @@ mod tests {
             provider: IdentityProvider::Keycloak,
             version: "25.0.0".to_string(),
             hostname: "auth.acme.com".to_string(),
+            replicas: 1,
             database: DatabaseConfig {
                 mode: DatabaseMode::ManagedCluster,
                 managed_cluster: ManagedClusterConfig {
@@ -504,6 +515,31 @@ mod tests {
     }
 
     #[test]
+    fn replicas_default_to_one_when_absent_and_round_trip() {
+        let spec: IdentityInstanceSpec = serde_json::from_value(spec_json()).unwrap();
+        assert_eq!(spec.replicas, 1);
+
+        let mut value = spec_json();
+        value["replicas"] = json!(3);
+        let spec: IdentityInstanceSpec = serde_json::from_value(value).unwrap();
+        assert_eq!(spec.replicas, 3);
+        assert_eq!(serde_json::to_value(&spec).unwrap()["replicas"], json!(3));
+    }
+
+    #[test]
+    fn the_schema_bounds_replicas_between_one_and_five() {
+        use kube::CustomResourceExt;
+
+        let crd = serde_json::to_value(IdentityInstance::crd()).unwrap();
+        let spec = &crd["spec"]["versions"][0]["schema"]["openAPIV3Schema"]["properties"]["spec"];
+        let replicas = &spec["properties"]["replicas"];
+
+        assert_eq!(replicas["minimum"].as_f64(), Some(1.0));
+        assert_eq!(replicas["maximum"].as_f64(), Some(5.0));
+        assert_eq!(replicas["default"], json!(1));
+    }
+
+    #[test]
     fn test_provider_display() {
         assert_eq!(IdentityProvider::Keycloak.to_string(), "keycloak");
         assert_eq!(IdentityProvider::Ferriskey.to_string(), "ferriskey");
@@ -566,6 +602,7 @@ mod tests {
                 provider: IdentityProvider::Keycloak,
                 version: "25.0.0".to_string(),
                 hostname: "auth.acme.com".to_string(),
+                replicas: 1,
                 database: DatabaseConfig {
                     mode: DatabaseMode::ManagedCluster,
                     managed_cluster: ManagedClusterConfig {
@@ -617,6 +654,7 @@ mod tests {
                 provider: IdentityProvider::Ferriskey,
                 version: "1.0.0".to_string(),
                 hostname: "auth.example.com".to_string(),
+                replicas: 1,
                 database: DatabaseConfig {
                     mode: DatabaseMode::ManagedCluster,
                     managed_cluster: ManagedClusterConfig {

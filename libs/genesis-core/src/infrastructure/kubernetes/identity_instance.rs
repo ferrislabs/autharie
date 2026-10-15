@@ -479,6 +479,7 @@ fn to_identity_instance(desired: &DesiredIdentityInstance) -> IdentityInstance {
         provider,
         version: desired.version.clone(),
         hostname: desired.hostname.clone(),
+        replicas: desired.replicas,
         database: DatabaseConfig {
             mode: DatabaseMode::ManagedCluster,
             managed_cluster: ManagedClusterConfig {
@@ -555,7 +556,8 @@ mod tests {
             provider,
             version: "25.0.0".to_string(),
             hostname: "acme-prod.autharie-acme-prod.autharie.local".to_string(),
-            database: DesiredDatabase::from_reserved(500, 1024, 1),
+            database: DesiredDatabase::from_reserved(500, 1024, 1, 1),
+            replicas: 1,
             archive: None,
         }
     }
@@ -596,6 +598,18 @@ mod tests {
                 .restore
                 .is_none()
         );
+    }
+
+    #[test]
+    fn the_instance_carries_its_replicas_and_database_instances() {
+        let mut sized = desired(IdentityInstanceProvider::Ferriskey);
+        sized.replicas = 2;
+        sized.database.instances = 3;
+
+        let spec = to_identity_instance(&sized).spec;
+
+        assert_eq!(spec.replicas, 2);
+        assert_eq!(spec.database.managed_cluster.instances, 3);
     }
 
     fn archiving() -> DesiredIdentityInstance {

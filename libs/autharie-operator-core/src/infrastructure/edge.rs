@@ -262,6 +262,7 @@ mod tests {
                 provider: IdentityProvider::Ferriskey,
                 version: "0.5.0".to_string(),
                 hostname: hostname.to_string(),
+                replicas: 1,
                 database: DatabaseConfig {
                     mode: DatabaseMode::ManagedCluster,
                     managed_cluster: ManagedClusterConfig {

@@ -5,14 +5,17 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use autharie_crds::common::types::Phase;
-use autharie_crds::v1alpha::identity_instance::{IdentityInstance, IdentityProvider};
+use autharie_crds::v1alpha::identity_instance::{
+    IdentityInstance, IdentityProvider, ManagedClusterConfig,
+};
 use autharie_crds::v1alpha::identity_instance_upgrade::IdentityInstanceUpgrade;
 use futures::StreamExt;
 use k8s_openapi::api::apps::v1::{Deployment, DeploymentSpec};
 use k8s_openapi::api::batch::v1::{Job, JobSpec};
 use k8s_openapi::api::core::v1::{
-    Container, ContainerPort, EnvVar, EnvVarSource, HTTPGetAction, PodSpec, PodTemplateSpec, Probe,
-    Secret, SecretKeySelector, Service, ServicePort, ServiceSpec,
+    Affinity, Container, ContainerPort, EnvVar, EnvVarSource, HTTPGetAction, PodAffinityTerm,
+    PodAntiAffinity, PodSpec, PodTemplateSpec, Probe, Secret, SecretKeySelector, Service,
+    ServicePort, ServiceSpec, WeightedPodAffinityTerm,
 };
 use k8s_openapi::api::networking::v1::Ingress;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::{LabelSelector, ObjectMeta, OwnerReference};
@@ -527,29 +530,7 @@ impl KeycloakProviderHandler {
             return Ok(false);
         };
 
-        // IdentityInstance currently drives a single replica deployment.
-        let desired_replicas = 1;
-        let generation = deployment.metadata.generation.unwrap_or_default();
-        let observed_generation = deployment
-            .status
-            .as_ref()
-            .and_then(|status| status.observed_generation)
-            .unwrap_or_default();
-        let ready_replicas = deployment
-            .status
-            .as_ref()
-            .and_then(|status| status.ready_replicas)
-            .unwrap_or(0);
-        let available_replicas = deployment
-            .status
-            .as_ref()
-            .and_then(|status| status.available_replicas)
-            .unwrap_or(0);
-        // `updated_replicas` can stay unset depending on rollout history; rely on
-        // observed generation + ready/available replicas to decide readiness.
-        Ok(observed_generation >= generation
-            && ready_replicas >= desired_replicas
-            && available_replicas >= desired_replicas)
+        Ok(replicas_ready(&deployment, desired_replicas(instance)))
     }
 
     async fn ensure_keycloak_route(
@@ -601,19 +582,7 @@ impl KeycloakProviderHandler {
         let clusters: Api<DynamicObject> =
             Api::namespaced_with(self.client.clone(), namespace, &ar);
 
-        let managed_cluster = &instance.spec.database.managed_cluster;
-        let mut spec = serde_json::Map::new();
-        spec.insert("instances".to_string(), json!(managed_cluster.instances));
-        let mut storage = serde_json::Map::new();
-        storage.insert("size".to_string(), json!(managed_cluster.storage.size));
-        if let Some(storage_class) = managed_cluster.storage.storage_class.as_ref() {
-            storage.insert("storageClass".to_string(), json!(storage_class));
-        }
-        spec.insert("storage".to_string(), serde_json::Value::Object(storage));
-
-        if let Some(resources) = cnpg_resources_json(&managed_cluster.resources) {
-            spec.insert("resources".to_string(), resources);
-        }
+        let mut spec = cnpg_base_spec(&instance.spec.database.managed_cluster);
 
         // Absent when the instance archives nowhere, and left off the spec
         // entirely rather than written as an empty object: an empty
@@ -959,19 +928,7 @@ impl FerriskeyProviderHandler {
         let clusters: Api<DynamicObject> =
             Api::namespaced_with(self.client.clone(), namespace, &ar);
 
-        let managed_cluster = &instance.spec.database.managed_cluster;
-        let mut spec = serde_json::Map::new();
-        spec.insert("instances".to_string(), json!(managed_cluster.instances));
-        let mut storage = serde_json::Map::new();
-        storage.insert("size".to_string(), json!(managed_cluster.storage.size));
-        if let Some(storage_class) = managed_cluster.storage.storage_class.as_ref() {
-            storage.insert("storageClass".to_string(), json!(storage_class));
-        }
-        spec.insert("storage".to_string(), serde_json::Value::Object(storage));
-
-        if let Some(resources) = cnpg_resources_json(&managed_cluster.resources) {
-            spec.insert("resources".to_string(), resources);
-        }
+        let mut spec = cnpg_base_spec(&instance.spec.database.managed_cluster);
 
         // Absent when the instance archives nowhere, and left off the spec
         // entirely rather than written as an empty object: an empty
@@ -1343,6 +1300,7 @@ impl FerriskeyProviderHandler {
             &webapp_url,
             &allowed_origins,
             self.otlp_endpoint.as_deref(),
+            desired_replicas(instance),
             owner_reference.clone(),
         )?;
         let api_service = build_ferriskey_service(
@@ -1359,6 +1317,7 @@ impl FerriskeyProviderHandler {
             &web_labels,
             &web_image,
             &api_base_url,
+            desired_replicas(instance),
             owner_reference.clone(),
         )?;
         let web_service =
@@ -1464,8 +1423,10 @@ impl FerriskeyProviderHandler {
         let api_name = ferriskey_api_name(&instance_name);
         let web_name = ferriskey_webapp_name(&instance_name);
         let deployments: Api<Deployment> = Api::namespaced(self.client.clone(), &namespace);
-        let api_ready = deployment_ready(&deployments, &api_name).await?;
-        let web_ready = deployment_ready(&deployments, &web_name).await?;
+        let api_ready =
+            deployment_ready(&deployments, &api_name, desired_replicas(instance)).await?;
+        let web_ready =
+            deployment_ready(&deployments, &web_name, desired_replicas(instance)).await?;
         let migration_done = self.ferriskey_migration_completed(instance).await?;
 
         Ok(api_ready && web_ready && migration_done)
@@ -2238,7 +2199,28 @@ async fn route_ready_or_unexposed(
     Ok(route_is_ready(route.data.get("status")))
 }
 
-async fn deployment_ready(api: &Api<Deployment>, name: &str) -> Result<bool, OperatorError> {
+fn cnpg_base_spec(managed_cluster: &ManagedClusterConfig) -> serde_json::Map<String, Value> {
+    let mut spec = serde_json::Map::new();
+    spec.insert("instances".to_string(), json!(managed_cluster.instances));
+    let mut storage = serde_json::Map::new();
+    storage.insert("size".to_string(), json!(managed_cluster.storage.size));
+    if let Some(storage_class) = managed_cluster.storage.storage_class.as_ref() {
+        storage.insert("storageClass".to_string(), json!(storage_class));
+    }
+    spec.insert("storage".to_string(), Value::Object(storage));
+
+    if let Some(resources) = cnpg_resources_json(&managed_cluster.resources) {
+        spec.insert("resources".to_string(), resources);
+    }
+
+    spec
+}
+
+async fn deployment_ready(
+    api: &Api<Deployment>,
+    name: &str,
+    desired_replicas: i32,
+) -> Result<bool, OperatorError> {
     let deployment = api
         .get_opt(name)
         .await
@@ -2249,11 +2231,41 @@ async fn deployment_ready(api: &Api<Deployment>, name: &str) -> Result<bool, Ope
         return Ok(false);
     };
 
-    let desired_replicas = deployment
-        .spec
-        .as_ref()
-        .and_then(|spec| spec.replicas)
-        .unwrap_or(1);
+    Ok(replicas_ready(&deployment, desired_replicas))
+}
+
+/// Keycloak is not configured as a cluster, so more than one replica of it
+/// would not share sessions: only a FerrisKey instance runs the number asked.
+pub(crate) fn desired_replicas(instance: &IdentityInstance) -> i32 {
+    match instance.spec.provider {
+        IdentityProvider::Keycloak => 1,
+        IdentityProvider::Ferriskey => instance.spec.replicas,
+    }
+}
+
+fn spread_across_nodes(labels: &BTreeMap<String, String>, replicas: i32) -> Option<Affinity> {
+    (replicas > 1).then(|| Affinity {
+        pod_anti_affinity: Some(PodAntiAffinity {
+            preferred_during_scheduling_ignored_during_execution: Some(vec![
+                WeightedPodAffinityTerm {
+                    weight: 100,
+                    pod_affinity_term: PodAffinityTerm {
+                        label_selector: Some(LabelSelector {
+                            match_labels: Some(labels.clone()),
+                            ..Default::default()
+                        }),
+                        topology_key: "kubernetes.io/hostname".to_string(),
+                        ..Default::default()
+                    },
+                },
+            ]),
+            ..Default::default()
+        }),
+        ..Default::default()
+    })
+}
+
+fn replicas_ready(deployment: &Deployment, desired_replicas: i32) -> bool {
     let generation = deployment.metadata.generation.unwrap_or_default();
     let observed_generation = deployment
         .status
@@ -2271,9 +2283,9 @@ async fn deployment_ready(api: &Api<Deployment>, name: &str) -> Result<bool, Ope
         .and_then(|status| status.available_replicas)
         .unwrap_or(0);
 
-    Ok(observed_generation >= generation
+    observed_generation >= generation
         && ready_replicas >= desired_replicas
-        && available_replicas >= desired_replicas)
+        && available_replicas >= desired_replicas
 }
 
 fn build_keycloak_deployment(
@@ -2300,7 +2312,7 @@ fn build_keycloak_deployment(
             ..Default::default()
         },
         spec: Some(DeploymentSpec {
-            replicas: Some(1),
+            replicas: Some(desired_replicas(instance)),
             selector,
             template: PodTemplateSpec {
                 metadata: Some(ObjectMeta {
@@ -2622,6 +2634,7 @@ fn build_ferriskey_api_deployment(
     webapp_url: &str,
     allowed_origins: &str,
     otlp_endpoint: Option<&str>,
+    replicas: i32,
     owner_reference: Option<OwnerReference>,
 ) -> Result<Deployment, OperatorError> {
     let mut env = ferriskey_api_env_vars(
@@ -2671,7 +2684,7 @@ fn build_ferriskey_api_deployment(
             ..Default::default()
         },
         spec: Some(DeploymentSpec {
-            replicas: Some(1),
+            replicas: Some(replicas),
             selector: LabelSelector {
                 match_labels: Some(labels.clone()),
                 ..Default::default()
@@ -2682,6 +2695,7 @@ fn build_ferriskey_api_deployment(
                     ..Default::default()
                 }),
                 spec: Some(PodSpec {
+                    affinity: spread_across_nodes(labels, replicas),
                     containers: vec![Container {
                         name: "ferriskey-api".to_string(),
                         image: Some(image.to_string()),
@@ -2739,6 +2753,7 @@ fn build_ferriskey_webapp_deployment(
     labels: &BTreeMap<String, String>,
     image: &str,
     api_base_url: &str,
+    replicas: i32,
     owner_reference: Option<OwnerReference>,
 ) -> Result<Deployment, OperatorError> {
     Ok(Deployment {
@@ -2750,7 +2765,7 @@ fn build_ferriskey_webapp_deployment(
             ..Default::default()
         },
         spec: Some(DeploymentSpec {
-            replicas: Some(1),
+            replicas: Some(replicas),
             selector: LabelSelector {
                 match_labels: Some(labels.clone()),
                 ..Default::default()
@@ -2761,6 +2776,7 @@ fn build_ferriskey_webapp_deployment(
                     ..Default::default()
                 }),
                 spec: Some(PodSpec {
+                    affinity: spread_across_nodes(labels, replicas),
                     containers: vec![Container {
                         name: "ferriskey-webapp".to_string(),
                         image: Some(image.to_string()),
@@ -3130,6 +3146,7 @@ mod tests {
                 provider: IdentityProvider::Keycloak,
                 version: "25.0.0".to_string(),
                 hostname: "auth.acme.test".to_string(),
+                replicas: 1,
                 database: DatabaseConfig {
                     mode: DatabaseMode::ManagedCluster,
                     managed_cluster: ManagedClusterConfig {
@@ -3376,6 +3393,196 @@ mod tests {
         );
     }
 
+    fn api_deployment_with(replicas: i32) -> Deployment {
+        build_ferriskey_api_deployment(
+            "instance-1-api",
+            "default",
+            &BTreeMap::new(),
+            "ghcr.io/ferriskey/ferriskey-api:1.0.0",
+            "instance-1-db-credentials",
+            "instance-1-admin",
+            "instance-1-db.default.svc",
+            "https://auth.acme.test",
+            "https://auth.acme.test",
+            None,
+            replicas,
+            None,
+        )
+        .unwrap()
+    }
+
+    fn with_status(mut deployment: Deployment, ready: i32) -> Deployment {
+        deployment.metadata.generation = Some(1);
+        deployment.status = Some(k8s_openapi::api::apps::v1::DeploymentStatus {
+            observed_generation: Some(1),
+            ready_replicas: Some(ready),
+            available_replicas: Some(ready),
+            ..Default::default()
+        });
+        deployment
+    }
+
+    #[test]
+    fn the_ferriskey_api_deployment_runs_the_replicas_it_is_given() {
+        assert_eq!(api_deployment_with(2).spec.unwrap().replicas, Some(2));
+        assert_eq!(api_deployment_with(1).spec.unwrap().replicas, Some(1));
+    }
+
+    fn webapp_deployment_with(labels: &BTreeMap<String, String>, replicas: i32) -> Deployment {
+        build_ferriskey_webapp_deployment(
+            "instance-1-webapp",
+            "default",
+            labels,
+            "ghcr.io/ferriskey/ferriskey-webapp:1.0.0",
+            "https://auth.acme.test",
+            replicas,
+            None,
+        )
+        .unwrap()
+    }
+
+    fn affinity_of(deployment: &Deployment) -> Option<Affinity> {
+        deployment
+            .spec
+            .as_ref()?
+            .template
+            .spec
+            .as_ref()?
+            .affinity
+            .clone()
+    }
+
+    fn assert_spreads_over_nodes(affinity: Option<Affinity>, labels: &BTreeMap<String, String>) {
+        let terms = affinity
+            .expect("two replicas get an affinity")
+            .pod_anti_affinity
+            .expect("it is an anti-affinity")
+            .preferred_during_scheduling_ignored_during_execution
+            .expect("it is a preference, not a requirement");
+
+        assert_eq!(terms.len(), 1);
+        assert_eq!(terms[0].weight, 100);
+        assert_eq!(
+            terms[0].pod_affinity_term.topology_key,
+            "kubernetes.io/hostname"
+        );
+        assert_eq!(
+            terms[0]
+                .pod_affinity_term
+                .label_selector
+                .as_ref()
+                .unwrap()
+                .match_labels
+                .as_ref(),
+            Some(labels)
+        );
+    }
+
+    #[test]
+    fn two_replicas_of_each_ferriskey_workload_prefer_different_nodes() {
+        let labels = BTreeMap::from([("app".to_string(), "instance-1".to_string())]);
+        let api = build_ferriskey_api_deployment(
+            "instance-1-api",
+            "default",
+            &labels,
+            "ghcr.io/ferriskey/ferriskey-api:1.0.0",
+            "instance-1-db-credentials",
+            "instance-1-admin",
+            "instance-1-db.default.svc",
+            "https://auth.acme.test",
+            "https://auth.acme.test",
+            None,
+            2,
+            None,
+        )
+        .unwrap();
+
+        assert_spreads_over_nodes(affinity_of(&api), &labels);
+        assert_spreads_over_nodes(affinity_of(&webapp_deployment_with(&labels, 2)), &labels);
+    }
+
+    #[test]
+    fn one_replica_of_each_ferriskey_workload_carries_no_affinity() {
+        let labels = BTreeMap::from([("app".to_string(), "instance-1".to_string())]);
+
+        assert!(affinity_of(&api_deployment_with(1)).is_none());
+        assert!(affinity_of(&webapp_deployment_with(&labels, 1)).is_none());
+    }
+
+    #[test]
+    fn a_ferriskey_instance_runs_the_replicas_of_its_spec() {
+        let mut instance = instance();
+        instance.spec.provider = IdentityProvider::Ferriskey;
+        instance.spec.replicas = 3;
+
+        assert_eq!(desired_replicas(&instance), 3);
+    }
+
+    #[test]
+    fn the_ferriskey_webapp_deployment_runs_the_replicas_it_is_given() {
+        let deployment = build_ferriskey_webapp_deployment(
+            "instance-1-webapp",
+            "default",
+            &BTreeMap::new(),
+            "ghcr.io/ferriskey/ferriskey-webapp:1.0.0",
+            "https://auth.acme.test",
+            2,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(deployment.spec.unwrap().replicas, Some(2));
+    }
+
+    #[test]
+    fn the_keycloak_deployment_always_runs_one_replica() {
+        let mut instance = instance();
+        instance.spec.provider = IdentityProvider::Keycloak;
+        instance.spec.replicas = 2;
+
+        let deployment = build_keycloak_deployment(
+            &instance,
+            "instance-1",
+            "default",
+            &BTreeMap::new(),
+            "instance-1-admin",
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(deployment.spec.unwrap().replicas, Some(1));
+    }
+
+    #[test]
+    fn readiness_waits_for_every_replica() {
+        let deployment = api_deployment_with(2);
+
+        assert!(!replicas_ready(&with_status(deployment.clone(), 1), 2));
+        assert!(replicas_ready(&with_status(deployment, 2), 2));
+    }
+
+    #[test]
+    fn readiness_with_the_default_replica_count_is_unchanged() {
+        let deployment = api_deployment_with(1);
+
+        assert!(!replicas_ready(&with_status(deployment.clone(), 0), 1));
+        assert!(replicas_ready(&with_status(deployment, 1), 1));
+    }
+
+    #[test]
+    fn the_database_instances_of_the_instance_reach_the_cluster_spec() {
+        let mut instance = instance();
+        instance.spec.database.managed_cluster.instances = 2;
+
+        let spec = cnpg_base_spec(&instance.spec.database.managed_cluster);
+
+        assert_eq!(spec["instances"], json!(2));
+        assert_eq!(
+            cnpg_base_spec(&self::instance().spec.database.managed_cluster)["instances"],
+            json!(1)
+        );
+    }
+
     /// Absent is the default and a legitimate one -- an installation that
     /// has not turned tracing on must provision FerrisKey exactly as it
     /// always has, with neither var present at all.
@@ -3392,6 +3599,7 @@ mod tests {
             "https://auth.acme.test",
             "https://auth.acme.test",
             None,
+            1,
             None,
         )
         .unwrap();
@@ -3420,6 +3628,7 @@ mod tests {
             "https://auth.acme.test",
             "https://auth.acme.test",
             Some("http://release-herald.dataplane.svc:4318"),
+            1,
             None,
         )
         .unwrap();

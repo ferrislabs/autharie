@@ -517,6 +517,7 @@ mod tests {
 
     fn deployment_with_id(id: Uuid, created_at: chrono::DateTime<Utc>) -> Deployment {
         Deployment {
+            topology: Default::default(),
             id: DeploymentId(id),
             organisation_id: OrganisationId(Uuid::new_v4()),
             dataplane_id: DataPlaneId(Uuid::new_v4()),

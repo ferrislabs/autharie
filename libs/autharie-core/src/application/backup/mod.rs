@@ -431,6 +431,7 @@ impl BackupService for AutharieService {
             .recovering(Recovery {
                 backup: archive.id,
                 resources: planned.resources,
+                topology: source.topology,
             }),
         )
         .await?;

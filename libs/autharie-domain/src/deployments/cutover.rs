@@ -96,6 +96,7 @@ mod tests {
     fn deployment(id: u128, organisation: u128, name: &str) -> Deployment {
         let at = chrono::Utc::now();
         Deployment {
+            topology: Default::default(),
             id: DeploymentId(Uuid::from_u128(id)),
             organisation_id: OrganisationId(Uuid::from_u128(organisation)),
             dataplane_id: DataPlaneId(Uuid::from_u128(9)),

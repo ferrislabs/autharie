@@ -85,9 +85,14 @@ impl DesiredDatabase {
     /// The request is what the control plane reserved; the limit is twice it,
     /// so a burst does not take a database down while still bounding what one
     /// deployment can take from its neighbours.
-    pub fn from_reserved(cpu_millis: u32, memory_mib: u32, storage_gib: u32) -> Self {
+    pub fn from_reserved(
+        cpu_millis: u32,
+        memory_mib: u32,
+        storage_gib: u32,
+        instances: i32,
+    ) -> Self {
         Self {
-            instances: 1,
+            instances,
             storage_size: format!("{storage_gib}Gi"),
             cpu_request: format!("{cpu_millis}m"),
             memory_request: format!("{memory_mib}Mi"),
@@ -107,6 +112,8 @@ pub struct DesiredIdentityInstance {
     pub version: String,
     pub hostname: String,
     pub database: DesiredDatabase,
+
+    pub replicas: i32,
 
     /// Where this instance archives. `None` is an installation that archives
     /// nowhere, and it leaves an existing schedule alone: the control plane
@@ -145,9 +152,26 @@ pub struct DesiredArchiveSchedule {
     pub enabled: bool,
 }
 
+const MIN_COUNT: i32 = 1;
+const MAX_COUNT: i32 = 5;
+
+fn bounded_count(name: &str, value: Option<i32>) -> Result<i32, GenesisError> {
+    let value = value.unwrap_or(MIN_COUNT);
+
+    if (MIN_COUNT..=MAX_COUNT).contains(&value) {
+        Ok(value)
+    } else {
+        Err(GenesisError::InvalidPayload {
+            message: format!("`{name}` must be between {MIN_COUNT} and {MAX_COUNT}, got {value}"),
+        })
+    }
+}
+
 impl DesiredIdentityInstance {
     pub fn from_payload(payload: &DeploymentPayloadV1) -> Result<Self, GenesisError> {
         let provider = IdentityInstanceProvider::parse(&payload.kind)?;
+        let replicas = bounded_count("replicas", payload.replicas)?;
+        let database_instances = bounded_count("database_instances", payload.database_instances)?;
         let reference =
             IdentityInstanceRef::for_deployment(payload.deployment_id, payload.namespace.clone());
         // The control plane decides this now -- slug(name) under whichever
@@ -173,7 +197,9 @@ impl DesiredIdentityInstance {
                 payload.cpu_millis(),
                 payload.memory_mib(),
                 payload.storage_gib(),
+                database_instances,
             ),
+            replicas,
             archive: payload.archive.as_ref().map(|archive| DesiredArchive {
                 destination_path: archive.destination_path.clone(),
                 encryption: archive.encryption.clone(),
@@ -212,6 +238,47 @@ mod tests {
             storage_gib: None,
             archive: None,
             hostname: None,
+            replicas: None,
+            database_instances: None,
+        }
+    }
+
+    #[test]
+    fn a_payload_without_counts_gives_one_and_one() {
+        let desired = DesiredIdentityInstance::from_payload(&payload()).unwrap();
+
+        assert_eq!(desired.replicas, 1);
+        assert_eq!(desired.database.instances, 1);
+    }
+
+    #[test]
+    fn a_payload_with_counts_carries_them() {
+        let mut sized = payload();
+        sized.replicas = Some(2);
+        sized.database_instances = Some(3);
+
+        let desired = DesiredIdentityInstance::from_payload(&sized).unwrap();
+
+        assert_eq!(desired.replicas, 2);
+        assert_eq!(desired.database.instances, 3);
+    }
+
+    #[test]
+    fn counts_outside_one_to_five_are_refused() {
+        for bad in [0, 6, -1] {
+            let mut replicas = payload();
+            replicas.replicas = Some(bad);
+            assert!(matches!(
+                DesiredIdentityInstance::from_payload(&replicas),
+                Err(GenesisError::InvalidPayload { .. })
+            ));
+
+            let mut database = payload();
+            database.database_instances = Some(bad);
+            assert!(matches!(
+                DesiredIdentityInstance::from_payload(&database),
+                Err(GenesisError::InvalidPayload { .. })
+            ));
         }
     }
 

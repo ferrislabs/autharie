@@ -1,7 +1,7 @@
 use crate::{
     CoreError,
     dataplane::value_objects::{DataPlaneId, DeploymentResources, Region},
-    deployments::environment::Environment,
+    deployments::{environment::Environment, topology::Topology},
     offers::Offer,
     organisation::OrganisationId,
     user::UserId,
@@ -45,6 +45,8 @@ pub struct CreateDeploymentCommand {
     /// Private so the only way to ask for the customer's cloud is
     /// [`CreateDeploymentCommand::with_distribution`], which checks the kind.
     distribution: Distribution,
+
+    topology: Topology,
 }
 
 /// What a recovery deployment is coming back from.
@@ -57,6 +59,7 @@ pub struct CreateDeploymentCommand {
 pub struct Recovery {
     pub backup: crate::backups::BackupId,
     pub resources: DeploymentResources,
+    pub topology: Topology,
 }
 
 impl CreateDeploymentCommand {
@@ -82,6 +85,7 @@ impl CreateDeploymentCommand {
             offer,
             recovery: None,
             distribution: Distribution::Shared,
+            topology: Topology::SINGLE,
         })
     }
 
@@ -98,8 +102,18 @@ impl CreateDeploymentCommand {
         &self.distribution
     }
 
+    pub fn with_topology(mut self, topology: Topology) -> Self {
+        self.topology = topology;
+        self
+    }
+
+    pub fn topology(&self) -> Topology {
+        self.topology
+    }
+
     /// The same deployment, brought back from an archive.
     pub fn recovering(mut self, recovery: Recovery) -> Self {
+        self.topology = recovery.topology;
         self.recovery = Some(recovery);
         self
     }
@@ -202,6 +216,30 @@ mod tests {
         assert_eq!(command.version.to_string(), "1.0.0");
         assert_eq!(command.environment, Environment::Production);
         assert_eq!(command.offer, Offer::Standard);
+    }
+
+    #[test]
+    fn a_recovery_decides_the_topology_of_the_command() {
+        let command = CreateDeploymentCommand::new(
+            OrganisationId(Uuid::new_v4()),
+            DeploymentName("tenant".to_string()),
+            DeploymentKind::Ferriskey,
+            Version::new(1, 0, 0),
+            UserId(Uuid::new_v4()),
+            Environment::Production,
+            Region::new("fr-par"),
+            Offer::Standard,
+        )
+        .expect("a creatable name");
+        assert_eq!(command.topology(), Topology::SINGLE);
+
+        let recovering = command.recovering(Recovery {
+            backup: crate::backups::BackupId(Uuid::new_v4()),
+            resources: DeploymentResources::DEFAULT,
+            topology: Topology::HIGH_AVAILABILITY,
+        });
+
+        assert_eq!(recovering.topology(), Topology::HIGH_AVAILABILITY);
     }
 
     /// There is no field for either, and that is the point: a command

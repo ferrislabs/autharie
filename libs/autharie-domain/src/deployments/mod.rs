@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use crate::dataplane::value_objects::DeploymentResources;
 use crate::deployments::network::NetworkAccess;
+use crate::deployments::topology::Topology;
 use crate::upgrades::policy::{AutoUpgradePolicy, MaintenanceWindow};
 use crate::version::Version;
 use crate::{
@@ -24,6 +25,7 @@ pub mod distribution;
 pub mod ports;
 pub mod provisioning;
 pub mod service;
+pub mod topology;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 pub struct DeploymentId(pub Uuid);
@@ -245,6 +247,8 @@ pub struct Deployment {
     /// How it is hosted. `Shared` for every deployment created before
     /// customer clusters existed.
     pub distribution: distribution::Distribution,
+
+    pub topology: Topology,
 }
 
 impl Deployment {
@@ -421,6 +425,7 @@ mod tests {
     fn deployment(status: DeploymentStatus) -> Deployment {
         let at = Utc::now();
         Deployment {
+            topology: Default::default(),
             id: DeploymentId(Uuid::new_v4()),
             organisation_id: crate::organisation::OrganisationId(Uuid::new_v4()),
             dataplane_id: crate::dataplane::value_objects::DataPlaneId(Uuid::new_v4()),
@@ -447,6 +452,21 @@ mod tests {
             iam_settings: Default::default(),
             distribution: Default::default(),
         }
+    }
+
+    #[test]
+    fn a_deployment_serialises_its_topology() {
+        let mut subject = deployment(DeploymentStatus::Successful);
+        assert_eq!(
+            serde_json::to_value(&subject).unwrap()["topology"],
+            serde_json::json!({"replicas": 1, "database_instances": 1})
+        );
+
+        subject.topology = Topology::HIGH_AVAILABILITY;
+        assert_eq!(
+            serde_json::to_value(&subject).unwrap()["topology"],
+            serde_json::json!({"replicas": 2, "database_instances": 2})
+        );
     }
 
     /// The one thing the repository constraint checks. If this and

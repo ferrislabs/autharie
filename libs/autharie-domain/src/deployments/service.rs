@@ -424,6 +424,7 @@ where
         };
 
         let distribution = command.distribution().clone();
+        let topology = command.topology();
         let now = chrono::Utc::now();
         let deployment = Deployment {
             id,
@@ -457,6 +458,7 @@ where
             log_shipping_enabled: false,
             iam_settings: Default::default(),
             distribution,
+            topology,
         };
 
         info!(
@@ -914,6 +916,7 @@ mod tests {
         organisation_id: OrganisationId,
     ) -> Deployment {
         Deployment {
+            topology: Default::default(),
             id: deployment_id,
             organisation_id,
             dataplane_id: DataPlaneId(Uuid::new_v4()),
@@ -1021,6 +1024,69 @@ mod tests {
 
         let result = service.create_deployment(caller(), command).await;
         assert!(result.is_ok());
+    }
+
+    async fn created_with(command: CreateDeploymentCommand) -> Deployment {
+        let mut mock_repo = MockDeploymentRepository::new();
+        let mut mock_dataplane_repo = MockDataPlaneRepository::new();
+        mock_repo
+            .expect_insert()
+            .times(1)
+            .returning(|_| Box::pin(async { Ok(()) }));
+        mock_dataplane_repo
+            .expect_find_available()
+            .times(1)
+            .returning(|_| {
+                let dataplane = sample_dataplane();
+                Box::pin(async move { Ok(Some(dataplane)) })
+            });
+
+        DeploymentServiceImpl::new(
+            mock_repo,
+            StubUserRepository,
+            mock_dataplane_repo,
+            organisations_on(crate::organisation::value_objects::Plan::Enterprise),
+            no_provisioning(),
+            windows(),
+            Allowed,
+        )
+        .create_deployment(caller(), command)
+        .await
+        .expect("created")
+    }
+
+    fn a_create_command() -> CreateDeploymentCommand {
+        CreateDeploymentCommand::new(
+            OrganisationId(Uuid::new_v4()),
+            DeploymentName("tenant".to_string()),
+            DeploymentKind::Keycloak,
+            crate::version::Version::new(1, 0, 0),
+            UserId(Uuid::new_v4()),
+            crate::deployments::environment::Environment::Development,
+            Region::new("fr-par"),
+            crate::offers::Offer::Standard,
+        )
+        .expect("a creatable name")
+    }
+
+    #[tokio::test]
+    async fn a_deployment_created_without_a_topology_is_single() {
+        let created = created_with(a_create_command()).await;
+
+        assert_eq!(
+            created.topology,
+            crate::deployments::topology::Topology::SINGLE
+        );
+    }
+
+    #[tokio::test]
+    async fn a_deployment_created_with_a_topology_keeps_it() {
+        use crate::deployments::topology::Topology;
+
+        let created =
+            created_with(a_create_command().with_topology(Topology::HIGH_AVAILABILITY)).await;
+
+        assert_eq!(created.topology, Topology::HIGH_AVAILABILITY);
     }
 
     /// #136: a mistyped id and someone else's deployment must be

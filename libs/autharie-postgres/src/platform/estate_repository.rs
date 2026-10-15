@@ -46,6 +46,8 @@ struct EstateRow {
     deployed_at: Option<DateTime<Utc>>,
     deleted_at: Option<DateTime<Utc>>,
     auto_upgrade: String,
+    replicas: i16,
+    database_instances: i16,
 }
 
 impl EstateRow {
@@ -71,6 +73,10 @@ impl EstateRow {
             },
             region: Region::new(self.region),
             deployment: Deployment {
+                topology: autharie_domain::deployments::topology::Topology::new(
+                    u8::try_from(self.replicas).unwrap_or(0),
+                    u8::try_from(self.database_instances).unwrap_or(0),
+                )?,
                 id: DeploymentId(self.id),
                 organisation_id: OrganisationId(self.organisation_id),
                 dataplane_id: DataPlaneId(self.dataplane_id),
@@ -207,7 +213,9 @@ impl EstateRepository for PostgresEstateRepository<'_> {
                    d.updated_at,
                    d.deployed_at,
                    d.deleted_at,
-                   d.auto_upgrade
+                   d.auto_upgrade,
+                   d.replicas,
+                   d.database_instances
             FROM deployments d
             JOIN organisations o ON o.id = d.organisation_id
             JOIN data_planes dp ON dp.id = d.dataplane_id

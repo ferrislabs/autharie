@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT d.id,\n                   d.organisation_id,\n                   o.name AS organisation_name,\n                   d.dataplane_id,\n                   dp.region,\n                   d.name,\n                   d.kind,\n                   d.status,\n                   d.namespace,\n                   d.environment,\n                   d.offer,\n                   d.restored_from,\n                   d.version,\n                   d.cpu_millis,\n                   d.memory_mib,\n                   d.storage_gib,\n                   d.created_by,\n                   d.created_at,\n                   d.updated_at,\n                   d.deployed_at,\n                   d.deleted_at,\n                   d.auto_upgrade\n            FROM deployments d\n            JOIN organisations o ON o.id = d.organisation_id\n            JOIN data_planes dp ON dp.id = d.dataplane_id\n            WHERE d.status <> 'deleted'\n              AND ($1::UUID IS NULL OR d.organisation_id = $1)\n              AND ($2::UUID IS NULL OR d.dataplane_id = $2)\n              AND ($3::TEXT IS NULL OR dp.region = $3)\n              AND ($4::TEXT IS NULL OR d.status = $4)\n              -- Keyset, against the row the cursor names. An offset would\n              -- shift under a deployment created while somebody pages,\n              -- showing one row twice and skipping another.\n              AND ($5::UUID IS NULL OR (d.created_at, d.id) < (\n                    SELECT c.created_at, c.id FROM deployments c WHERE c.id = $5\n              ))\n            ORDER BY d.created_at DESC, d.id DESC\n            LIMIT $6\n            ",
+  "query": "\n            SELECT d.id,\n                   d.organisation_id,\n                   o.name AS organisation_name,\n                   d.dataplane_id,\n                   dp.region,\n                   d.name,\n                   d.kind,\n                   d.status,\n                   d.namespace,\n                   d.environment,\n                   d.offer,\n                   d.restored_from,\n                   d.version,\n                   d.cpu_millis,\n                   d.memory_mib,\n                   d.storage_gib,\n                   d.created_by,\n                   d.created_at,\n                   d.updated_at,\n                   d.deployed_at,\n                   d.deleted_at,\n                   d.auto_upgrade,\n                   d.replicas,\n                   d.database_instances\n            FROM deployments d\n            JOIN organisations o ON o.id = d.organisation_id\n            JOIN data_planes dp ON dp.id = d.dataplane_id\n            WHERE d.status <> 'deleted'\n              AND ($1::UUID IS NULL OR d.organisation_id = $1)\n              AND ($2::UUID IS NULL OR d.dataplane_id = $2)\n              AND ($3::TEXT IS NULL OR dp.region = $3)\n              AND ($4::TEXT IS NULL OR d.status = $4)\n              -- Keyset, against the row the cursor names. An offset would\n              -- shift under a deployment created while somebody pages,\n              -- showing one row twice and skipping another.\n              AND ($5::UUID IS NULL OR (d.created_at, d.id) < (\n                    SELECT c.created_at, c.id FROM deployments c WHERE c.id = $5\n              ))\n            ORDER BY d.created_at DESC, d.id DESC\n            LIMIT $6\n            ",
   "describe": {
     "columns": [
       {
@@ -112,6 +112,16 @@
         "ordinal": 21,
         "name": "auto_upgrade",
         "type_info": "Text"
+      },
+      {
+        "ordinal": 22,
+        "name": "replicas",
+        "type_info": "Int2"
+      },
+      {
+        "ordinal": 23,
+        "name": "database_instances",
+        "type_info": "Int2"
       }
     ],
     "parameters": {
@@ -146,8 +156,10 @@
       false,
       true,
       true,
+      false,
+      false,
       false
     ]
   },
-  "hash": "5a18e7787b33294900b1d31c7dffcde6d23c343c77b9b8fc50e102cc8a5604a0"
+  "hash": "6e46e171b29197da73f2cade701effc3a2facf22d5e220528cc15ceaee2e4560"
 }

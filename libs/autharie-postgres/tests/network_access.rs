@@ -278,6 +278,7 @@ async fn seed(tx: &autharie_persistence::SharedTx<'_>) -> Result<Deployment, Cor
 
     let now = Utc::now();
     let deployment = Deployment {
+        topology: Default::default(),
         id: DeploymentId(Uuid::new_v4()),
         organisation_id,
         dataplane_id: DataPlaneId(dataplane.id.0),

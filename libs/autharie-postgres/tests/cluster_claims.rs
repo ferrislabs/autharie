@@ -194,6 +194,7 @@ async fn seed_customer_plane(pool: &PgPool, account: &Seeded) -> (DataPlaneId, D
         let at = Utc::now();
         PostgresDeploymentRepository::new(&tx)
             .insert(Deployment {
+                topology: Default::default(),
                 id: deployment_id,
                 organisation_id: account.organisation,
                 dataplane_id: plane.id,

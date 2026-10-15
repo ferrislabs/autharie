@@ -115,6 +115,7 @@ fn deployment(world: &World, name: &str, distribution: Distribution) -> Deployme
     let at = Utc::now();
 
     Deployment {
+        topology: Default::default(),
         id: DeploymentId(Uuid::new_v4()),
         organisation_id: world.organisation,
         dataplane_id: world.dataplane,

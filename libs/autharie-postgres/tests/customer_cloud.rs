@@ -158,6 +158,7 @@ fn deployment(
     let at = Utc::now();
 
     Deployment {
+        topology: Default::default(),
         id,
         organisation_id,
         dataplane_id,

@@ -1,4 +1,5 @@
 pub mod archive;
+pub mod crds;
 pub mod dataplane_upgrade;
 pub mod dataplane_upgrade_controller;
 pub mod edge;
@@ -29,6 +30,13 @@ pub async fn run() -> Result<(), OperatorError> {
         Some(store) => std::sync::Arc::new(manifest_store::S3ManifestWriter::new(store)),
         None => std::sync::Arc::new(NoManifests),
     };
+
+    match kube::Client::try_default().await {
+        Ok(client) => {
+            crds::apply_crds(&client).await;
+        }
+        Err(error) => tracing::error!(%error, "no Kubernetes client to apply the CRDs with"),
+    }
 
     try_join!(
         identity_instance::run(),

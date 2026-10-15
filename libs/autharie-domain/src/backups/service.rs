@@ -1148,6 +1148,7 @@ mod tests {
         let now = Utc.with_ymd_and_hms(2026, 9, 1, 0, 0, 0).unwrap();
 
         Deployment {
+            topology: Default::default(),
             id: deployment_id(),
             organisation_id: OrganisationId(Uuid::from_u128(1)),
             dataplane_id: DataPlaneId(Uuid::from_u128(9)),

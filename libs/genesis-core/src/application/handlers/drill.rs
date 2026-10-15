@@ -107,7 +107,9 @@ impl DrillEventHandler {
                 payload.cpu_millis,
                 payload.memory_mib,
                 payload.storage_gib,
+                1,
             ),
+            replicas: 1,
             archive: None,
             restore: Some(DesiredRestore {
                 destination_path: payload.source.destination_path.clone(),

@@ -191,6 +191,7 @@ fn named_deployment(
     let at = Utc::now();
 
     Deployment {
+        topology: Default::default(),
         id: DeploymentId(Uuid::new_v4()),
         organisation_id,
         dataplane_id,

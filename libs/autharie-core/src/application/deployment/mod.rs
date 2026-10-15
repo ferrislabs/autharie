@@ -51,6 +51,8 @@ pub(crate) fn deployment_payload(
         "cpu_millis": deployment.resources.cpu_millis,
         "memory_mib": deployment.resources.memory_mib,
         "storage_gib": deployment.resources.storage_gib,
+        "replicas": deployment.topology.replicas(),
+        "database_instances": deployment.topology.database_instances(),
     });
 
     if let Some(archive) = archive {
@@ -504,6 +506,24 @@ mod tests {
         assert_eq!(payload["storage_gib"], 1);
     }
 
+    #[test]
+    fn a_default_deployment_sends_one_replica_and_one_database_instance() {
+        let payload = deployment_payload(&sample_deployment(), None, None);
+
+        assert_eq!(payload["replicas"], 1);
+        assert_eq!(payload["database_instances"], 1);
+    }
+
+    #[test]
+    fn the_action_payload_carries_the_topology_of_the_deployment() {
+        let mut deployment = sample_deployment();
+        deployment.topology = crate::deployments::topology::Topology::new(3, 2).unwrap();
+        let payload = deployment_payload(&deployment, None, None);
+
+        assert_eq!(payload["replicas"], 3);
+        assert_eq!(payload["database_instances"], 2);
+    }
+
     /// The half of the chain that was missing: the operator has known how to
     /// archive since the CRDs landed, and nothing ever told it where to.
     #[test]
@@ -667,6 +687,7 @@ mod tests {
     fn sample_deployment() -> Deployment {
         let at = chrono::Utc::now();
         Deployment {
+            topology: Default::default(),
             id: DeploymentId(uuid::Uuid::new_v4()),
             organisation_id: OrganisationId(uuid::Uuid::new_v4()),
             dataplane_id: autharie_domain::dataplane::value_objects::DataPlaneId(

@@ -10008,7 +10008,8 @@
           "network_access",
           "log_shipping_enabled",
           "iam_settings",
-          "distribution"
+          "distribution",
+          "topology"
         ],
         "properties": {
           "auto_upgrade": {
@@ -10129,6 +10130,9 @@
           },
           "status": {
             "$ref": "#/components/schemas/DeploymentStatus"
+          },
+          "topology": {
+            "$ref": "#/components/schemas/Topology"
           },
           "updated_at": {
             "type": "string",
@@ -13597,6 +13601,27 @@
                 "$ref": "#/components/schemas/OrganisationId"
               }
             ]
+          }
+        }
+      },
+      "Topology": {
+        "type": "object",
+        "required": [
+          "replicas",
+          "database_instances"
+        ],
+        "properties": {
+          "database_instances": {
+            "type": "integer",
+            "format": "int32",
+            "maximum": 5,
+            "minimum": 1
+          },
+          "replicas": {
+            "type": "integer",
+            "format": "int32",
+            "maximum": 5,
+            "minimum": 1
           }
         }
       },

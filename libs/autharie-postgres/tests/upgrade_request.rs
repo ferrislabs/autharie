@@ -177,6 +177,7 @@ async fn request(
                 let at = Utc::now();
                 deployments
                     .insert(Deployment {
+                        topology: Default::default(),
                         id: fixture.deployment_id,
                         organisation_id: fixture.organisation_id,
                         dataplane_id: dataplane.id,
