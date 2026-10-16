@@ -24,7 +24,7 @@ pub use ports::MockCellRepository;
 pub use realm_name::RealmName;
 pub use realms::{
     HAND_OFF_FAILED, PooledOutcomes, REALM_ADMINISTRATOR_ISSUE, REALM_CREATE, REALM_DELETE,
-    RealmRequests, Settlement,
+    REALM_QUIET_PERIOD, REALMS_RESENT_PER_RUN, RealmRequests, Resent, Settlement,
 };
 pub use service::{
     CELL_API_REPLICA, CELL_DATABASE_INSTANCE, CELL_MIN_FERRISKEY, CELL_WEBAPP_REPLICA,

@@ -1,5 +1,7 @@
 use std::future::Future;
 
+use chrono::{DateTime, Utc};
+
 use crate::{CoreError, dataplane::value_objects::Region, deployments::DeploymentId};
 
 use super::{Cell, CellId, CellStatus};
@@ -48,4 +50,10 @@ pub trait CellRepository: Send + Sync {
         &self,
         deployment: DeploymentId,
     ) -> impl Future<Output = Result<Option<String>, CoreError>> + Send;
+
+    fn stalled_realms(
+        &self,
+        quiet_since: DateTime<Utc>,
+        limit: usize,
+    ) -> impl Future<Output = Result<Vec<DeploymentId>, CoreError>> + Send;
 }

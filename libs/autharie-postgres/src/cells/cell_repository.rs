@@ -1,6 +1,6 @@
 use autharie_domain::{
     CoreError,
-    cells::{Cell, CellError, CellId, CellRepository, CellStatus},
+    cells::{Cell, CellError, CellId, CellRepository, CellStatus, REALM_CREATE, REALM_DELETE},
     dataplane::value_objects::{DataPlaneId, Region},
     deployments::DeploymentId,
 };
@@ -389,5 +389,46 @@ impl CellRepository for PostgresCellRepository<'_> {
         .map_err(database_error("read the refusal of a realm"))?;
 
         Ok(refusal.flatten())
+    }
+
+    async fn stalled_realms(
+        &self,
+        quiet_since: DateTime<Utc>,
+        limit: usize,
+    ) -> Result<Vec<DeploymentId>, CoreError> {
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let mut tx = self.tx.lock().await;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+            .bind("cells:stalled-realms")
+            .execute(&mut ***tx)
+            .await
+            .map_err(database_error("serialise the resending of stalled realms"))?;
+
+        let stalled = sqlx::query_scalar!(
+            r#"
+            SELECT d.id
+            FROM deployments d
+            WHERE d.distribution = 'pooled'
+              AND d.status IN ('pending', 'scheduling', 'in_progress', 'deleting')
+              AND d.updated_at <= $1
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM actions a
+                  WHERE a.deployment_id = d.id
+                    AND a.action_type = ANY($3)
+                    AND (a.status IN ('pending', 'leased') OR a.created_at > $1)
+              )
+            ORDER BY d.updated_at, d.id
+            LIMIT $2
+            "#,
+            quiet_since,
+            limit,
+            &[REALM_CREATE.to_string(), REALM_DELETE.to_string()],
+        )
+        .fetch_all(&mut ***tx)
+        .await
+        .map_err(database_error("list the realms whose request stalled"))?;
+
+        Ok(stalled.into_iter().map(DeploymentId).collect())
     }
 }

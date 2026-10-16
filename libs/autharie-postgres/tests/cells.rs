@@ -2,7 +2,8 @@ use autharie_domain::{
     CoreError,
     cells::{
         Cell, CellError, CellId, CellPolicy, CellRepository, CellStatus, HAND_OFF_FAILED,
-        PooledOutcomes, REALM_CREATE, REALM_DELETE, RealmName, RealmRequests, Settlement,
+        PooledOutcomes, REALM_CREATE, REALM_DELETE, REALM_QUIET_PERIOD, RealmName, RealmRequests,
+        Settlement,
     },
     dataplane::{
         entities::DataPlane,
@@ -1304,4 +1305,215 @@ async fn two_creations_racing_for_the_last_slot_never_exceed_the_capacity() {
     if let Err(failure) = body {
         std::panic::resume_unwind(failure.into_panic());
     }
+}
+
+async fn stalled_since(
+    tx: &SharedTx<'_>,
+    world: &World,
+    cell: CellId,
+    status: DeploymentStatus,
+    quiet: Duration,
+) -> Result<Deployment, CoreError> {
+    let mut tenant = pooled_in(world, cell, &unique("t"));
+    tenant.status = status;
+    tenant.updated_at = Utc::now() - quiet;
+    PostgresDeploymentRepository::new(tx)
+        .insert(tenant.clone())
+        .await?;
+    Ok(tenant)
+}
+
+fn realm_requests<'tx>(
+    tx: &SharedTx<'tx>,
+) -> RealmRequests<
+    PostgresCellRepository<'tx>,
+    PostgresDeploymentRepository<'tx>,
+    PostgresActionRepository<'tx>,
+> {
+    RealmRequests::new(
+        PostgresCellRepository::new(tx),
+        PostgresDeploymentRepository::new(tx),
+        PostgresActionRepository::new(tx),
+    )
+}
+
+async fn realm_actions(tx: &SharedTx<'_>, id: DeploymentId) -> Result<Vec<String>, CoreError> {
+    sqlx::query_scalar(
+        "SELECT action_type FROM actions WHERE deployment_id = $1 ORDER BY created_at",
+    )
+    .bind(id.0)
+    .fetch_all(&mut ***tx.lock().await)
+    .await
+    .map_err(db_error)
+}
+
+async fn backdate_actions(
+    tx: &SharedTx<'_>,
+    id: DeploymentId,
+    status: &str,
+    age: Duration,
+) -> Result<(), CoreError> {
+    sqlx::query("UPDATE actions SET status = $2, created_at = $3 WHERE deployment_id = $1")
+        .bind(id.0)
+        .bind(status)
+        .bind(Utc::now() - age)
+        .execute(&mut ***tx.lock().await)
+        .await
+        .map_err(db_error)?;
+    Ok(())
+}
+
+async fn listed_as_stalled(tx: &SharedTx<'_>, id: DeploymentId) -> Result<bool, CoreError> {
+    let stalled = PostgresCellRepository::new(tx)
+        .stalled_realms(Utc::now() - REALM_QUIET_PERIOD, 10_000)
+        .await?;
+    Ok(stalled.contains(&id))
+}
+
+#[tokio::test]
+async fn a_realm_stuck_on_its_way_up_is_asked_for_exactly_once_more() {
+    scratch(async |tx| {
+        let world = seed_world(&tx).await?;
+        let cell = open_cell(&tx, &world, &world.region, 5, 0).await?;
+        let tenant = stalled_since(
+            &tx,
+            &world,
+            cell,
+            DeploymentStatus::InProgress,
+            Duration::minutes(11),
+        )
+        .await?;
+
+        realm_requests(&tx)
+            .resend_stalled(Utc::now(), Some("cells.test"))
+            .await?;
+        realm_requests(&tx)
+            .resend_stalled(Utc::now(), Some("cells.test"))
+            .await?;
+
+        assert_eq!(realm_actions(&tx, tenant.id).await?, [REALM_CREATE]);
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_realm_stuck_deleting_is_asked_to_go_once_more() {
+    scratch(async |tx| {
+        let world = seed_world(&tx).await?;
+        let cell = open_cell(&tx, &world, &world.region, 5, 0).await?;
+        let tenant = stalled_since(
+            &tx,
+            &world,
+            cell,
+            DeploymentStatus::Deleting,
+            Duration::minutes(11),
+        )
+        .await?;
+
+        realm_requests(&tx)
+            .resend_stalled(Utc::now(), Some("cells.test"))
+            .await?;
+
+        assert_eq!(realm_actions(&tx, tenant.id).await?, [REALM_DELETE]);
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_realm_with_a_request_still_outstanding_is_not_asked_again() {
+    scratch(async |tx| {
+        let world = seed_world(&tx).await?;
+        let cell = open_cell(&tx, &world, &world.region, 5, 0).await?;
+        for status in ["pending", "leased"] {
+            let tenant = stalled_since(
+                &tx,
+                &world,
+                cell,
+                DeploymentStatus::Pending,
+                Duration::minutes(30),
+            )
+            .await?;
+            realm_requests(&tx).create(&tenant, "cells.test").await?;
+            backdate_actions(&tx, tenant.id, status, Duration::minutes(30)).await?;
+
+            assert!(!listed_as_stalled(&tx, tenant.id).await?, "{status}");
+        }
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_realm_is_not_stalled_before_ten_quiet_minutes() {
+    scratch(async |tx| {
+        let world = seed_world(&tx).await?;
+        let cell = open_cell(&tx, &world, &world.region, 5, 0).await?;
+        let recently_changed = stalled_since(
+            &tx,
+            &world,
+            cell,
+            DeploymentStatus::Pending,
+            Duration::minutes(2),
+        )
+        .await?;
+        let recently_asked = stalled_since(
+            &tx,
+            &world,
+            cell,
+            DeploymentStatus::Pending,
+            Duration::minutes(30),
+        )
+        .await?;
+        realm_requests(&tx)
+            .create(&recently_asked, "cells.test")
+            .await?;
+        backdate_actions(&tx, recently_asked.id, "published", Duration::minutes(3)).await?;
+        let long_asked = stalled_since(
+            &tx,
+            &world,
+            cell,
+            DeploymentStatus::Pending,
+            Duration::minutes(30),
+        )
+        .await?;
+        realm_requests(&tx)
+            .create(&long_asked, "cells.test")
+            .await?;
+        backdate_actions(&tx, long_asked.id, "published", Duration::minutes(20)).await?;
+
+        assert!(!listed_as_stalled(&tx, recently_changed.id).await?);
+        assert!(!listed_as_stalled(&tx, recently_asked.id).await?);
+        assert!(listed_as_stalled(&tx, long_asked.id).await?);
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn only_a_realm_still_on_its_way_is_stalled() {
+    scratch(async |tx| {
+        let world = seed_world(&tx).await?;
+        let cell = open_cell(&tx, &world, &world.region, 5, 0).await?;
+        for status in [
+            DeploymentStatus::Successful,
+            DeploymentStatus::Failed,
+            DeploymentStatus::Deleted,
+        ] {
+            let tenant =
+                stalled_since(&tx, &world, cell, status.clone(), Duration::minutes(30)).await?;
+            assert!(!listed_as_stalled(&tx, tenant.id).await?, "{status:?}");
+        }
+
+        let mut dedicated = deployment(&world, &unique("d"), Distribution::Shared);
+        dedicated.status = DeploymentStatus::Pending;
+        dedicated.updated_at = Utc::now() - Duration::minutes(30);
+        PostgresDeploymentRepository::new(&tx)
+            .insert(dedicated.clone())
+            .await?;
+        assert!(!listed_as_stalled(&tx, dedicated.id).await?);
+        Ok(())
+    })
+    .await;
 }
