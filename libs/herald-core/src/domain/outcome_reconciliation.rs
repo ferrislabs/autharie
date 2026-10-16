@@ -8,6 +8,7 @@ use super::entities::outcome::DeploymentOutcomeReport;
 
 pub const QUIET_BEFORE_RECONCILING: Duration = Duration::minutes(5);
 pub const RECONCILED_PER_CYCLE: usize = 16;
+pub const RECONCILE_EVERY_CYCLES: u64 = 8;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InstanceState {
@@ -17,6 +18,17 @@ pub enum InstanceState {
 }
 
 pub type ObservedInstances = HashMap<DeploymentId, InstanceState>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Overdue {
+    pub deployment_id: DeploymentId,
+    pub report: DeploymentOutcomeReport,
+    pub absence_to_confirm_in: Option<String>,
+}
+
+pub fn is_reconciling_cycle(cycle: u64) -> bool {
+    cycle.is_multiple_of(RECONCILE_EVERY_CYCLES)
+}
 
 pub fn awaiting_reconciliation<'a>(
     deployments: &'a [Deployment],
@@ -33,36 +45,66 @@ pub fn awaiting_reconciliation<'a>(
         .collect()
 }
 
-pub fn overdue_outcomes(
-    candidates: &[&Deployment],
-    observed: &ObservedInstances,
-) -> Vec<DeploymentOutcomeReport> {
+pub fn overdue_outcomes(candidates: &[&Deployment], observed: &ObservedInstances) -> Vec<Overdue> {
     candidates
         .iter()
         .filter_map(|deployment| overdue_outcome(deployment, observed.get(&deployment.id)))
-        .take(RECONCILED_PER_CYCLE)
         .collect()
 }
 
-fn overdue_outcome(
-    deployment: &Deployment,
-    instance: Option<&InstanceState>,
-) -> Option<DeploymentOutcomeReport> {
-    let deployment_id = Uuid::parse_str(&deployment.id.0).ok()?;
+fn overdue_outcome(deployment: &Deployment, instance: Option<&InstanceState>) -> Option<Overdue> {
+    let id = Uuid::parse_str(&deployment.id.0).ok()?;
+    let overdue = |report, absence_to_confirm_in| Overdue {
+        deployment_id: deployment.id.clone(),
+        report,
+        absence_to_confirm_in,
+    };
 
     match (deployment.transition?, instance) {
-        (Transition::Departing, None) => Some(DeploymentOutcomeReport::observed(
-            deployment_id,
-            "deleted",
+        (Transition::Departing, None) => Some(overdue(
+            DeploymentOutcomeReport::observed(id, "deleted", None),
+            Some(deployment.namespace.clone()?),
+        )),
+        (Transition::Arriving, Some(InstanceState::Serving { version })) => Some(overdue(
+            DeploymentOutcomeReport::observed(id, "running", Some(version.clone())),
             None,
         )),
-        (Transition::Arriving, Some(InstanceState::Serving { version })) => Some(
-            DeploymentOutcomeReport::observed(deployment_id, "running", Some(version.clone())),
-        ),
-        (Transition::Arriving, Some(InstanceState::Failed)) => Some(
-            DeploymentOutcomeReport::observed(deployment_id, "failed", None),
-        ),
+        (Transition::Arriving, Some(InstanceState::Failed)) => Some(overdue(
+            DeploymentOutcomeReport::observed(id, "failed", None),
+            None,
+        )),
         _ => None,
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct ReconciliationTurns {
+    last_attempt: HashMap<DeploymentId, DateTime<Utc>>,
+}
+
+impl ReconciliationTurns {
+    pub fn next(
+        &mut self,
+        candidates: &[&Deployment],
+        mut overdue: Vec<Overdue>,
+        now: DateTime<Utc>,
+    ) -> Vec<Overdue> {
+        let still_candidates: HashSet<&DeploymentId> =
+            candidates.iter().map(|deployment| &deployment.id).collect();
+        self.last_attempt
+            .retain(|id, _| still_candidates.contains(id));
+
+        overdue.sort_by_key(|item| self.last_attempt.get(&item.deployment_id).copied());
+        overdue.truncate(RECONCILED_PER_CYCLE);
+        for item in &overdue {
+            self.last_attempt.insert(item.deployment_id.clone(), now);
+        }
+        overdue
+    }
+
+    #[cfg(test)]
+    fn remembered(&self) -> usize {
+        self.last_attempt.len()
     }
 }
 
@@ -97,6 +139,9 @@ mod tests {
     ) -> Vec<DeploymentOutcomeReport> {
         let candidates = awaiting_reconciliation(deployments, &HashSet::new(), now());
         overdue_outcomes(&candidates, observed)
+            .into_iter()
+            .map(|overdue| overdue.report)
+            .collect()
     }
 
     #[test]
@@ -196,14 +241,92 @@ mod tests {
     }
 
     #[test]
-    fn one_cycle_reports_a_bounded_batch() {
-        let deployments: Vec<Deployment> = (0..RECONCILED_PER_CYCLE + 5)
-            .map(|_| deployment(Uuid::new_v4(), Some(Transition::Departing)))
+    fn a_deletion_is_only_overdue_where_absence_can_be_confirmed() {
+        let departing = deployment(Uuid::new_v4(), Some(Transition::Departing));
+        let mut nowhere = deployment(Uuid::new_v4(), Some(Transition::Departing));
+        nowhere.namespace = None;
+        let candidates = [&departing, &nowhere];
+
+        let overdue = overdue_outcomes(&candidates, &ObservedInstances::new());
+
+        assert_eq!(overdue.len(), 1);
+        assert_eq!(overdue[0].deployment_id, departing.id);
+        assert_eq!(
+            overdue[0].absence_to_confirm_in.as_deref(),
+            Some("autharie-acme-prod")
+        );
+    }
+
+    #[test]
+    fn only_one_cycle_in_eight_reconciles() {
+        let reconciling: Vec<u64> = (0..20)
+            .filter(|cycle| is_reconciling_cycle(*cycle))
             .collect();
 
+        assert_eq!(reconciling, [0, 8, 16]);
+    }
+
+    fn twenty_overdue() -> (Vec<Deployment>, ObservedInstances) {
+        let deployments = (0..20)
+            .map(|_| deployment(Uuid::new_v4(), Some(Transition::Departing)))
+            .collect();
+        (deployments, ObservedInstances::new())
+    }
+
+    #[test]
+    fn one_cycle_takes_a_bounded_batch() {
+        let (deployments, observed) = twenty_overdue();
+        let candidates = awaiting_reconciliation(&deployments, &HashSet::new(), now());
+        let mut turns = ReconciliationTurns::default();
+
+        let taken = turns.next(&candidates, overdue_outcomes(&candidates, &observed), now());
+
+        assert_eq!(taken.len(), RECONCILED_PER_CYCLE);
+    }
+
+    #[test]
+    fn deployments_left_out_go_first_on_the_next_turn() {
+        let (deployments, observed) = twenty_overdue();
+        let candidates = awaiting_reconciliation(&deployments, &HashSet::new(), now());
+        let mut turns = ReconciliationTurns::default();
+
+        let first: HashSet<DeploymentId> = turns
+            .next(&candidates, overdue_outcomes(&candidates, &observed), now())
+            .into_iter()
+            .map(|item| item.deployment_id)
+            .collect();
+        let second: Vec<DeploymentId> = turns
+            .next(
+                &candidates,
+                overdue_outcomes(&candidates, &observed),
+                now() + Duration::minutes(2),
+            )
+            .into_iter()
+            .map(|item| item.deployment_id)
+            .collect();
+
+        let left_out: HashSet<DeploymentId> = deployments
+            .iter()
+            .map(|deployment| deployment.id.clone())
+            .filter(|id| !first.contains(id))
+            .collect();
+        assert_eq!(left_out.len(), 4);
         assert_eq!(
-            reconciled(&deployments, &ObservedInstances::new()).len(),
-            RECONCILED_PER_CYCLE
+            second[..4].iter().cloned().collect::<HashSet<_>>(),
+            left_out
         );
+    }
+
+    #[test]
+    fn a_deployment_that_left_the_candidates_is_forgotten() {
+        let (deployments, observed) = twenty_overdue();
+        let candidates = awaiting_reconciliation(&deployments, &HashSet::new(), now());
+        let mut turns = ReconciliationTurns::default();
+        turns.next(&candidates, overdue_outcomes(&candidates, &observed), now());
+
+        let remaining = &candidates[..3];
+        turns.next(remaining, overdue_outcomes(remaining, &observed), now());
+
+        assert_eq!(turns.remembered(), 3);
     }
 }

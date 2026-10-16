@@ -296,6 +296,12 @@ pub trait ArchiveSource: Send + Sync {
 #[cfg_attr(test, mockall::automock)]
 pub trait InstanceStateSource: Send + Sync {
     fn observe(&self) -> impl Future<Output = Result<ObservedInstances, HeraldError>> + Send;
+
+    fn is_absent(
+        &self,
+        deployment_id: &DeploymentId,
+        namespace: &str,
+    ) -> impl Future<Output = Result<bool, HeraldError>> + Send;
 }
 
 /// The outcomes waiting to be carried to the control plane.

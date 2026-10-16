@@ -8,7 +8,9 @@ use crate::domain::entities::shard::ShardConfig;
 use crate::domain::error::HeraldError;
 use crate::domain::log_session::run_log_session;
 use crate::domain::log_shipping::run_continuous_log_shipping;
-use crate::domain::outcome_reconciliation::{awaiting_reconciliation, overdue_outcomes};
+use crate::domain::outcome_reconciliation::{
+    Overdue, ReconciliationTurns, awaiting_reconciliation, is_reconciling_cycle, overdue_outcomes,
+};
 use crate::domain::ports::{
     ControlPlaneRepository, GatewayCertificateSink, HeraldService, InstanceStateSource,
     LogIndexSink, MessageBusRepository, OutcomeInboxRepository, PodLogSource, UsageSource,
@@ -17,6 +19,7 @@ use crate::domain::usage_collector::UsageCollector;
 use chrono::Utc;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
@@ -42,6 +45,8 @@ where
     usage_source: Arc<US>,
     pod_logs: Arc<PL>,
     instances: Arc<IS>,
+    reconciliation_cycles: AtomicU64,
+    reconciliation_turns: Mutex<ReconciliationTurns>,
     /// The only state Herald keeps between cycles, and the only thing a
     /// restart loses.
     usage: Mutex<UsageCollector>,
@@ -108,6 +113,8 @@ where
             usage_source,
             pod_logs,
             instances,
+            reconciliation_cycles: AtomicU64::new(0),
+            reconciliation_turns: Mutex::new(ReconciliationTurns::default()),
             usage: Mutex::new(UsageCollector::default()),
             log_sessions: Arc::new(Mutex::new(HashSet::new())),
             log_readers: Arc::new(Mutex::new(HashMap::new())),
@@ -239,8 +246,17 @@ where
     }
 
     async fn reconcile_outcomes(&self, owned: &[Deployment], busy: &HashSet<DeploymentId>) {
-        let candidates = awaiting_reconciliation(owned, busy, Utc::now());
+        if !is_reconciling_cycle(self.reconciliation_cycles.fetch_add(1, Ordering::Relaxed)) {
+            return;
+        }
+
+        let now = Utc::now();
+        let candidates = awaiting_reconciliation(owned, busy, now);
         if candidates.is_empty() {
+            self.reconciliation_turns
+                .lock()
+                .await
+                .next(&candidates, Vec::new(), now);
             return;
         }
 
@@ -252,24 +268,60 @@ where
             }
         };
 
-        for report in overdue_outcomes(&candidates, &observed) {
-            match self
-                .control_plane
-                .report_outcome(&self.dataplane_id, &report)
-                .await
-            {
-                Ok(()) => info!(
-                    deployment_id = %report.deployment_id,
-                    outcome = %report.outcome,
-                    "reported an outcome the cluster shows and the control plane did not have"
-                ),
-                Err(err) => warn!(
-                    %err,
-                    deployment_id = %report.deployment_id,
-                    outcome = %report.outcome,
-                    "failed to report a reconciled outcome"
-                ),
+        let turn = self.reconciliation_turns.lock().await.next(
+            &candidates,
+            overdue_outcomes(&candidates, &observed),
+            now,
+        );
+
+        for overdue in turn {
+            if self.absence_unconfirmed(&overdue).await {
+                continue;
             }
+            self.report_reconciled(&overdue).await;
+        }
+    }
+
+    async fn absence_unconfirmed(&self, overdue: &Overdue) -> bool {
+        let Some(namespace) = &overdue.absence_to_confirm_in else {
+            return false;
+        };
+
+        match self
+            .instances
+            .is_absent(&overdue.deployment_id, namespace)
+            .await
+        {
+            Ok(absent) => !absent,
+            Err(err) => {
+                warn!(
+                    %err,
+                    deployment_id = %overdue.deployment_id,
+                    "could not confirm that this deployment's instance is gone"
+                );
+                true
+            }
+        }
+    }
+
+    async fn report_reconciled(&self, overdue: &Overdue) {
+        let report = &overdue.report;
+        match self
+            .control_plane
+            .report_outcome(&self.dataplane_id, report)
+            .await
+        {
+            Ok(()) => info!(
+                deployment_id = %report.deployment_id,
+                outcome = %report.outcome,
+                "reported an outcome the cluster shows and the control plane did not have"
+            ),
+            Err(err) => warn!(
+                %err,
+                deployment_id = %report.deployment_id,
+                outcome = %report.outcome,
+                "failed to report a reconciled outcome"
+            ),
         }
     }
 
@@ -644,7 +696,9 @@ mod tests {
     use crate::domain::entities::deployment::Transition;
     use crate::domain::entities::outcome::DeploymentOutcomeReport;
     use crate::domain::entities::usage::{CounterSample, UsageMetric};
-    use crate::domain::outcome_reconciliation::ObservedInstances;
+    use crate::domain::outcome_reconciliation::{
+        InstanceState, ObservedInstances, RECONCILE_EVERY_CYCLES, RECONCILED_PER_CYCLE,
+    };
     use crate::domain::ports::{
         HeartbeatOutcome, MockControlPlaneRepository, MockInstanceStateSource,
         MockMessageBusRepository, MockOutcomeInboxRepository, MockPodLogSource, MockUsageSource,
@@ -957,6 +1011,9 @@ mod tests {
         instances
             .expect_observe()
             .returning(|| Box::pin(async { Ok(ObservedInstances::new()) }));
+        instances
+            .expect_is_absent()
+            .returning(|_, _| Box::pin(async { Ok(true) }));
 
         let service = HeraldServiceImpl::new(
             Arc::new(control_plane),
@@ -976,10 +1033,12 @@ mod tests {
         assert!(recorded.lock().expect("not poisoned").is_empty());
 
         control_plane_up.store(true, std::sync::atomic::Ordering::SeqCst);
-        service
-            .sync_all_deployments()
-            .await
-            .expect("cycle succeeds");
+        for _ in 0..RECONCILE_EVERY_CYCLES {
+            service
+                .sync_all_deployments()
+                .await
+                .expect("cycle succeeds");
+        }
 
         assert_eq!(
             *recorded.lock().expect("not poisoned"),
@@ -989,6 +1048,162 @@ mod tests {
                 None
             )]
         );
+    }
+
+    fn listing(deployments: Vec<Deployment>) -> MockControlPlaneRepository {
+        let mut control_plane = MockControlPlaneRepository::new();
+        control_plane
+            .expect_send_heartbeat()
+            .returning(|_, _| Box::pin(async { Ok(HeartbeatOutcome::default()) }));
+        control_plane.expect_list_deployments().returning(move |_| {
+            let listed = deployments.clone();
+            Box::pin(async move { Ok(listed) })
+        });
+        control_plane
+            .expect_claim_actions()
+            .returning(|_, _| Box::pin(async { Ok(Vec::new()) }));
+        control_plane
+    }
+
+    fn cluster_with_nothing(absent: bool) -> MockInstanceStateSource {
+        let mut instances = MockInstanceStateSource::new();
+        instances
+            .expect_observe()
+            .returning(|| Box::pin(async { Ok(ObservedInstances::new()) }));
+        instances
+            .expect_is_absent()
+            .returning(move |_, _| Box::pin(async move { Ok(absent) }));
+        instances
+    }
+
+    #[tokio::test]
+    async fn an_instance_the_list_missed_but_a_get_finds_is_not_reported_deleted() {
+        let mut control_plane = listing(vec![deleting_since_eleven_minutes(Uuid::new_v4())]);
+        control_plane.expect_report_outcome().never();
+
+        let service = HeraldServiceTestBuilder::new()
+            .with_control_plane(control_plane)
+            .with_instances(cluster_with_nothing(false))
+            .build();
+
+        service
+            .sync_all_deployments()
+            .await
+            .expect("cycle succeeds");
+    }
+
+    #[tokio::test]
+    async fn a_running_instance_needs_no_second_look() {
+        let id = Uuid::new_v4();
+        let mut arriving = create_test_deployment(&id.to_string(), "acme-prod");
+        arriving.transition = Some(Transition::Arriving);
+        arriving.changed_at = Some(Utc::now() - Duration::minutes(11));
+        let observed_id = arriving.id.clone();
+        let mut control_plane = listing(vec![arriving]);
+        control_plane
+            .expect_report_outcome()
+            .withf(move |_, report| report.deployment_id == id && report.outcome == "running")
+            .times(1)
+            .returning(|_, _| Box::pin(async { Ok(()) }));
+        let mut instances = MockInstanceStateSource::new();
+        instances.expect_observe().returning(move || {
+            let observed = ObservedInstances::from([(
+                observed_id.clone(),
+                InstanceState::Serving {
+                    version: "26.0.1".to_string(),
+                },
+            )]);
+            Box::pin(async move { Ok(observed) })
+        });
+        instances.expect_is_absent().never();
+
+        let service = HeraldServiceTestBuilder::new()
+            .with_control_plane(control_plane)
+            .with_instances(instances)
+            .build();
+
+        service
+            .sync_all_deployments()
+            .await
+            .expect("cycle succeeds");
+    }
+
+    #[tokio::test]
+    async fn the_cluster_is_read_only_one_cycle_in_eight() {
+        let mut control_plane = listing(vec![deleting_since_eleven_minutes(Uuid::new_v4())]);
+        control_plane
+            .expect_report_outcome()
+            .returning(|_, _| Box::pin(async { Ok(()) }));
+        let mut instances = MockInstanceStateSource::new();
+        instances
+            .expect_observe()
+            .times(2)
+            .returning(|| Box::pin(async { Ok(ObservedInstances::new()) }));
+        instances
+            .expect_is_absent()
+            .returning(|_, _| Box::pin(async { Ok(true) }));
+
+        let service = HeraldServiceTestBuilder::new()
+            .with_control_plane(control_plane)
+            .with_instances(instances)
+            .build();
+
+        for _ in 0..=RECONCILE_EVERY_CYCLES {
+            service
+                .sync_all_deployments()
+                .await
+                .expect("cycle succeeds");
+        }
+    }
+
+    #[tokio::test]
+    async fn reports_the_control_plane_keeps_rejecting_do_not_starve_the_others() {
+        let deployments: Vec<Deployment> = (0..20)
+            .map(|_| deleting_since_eleven_minutes(Uuid::new_v4()))
+            .collect();
+        let attempted: Arc<std::sync::Mutex<Vec<Uuid>>> = Arc::default();
+        let sink = Arc::clone(&attempted);
+        let mut control_plane = listing(deployments.clone());
+        control_plane
+            .expect_report_outcome()
+            .returning(move |_, report| {
+                sink.lock()
+                    .expect("not poisoned")
+                    .push(report.deployment_id);
+                Box::pin(async {
+                    Err(HeraldError::ControlPlane {
+                        message: "rejected".to_string(),
+                    })
+                })
+            });
+
+        let service = HeraldServiceTestBuilder::new()
+            .with_control_plane(control_plane)
+            .with_instances(cluster_with_nothing(true))
+            .build();
+
+        for _ in 0..=RECONCILE_EVERY_CYCLES {
+            service
+                .sync_all_deployments()
+                .await
+                .expect("cycle succeeds");
+        }
+
+        let attempted = attempted.lock().expect("not poisoned");
+        assert_eq!(attempted.len(), 2 * RECONCILED_PER_CYCLE);
+        let first_turn: HashSet<Uuid> = attempted[..RECONCILED_PER_CYCLE].iter().copied().collect();
+        let left_out: HashSet<Uuid> = deployments
+            .iter()
+            .map(|deployment| Uuid::parse_str(&deployment.id.0).expect("a uuid"))
+            .filter(|id| !first_turn.contains(id))
+            .collect();
+        let second_turn_opens_with: HashSet<Uuid> = attempted
+            [RECONCILED_PER_CYCLE..RECONCILED_PER_CYCLE + 4]
+            .iter()
+            .copied()
+            .collect();
+        assert_eq!(left_out.len(), 4);
+        assert_eq!(second_turn_opens_with, left_out);
     }
 
     #[tokio::test]

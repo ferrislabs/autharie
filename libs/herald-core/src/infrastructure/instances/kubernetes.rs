@@ -44,6 +44,29 @@ impl InstanceStateSource for KubeInstanceStateSource {
 
         Ok(listed.items.iter().filter_map(observed).collect())
     }
+
+    async fn is_absent(
+        &self,
+        deployment_id: &DeploymentId,
+        namespace: &str,
+    ) -> Result<bool, HeraldError> {
+        let instances: Api<IdentityInstance> = Api::namespaced(self.client.clone(), namespace);
+
+        let found = instances
+            .get_opt(&instance_name(deployment_id))
+            .await
+            .map_err(|error| HeraldError::Internal {
+                message: format!(
+                    "the instance of deployment {deployment_id} could not be read: {error}"
+                ),
+            })?;
+
+        Ok(found.is_none())
+    }
+}
+
+fn instance_name(deployment_id: &DeploymentId) -> String {
+    format!("{DEPLOYMENT_INSTANCE_PREFIX}{deployment_id}")
 }
 
 fn observed(instance: &IdentityInstance) -> Option<(DeploymentId, InstanceState)> {
@@ -145,6 +168,18 @@ mod tests {
         assert_eq!(
             observation.map(|(_, state)| state),
             Some(InstanceState::Failed)
+        );
+    }
+
+    #[test]
+    fn the_instance_looked_for_is_the_one_genesis_names_after_the_deployment() {
+        let id = Uuid::new_v4();
+        let name = instance_name(&DeploymentId::new(id.to_string()));
+
+        assert_eq!(name, format!("deployment-{id}"));
+        assert_eq!(
+            deployment_id_of(&name),
+            Some(DeploymentId::new(id.to_string()))
         );
     }
 
