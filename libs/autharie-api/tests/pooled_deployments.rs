@@ -665,11 +665,25 @@ async fn a_free_deployment_cannot_be_changed_through_the_update_route() {
             "{refused}"
         );
 
-        for change in [
-            json!({"kind": "keycloak"}),
-            json!({"status": "successful"}),
-            json!({"namespace": "somewhere-else"}),
-            json!({"version": installation.release}),
+        let (status, refused) = call(
+            &app,
+            Method::PATCH,
+            &format!("{}/{id}", installation.deployments()),
+            Some(json!({"log_shipping_enabled": true})),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+        assert!(
+            refused.to_string().contains("realm in a shared cell"),
+            "{refused}"
+        );
+
+        for (field, change) in [
+            ("kind", json!({"kind": "keycloak"})),
+            ("status", json!({"status": "successful"})),
+            ("namespace", json!({"namespace": "somewhere-else"})),
+            ("version", json!({"version": installation.release})),
         ] {
             let (status, refused) = call(
                 &app,
@@ -679,9 +693,15 @@ async fn a_free_deployment_cannot_be_changed_through_the_update_route() {
             )
             .await;
 
-            assert_eq!(status, StatusCode::CONFLICT, "{change}: {refused}");
+            assert_eq!(
+                status,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "{change}: {refused}"
+            );
             assert!(
-                refused.to_string().contains("realm in a shared cell"),
+                refused
+                    .to_string()
+                    .contains(&format!("unknown field `{field}`")),
                 "{change}: {refused}"
             );
         }
