@@ -32,6 +32,13 @@ spec:
               value: {{ include "autharie-dataplane.amqpUrl" . | quote }}
             - name: AMQP_QUEUE
               value: {{ .Values.genesis.queue | quote }}
+            {{- with .Values.genesis.tenantZone }}
+            # The zone pooled tenants are served under. Unset, every realm
+            # action is refused rather than trusting the hostname a payload
+            # carries.
+            - name: TENANT_ZONE
+              value: {{ . | quote }}
+            {{- end }}
             {{- if .Values.objectStore.enabled }}
             # Where the store answers from inside this data plane. The control
             # plane sends the destination, because it owns the layout; how to

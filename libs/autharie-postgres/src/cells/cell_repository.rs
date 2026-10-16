@@ -337,4 +337,27 @@ impl CellRepository for PostgresCellRepository<'_> {
 
         Ok(affected > 0)
     }
+
+    async fn release_refused(
+        &self,
+        deployment: DeploymentId,
+        reason: &str,
+    ) -> Result<bool, CoreError> {
+        let mut tx = self.tx.lock().await;
+        let affected = sqlx::query!(
+            r#"
+            UPDATE deployments
+            SET cell_slot_held = false, realm_refusal = $2
+            WHERE id = $1 AND cell_slot_held
+            "#,
+            deployment.0,
+            reason
+        )
+        .execute(&mut ***tx)
+        .await
+        .map_err(database_error("release the slot of a refused realm"))?
+        .rows_affected();
+
+        Ok(affected > 0)
+    }
 }

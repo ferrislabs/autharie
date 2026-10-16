@@ -7,4 +7,5 @@ pub mod iam_settings_payload;
 pub mod identity_instance;
 pub mod network_access_payload;
 pub mod outcome;
+pub mod realm_payload;
 pub mod upgrade_payload;

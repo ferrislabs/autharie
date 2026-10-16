@@ -283,6 +283,7 @@ async fn report(service: &AutharieService, installation: &Installation, instance
                 dataplane_id,
                 deployment_id: DeploymentId(instance),
                 outcome: DeploymentOutcome::Running,
+                reason: None,
             },
         )
         .await

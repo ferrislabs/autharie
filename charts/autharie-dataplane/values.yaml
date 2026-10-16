@@ -150,6 +150,8 @@ genesis:
   enabled: true
   replicaCount: 1
   queue: genesis.actions
+  # DNS zone of pooled tenants ({realm}.{zone}); empty refuses realm actions.
+  tenantZone: ""
   resources:
     requests:
       cpu: 50m
