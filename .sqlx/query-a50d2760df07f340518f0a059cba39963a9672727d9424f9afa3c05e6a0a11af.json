@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                SELECT cells.id\n                FROM cells\n                JOIN deployments instance ON instance.id = cells.instance_deployment_id\n                WHERE cells.id = $1\n                  AND cells.status = 'open'\n                  AND instance.status = 'successful'\n                FOR UPDATE OF cells\n                ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "a50d2760df07f340518f0a059cba39963a9672727d9424f9afa3c05e6a0a11af"
+}

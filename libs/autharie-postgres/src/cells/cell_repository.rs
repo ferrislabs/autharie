@@ -4,6 +4,7 @@ use autharie_domain::{
     dataplane::value_objects::{DataPlaneId, Region},
     deployments::DeploymentId,
 };
+use autharie_macros::repository;
 use autharie_persistence::SharedTx;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
@@ -77,6 +78,7 @@ fn database_error(action: &'static str) -> impl FnOnce(sqlx::Error) -> CoreError
 }
 
 #[cfg_attr(coverage_nightly, coverage(off))]
+#[repository(domain = Cell, backend = Postgres)]
 pub struct PostgresCellRepository<'tx> {
     tx: SharedTx<'tx>,
 }
@@ -139,6 +141,32 @@ impl CellRepository for PostgresCellRepository<'_> {
         .fetch_optional(&mut ***tx)
         .await
         .map_err(database_error("find a cell"))?;
+
+        row.map(CellRow::into_cell).transpose()
+    }
+
+    async fn find_by_instance(&self, instance: DeploymentId) -> Result<Option<Cell>, CoreError> {
+        let mut tx = self.tx.lock().await;
+        let row = sqlx::query_as!(
+            CellRow,
+            r#"
+            SELECT c.id,
+                   c.region,
+                   c.data_plane_id,
+                   c.instance_deployment_id,
+                   c.status,
+                   c.capacity,
+                   (SELECT count(*) FROM deployments d
+                    WHERE d.cell_id = c.id AND d.cell_slot_held) AS "realms!",
+                   c.created_at
+            FROM cells c
+            WHERE c.instance_deployment_id = $1
+            "#,
+            instance.0
+        )
+        .fetch_optional(&mut ***tx)
+        .await
+        .map_err(database_error("find the cell of an instance"))?;
 
         row.map(CellRow::into_cell).transpose()
     }
@@ -228,7 +256,10 @@ impl CellRepository for PostgresCellRepository<'_> {
                        (SELECT count(*) FROM deployments d
                         WHERE d.cell_id = cells.id AND d.cell_slot_held) AS realms
                 FROM cells
-                WHERE cells.region = $1 AND cells.status = 'open'
+                JOIN deployments instance ON instance.id = cells.instance_deployment_id
+                WHERE cells.region = $1
+                  AND cells.status = 'open'
+                  AND instance.status = 'successful'
             ) c
             WHERE c.realms < c.capacity
             ORDER BY c.realms DESC, c.created_at, c.id
@@ -242,10 +273,13 @@ impl CellRepository for PostgresCellRepository<'_> {
         for id in candidates {
             let locked = sqlx::query_scalar!(
                 r#"
-                SELECT id
+                SELECT cells.id
                 FROM cells
-                WHERE id = $1 AND status = 'open'
-                FOR UPDATE
+                JOIN deployments instance ON instance.id = cells.instance_deployment_id
+                WHERE cells.id = $1
+                  AND cells.status = 'open'
+                  AND instance.status = 'successful'
+                FOR UPDATE OF cells
                 "#,
                 id
             )

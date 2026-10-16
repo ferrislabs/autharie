@@ -355,12 +355,22 @@ impl From<CoreError> for ApiError {
                 reason: value.to_string(),
             },
             CoreError::Cell(
-                CellError::Full | CellError::NotOpen | CellError::InvalidTransition,
+                CellError::Full
+                | CellError::NotOpen
+                | CellError::InvalidTransition
+                | CellError::NoRelease
+                | CellError::InstanceInUse { .. },
             )
             | CoreError::Realm(RealmError::AlreadyExists) => ApiError::Conflict {
                 reason: value.to_string(),
             },
             CoreError::Realm(RealmError::InvalidName { .. }) => ApiError::Unprocessable {
+                reason: value.to_string(),
+            },
+            CoreError::Cell(CellError::CapacityInvalid) => ApiError::Unprocessable {
+                reason: value.to_string(),
+            },
+            CoreError::Cell(CellError::NotConfigured) => ApiError::ServiceUnavailable {
                 reason: value.to_string(),
             },
             CoreError::Cell(CellError::UnknownCell { .. }) => ApiError::NotFound {
@@ -451,6 +461,30 @@ mod tests {
         assert_eq!(
             status(CoreError::Realm(RealmError::CellUnreachable)),
             StatusCode::BAD_GATEWAY
+        );
+        assert_eq!(
+            status(CoreError::Cell(CellError::NotConfigured)),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            status(CoreError::Cell(CellError::NoRelease)),
+            StatusCode::CONFLICT
+        );
+        assert_eq!(
+            status(CoreError::Cell(CellError::InstanceInUse {
+                cell: uuid::Uuid::nil(),
+            })),
+            StatusCode::CONFLICT
+        );
+        assert_eq!(
+            status(CoreError::Cell(CellError::CapacityInvalid)),
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
+        assert_eq!(
+            status(CoreError::Cell(CellError::UnknownCell {
+                id: uuid::Uuid::nil(),
+            })),
+            StatusCode::NOT_FOUND
         );
     }
 

@@ -10,6 +10,11 @@ pub trait CellRepository: Send + Sync {
 
     fn find(&self, id: CellId) -> impl Future<Output = Result<Option<Cell>, CoreError>> + Send;
 
+    fn find_by_instance(
+        &self,
+        instance: DeploymentId,
+    ) -> impl Future<Output = Result<Option<Cell>, CoreError>> + Send;
+
     fn list(&self) -> impl Future<Output = Result<Vec<Cell>, CoreError>> + Send;
 
     fn set_status(

@@ -249,7 +249,7 @@ mod tests {
     use super::*;
     use crate::{
         action::ports::MockActionRepository,
-        cells::{CellPolicy, CellStatus, ports::MockCellRepository},
+        cells::{CellStatus, ports::MockCellRepository},
         dataplane::value_objects::{DataPlaneId, DeploymentResources, Region},
         deployments::{
             DeploymentKind, DeploymentName, environment::Environment, network::NetworkAccess,
@@ -311,17 +311,17 @@ mod tests {
     }
 
     fn cell(plane: DataPlaneId) -> Cell {
-        let mut cell = Cell::new(
+        Cell::restore(
             CELL,
             Region::new("eu"),
             plane,
             INSTANCE,
-            &CellPolicy::new(200, 50).expect("valid"),
+            CellStatus::Open,
+            200,
+            0,
             Utc::now(),
-        );
-        cell.open().expect("opens");
-        assert_eq!(cell.status(), CellStatus::Open);
-        cell
+        )
+        .expect("an open cell")
     }
 
     fn cells_finding(found: Option<Cell>) -> MockCellRepository {

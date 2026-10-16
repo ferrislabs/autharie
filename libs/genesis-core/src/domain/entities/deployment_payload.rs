@@ -63,6 +63,11 @@ pub struct DeploymentPayloadV1 {
     pub replicas: Option<i32>,
     #[serde(default)]
     pub database_instances: Option<i32>,
+
+    /// The instance of a cell, serving the realms of many tenants on their
+    /// own hostnames. Absent is an ordinary instance.
+    #[serde(default)]
+    pub pooled_cell: bool,
 }
 
 /// The restore half of a `deployment.restore` payload.

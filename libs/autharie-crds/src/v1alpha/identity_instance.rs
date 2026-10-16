@@ -285,6 +285,12 @@ pub struct FerriskeyConfig {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_base_url: Option<String>,
+
+    /// Serves the realms of many tenants, each on its own hostname: the
+    /// webapp calls a relative `/api` and the API derives the webapp URL
+    /// from the request.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pooled_cell: bool,
 }
 
 /// Whether and how an instance is reachable from outside the cluster.

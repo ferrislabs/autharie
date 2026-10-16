@@ -47,6 +47,14 @@ pub struct CreateDeploymentCommand {
     distribution: Distribution,
 
     topology: Topology,
+
+    sizing: Sizing,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sizing {
+    Offer,
+    Platform(DeploymentResources),
 }
 
 /// What a recovery deployment is coming back from.
@@ -86,6 +94,7 @@ impl CreateDeploymentCommand {
             recovery: None,
             distribution: Distribution::Shared,
             topology: Topology::SINGLE,
+            sizing: Sizing::Offer,
         })
     }
 
@@ -109,6 +118,15 @@ impl CreateDeploymentCommand {
 
     pub fn topology(&self) -> Topology {
         self.topology
+    }
+
+    pub fn sized_by_platform(mut self, resources: DeploymentResources) -> Self {
+        self.sizing = Sizing::Platform(resources);
+        self
+    }
+
+    pub fn sizing(&self) -> Sizing {
+        self.sizing
     }
 
     /// The same deployment, brought back from an archive.

@@ -116,7 +116,12 @@ pub async fn state(args: Arc<Args>) -> Result<AppState, ApiError> {
         // so an installation that has none is visible in the wiring.
         .administering(args.realm.admin())
         .with_domain(args.ovh.domain())
-        .with_credential_keys(keys.clone());
+        .with_credential_keys(keys.clone())
+        .with_cells_organisation(
+            args.platform
+                .cells_organisation_id
+                .map(autharie_core::organisation::OrganisationId),
+        );
     let cloud = customer_cloud_providers(&args, &service, keys.as_ref());
     let resizers = customer_cluster_resizers(&args, &service, keys.as_ref());
     let service = service
