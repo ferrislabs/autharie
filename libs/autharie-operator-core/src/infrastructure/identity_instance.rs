@@ -1289,7 +1289,7 @@ impl FerriskeyProviderHandler {
         let api_base_url = ferriskey_api_base_url(instance, self.public_https_port);
         let allowed_origins = ferriskey_allowed_origins(&webapp_url);
 
-        let api_deployment = build_ferriskey_api_deployment(
+        let mut api_deployment = build_ferriskey_api_deployment(
             &api_name,
             namespace,
             &api_labels,
@@ -1303,6 +1303,9 @@ impl FerriskeyProviderHandler {
             desired_replicas(instance),
             owner_reference.clone(),
         )?;
+        if is_pooled_cell(instance) {
+            derive_webapp_url_from_request(&mut api_deployment, &instance.spec.hostname);
+        }
         let api_service = build_ferriskey_service(
             &api_name,
             namespace,
@@ -1993,7 +1996,57 @@ fn ferriskey_webapp_url(instance: &IdentityInstance, public_https_port: Option<u
         .unwrap_or_else(|| public_origin(&instance.spec.hostname, public_https_port))
 }
 
+const POOLED_CELL_API_BASE_URL: &str = "/api";
+const WEBAPP_URL_FROM_REQUEST: &str = "WEBAPP_URL_FROM_REQUEST";
+
+fn is_pooled_cell(instance: &IdentityInstance) -> bool {
+    instance
+        .spec
+        .ferriskey
+        .as_ref()
+        .is_some_and(|config| config.pooled_cell)
+}
+
+const WEBAPP_ALLOWED_HOSTS: &str = "WEBAPP_ALLOWED_HOSTS";
+
+fn webapp_allowed_hosts(hostname: &str) -> String {
+    let hostname = hostname.trim();
+
+    match hostname.split_once('.') {
+        Some((_, zone)) if !zone.is_empty() => format!("*.{zone}"),
+        _ => hostname.to_string(),
+    }
+}
+
+fn derive_webapp_url_from_request(api: &mut Deployment, hostname: &str) {
+    let allowed_hosts = webapp_allowed_hosts(hostname);
+    let containers = api
+        .spec
+        .iter_mut()
+        .filter_map(|spec| spec.template.spec.as_mut())
+        .flat_map(|pod| pod.containers.iter_mut());
+
+    for container in containers {
+        container.env.get_or_insert_with(Vec::new).extend([
+            EnvVar {
+                name: WEBAPP_URL_FROM_REQUEST.to_string(),
+                value: Some("true".to_string()),
+                ..Default::default()
+            },
+            EnvVar {
+                name: WEBAPP_ALLOWED_HOSTS.to_string(),
+                value: Some(allowed_hosts.clone()),
+                ..Default::default()
+            },
+        ]);
+    }
+}
+
 fn ferriskey_api_base_url(instance: &IdentityInstance, public_https_port: Option<u16>) -> String {
+    if is_pooled_cell(instance) {
+        return POOLED_CELL_API_BASE_URL.to_string();
+    }
+
     instance
         .spec
         .ferriskey
@@ -3668,6 +3721,7 @@ mod tests {
         instance.spec.ferriskey = Some(FerriskeyConfig {
             webapp_url: Some("http://localhost:5555".to_string()),
             api_base_url: None,
+            pooled_cell: false,
         });
         assert_eq!(
             ferriskey_webapp_url(&instance, None),
@@ -3677,6 +3731,7 @@ mod tests {
         instance.spec.ferriskey = Some(FerriskeyConfig {
             webapp_url: Some("   ".to_string()),
             api_base_url: None,
+            pooled_cell: false,
         });
         assert_eq!(
             ferriskey_webapp_url(&instance, None),
@@ -3711,6 +3766,7 @@ mod tests {
         instance.spec.ferriskey = Some(FerriskeyConfig {
             webapp_url: None,
             api_base_url: Some("http://localhost:3333/api".to_string()),
+            pooled_cell: false,
         });
         assert_eq!(
             ferriskey_api_base_url(&instance, None),
@@ -3720,11 +3776,79 @@ mod tests {
         instance.spec.ferriskey = Some(FerriskeyConfig {
             webapp_url: None,
             api_base_url: Some(" ".to_string()),
+            pooled_cell: false,
         });
         assert_eq!(
             ferriskey_api_base_url(&instance, None),
             "https://auth.acme.test/api"
         );
+    }
+
+    fn env_of(deployment: &Deployment) -> Vec<(String, Option<String>)> {
+        deployment
+            .spec
+            .iter()
+            .filter_map(|spec| spec.template.spec.as_ref())
+            .flat_map(|pod| pod.containers.iter())
+            .flat_map(|container| container.env.iter().flatten())
+            .map(|env| (env.name.clone(), env.value.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn the_webapp_of_a_pooled_cell_calls_a_relative_api_whatever_its_hostname() {
+        let mut instance = instance();
+        instance.spec.provider = IdentityProvider::Ferriskey;
+        instance.spec.ferriskey = Some(FerriskeyConfig {
+            webapp_url: None,
+            api_base_url: Some("http://localhost:3333/api".to_string()),
+            pooled_cell: true,
+        });
+
+        assert!(is_pooled_cell(&instance));
+        assert_eq!(ferriskey_api_base_url(&instance, Some(8444)), "/api");
+    }
+
+    #[test]
+    fn a_pooled_cell_allows_every_host_of_its_zone_or_its_own_host_when_it_has_no_zone() {
+        assert_eq!(
+            webapp_allowed_hosts("cell-1a2b3c4d.cells.autharie.fr"),
+            "*.cells.autharie.fr"
+        );
+        assert_eq!(
+            webapp_allowed_hosts("cell-1a2b3c4d.autharie.local"),
+            "*.autharie.local"
+        );
+        assert_eq!(webapp_allowed_hosts("localhost"), "localhost");
+        assert_eq!(webapp_allowed_hosts("cell."), "cell.");
+    }
+
+    #[test]
+    fn only_the_api_of_a_pooled_cell_derives_its_webapp_url_from_the_request() {
+        let flag = (
+            WEBAPP_URL_FROM_REQUEST.to_string(),
+            Some("true".to_string()),
+        );
+        let ordinary = api_deployment_with(2);
+        let hosts = (
+            WEBAPP_ALLOWED_HOSTS.to_string(),
+            Some("*.cells.autharie.fr".to_string()),
+        );
+        let mut cell = api_deployment_with(2);
+        derive_webapp_url_from_request(&mut cell, "cell-1a2b3c4d.cells.autharie.fr");
+
+        assert!(!env_of(&ordinary).contains(&flag));
+        assert!(
+            !env_of(&ordinary)
+                .iter()
+                .any(|(name, _)| name == WEBAPP_ALLOWED_HOSTS)
+        );
+        assert!(env_of(&cell).contains(&flag));
+        assert!(env_of(&cell).contains(&hosts));
+
+        let mut instance = instance();
+        instance.spec.provider = IdentityProvider::Ferriskey;
+        assert!(!is_pooled_cell(&instance));
     }
 
     #[test]

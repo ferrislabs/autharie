@@ -151,6 +151,12 @@ spec:
                   apiBaseUrl:
                     nullable: true
                     type: string
+                  pooledCell:
+                    description: |-
+                      Serves the realms of many tenants, each on its own hostname: the
+                      webapp calls a relative `/api` and the API derives the webapp URL
+                      from the request.
+                    type: boolean
                   webappUrl:
                     nullable: true
                     type: string

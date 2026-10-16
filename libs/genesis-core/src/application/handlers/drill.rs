@@ -110,6 +110,7 @@ impl DrillEventHandler {
                 1,
             ),
             replicas: 1,
+            pooled_cell: false,
             archive: None,
             restore: Some(DesiredRestore {
                 destination_path: payload.source.destination_path.clone(),

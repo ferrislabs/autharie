@@ -183,6 +183,19 @@ export namespace Schemas {
     storage_gib: number
   }
   export type CellId = string
+  export type CellStatus = 'provisioning' | 'open' | 'full' | 'draining' | 'retired' | 'failed'
+  export type CellView = {
+    capacity: number
+    created_at: string
+    data_plane_id: string
+    id: string
+    instance_deployment_id: string
+    realms: number
+    region: string
+    status: CellStatus
+  }
+  export type CellResponse = { data: CellView }
+  export type CellsResponse = { data: Array<CellView> }
   export type CertificatePayload = {
     certificate_pem: string
     fingerprint: string
@@ -234,6 +247,7 @@ export namespace Schemas {
   export type Every = 'all'
   export type ComponentSelection = Every | Array<string>
   export type CostEstimate = { max: Money; min: Money }
+  export type CreateCellRequest = { capacity?: (number | null) | undefined; region: string }
   export type DataPlaneMode = 'shared' | 'dedicated'
   export type Region = string
   export type CreateDataPlaneRequest = {
@@ -1508,6 +1522,49 @@ export namespace Endpoints {
     }
     response: Schemas.ListFleetAuditLogResponse
   }
+  export type get_List_cells_handler = {
+    method: 'GET'
+    path: '/platform/cells'
+    requestFormat: 'json'
+    parameters: never
+    response: Schemas.CellsResponse
+  }
+  export type post_Create_cell_handler = {
+    method: 'POST'
+    path: '/platform/cells'
+    requestFormat: 'json'
+    parameters: {
+      body: Schemas.CreateCellRequest
+    }
+    response: Schemas.CellResponse
+  }
+  export type get_Get_cell_handler = {
+    method: 'GET'
+    path: '/platform/cells/{cell_id}'
+    requestFormat: 'json'
+    parameters: {
+      path: { cell_id: string }
+    }
+    response: Schemas.CellResponse
+  }
+  export type post_Drain_cell_handler = {
+    method: 'POST'
+    path: '/platform/cells/{cell_id}/drain'
+    requestFormat: 'json'
+    parameters: {
+      path: { cell_id: string }
+    }
+    response: Schemas.CellResponse
+  }
+  export type post_Retire_cell_handler = {
+    method: 'POST'
+    path: '/platform/cells/{cell_id}/retire'
+    requestFormat: 'json'
+    parameters: {
+      path: { cell_id: string }
+    }
+    response: Schemas.CellResponse
+  }
   export type post_Upgrade_dataplanes_handler = {
     method: 'POST'
     path: '/platform/dataplanes/upgrade'
@@ -1780,6 +1837,8 @@ export type EndpointByMethod = {
     '/organisations/{organisation_id}/traces/search': Endpoints.get_Search_traces_handler
     '/organisations/{organisation_id}/traces/{trace_id}': Endpoints.get_Get_trace_handler
     '/platform/audit-log': Endpoints.get_List_fleet_audit_log_handler
+    '/platform/cells': Endpoints.get_List_cells_handler
+    '/platform/cells/{cell_id}': Endpoints.get_Get_cell_handler
     '/platform/dataplanes/upgrades': Endpoints.get_List_dataplane_upgrades_handler
     '/platform/deployments': Endpoints.get_List_estate_deployments_handler
     '/platform/deployments/{deployment_id}/downtime': Endpoints.get_Get_deployment_downtime_handler
@@ -1819,6 +1878,9 @@ export type EndpointByMethod = {
     '/organisations/{organisation_id}/deployments/{deployment_id}/upgrade': Endpoints.post_Upgrade_deployment_handler
     '/organisations/{organisation_id}/invitations': Endpoints.post_Invite_handler
     '/organisations/{organisation_id}/roles': Endpoints.post_Create_role_handler
+    '/platform/cells': Endpoints.post_Create_cell_handler
+    '/platform/cells/{cell_id}/drain': Endpoints.post_Drain_cell_handler
+    '/platform/cells/{cell_id}/retire': Endpoints.post_Retire_cell_handler
     '/platform/dataplanes/upgrade': Endpoints.post_Upgrade_dataplanes_handler
     '/releases/operator/{kind}': Endpoints.post_Publish_release_handler
     '/releases/operator/{kind}/{version}/rollout/preview': Endpoints.post_Preview_rollout_coverage_handler

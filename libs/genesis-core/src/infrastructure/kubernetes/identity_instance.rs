@@ -462,6 +462,7 @@ fn to_identity_instance(desired: &DesiredIdentityInstance) -> IdentityInstance {
         matches!(desired.provider, IdentityInstanceProvider::Ferriskey).then(|| FerriskeyConfig {
             webapp_url: None,
             api_base_url: None,
+            pooled_cell: desired.pooled_cell,
         });
 
     let spec = IdentityInstanceSpec {
@@ -558,6 +559,7 @@ mod tests {
             hostname: "acme-prod.autharie-acme-prod.autharie.local".to_string(),
             database: DesiredDatabase::from_reserved(500, 1024, 1, 1),
             replicas: 1,
+            pooled_cell: false,
             archive: None,
         }
     }
@@ -711,6 +713,24 @@ mod tests {
             "acme-prod.autharie-acme-prod.autharie.local"
         );
         assert!(resource.spec.ferriskey.is_none());
+    }
+
+    #[test]
+    fn only_the_instance_of_a_cell_is_marked_as_a_pooled_cell() {
+        let ordinary = to_identity_instance(&desired(IdentityInstanceProvider::Ferriskey));
+        let cell = to_identity_instance(&DesiredIdentityInstance {
+            pooled_cell: true,
+            ..desired(IdentityInstanceProvider::Ferriskey)
+        });
+
+        assert!(
+            !ordinary
+                .spec
+                .ferriskey
+                .expect("a ferriskey block")
+                .pooled_cell
+        );
+        assert!(cell.spec.ferriskey.expect("a ferriskey block").pooled_cell);
     }
 
     #[test]

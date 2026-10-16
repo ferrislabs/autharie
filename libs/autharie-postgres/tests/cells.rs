@@ -155,25 +155,49 @@ fn pooled_in(world: &World, cell: CellId, realm: &str) -> Deployment {
     )
 }
 
-fn provisioning(world: &World, region: &Region, capacity: u16, age: i64) -> Cell {
+async fn instance_for_a_new_cell(
+    tx: &SharedTx<'_>,
+    world: &World,
+) -> Result<DeploymentId, CoreError> {
+    let cells = PostgresCellRepository::new(tx);
+    if cells.find_by_instance(world.instance).await?.is_none() {
+        return Ok(world.instance);
+    }
+
+    let instance = deployment(world, &unique("instance"), Distribution::Shared);
+    PostgresDeploymentRepository::new(tx)
+        .insert(instance.clone())
+        .await?;
+    Ok(instance.id)
+}
+
+fn provisioning(
+    world: &World,
+    instance: DeploymentId,
+    region: &Region,
+    capacity: u16,
+    age: i64,
+) -> Cell {
     Cell::new(
         CellId(Uuid::new_v4()),
         region.clone(),
         world.dataplane,
-        world.instance,
+        instance,
         &CellPolicy::new(capacity, 0).expect("a valid policy"),
         DateTime::<Utc>::UNIX_EPOCH + Duration::days(age),
     )
 }
 
 async fn open_cell(
-    cells: &PostgresCellRepository<'_>,
+    tx: &SharedTx<'_>,
     world: &World,
     region: &Region,
     capacity: u16,
     age: i64,
 ) -> Result<CellId, CoreError> {
-    let cell = provisioning(world, region, capacity, age);
+    let cells = PostgresCellRepository::new(tx);
+    let instance = instance_for_a_new_cell(tx, world).await?;
+    let cell = provisioning(world, instance, region, capacity, age);
     cells.create(&cell).await?;
     cells.set_status(cell.id(), CellStatus::Open).await?;
     Ok(cell.id())
@@ -211,9 +235,9 @@ async fn place_takes_the_fullest_open_cell_with_room_and_stays_in_its_region() {
         let deployments = PostgresDeploymentRepository::new(&tx);
         let elsewhere = Region::new(format!("elsewhere-{}", Uuid::new_v4()));
 
-        open_cell(&cells, &world, &world.region, 5, 0).await?;
-        let fuller = open_cell(&cells, &world, &world.region, 5, 1).await?;
-        let other_region = open_cell(&cells, &world, &elsewhere, 5, 2).await?;
+        open_cell(&tx, &world, &world.region, 5, 0).await?;
+        let fuller = open_cell(&tx, &world, &world.region, 5, 1).await?;
+        let other_region = open_cell(&tx, &world, &elsewhere, 5, 2).await?;
         fill(&deployments, &world, fuller, 2).await?;
         fill(&deployments, &world, other_region, 4).await?;
 
@@ -231,8 +255,8 @@ async fn place_breaks_a_tie_with_the_oldest_cell() {
         let world = seed_world(&tx).await?;
         let cells = PostgresCellRepository::new(&tx);
 
-        let young = open_cell(&cells, &world, &world.region, 5, 9).await?;
-        let old = open_cell(&cells, &world, &world.region, 5, 1).await?;
+        let young = open_cell(&tx, &world, &world.region, 5, 9).await?;
+        let old = open_cell(&tx, &world, &world.region, 5, 1).await?;
 
         let chosen = placed(&cells, &world.region).await;
         assert_eq!(chosen, Some(old));
@@ -250,8 +274,8 @@ async fn a_cell_at_capacity_reads_as_full_and_is_no_longer_placed() {
         let cells = PostgresCellRepository::new(&tx);
         let deployments = PostgresDeploymentRepository::new(&tx);
 
-        let first = open_cell(&cells, &world, &world.region, 3, 0).await?;
-        let second = open_cell(&cells, &world, &world.region, 3, 1).await?;
+        let first = open_cell(&tx, &world, &world.region, 3, 0).await?;
+        let second = open_cell(&tx, &world, &world.region, 3, 1).await?;
         fill(&deployments, &world, first, 2).await?;
 
         assert_eq!(placed(&cells, &world.region).await, Some(first));
@@ -274,7 +298,7 @@ async fn place_is_empty_when_every_cell_is_full() {
         let cells = PostgresCellRepository::new(&tx);
         let deployments = PostgresDeploymentRepository::new(&tx);
 
-        let only = open_cell(&cells, &world, &world.region, 2, 0).await?;
+        let only = open_cell(&tx, &world, &world.region, 2, 0).await?;
         fill(&deployments, &world, only, 2).await?;
 
         assert_eq!(placed(&cells, &world.region).await, None);
@@ -292,7 +316,7 @@ async fn release_is_idempotent_and_reopens_a_full_cell() {
         let cells = PostgresCellRepository::new(&tx);
         let deployments = PostgresDeploymentRepository::new(&tx);
 
-        let cell = open_cell(&cells, &world, &world.region, 2, 0).await?;
+        let cell = open_cell(&tx, &world, &world.region, 2, 0).await?;
         let tenants = fill(&deployments, &world, cell, 2).await?;
         assert_eq!(
             cells.find(cell).await?.expect("exists").status(),
@@ -332,7 +356,7 @@ async fn updating_a_released_deployment_does_not_take_its_slot_back() {
         let cells = PostgresCellRepository::new(&tx);
         let deployments = PostgresDeploymentRepository::new(&tx);
 
-        let cell = open_cell(&cells, &world, &world.region, 2, 0).await?;
+        let cell = open_cell(&tx, &world, &world.region, 2, 0).await?;
         let tenants = fill(&deployments, &world, cell, 1).await?;
         assert!(cells.release(tenants[0]).await?);
 
@@ -353,7 +377,7 @@ async fn a_cell_that_is_not_open_is_never_placed() {
         let world = seed_world(&tx).await?;
         let cells = PostgresCellRepository::new(&tx);
 
-        let cell = provisioning(&world, &world.region, 5, 0);
+        let cell = provisioning(&world, world.instance, &world.region, 5, 0);
         cells.create(&cell).await?;
         assert_eq!(placed(&cells, &world.region).await, None);
 
@@ -378,7 +402,7 @@ async fn set_status_refuses_full_and_an_unknown_cell() {
     scratch(async |tx| {
         let world = seed_world(&tx).await?;
         let cells = PostgresCellRepository::new(&tx);
-        let cell = open_cell(&cells, &world, &world.region, 5, 0).await?;
+        let cell = open_cell(&tx, &world, &world.region, 5, 0).await?;
         let unknown = CellId(Uuid::new_v4());
 
         assert!(matches!(
@@ -432,9 +456,15 @@ async fn a_cell_round_trips_and_the_list_is_ordered_by_age() {
         let cells = PostgresCellRepository::new(&tx);
         let region = Region::new(format!("round-trip-{}", Uuid::new_v4()));
 
-        let younger = provisioning(&world, &region, 7, 5);
-        let older = provisioning(&world, &region, 9, 2);
+        let younger = provisioning(&world, world.instance, &region, 7, 5);
         cells.create(&younger).await?;
+        let older = provisioning(
+            &world,
+            instance_for_a_new_cell(&tx, &world).await?,
+            &region,
+            9,
+            2,
+        );
         cells.create(&older).await?;
 
         assert_eq!(cells.find(younger.id()).await?, Some(younger.clone()));
@@ -457,9 +487,8 @@ async fn a_cell_round_trips_and_the_list_is_ordered_by_age() {
 async fn a_pooled_deployment_round_trips() {
     scratch(async |tx| {
         let world = seed_world(&tx).await?;
-        let cells = PostgresCellRepository::new(&tx);
         let deployments = PostgresDeploymentRepository::new(&tx);
-        let cell = open_cell(&cells, &world, &world.region, 5, 0).await?;
+        let cell = open_cell(&tx, &world, &world.region, 5, 0).await?;
 
         let tenant = pooled_in(&world, cell, &unique("t"));
         deployments.insert(tenant.clone()).await?;
@@ -517,9 +546,8 @@ fn names(error: &CoreError, constraint: &str) -> bool {
 async fn two_live_pooled_deployments_cannot_share_a_realm() {
     scratch(async |tx| {
         let world = seed_world(&tx).await?;
-        let cells = PostgresCellRepository::new(&tx);
         let deployments = PostgresDeploymentRepository::new(&tx);
-        let cell = open_cell(&cells, &world, &world.region, 5, 0).await?;
+        let cell = open_cell(&tx, &world, &world.region, 5, 0).await?;
         let realm = unique("t");
 
         deployments.insert(pooled_in(&world, cell, &realm)).await?;
@@ -537,7 +565,7 @@ async fn a_soft_deleted_realm_still_holding_its_slot_blocks_the_name_until_relea
         let world = seed_world(&tx).await?;
         let cells = PostgresCellRepository::new(&tx);
         let deployments = PostgresDeploymentRepository::new(&tx);
-        let cell = open_cell(&cells, &world, &world.region, 5, 0).await?;
+        let cell = open_cell(&tx, &world, &world.region, 5, 0).await?;
         let realm = unique("t");
 
         let first = pooled_in(&world, cell, &realm);
@@ -559,9 +587,8 @@ async fn a_soft_deleted_realm_still_holding_its_slot_blocks_the_name_until_relea
 async fn a_hard_deleted_realm_frees_its_name() {
     scratch(async |tx| {
         let world = seed_world(&tx).await?;
-        let cells = PostgresCellRepository::new(&tx);
         let deployments = PostgresDeploymentRepository::new(&tx);
-        let cell = open_cell(&cells, &world, &world.region, 5, 0).await?;
+        let cell = open_cell(&tx, &world, &world.region, 5, 0).await?;
         let realm = unique("t");
 
         let first = pooled_in(&world, cell, &realm);
@@ -583,9 +610,8 @@ async fn a_hard_deleted_realm_frees_its_name() {
 async fn a_pooled_row_whose_hostname_slug_differs_from_its_realm_is_refused() {
     scratch(async |tx| {
         let world = seed_world(&tx).await?;
-        let cells = PostgresCellRepository::new(&tx);
         let deployments = PostgresDeploymentRepository::new(&tx);
-        let cell = open_cell(&cells, &world, &world.region, 5, 0).await?;
+        let cell = open_cell(&tx, &world, &world.region, 5, 0).await?;
 
         let mut tenant = pooled_in(&world, cell, &unique("t"));
         tenant.name = DeploymentName(unique("other"));
@@ -625,9 +651,8 @@ async fn constraint_fired(tx: &SharedTx<'_>, statement: &str) -> Result<Option<S
 async fn the_database_refuses_rows_that_cannot_be_real() {
     scratch(async |tx| {
         let world = seed_world(&tx).await?;
-        let cells = PostgresCellRepository::new(&tx);
         let deployments = PostgresDeploymentRepository::new(&tx);
-        let cell = open_cell(&cells, &world, &world.region, 5, 0).await?;
+        let cell = open_cell(&tx, &world, &world.region, 5, 0).await?;
         let tenant = deployment(&world, &unique("d"), Distribution::Shared);
         deployments.insert(tenant.clone()).await?;
         let pooled = pooled_in(&world, cell, &unique("t"));
@@ -716,7 +741,7 @@ async fn set_status_refuses_provisioning_and_retired_while_slots_are_held() {
         let world = seed_world(&tx).await?;
         let cells = PostgresCellRepository::new(&tx);
         let deployments = PostgresDeploymentRepository::new(&tx);
-        let cell = open_cell(&cells, &world, &world.region, 5, 0).await?;
+        let cell = open_cell(&tx, &world, &world.region, 5, 0).await?;
         let tenants = fill(&deployments, &world, cell, 1).await?;
 
         for status in [CellStatus::Provisioning, CellStatus::Retired] {
@@ -758,8 +783,8 @@ async fn update_never_moves_a_deployment_between_cells() {
         let world = seed_world(&tx).await?;
         let cells = PostgresCellRepository::new(&tx);
         let deployments = PostgresDeploymentRepository::new(&tx);
-        let home = open_cell(&cells, &world, &world.region, 5, 0).await?;
-        let other = open_cell(&cells, &world, &world.region, 5, 1).await?;
+        let home = open_cell(&tx, &world, &world.region, 5, 0).await?;
+        let other = open_cell(&tx, &world, &world.region, 5, 1).await?;
 
         let tenant = pooled_in(&world, home, &unique("t"));
         deployments.insert(tenant.clone()).await?;
@@ -784,9 +809,8 @@ async fn update_never_moves_a_deployment_between_cells() {
 async fn purge_leaves_the_instance_of_a_cell_and_still_purges_the_rest() {
     scratch(async |tx| {
         let world = seed_world(&tx).await?;
-        let cells = PostgresCellRepository::new(&tx);
         let deployments = PostgresDeploymentRepository::new(&tx);
-        open_cell(&cells, &world, &world.region, 5, 0).await?;
+        open_cell(&tx, &world, &world.region, 5, 0).await?;
 
         let long_ago = Utc::now() - Duration::days(30);
         let unrelated = deployment(&world, &unique("d"), Distribution::Shared);
@@ -809,6 +833,72 @@ async fn purge_leaves_the_instance_of_a_cell_and_still_purges_the_rest() {
 
         assert!(deployments.get_by_id(unrelated.id).await?.is_none());
         assert!(deployments.get_by_id(world.instance).await?.is_some());
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_cell_is_found_by_its_instance_and_an_instance_holds_one_cell() {
+    scratch(async |tx| {
+        let world = seed_world(&tx).await?;
+        let cells = PostgresCellRepository::new(&tx);
+        let cell = provisioning(&world, world.instance, &world.region, 5, 0);
+        cells.create(&cell).await?;
+
+        assert_eq!(cells.find_by_instance(world.instance).await?, Some(cell));
+        assert_eq!(
+            cells.find_by_instance(DeploymentId(Uuid::new_v4())).await?,
+            None
+        );
+
+        let second = provisioning(&world, world.instance, &world.region, 5, 1);
+        let refused = guarded(&tx, cells.create(&second))
+            .await?
+            .expect_err("a second cell took the same instance");
+        assert!(
+            names(&refused, "idx_cells_instance_deployment"),
+            "{refused}"
+        );
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn an_open_cell_whose_instance_stops_serving_is_skipped_until_it_serves_again() {
+    scratch(async |tx| {
+        let world = seed_world(&tx).await?;
+        let cells = PostgresCellRepository::new(&tx);
+        let deployments = PostgresDeploymentRepository::new(&tx);
+        let fuller = open_cell(&tx, &world, &world.region, 5, 0).await?;
+        fill(&deployments, &world, fuller, 3).await?;
+        let emptier = open_cell(&tx, &world, &world.region, 5, 1).await?;
+        let instance = cells
+            .find(fuller)
+            .await?
+            .expect("the cell exists")
+            .instance();
+        let set_instance = async |status: DeploymentStatus| -> Result<(), CoreError> {
+            let mut deployment = deployments
+                .get_by_id(instance)
+                .await?
+                .expect("the instance exists");
+            deployment.status = status;
+            deployments.update(deployment).await
+        };
+
+        assert_eq!(placed(&cells, &world.region).await, Some(fuller));
+
+        set_instance(DeploymentStatus::Failed).await?;
+        assert_eq!(placed(&cells, &world.region).await, Some(emptier));
+        assert_eq!(
+            cells.find(fuller).await?.map(|cell| cell.status()),
+            Some(CellStatus::Open)
+        );
+
+        set_instance(DeploymentStatus::Successful).await?;
+        assert_eq!(placed(&cells, &world.region).await, Some(fuller));
         Ok(())
     })
     .await;
@@ -911,10 +1001,8 @@ async fn two_creations_racing_for_the_last_slot_never_exceed_the_capacity() {
         let committed = committed.clone();
         async move {
             let cell_id = with_tx(&committed.pool, db_error, async |tx| {
-                let cells = PostgresCellRepository::new(&tx);
                 let deployments = PostgresDeploymentRepository::new(&tx);
-                let cell =
-                    open_cell(&cells, &committed.world, &committed.world.region, 2, 0).await?;
+                let cell = open_cell(&tx, &committed.world, &committed.world.region, 2, 0).await?;
                 fill(&deployments, &committed.world, cell, 1).await?;
                 Ok(cell)
             })

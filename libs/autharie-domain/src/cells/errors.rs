@@ -19,6 +19,15 @@ pub enum CellError {
 
     #[error("cell not found with id: {id}")]
     UnknownCell { id: Uuid },
+
+    #[error("cells are not configured on this installation: set CELLS_ORGANISATION_ID")]
+    NotConfigured,
+
+    #[error("no FerrisKey release is available to build a cell: publish one first")]
+    NoRelease,
+
+    #[error("this deployment is the instance of cell {cell}: retire the cell first")]
+    InstanceInUse { cell: Uuid },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

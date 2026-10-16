@@ -218,6 +218,8 @@ impl DataPlaneService for AutharieService {
             return Ok(false);
         }
 
+        crate::application::cells::settle_cell_instance(&tx, deployment_id).await?;
+
         // An upgrade of several versions moves one step at a time, and this is
         // where the next one starts: only once the data plane has reported the
         // last one running, which after the operator's health check means it
