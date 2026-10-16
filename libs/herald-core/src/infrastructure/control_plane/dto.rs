@@ -13,7 +13,7 @@ use uuid::Uuid;
 use crate::domain::entities::action::{Action, ActionFailureReason, ActionId};
 use crate::domain::entities::certificate::ReceivedCertificate;
 use crate::domain::entities::dataplane::DataPlaneId;
-use crate::domain::entities::deployment::{Deployment, DeploymentId, DeploymentKind};
+use crate::domain::entities::deployment::{Deployment, DeploymentId, DeploymentKind, Transition};
 use crate::domain::entities::logs::{Ending, LogLine, OrganisationId};
 use crate::domain::entities::usage::UsagePoint;
 use crate::domain::error::HeraldError;
@@ -48,6 +48,19 @@ pub struct DeploymentDto {
 
     #[serde(default)]
     pub distribution: Option<Value>,
+
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
+fn transition_of(status: Option<&str>) -> Option<Transition> {
+    match status? {
+        "pending" | "scheduling" | "in_progress" => Some(Transition::Arriving),
+        "deleting" => Some(Transition::Departing),
+        _ => None,
+    }
 }
 
 impl From<DeploymentDto> for Deployment {
@@ -65,6 +78,8 @@ impl From<DeploymentDto> for Deployment {
                 .as_ref()
                 .and_then(Value::as_object)
                 .is_some_and(|distribution| distribution.contains_key("pooled")),
+            transition: transition_of(dto.status.as_deref()),
+            changed_at: dto.updated_at,
         }
     }
 }
@@ -320,6 +335,55 @@ mod tests {
         assert!(deployment_with(json!({"pooled": {"realm": "acme"}})).pooled);
         assert!(!deployment_with(json!("shared")).pooled);
         assert!(!deployment_with(Value::Null).pooled);
+    }
+
+    fn deployment_in(status: &str) -> Deployment {
+        serde_json::from_value::<DeploymentDto>(json!({
+            "id": "11111111-1111-1111-1111-111111111111",
+            "dataplane_id": "22222222-2222-2222-2222-222222222222",
+            "organisation_id": "44444444-4444-4444-4444-444444444444",
+            "name": "acme",
+            "status": status,
+            "updated_at": "2026-10-07T01:39:12Z",
+        }))
+        .expect("a deployment")
+        .into()
+    }
+
+    #[test]
+    fn a_deployment_on_its_way_up_is_arriving() {
+        for status in ["pending", "scheduling", "in_progress"] {
+            assert_eq!(
+                deployment_in(status).transition,
+                Some(Transition::Arriving),
+                "{status}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_deployment_being_torn_down_is_departing() {
+        let deployment = deployment_in("deleting");
+
+        assert_eq!(deployment.transition, Some(Transition::Departing));
+        assert_eq!(
+            deployment.changed_at,
+            Some("2026-10-07T01:39:12Z".parse().expect("a timestamp"))
+        );
+    }
+
+    #[test]
+    fn a_settled_deployment_awaits_nothing() {
+        for status in [
+            "successful",
+            "failed",
+            "upgrading",
+            "maintenance",
+            "deleted",
+        ] {
+            assert_eq!(deployment_in(status).transition, None, "{status}");
+        }
+        assert_eq!(deployment_with(Value::Null).transition, None);
     }
 
     fn action_json(deployment_id: Value) -> Value {

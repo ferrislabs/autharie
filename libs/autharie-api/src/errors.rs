@@ -403,6 +403,13 @@ impl From<CoreError> for ApiError {
             CoreError::Cell(CellError::UnknownCell { .. }) => ApiError::NotFound {
                 reason: value.to_string(),
             },
+            CoreError::Cell(CellError::Inconsistent { .. }) => {
+                tracing::error!(error = %value, "a cell's stored state is inconsistent");
+
+                ApiError::InternalServerError {
+                    reason: "a cell's stored state is inconsistent".to_string(),
+                }
+            }
             CoreError::Realm(RealmError::CellUnreachable | RealmError::Refused { .. }) => {
                 ApiError::BadGateway {
                     reason: value.to_string(),
@@ -512,6 +519,19 @@ mod tests {
                 id: uuid::Uuid::nil(),
             })),
             StatusCode::NOT_FOUND
+        );
+    }
+
+    #[test]
+    fn an_inconsistent_cell_is_the_platform_at_fault_and_names_nothing() {
+        let response = ApiError::from(CoreError::Cell(CellError::Inconsistent {
+            reason: "deployment 1234 is not on the data plane of cell 5678".to_string(),
+        }));
+
+        assert!(!format!("{response:?}").contains("1234"));
+        assert_eq!(
+            response.into_response().status(),
+            StatusCode::INTERNAL_SERVER_ERROR
         );
     }
 

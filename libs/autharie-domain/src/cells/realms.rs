@@ -1,3 +1,4 @@
+use chrono::{DateTime, Duration, Utc};
 use serde_json::{Value, json};
 
 use crate::{
@@ -23,6 +24,15 @@ pub const REALM_ADMINISTRATOR_ISSUE: &str = "realm.administrator.issue";
 
 const UNSTATED_REFUSAL: &str = "the cell refused the realm";
 pub const HAND_OFF_FAILED: &str = "the realm request could not be handed to the data plane";
+
+pub const REALM_QUIET_PERIOD: Duration = Duration::minutes(10);
+pub const REALMS_RESENT_PER_RUN: usize = 25;
+
+#[derive(Debug, Default)]
+pub struct Resent {
+    pub recorded: Vec<Action>,
+    pub refused: Vec<(DeploymentId, CoreError)>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Settlement {
@@ -110,6 +120,41 @@ where
         let payload = self.payload(deployment, cell_id, realm).await?;
         self.record(deployment, REALM_DELETE, payload, ActionSource::System)
             .await
+    }
+
+    pub async fn resend_stalled(
+        &self,
+        now: DateTime<Utc>,
+        zone: Option<&str>,
+    ) -> Result<Resent, CoreError> {
+        let stalled = self
+            .cells
+            .take_stalled_realms(now, now - REALM_QUIET_PERIOD, REALMS_RESENT_PER_RUN)
+            .await?;
+
+        let mut resent = Resent::default();
+        for id in stalled {
+            let Some(deployment) = self.deployments.get_by_id(id).await? else {
+                continue;
+            };
+            let request = match (&deployment.status, zone) {
+                (DeploymentStatus::Deleting, _) => self.delete(&deployment).await,
+                (
+                    DeploymentStatus::Pending
+                    | DeploymentStatus::Scheduling
+                    | DeploymentStatus::InProgress,
+                    Some(zone),
+                ) => self.create(&deployment, zone).await,
+                _ => continue,
+            };
+            match request {
+                Ok(action) => resent.recorded.push(action),
+                Err(error @ CoreError::DatabaseError { .. }) => return Err(error),
+                Err(error) => resent.refused.push((id, error)),
+            }
+        }
+
+        Ok(resent)
     }
 
     async fn payload(
@@ -532,6 +577,139 @@ mod tests {
             CoreError::Cell(CellError::Inconsistent { .. })
         ));
         assert_eq!(recorded_count(&recorded), 0);
+    }
+
+    fn now() -> DateTime<Utc> {
+        "2026-10-16T12:00:00Z".parse().expect("a timestamp")
+    }
+
+    fn resending(stalled: Vec<Deployment>) -> (Requests, Recorded) {
+        let stalled_ids: Vec<DeploymentId> = stalled.iter().map(|tenant| tenant.id).collect();
+        let mut cells = MockCellRepository::new();
+        cells
+            .expect_find()
+            .returning(|_| Box::pin(async { Ok(Some(cell(PLANE))) }));
+        cells
+            .expect_take_stalled_realms()
+            .withf(|attempted_at, quiet_since, limit| {
+                *attempted_at == now()
+                    && *quiet_since == now() - REALM_QUIET_PERIOD
+                    && *limit == REALMS_RESENT_PER_RUN
+            })
+            .times(1)
+            .returning(move |_, _, _| {
+                let ids = stalled_ids.clone();
+                Box::pin(async move { Ok(ids) })
+            });
+
+        let mut known = stalled;
+        known.push(deployment(INSTANCE, "cell-one", Distribution::Shared));
+        let mut deployments = MockDeploymentRepository::new();
+        deployments.expect_get_by_id().returning(move |id| {
+            let found = known.iter().find(|candidate| candidate.id == id).cloned();
+            Box::pin(async move { Ok(found) })
+        });
+
+        let recorded: Recorded = Arc::default();
+        let sink = Arc::clone(&recorded);
+        let mut actions = MockActionRepository::new();
+        actions.expect_append().returning(move |action| {
+            sink.lock().expect("not poisoned").push(action);
+            Box::pin(async { Ok(()) })
+        });
+
+        (RealmRequests::new(cells, deployments, actions), recorded)
+    }
+
+    fn recorded_types(recorded: &Recorded) -> Vec<String> {
+        recorded
+            .lock()
+            .expect("not poisoned")
+            .iter()
+            .map(|action| action.action_type.0.clone())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_realm_stuck_on_its_way_up_is_asked_for_once_more() {
+        for status in [
+            DeploymentStatus::Pending,
+            DeploymentStatus::Scheduling,
+            DeploymentStatus::InProgress,
+        ] {
+            let (requests, recorded) = resending(vec![tenant(status.clone())]);
+
+            let resent = requests
+                .resend_stalled(now(), Some("cells.example"))
+                .await
+                .expect("resent");
+
+            assert_eq!(resent.recorded.len(), 1, "{status:?}");
+            assert_eq!(recorded_types(&recorded), [REALM_CREATE], "{status:?}");
+            assert_eq!(
+                recorded.lock().expect("not poisoned")[0].payload.data["hostname"],
+                json!("acme.cells.example")
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_realm_stuck_deleting_is_asked_to_go_once_more() {
+        let (requests, recorded) = resending(vec![tenant(DeploymentStatus::Deleting)]);
+
+        requests
+            .resend_stalled(now(), Some("cells.example"))
+            .await
+            .expect("resent");
+
+        assert_eq!(recorded_types(&recorded), [REALM_DELETE]);
+    }
+
+    #[tokio::test]
+    async fn a_realm_that_settled_meanwhile_is_left_alone() {
+        for status in [
+            DeploymentStatus::Successful,
+            DeploymentStatus::Failed,
+            DeploymentStatus::Deleted,
+        ] {
+            let (requests, recorded) = resending(vec![tenant(status.clone())]);
+
+            let resent = requests
+                .resend_stalled(now(), Some("cells.example"))
+                .await
+                .expect("resent");
+
+            assert!(resent.recorded.is_empty(), "{status:?}");
+            assert_eq!(recorded_count(&recorded), 0, "{status:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn without_a_zone_only_a_deletion_is_resent() {
+        let (requests, recorded) = resending(vec![tenant(DeploymentStatus::InProgress)]);
+        requests.resend_stalled(now(), None).await.expect("resent");
+        assert_eq!(recorded_count(&recorded), 0);
+
+        let (requests, recorded) = resending(vec![tenant(DeploymentStatus::Deleting)]);
+        requests.resend_stalled(now(), None).await.expect("resent");
+        assert_eq!(recorded_types(&recorded), [REALM_DELETE]);
+    }
+
+    #[tokio::test]
+    async fn a_realm_that_cannot_be_asked_for_does_not_stop_the_others() {
+        let mut renamed = tenant(DeploymentStatus::Pending);
+        renamed.id = DeploymentId(Uuid::from_u128(2));
+        renamed.name = DeploymentName("Acme Corp".to_string());
+        let (requests, recorded) = resending(vec![renamed, tenant(DeploymentStatus::Deleting)]);
+
+        let resent = requests
+            .resend_stalled(now(), Some("cells.example"))
+            .await
+            .expect("resent");
+
+        assert_eq!(recorded_types(&recorded), [REALM_DELETE]);
+        assert_eq!(resent.refused.len(), 1);
+        assert_eq!(resent.refused[0].0, DeploymentId(Uuid::from_u128(2)));
     }
 
     fn outcomes(

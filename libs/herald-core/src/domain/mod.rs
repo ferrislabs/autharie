@@ -6,6 +6,7 @@ pub mod liveness;
 pub mod log_index;
 pub mod log_session;
 pub mod log_shipping;
+pub mod outcome_reconciliation;
 pub mod ports;
 pub mod services;
 pub mod trace_index;

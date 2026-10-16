@@ -259,6 +259,12 @@ rules:
   - apiGroups: ["autharie.fr"]
     resources: ["identityinstancebackups"]
     verbs: ["get", "list", "watch"]
+  # Read only: Herald compares the instances on this cluster with the
+  # deployments the control plane still shows as pending or deleting, and
+  # reports again an outcome that was lost on its way (#202).
+  - apiGroups: ["autharie.fr"]
+    resources: ["identityinstances"]
+    verbs: ["get", "list"]
   # Read-only, same as the operator's: Herald reads back the address of the
   # Gateway this chart declares, it never edits the edge itself.
   - apiGroups: ["gateway.networking.k8s.io"]

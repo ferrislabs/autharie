@@ -2,8 +2,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use autharie_crds::common::types::Phase;
-use autharie_crds::v1alpha::identity_instance::{IdentityInstance, IdentityInstanceStatus};
+use autharie_crds::v1alpha::identity_instance::{
+    IdentityInstance, IdentityInstanceStatus, Settled,
+};
 use kube::runtime::watcher;
 use kube::runtime::watcher::Event;
 use kube::{Api, Client};
@@ -161,15 +162,9 @@ fn should_report(previous: Option<LastReport<'_>>, outcome: &str, version: Optio
 /// Every other phase is a deployment still on its way, and reporting one would
 /// replace a truthful `in_progress` with a different kind of "not yet".
 fn outcome_for(status: Option<&IdentityInstanceStatus>) -> Option<&'static str> {
-    let status = status?;
-
-    match status.phase {
-        // `ready` as well as the phase: `Running` says the resources exist,
-        // `ready` says traffic can reach them, and only the pair means the
-        // deployment is actually serving.
-        Some(Phase::Running) if status.ready => Some("running"),
-        Some(Phase::Failed) => Some("failed"),
-        _ => None,
+    match status?.settled()? {
+        Settled::Serving => Some("running"),
+        Settled::Failed => Some("failed"),
     }
 }
 
@@ -187,6 +182,7 @@ fn deployment_id_of(name: Option<&str>) -> Option<Uuid> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use autharie_crds::common::types::Phase;
 
     fn status(phase: Phase, ready: bool) -> IdentityInstanceStatus {
         IdentityInstanceStatus {

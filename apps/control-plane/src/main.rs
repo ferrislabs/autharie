@@ -17,6 +17,7 @@ use autharie_api::{
     objectstore::ensure_archive_bucket,
     operators::{ensure_first_operator, warn_if_nobody_operates},
     purge::purge_deleted_deployments,
+    realm_resend::resend_stalled_realms,
     router::router,
     run_server,
     state::state,
@@ -53,6 +54,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::spawn(run_action_stuck_signal_probe(app_state.clone()));
     tokio::spawn(run_backup_signal_probe(app_state.clone()));
     tokio::spawn(run_drill_signal_probe(app_state.clone()));
+    tokio::spawn(resend_stalled_realms(app_state.clone()));
 
     if args.customer_cloud_active() {
         tokio::spawn(run_customer_cluster_worker(args.clone(), app_state.clone()));

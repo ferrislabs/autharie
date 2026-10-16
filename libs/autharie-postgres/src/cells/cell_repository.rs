@@ -1,6 +1,6 @@
 use autharie_domain::{
     CoreError,
-    cells::{Cell, CellError, CellId, CellRepository, CellStatus},
+    cells::{Cell, CellError, CellId, CellRepository, CellStatus, REALM_CREATE, REALM_DELETE},
     dataplane::value_objects::{DataPlaneId, Region},
     deployments::DeploymentId,
 };
@@ -389,5 +389,54 @@ impl CellRepository for PostgresCellRepository<'_> {
         .map_err(database_error("read the refusal of a realm"))?;
 
         Ok(refusal.flatten())
+    }
+
+    async fn take_stalled_realms(
+        &self,
+        attempted_at: DateTime<Utc>,
+        quiet_since: DateTime<Utc>,
+        limit: usize,
+    ) -> Result<Vec<DeploymentId>, CoreError> {
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let mut tx = self.tx.lock().await;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+            .bind("cells:stalled-realms")
+            .execute(&mut ***tx)
+            .await
+            .map_err(database_error("serialise the resending of stalled realms"))?;
+
+        let stalled = sqlx::query_scalar!(
+            r#"
+            UPDATE deployments
+            SET realm_resent_at = $1
+            WHERE id IN (
+                SELECT d.id
+                FROM deployments d
+                WHERE d.distribution = 'pooled'
+                  AND d.status IN ('pending', 'scheduling', 'in_progress', 'deleting')
+                  AND d.updated_at <= $2
+                  AND (d.realm_resent_at IS NULL OR d.realm_resent_at <= $2)
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM actions a
+                      WHERE a.deployment_id = d.id
+                        AND a.action_type = ANY($4)
+                        AND (a.status IN ('pending', 'leased') OR a.created_at > $2)
+                  )
+                ORDER BY d.realm_resent_at NULLS FIRST, d.updated_at, d.id
+                LIMIT $3
+            )
+            RETURNING id
+            "#,
+            attempted_at,
+            quiet_since,
+            limit,
+            &[REALM_CREATE.to_string(), REALM_DELETE.to_string()],
+        )
+        .fetch_all(&mut ***tx)
+        .await
+        .map_err(database_error("take the realms whose request stalled"))?;
+
+        Ok(stalled.into_iter().map(DeploymentId).collect())
     }
 }

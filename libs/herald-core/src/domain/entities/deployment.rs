@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -41,7 +42,13 @@ impl std::fmt::Display for DeploymentKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Transition {
+    Arriving,
+    Departing,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Deployment {
     pub id: DeploymentId,
     pub dataplane_id: DataPlaneId,
@@ -62,6 +69,9 @@ pub struct Deployment {
     pub log_shipping_enabled: bool,
 
     pub pooled: bool,
+
+    pub transition: Option<Transition>,
+    pub changed_at: Option<DateTime<Utc>>,
 }
 
 impl Deployment {
@@ -116,6 +126,8 @@ mod tests {
             namespace: namespace.map(str::to_string),
             log_shipping_enabled: false,
             pooled: false,
+            transition: None,
+            changed_at: None,
         }
     }
 

@@ -4,7 +4,7 @@ use autharie_domain::{
     catalog::ports::ReleaseRepository,
     cells::{
         Cell, CellError, CellId, CellRepository, CellServiceImpl, CellStatus, CreateCellCommand,
-        release_for_cells,
+        RealmRequests, Resent, release_for_cells,
     },
     deployments::{
         DeploymentId, DeploymentKind, ports::DeploymentRepository, service::DeploymentServiceImpl,
@@ -17,6 +17,7 @@ use autharie_postgres::{
     cells::PostgresCellRepository, deployments::PostgresDeploymentRepository,
     platform::PostgresOperatorRepository,
 };
+use chrono::Utc;
 
 use crate::{
     AutharieService,
@@ -83,6 +84,13 @@ impl AutharieService {
         .await?;
 
         Ok(cell)
+    }
+
+    #[transactional(cell, deployment, action)]
+    pub async fn resend_stalled_realms(&self) -> Result<Resent, CoreError> {
+        RealmRequests::new(cell_repository, deployment_repository, action_repository)
+            .resend_stalled(Utc::now(), self.deployment_domain())
+            .await
     }
 
     #[transactional(cell, platform_operator)]

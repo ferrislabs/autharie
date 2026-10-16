@@ -168,6 +168,8 @@ mod tests {
             namespace: Some("autharie-acme".to_string()),
             log_shipping_enabled: true,
             pooled: false,
+            transition: None,
+            changed_at: None,
         }
     }
 
