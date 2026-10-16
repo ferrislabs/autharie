@@ -8,6 +8,7 @@ use crate::domain::entities::outcome::DeploymentOutcomeReport;
 use crate::domain::entities::usage::{CounterSample, UsagePoint, UsageTarget};
 use crate::domain::error::HeraldError;
 use crate::domain::log_index::LogIndexDocument;
+use crate::domain::outcome_reconciliation::ObservedInstances;
 use crate::domain::trace_index::SpanDocument;
 use std::future::Future;
 use std::net::IpAddr;
@@ -290,6 +291,11 @@ pub trait UsageSource: Send + Sync {
 #[cfg_attr(test, mockall::automock)]
 pub trait ArchiveSource: Send + Sync {
     fn finished_archives(&self) -> impl Future<Output = Result<Vec<Archive>, HeraldError>> + Send;
+}
+
+#[cfg_attr(test, mockall::automock)]
+pub trait InstanceStateSource: Send + Sync {
+    fn observe(&self) -> impl Future<Output = Result<ObservedInstances, HeraldError>> + Send;
 }
 
 /// The outcomes waiting to be carried to the control plane.

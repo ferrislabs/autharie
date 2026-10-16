@@ -42,6 +42,20 @@ pub struct RelayedAdministrator {
     password: String,
 }
 
+impl DeploymentOutcomeReport {
+    pub fn observed(deployment_id: Uuid, outcome: &str, version: Option<String>) -> Self {
+        Self {
+            deployment_id,
+            outcome: outcome.to_string(),
+            version,
+            duration_seconds: None,
+            reason: None,
+            administrator: None,
+            request_id: None,
+        }
+    }
+}
+
 impl fmt::Debug for DeploymentOutcomeReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("DeploymentOutcomeReport")

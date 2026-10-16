@@ -8,9 +8,10 @@ use crate::domain::entities::shard::ShardConfig;
 use crate::domain::error::HeraldError;
 use crate::domain::log_session::run_log_session;
 use crate::domain::log_shipping::run_continuous_log_shipping;
+use crate::domain::outcome_reconciliation::{awaiting_reconciliation, overdue_outcomes};
 use crate::domain::ports::{
-    ControlPlaneRepository, GatewayCertificateSink, HeraldService, LogIndexSink,
-    MessageBusRepository, OutcomeInboxRepository, PodLogSource, UsageSource,
+    ControlPlaneRepository, GatewayCertificateSink, HeraldService, InstanceStateSource,
+    LogIndexSink, MessageBusRepository, OutcomeInboxRepository, PodLogSource, UsageSource,
 };
 use crate::domain::usage_collector::UsageCollector;
 use chrono::Utc;
@@ -18,7 +19,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
-use tracing::warn;
+use tracing::{info, warn};
 
 /// How many outcomes one cycle carries.
 ///
@@ -26,19 +27,21 @@ use tracing::warn;
 /// is not carried this cycle is carried by the next, fifteen seconds later.
 const OUTCOMES_PER_CYCLE: usize = 64;
 
-pub struct HeraldServiceImpl<CP, MB, OI, US, PL>
+pub struct HeraldServiceImpl<CP, MB, OI, US, PL, IS>
 where
     CP: ControlPlaneRepository,
     MB: MessageBusRepository,
     OI: OutcomeInboxRepository,
     US: UsageSource,
     PL: PodLogSource,
+    IS: InstanceStateSource,
 {
     control_plane: Arc<CP>,
     message_bus: Arc<MB>,
     outcomes: Arc<OI>,
     usage_source: Arc<US>,
     pod_logs: Arc<PL>,
+    instances: Arc<IS>,
     /// The only state Herald keeps between cycles, and the only thing a
     /// restart loses.
     usage: Mutex<UsageCollector>,
@@ -78,20 +81,23 @@ where
     deployment_registry: DeploymentRegistry,
 }
 
-impl<CP, MB, OI, US, PL> HeraldServiceImpl<CP, MB, OI, US, PL>
+impl<CP, MB, OI, US, PL, IS> HeraldServiceImpl<CP, MB, OI, US, PL, IS>
 where
     CP: ControlPlaneRepository + 'static,
     MB: MessageBusRepository,
     OI: OutcomeInboxRepository,
     US: UsageSource,
     PL: PodLogSource + 'static,
+    IS: InstanceStateSource,
 {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         control_plane: Arc<CP>,
         message_bus: Arc<MB>,
         outcomes: Arc<OI>,
         usage_source: Arc<US>,
         pod_logs: Arc<PL>,
+        instances: Arc<IS>,
         dataplane_id: DataPlaneId,
         shard_config: ShardConfig,
     ) -> Self {
@@ -101,6 +107,7 @@ where
             outcomes,
             usage_source,
             pod_logs,
+            instances,
             usage: Mutex::new(UsageCollector::default()),
             log_sessions: Arc::new(Mutex::new(HashSet::new())),
             log_readers: Arc::new(Mutex::new(HashMap::new())),
@@ -227,6 +234,41 @@ where
                     outcome = %report.outcome,
                     "failed to report an outcome"
                 );
+            }
+        }
+    }
+
+    async fn reconcile_outcomes(&self, owned: &[Deployment], busy: &HashSet<DeploymentId>) {
+        let candidates = awaiting_reconciliation(owned, busy, Utc::now());
+        if candidates.is_empty() {
+            return;
+        }
+
+        let observed = match self.instances.observe().await {
+            Ok(observed) => observed,
+            Err(err) => {
+                warn!(%err, "could not read the instances on this cluster to reconcile outcomes");
+                return;
+            }
+        };
+
+        for report in overdue_outcomes(&candidates, &observed) {
+            match self
+                .control_plane
+                .report_outcome(&self.dataplane_id, &report)
+                .await
+            {
+                Ok(()) => info!(
+                    deployment_id = %report.deployment_id,
+                    outcome = %report.outcome,
+                    "reported an outcome the cluster shows and the control plane did not have"
+                ),
+                Err(err) => warn!(
+                    %err,
+                    deployment_id = %report.deployment_id,
+                    outcome = %report.outcome,
+                    "failed to report a reconciled outcome"
+                ),
             }
         }
     }
@@ -396,13 +438,14 @@ where
     }
 }
 
-impl<CP, MB, OI, US, PL> HeraldService for HeraldServiceImpl<CP, MB, OI, US, PL>
+impl<CP, MB, OI, US, PL, IS> HeraldService for HeraldServiceImpl<CP, MB, OI, US, PL, IS>
 where
     CP: ControlPlaneRepository + 'static,
     MB: MessageBusRepository,
     OI: OutcomeInboxRepository,
     US: UsageSource,
     PL: PodLogSource + 'static,
+    IS: InstanceStateSource,
 {
     async fn sync_all_deployments(&self) -> Result<(), HeraldError> {
         // Reported before the work, not after: a cycle that fails partway
@@ -483,6 +526,8 @@ where
                 .push(action);
         }
 
+        let busy: HashSet<DeploymentId> = by_deployment.keys().flatten().cloned().collect();
+
         for (deployment_id, actions) in by_deployment {
             if let Err(err) = self.publish_and_ack(deployment_id.as_ref(), actions).await {
                 warn!(
@@ -492,6 +537,8 @@ where
                 );
             }
         }
+
+        self.reconcile_outcomes(&owned, &busy).await;
 
         Ok(())
     }
@@ -594,11 +641,13 @@ mod tests {
     use crate::domain::entities::action::{AckOutcome, Action, ActionId};
     use crate::domain::entities::deployment::Deployment;
     use crate::domain::entities::deployment::DeploymentKind;
+    use crate::domain::entities::deployment::Transition;
     use crate::domain::entities::outcome::DeploymentOutcomeReport;
     use crate::domain::entities::usage::{CounterSample, UsageMetric};
+    use crate::domain::outcome_reconciliation::ObservedInstances;
     use crate::domain::ports::{
-        HeartbeatOutcome, MockControlPlaneRepository, MockMessageBusRepository,
-        MockOutcomeInboxRepository, MockPodLogSource, MockUsageSource,
+        HeartbeatOutcome, MockControlPlaneRepository, MockInstanceStateSource,
+        MockMessageBusRepository, MockOutcomeInboxRepository, MockPodLogSource, MockUsageSource,
     };
     use chrono::{DateTime, Duration, Utc};
     use serde_json::json;
@@ -616,6 +665,8 @@ mod tests {
             namespace: Some("autharie-test".to_string()),
             log_shipping_enabled: false,
             pooled: false,
+            transition: None,
+            changed_at: None,
         }
     }
 
@@ -628,6 +679,10 @@ mod tests {
     /// A pod log source no test asked anything of.
     fn unused_pod_logs() -> Arc<MockPodLogSource> {
         Arc::new(MockPodLogSource::new())
+    }
+
+    fn unused_instances() -> Arc<MockInstanceStateSource> {
+        Arc::new(MockInstanceStateSource::new())
     }
 
     fn create_test_action(deployment_id: &str, action_type: &str) -> Action {
@@ -648,6 +703,7 @@ mod tests {
         dataplane_id: DataPlaneId,
         shard_config: ShardConfig,
         pod_logs: Arc<MockPodLogSource>,
+        instances: Arc<MockInstanceStateSource>,
         log_index: Option<Arc<dyn LogIndexSink>>,
     }
 
@@ -661,6 +717,7 @@ mod tests {
                 // assertions are unaffected by sharding.
                 shard_config: ShardConfig::new(0, 1),
                 pod_logs: unused_pod_logs(),
+                instances: unused_instances(),
                 log_index: None,
             }
         }
@@ -685,6 +742,11 @@ mod tests {
             self
         }
 
+        fn with_instances(mut self, instances: MockInstanceStateSource) -> Self {
+            self.instances = Arc::new(instances);
+            self
+        }
+
         fn with_log_index(mut self, log_index: Arc<dyn LogIndexSink>) -> Self {
             self.log_index = Some(log_index);
             self
@@ -698,6 +760,7 @@ mod tests {
             MockOutcomeInboxRepository,
             MockUsageSource,
             MockPodLogSource,
+            MockInstanceStateSource,
         > {
             // Empty unless a test says otherwise: the outcome queue is not what
             // these tests are about, and a mock with no expectation set would
@@ -713,6 +776,7 @@ mod tests {
                 Arc::new(outcomes),
                 unused_usage_source(),
                 self.pod_logs,
+                self.instances,
                 self.dataplane_id,
                 self.shard_config,
             )
@@ -766,6 +830,7 @@ mod tests {
             Arc::new(outcomes),
             unused_usage_source(),
             unused_pod_logs(),
+            unused_instances(),
             dataplane_id,
             ShardConfig::new(0, 1),
         );
@@ -827,9 +892,170 @@ mod tests {
             Arc::new(outcomes),
             unused_usage_source(),
             unused_pod_logs(),
+            unused_instances(),
             dataplane_id,
             ShardConfig::new(0, 1),
         );
+
+        service
+            .sync_all_deployments()
+            .await
+            .expect("cycle succeeds");
+    }
+
+    fn deleting_since_eleven_minutes(deployment_id: Uuid) -> Deployment {
+        let mut deployment = create_test_deployment(&deployment_id.to_string(), "acme-prod");
+        deployment.transition = Some(Transition::Departing);
+        deployment.changed_at = Some(Utc::now() - Duration::minutes(11));
+        deployment
+    }
+
+    #[tokio::test]
+    async fn a_deleted_outcome_lost_to_a_control_plane_restart_is_reported_again() {
+        let deployment_id = Uuid::new_v4();
+        let control_plane_up = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let recorded: Arc<std::sync::Mutex<Vec<DeploymentOutcomeReport>>> = Arc::default();
+
+        let mut outcomes = MockOutcomeInboxRepository::new();
+        let mut queued = Some(vec![DeploymentOutcomeReport::observed(
+            deployment_id,
+            "deleted",
+            None,
+        )]);
+        outcomes.expect_drain().returning(move |_| {
+            let drained = queued.take().unwrap_or_default();
+            Box::pin(async move { Ok(drained) })
+        });
+
+        let mut control_plane = MockControlPlaneRepository::new();
+        control_plane
+            .expect_send_heartbeat()
+            .returning(|_, _| Box::pin(async { Ok(HeartbeatOutcome::default()) }));
+        let up = Arc::clone(&control_plane_up);
+        let sink = Arc::clone(&recorded);
+        control_plane
+            .expect_report_outcome()
+            .returning(move |_, report| {
+                if !up.load(std::sync::atomic::Ordering::SeqCst) {
+                    return Box::pin(async {
+                        Err(HeraldError::ControlPlane {
+                            message: "report_outcome request failed".to_string(),
+                        })
+                    });
+                }
+                sink.lock().expect("not poisoned").push(report.clone());
+                Box::pin(async { Ok(()) })
+            });
+        control_plane.expect_list_deployments().returning(move |_| {
+            Box::pin(async move { Ok(vec![deleting_since_eleven_minutes(deployment_id)]) })
+        });
+        control_plane
+            .expect_claim_actions()
+            .returning(|_, _| Box::pin(async { Ok(Vec::new()) }));
+
+        let mut instances = MockInstanceStateSource::new();
+        instances
+            .expect_observe()
+            .returning(|| Box::pin(async { Ok(ObservedInstances::new()) }));
+
+        let service = HeraldServiceImpl::new(
+            Arc::new(control_plane),
+            Arc::new(MockMessageBusRepository::new()),
+            Arc::new(outcomes),
+            unused_usage_source(),
+            unused_pod_logs(),
+            Arc::new(instances),
+            DataPlaneId::new(Uuid::new_v4()),
+            ShardConfig::new(0, 1),
+        );
+
+        service
+            .sync_all_deployments()
+            .await
+            .expect("cycle succeeds");
+        assert!(recorded.lock().expect("not poisoned").is_empty());
+
+        control_plane_up.store(true, std::sync::atomic::Ordering::SeqCst);
+        service
+            .sync_all_deployments()
+            .await
+            .expect("cycle succeeds");
+
+        assert_eq!(
+            *recorded.lock().expect("not poisoned"),
+            vec![DeploymentOutcomeReport::observed(
+                deployment_id,
+                "deleted",
+                None
+            )]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_cluster_that_cannot_be_read_reports_nothing_and_keeps_the_cycle() {
+        let deployment_id = Uuid::new_v4();
+
+        let mut control_plane = MockControlPlaneRepository::new();
+        control_plane
+            .expect_send_heartbeat()
+            .returning(|_, _| Box::pin(async { Ok(HeartbeatOutcome::default()) }));
+        control_plane.expect_list_deployments().returning(move |_| {
+            Box::pin(async move { Ok(vec![deleting_since_eleven_minutes(deployment_id)]) })
+        });
+        control_plane
+            .expect_claim_actions()
+            .returning(|_, _| Box::pin(async { Ok(Vec::new()) }));
+        control_plane.expect_report_outcome().never();
+
+        let mut instances = MockInstanceStateSource::new();
+        instances.expect_observe().times(1).returning(|| {
+            Box::pin(async {
+                Err(HeraldError::Internal {
+                    message: "forbidden".to_string(),
+                })
+            })
+        });
+
+        let service = HeraldServiceTestBuilder::new()
+            .with_control_plane(control_plane)
+            .with_instances(instances)
+            .build();
+
+        service
+            .sync_all_deployments()
+            .await
+            .expect("cycle succeeds");
+    }
+
+    #[tokio::test]
+    async fn a_deployment_whose_work_was_claimed_this_cycle_is_left_to_that_work() {
+        let deployment_id = Uuid::new_v4();
+
+        let mut control_plane = MockControlPlaneRepository::new();
+        control_plane
+            .expect_send_heartbeat()
+            .returning(|_, _| Box::pin(async { Ok(HeartbeatOutcome::default()) }));
+        control_plane.expect_list_deployments().returning(move |_| {
+            Box::pin(async move { Ok(vec![deleting_since_eleven_minutes(deployment_id)]) })
+        });
+        control_plane.expect_claim_actions().returning(move |_, _| {
+            let action = create_test_action(&deployment_id.to_string(), "deployment.delete");
+            Box::pin(async move { Ok(vec![action]) })
+        });
+        control_plane
+            .expect_ack_actions()
+            .returning(|_, _, _, _| Box::pin(async { Ok(AckOutcome { acknowledged: 1 }) }));
+        control_plane.expect_report_outcome().never();
+
+        let mut message_bus = MockMessageBusRepository::new();
+        message_bus
+            .expect_publish()
+            .returning(|_| Box::pin(async { Ok(()) }));
+
+        let service = HeraldServiceTestBuilder::new()
+            .with_control_plane(control_plane)
+            .with_message_bus(message_bus)
+            .build();
 
         service
             .sync_all_deployments()
@@ -887,6 +1113,7 @@ mod tests {
             Arc::new(outcomes),
             unused_usage_source(),
             unused_pod_logs(),
+            unused_instances(),
             dataplane_id,
             ShardConfig::new(0, 1),
         );
@@ -929,6 +1156,7 @@ mod tests {
             Arc::new(outcomes),
             unused_usage_source(),
             unused_pod_logs(),
+            unused_instances(),
             DataPlaneId::new(Uuid::new_v4()),
             ShardConfig::new(0, 1),
         );
@@ -1873,6 +2101,7 @@ mod tests {
         MockOutcomeInboxRepository,
         MockUsageSource,
         MockPodLogSource,
+        MockInstanceStateSource,
     > {
         HeraldServiceImpl::new(
             Arc::new(control_plane),
@@ -1880,6 +2109,7 @@ mod tests {
             Arc::new(MockOutcomeInboxRepository::new()),
             source,
             unused_pod_logs(),
+            unused_instances(),
             DataPlaneId::new("cccccccc-cccc-cccc-cccc-cccccccccccc"),
             ShardConfig::new(0, 1),
         )
@@ -2222,6 +2452,7 @@ mod tests {
         MockOutcomeInboxRepository,
         MockUsageSource,
         MockPodLogSource,
+        MockInstanceStateSource,
     > {
         let mut outcomes = MockOutcomeInboxRepository::new();
         outcomes
@@ -2234,6 +2465,7 @@ mod tests {
             Arc::new(outcomes),
             unused_usage_source(),
             Arc::new(pod_logs),
+            unused_instances(),
             DataPlaneId::new("cccccccc-cccc-cccc-cccc-cccccccccccc"),
             ShardConfig::new(0, 1),
         )

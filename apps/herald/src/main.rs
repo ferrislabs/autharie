@@ -19,6 +19,7 @@ use herald_core::infrastructure::control_plane::auth::ControlPlaneAuth;
 use herald_core::infrastructure::control_plane::control_plane_repository::HttpControlPlaneRepository;
 use herald_core::infrastructure::gateway;
 use herald_core::infrastructure::health::{bind as bind_health, serve_health};
+use herald_core::infrastructure::instances::kubernetes::KubeInstanceStateSource;
 use herald_core::infrastructure::logs::kubernetes::KubePodLogSource;
 use herald_core::infrastructure::logs::quickwit::QuickwitLogIndexSink;
 use herald_core::infrastructure::message_bus::outcome_inbox::RabbitMqOutcomeInbox;
@@ -185,6 +186,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // plane that took none -- and the difference only surfaces at a restore.
     let archives = Arc::new(KubeArchiveSource::from_env().await?);
 
+    let instances = Arc::new(KubeInstanceStateSource::from_env().await?);
+
     // Best-effort, like every other optional integration here: no secret
     // name configured, or a cluster this Herald cannot reach, both mean this
     // installation does not manage its Gateway's certificate -- not that it
@@ -220,6 +223,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         outcomes,
         usage_source,
         pod_logs,
+        instances,
         dataplane_id,
         shard_config,
     )
