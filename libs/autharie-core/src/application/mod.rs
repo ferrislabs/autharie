@@ -83,6 +83,7 @@ pub struct AutharieService {
     credential_keys: Option<Arc<TransitKeyProvider>>,
 
     cells_organisation: Option<autharie_domain::organisation::OrganisationId>,
+    platform_labels: Vec<String>,
 }
 
 /// How long a data plane may go without reporting before placement stops
@@ -128,6 +129,7 @@ impl AutharieService {
             resizers: ClusterResizers::default(),
             credential_keys: None,
             cells_organisation: None,
+            platform_labels: Vec::new(),
         }
     }
 
@@ -145,6 +147,15 @@ impl AutharieService {
     pub fn with_domain(mut self, domain: Option<String>) -> Self {
         self.domain = domain;
         self
+    }
+
+    pub fn with_platform_labels(mut self, labels: Vec<String>) -> Self {
+        self.platform_labels = labels;
+        self
+    }
+
+    pub(crate) fn platform_labels(&self) -> &[String] {
+        &self.platform_labels
     }
 
     pub fn with_cloud_providers(mut self, cloud: CloudProviders) -> Self {

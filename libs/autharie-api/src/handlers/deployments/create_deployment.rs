@@ -22,7 +22,7 @@ use uuid::Uuid;
 
 use crate::{
     errors::ApiError, handlers::cloud_credentials::profile::ClusterProfileRequest,
-    response::Response, state::AppState,
+    handlers::deployments::TenantDeployment, response::Response, state::AppState,
 };
 
 #[derive(Deserialize, ToSchema)]
@@ -47,7 +47,7 @@ pub struct CreateDeploymentRequest {
     #[serde(default)]
     pub region: Option<String>,
 
-    /// What they are buying: `sandbox`, `standard`, `scale` or `private`.
+    /// What they are buying: `free`, `sandbox`, `standard`, `scale` or `private`.
     ///
     /// The size and whether the deployment gets a cluster of its own are read
     /// from it. There is no field for either, deliberately: a request that
@@ -83,7 +83,8 @@ enum RequestedDistribution {
 
 #[derive(Serialize, ToSchema, PartialEq)]
 pub struct CreateDeploymentResponse {
-    data: Deployment,
+    #[schema(value_type = Deployment)]
+    data: TenantDeployment,
 }
 
 struct ParsedCreateDeploymentRequest {
@@ -262,7 +263,7 @@ pub async fn create_deployment_handler(
     ));
 
     Ok(Response::Created(CreateDeploymentResponse {
-        data: deployment,
+        data: TenantDeployment(deployment),
     }))
 }
 

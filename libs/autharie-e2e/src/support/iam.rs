@@ -166,6 +166,10 @@ impl OneOrganisation {
 }
 
 impl OrganisationRepository for OneOrganisation {
+    async fn lock_instance_count(&self, _: &OrganisationId) -> Result<(), CoreError> {
+        Ok(())
+    }
+
     async fn create(&self, _: CreateOrganisationData) -> Result<Organisation, CoreError> {
         Err(unused())
     }

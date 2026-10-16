@@ -317,7 +317,10 @@ impl From<CoreError> for ApiError {
             CoreError::DeploymentNameReserved { .. } => ApiError::Unprocessable {
                 reason: value.to_string(),
             },
-            CoreError::DeploymentNameTaken => ApiError::Conflict {
+            CoreError::DeploymentNameTaken
+            | CoreError::DeploymentNameBeingReleased
+            | CoreError::NotForPooledDeployment { .. }
+            | CoreError::OrganisationLimitReached { .. } => ApiError::Conflict {
                 reason: value.to_string(),
             },
             CoreError::Profile(_) | CoreError::Distribution(_) | CoreError::Resize(_) => {
@@ -939,5 +942,47 @@ mod tests {
             panic!("expected a conflict, got {taken:?}");
         };
         assert_eq!(reason, "this name is already used by another deployment");
+    }
+
+    #[test]
+    fn the_refusals_of_a_free_deployment_say_what_is_in_the_way() {
+        let cases = [
+            (
+                CoreError::from(autharie_core::cells::PlacementError::NoOpenCell {
+                    region: "fr-par".to_string(),
+                }),
+                StatusCode::SERVICE_UNAVAILABLE,
+                "try again later",
+            ),
+            (
+                CoreError::from(autharie_core::cells::PlacementError::NoTenantZone),
+                StatusCode::SERVICE_UNAVAILABLE,
+                "free deployments are not available",
+            ),
+            (
+                CoreError::DeploymentNameBeingReleased,
+                StatusCode::CONFLICT,
+                "still being released",
+            ),
+            (
+                CoreError::OrganisationLimitReached {
+                    limit_type: "instances".to_string(),
+                    max: 1,
+                    current: 1,
+                },
+                StatusCode::CONFLICT,
+                "instances",
+            ),
+        ];
+
+        for (error, status, says) in cases {
+            let message = error.to_string();
+            assert!(message.contains(says), "{message}");
+            assert_eq!(
+                ApiError::from(error).into_response().status(),
+                status,
+                "{message}"
+            );
+        }
     }
 }

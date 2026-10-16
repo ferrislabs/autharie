@@ -59,7 +59,7 @@ impl DeploymentName {
     /// through this, so a reserved label cannot reach the repository by
     /// either path.
     pub fn publishable(self) -> Result<Self, CoreError> {
-        if crate::dns::is_reserved_label(&environment::slug(&self.0)) {
+        if crate::dns::is_refused_name(&environment::slug(&self.0)) {
             return Err(CoreError::DeploymentNameReserved { name: self.0 });
         }
 
@@ -163,6 +163,7 @@ impl TryFrom<&str> for DeploymentStatus {
 pub struct Deployment {
     pub id: DeploymentId,
     pub organisation_id: OrganisationId,
+    #[schema(required = false)]
     pub dataplane_id: DataPlaneId,
     pub name: DeploymentName,
 
@@ -262,6 +263,32 @@ impl Deployment {
     /// agree with.
     pub fn hostname_slug(&self) -> String {
         environment::slug(&self.name.0)
+    }
+
+    pub fn is_pooled(&self) -> bool {
+        matches!(self.distribution, distribution::Distribution::Pooled { .. })
+    }
+
+    pub fn deserves_a_dns_record(&self) -> bool {
+        match self.status {
+            DeploymentStatus::Deleting => false,
+            DeploymentStatus::Failed => !self.is_pooled(),
+            _ => true,
+        }
+    }
+
+    pub fn is_probed_for_reachability(&self) -> bool {
+        !self.is_pooled() || self.status == DeploymentStatus::Successful
+    }
+
+    pub fn refuse_if_pooled(&self, operation: &str) -> Result<(), crate::CoreError> {
+        if !self.is_pooled() {
+            return Ok(());
+        }
+
+        Err(crate::CoreError::NotForPooledDeployment {
+            operation: operation.to_string(),
+        })
     }
 
     /// Records that the work has been handed to a data plane.
@@ -419,8 +446,46 @@ impl Deployment {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    pub(crate) fn a_deployment() -> Deployment {
+        deployment(DeploymentStatus::Pending)
+    }
+
+    fn pooled(status: DeploymentStatus) -> Deployment {
+        let mut realm = deployment(status);
+        realm.distribution = distribution::Distribution::Pooled {
+            cell_id: crate::cells::CellId(Uuid::nil()),
+            realm: crate::cells::RealmName::try_from("acme").expect("valid"),
+        };
+        realm
+    }
+
+    #[test]
+    fn a_refused_realm_and_a_deployment_being_deleted_get_no_dns_record() {
+        assert!(!pooled(DeploymentStatus::Failed).deserves_a_dns_record());
+        assert!(!pooled(DeploymentStatus::Deleting).deserves_a_dns_record());
+        assert!(!deployment(DeploymentStatus::Deleting).deserves_a_dns_record());
+        assert!(pooled(DeploymentStatus::Pending).deserves_a_dns_record());
+        assert!(deployment(DeploymentStatus::Failed).deserves_a_dns_record());
+    }
+
+    #[test]
+    fn a_realm_is_probed_only_once_it_serves() {
+        assert!(pooled(DeploymentStatus::Successful).is_probed_for_reachability());
+        for status in [
+            DeploymentStatus::Pending,
+            DeploymentStatus::Failed,
+            DeploymentStatus::Deleting,
+        ] {
+            assert!(
+                !pooled(status.clone()).is_probed_for_reachability(),
+                "{status:?}"
+            );
+        }
+        assert!(deployment(DeploymentStatus::Pending).is_probed_for_reachability());
+    }
 
     fn deployment(status: DeploymentStatus) -> Deployment {
         let at = Utc::now();

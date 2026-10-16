@@ -182,7 +182,6 @@ export namespace Schemas {
     memory_mib: number
     storage_gib: number
   }
-  export type CellId = string
   export type CellStatus = 'provisioning' | 'open' | 'full' | 'draining' | 'retired' | 'failed'
   export type CellView = {
     capacity: number
@@ -279,13 +278,13 @@ export namespace Schemas {
     | 'shared'
     | 'self_hosted'
     | { customer_cloud: { credential_id: CloudCredentialId; profile: ClusterProfile } }
-    | { pooled: { cell_id: CellId; realm: RealmName } }
+    | { pooled: { realm: RealmName } }
   export type Environment = 'production' | 'staging' | 'development'
   export type IamSettings = Partial<{ branding: null | Branding }>
   export type MaintenanceWindow = { day: string; duration: number; start: string; timezone: string }
   export type DeploymentName = string
   export type NetworkAccess = { kind: 'open' } | { allowed: AllowList; kind: 'restricted' }
-  export type Offer = 'sandbox' | 'standard' | 'scale' | 'private'
+  export type Offer = 'free' | 'sandbox' | 'standard' | 'scale' | 'private'
   export type DeploymentResources = { cpu_millis: number; memory_mib: number; storage_gib: number }
   export type DeploymentStatus =
     | 'pending'
@@ -303,7 +302,7 @@ export namespace Schemas {
     auto_upgrade: AutoUpgradePolicy
     created_at: string
     created_by: UserId
-    dataplane_id: DataPlaneId
+    dataplane_id?: DataPlaneId | undefined
     deleted_at?: (string | null) | undefined
     deployed_at?: (string | null) | undefined
     distribution: Distribution
@@ -472,9 +471,16 @@ export namespace Schemas {
     status: ProvisioningStatus
     step?: (null | ProvisioningStep) | undefined
   }
+  export type TenantRealm = {
+    issuer?: (string | null) | undefined
+    name: RealmName
+    refusal?: (string | null) | undefined
+    url?: (string | null) | undefined
+  }
   export type GetDeploymentResponse = {
     data: Deployment
     provisioning?: (null | Provisioning) | undefined
+    realm?: (null | TenantRealm) | undefined
   }
   export type UsageBucketResponse = { bucket: string; value: number }
   export type GetDeploymentUsageResponse = { data: Array<UsageBucketResponse> }

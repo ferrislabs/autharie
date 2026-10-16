@@ -106,6 +106,19 @@ impl<'tx> PostgresOrganisationRepository<'tx> {
 
 #[cfg_attr(coverage_nightly, coverage(off))]
 impl OrganisationRepository for PostgresOrganisationRepository<'_> {
+    async fn lock_instance_count(&self, id: &OrganisationId) -> Result<(), CoreError> {
+        let mut tx = self.tx.lock().await;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+            .bind(format!("org-instances:{}", id.0))
+            .execute(&mut ***tx)
+            .await
+            .map_err(|e| CoreError::DatabaseError {
+                message: format!("Failed to serialise the instance count of an organisation: {e}"),
+            })?;
+
+        Ok(())
+    }
+
     async fn create(&self, data: CreateOrganisationData) -> Result<Organisation, CoreError> {
         let id = OrganisationId::new();
         let now = Utc::now();

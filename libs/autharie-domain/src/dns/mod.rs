@@ -65,45 +65,88 @@ pub trait DnsProvider: Send + Sync {
 /// naming one `www` or `api` would otherwise make the platform publish over,
 /// or delete, a record that is not theirs.
 pub const RESERVED_HOSTNAME_LABELS: &[&str] = &[
-    "www",
+    "account",
+    "accounts",
+    "admin",
+    "api",
+    "app",
+    "assets",
+    "auth",
+    "autharie",
+    "autoconfig",
+    "autodiscover",
+    "billing",
+    "blog",
+    "cdn",
+    "cell",
+    "cells",
+    "console",
+    "dashboard",
+    "docs",
+    "ferriskey",
+    "ferrislabs",
     "ftp",
-    "mail",
-    "smtp",
+    "git",
+    "grafana",
+    "help",
+    "id",
+    "identity",
     "imap",
-    "pop",
-    "pop3",
-    "webmail",
+    "keycloak",
+    "landing",
+    "login",
+    "mail",
+    "metrics",
+    "mx",
+    "mx1",
     "ns",
     "ns1",
     "ns2",
-    "mx",
-    "mx1",
-    "api",
-    "app",
-    "console",
-    "id",
-    "auth",
-    "login",
+    "oauth",
+    "pop",
+    "pop3",
+    "portal",
+    "registry",
+    "secure",
+    "security",
+    "signin",
+    "smtp",
     "sso",
-    "admin",
-    "status",
-    "docs",
-    "blog",
-    "landing",
-    "cdn",
     "static",
-    "assets",
-    "git",
+    "status",
+    "support",
     "vpn",
-    "autodiscover",
-    "autoconfig",
-    "autharie",
-    "ferriskey",
-    "keycloak",
+    "webmail",
+    "www",
 ];
+
+pub const RESERVED_HOSTNAME_PREFIXES: &[&str] =
+    &["admin", "api", "auth", "autharie", "ferriskey", "www"];
 
 pub fn is_reserved_label(slug: &str) -> bool {
     RESERVED_HOSTNAME_LABELS.contains(&slug)
+}
+
+pub fn is_refused_name(slug: &str) -> bool {
+    is_reserved_label(slug)
+        || RESERVED_HOSTNAME_PREFIXES
+            .iter()
+            .any(|prefix| slug.starts_with(prefix))
+}
+
+pub fn label_under_zone(url: &str, zone: &str) -> Option<String> {
+    let without_scheme = url.split_once("://").map_or(url, |(_, rest)| rest);
+    let authority = without_scheme.split(['/', '?', '#']).next()?;
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host)
+        .split(':')
+        .next()?
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+    let label = host.strip_suffix(&format!(".{}", zone.to_ascii_lowercase()))?;
+
+    (!label.is_empty() && !label.contains('.')).then(|| label.to_string())
 }
 
 /// A deployment's own hostname, under whichever zone this installation
@@ -146,6 +189,50 @@ mod tests {
             assert!(is_reserved_label(label));
             assert_eq!(crate::deployments::environment::slug(label), *label);
         }
+    }
+
+    #[test]
+    fn the_reserved_lists_stay_sorted_and_without_duplicates() {
+        for list in [RESERVED_HOSTNAME_LABELS, RESERVED_HOSTNAME_PREFIXES] {
+            assert!(list.windows(2).all(|pair| pair[0] < pair[1]), "{list:?}");
+        }
+    }
+
+    #[test]
+    fn a_name_starting_like_a_platform_label_is_refused() {
+        for name in [
+            "api-gateway",
+            "admin-panel",
+            "auth0",
+            "authentication",
+            "autharie-support",
+            "ferriskey-demo",
+            "www2",
+        ] {
+            assert!(is_refused_name(name), "{name}");
+        }
+        for name in ["acme", "demo", "my-api", "billing-acme", "tenant-login"] {
+            assert!(!is_refused_name(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn a_platform_url_under_the_zone_names_its_label() {
+        assert_eq!(
+            label_under_zone("https://console.autharie.fr/realms/x", "autharie.fr").as_deref(),
+            Some("console")
+        );
+        assert_eq!(
+            label_under_zone("https://user@Quickwit.Autharie.fr:7280", "autharie.fr").as_deref(),
+            Some("quickwit")
+        );
+        assert_eq!(label_under_zone("https://autharie.fr", "autharie.fr"), None);
+        assert_eq!(
+            label_under_zone("https://a.b.autharie.fr", "autharie.fr"),
+            None
+        );
+        assert_eq!(label_under_zone("http://vault:8200", "autharie.fr"), None);
+        assert_eq!(label_under_zone("", "autharie.fr"), None);
     }
 
     #[test]

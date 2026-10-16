@@ -615,6 +615,7 @@ mod tests {
             kind: Some(DeploymentKind::Ferriskey),
             namespace: Some("autharie-test".to_string()),
             log_shipping_enabled: false,
+            pooled: false,
         }
     }
 

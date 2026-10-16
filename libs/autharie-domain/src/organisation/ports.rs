@@ -73,6 +73,11 @@ pub trait OrganisationRepository: Send + Sync {
         user_id: &UserId,
     ) -> impl Future<Output = Result<(), CoreError>> + Send;
 
+    fn lock_instance_count(
+        &self,
+        id: &OrganisationId,
+    ) -> impl Future<Output = Result<(), CoreError>> + Send;
+
     /// Finds an organisation by its ID
     fn find_by_id(
         &self,

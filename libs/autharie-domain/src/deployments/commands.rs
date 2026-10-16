@@ -82,6 +82,10 @@ impl CreateDeploymentCommand {
         region: Region,
         offer: Offer,
     ) -> Result<Self, CoreError> {
+        if offer.is_pooled() && kind != DeploymentKind::Ferriskey {
+            return Err(DistributionError::NotPoolable { kind }.into());
+        }
+
         Ok(Self {
             organisation_id,
             name: name.publishable()?,
@@ -103,6 +107,9 @@ impl CreateDeploymentCommand {
         mut self,
         distribution: Distribution,
     ) -> Result<Self, DistributionError> {
+        if self.offer.is_pooled() && distribution != Distribution::Shared {
+            return Err(DistributionError::PooledOfferPlacedElsewhere);
+        }
         self.distribution = distribution.checked_for(&self.kind)?;
         Ok(self)
     }
@@ -316,7 +323,7 @@ mod tests {
     fn a_reserved_label_is_refused_however_the_name_is_written() {
         for name in ["WWW", " Api ", "A.P.I", "--www--", "Console!"] {
             let expected_reserved =
-                crate::dns::is_reserved_label(&crate::deployments::environment::slug(name));
+                crate::dns::is_refused_name(&crate::deployments::environment::slug(name));
             assert_eq!(
                 matches!(
                     create_named(name),
@@ -344,9 +351,12 @@ mod tests {
     }
 
     #[test]
-    fn demo_and_a_prefixed_reserved_label_are_creatable() {
+    fn demo_is_creatable_and_a_name_starting_like_a_platform_label_is_not() {
         assert!(create_named("demo").is_ok());
-        assert!(create_named("api-gateway").is_ok());
+        assert!(matches!(
+            create_named("api-gateway"),
+            Err(CoreError::DeploymentNameReserved { .. })
+        ));
     }
 
     #[test]
@@ -381,6 +391,48 @@ mod tests {
             .expect("allowed");
 
         assert_eq!(command.distribution(), &customer_cloud);
+    }
+
+    fn a_free_command(kind: DeploymentKind) -> Result<CreateDeploymentCommand, CoreError> {
+        CreateDeploymentCommand::new(
+            OrganisationId(Uuid::new_v4()),
+            DeploymentName("tenant".to_string()),
+            kind,
+            Version::new(1, 0, 0),
+            UserId(Uuid::new_v4()),
+            Environment::Production,
+            Region::new("fr-par"),
+            Offer::Free,
+        )
+    }
+
+    /// @spec-fpr-13
+    #[test]
+    fn only_a_ferriskey_command_can_take_the_free_offer() {
+        let refused = a_free_command(DeploymentKind::Keycloak).expect_err("keycloak is not pooled");
+
+        assert!(
+            matches!(
+                refused,
+                CoreError::Distribution(DistributionError::NotPoolable { .. })
+            ),
+            "{refused}"
+        );
+        assert!(a_free_command(DeploymentKind::Ferriskey).is_ok());
+    }
+
+    #[test]
+    fn a_free_command_cannot_ask_for_another_distribution() {
+        let command = a_free_command(DeploymentKind::Ferriskey).expect("ferriskey");
+
+        assert_eq!(
+            command
+                .clone()
+                .with_distribution(crate::deployments::distribution::tests::customer_cloud())
+                .err(),
+            Some(DistributionError::PooledOfferPlacedElsewhere)
+        );
+        assert!(command.with_distribution(Distribution::Shared).is_ok());
     }
 
     #[test]

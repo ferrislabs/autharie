@@ -39,6 +39,7 @@ pub struct OfferAvailability {
 pub fn offers_for(plan: Plan) -> Vec<OfferAvailability> {
     Offer::ALL
         .into_iter()
+        .filter(|offer| !offer.is_pooled() || offer.is_open_to(plan))
         .map(|offer| {
             let open = offer.is_open_to(plan);
 
@@ -60,10 +61,42 @@ mod tests {
 
     /// The whole catalogue, so a screen can show what is not bought yet.
     #[test]
-    fn every_offer_is_answered_whatever_the_tier() {
+    fn every_dedicated_offer_is_answered_whatever_the_tier() {
         for plan in [Plan::Free, Plan::Starter, Plan::Business, Plan::Enterprise] {
-            assert_eq!(offers_for(plan).len(), Offer::ALL.len(), "{plan}");
+            let answered: Vec<Offer> = offers_for(plan).iter().map(|entry| entry.offer).collect();
+
+            for offer in Offer::ALL.into_iter().filter(|offer| !offer.is_pooled()) {
+                assert!(
+                    answered.contains(&offer),
+                    "{plan} is not told about {offer}"
+                );
+            }
         }
+    }
+
+    #[test]
+    fn the_free_offer_is_shown_only_to_the_tier_it_is_for() {
+        let shown = |plan| {
+            offers_for(plan)
+                .iter()
+                .any(|entry| entry.offer == Offer::Free)
+        };
+
+        assert!(shown(Plan::Free));
+        for plan in [Plan::Starter, Plan::Business, Plan::Enterprise] {
+            assert!(!shown(plan), "{plan} was offered the free offer");
+        }
+    }
+
+    #[test]
+    fn a_free_organisation_sees_the_sandbox_locked_behind_starter() {
+        let sandbox = offers_for(Plan::Free)
+            .into_iter()
+            .find(|entry| entry.offer == Offer::Sandbox)
+            .expect("the catalogue is whole");
+
+        assert!(!sandbox.open);
+        assert_eq!(sandbox.opened_by, Some(Plan::Starter));
     }
 
     #[test]

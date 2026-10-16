@@ -9,6 +9,7 @@ import {
   isResizable,
 } from '@/domain/cloud-providers/resize'
 import { availabilityView } from '../../availability'
+import { tenantRealmView } from '../../tenant-realm'
 import { PageDeploymentDetail } from '../ui/page-deployment-detail'
 
 export default function PageDeploymentDetailFeature() {
@@ -53,6 +54,7 @@ export default function PageDeploymentDetailFeature() {
       actions={filteredActions}
       availability={availability}
       provisioning={deployment.data?.provisioning}
+      realm={tenantRealmView(deployment.data?.realm)}
       clusterPanel={
         resizable ? (
           <ClusterPanelFeature

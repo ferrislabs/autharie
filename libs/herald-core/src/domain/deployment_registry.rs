@@ -62,6 +62,7 @@ mod tests {
             kind: None,
             namespace: None,
             log_shipping_enabled: false,
+            pooled: false,
         }
     }
 

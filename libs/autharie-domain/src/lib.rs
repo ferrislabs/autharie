@@ -126,6 +126,14 @@ pub enum CoreError {
     #[error("this name is already used by another deployment")]
     DeploymentNameTaken,
 
+    #[error("this deployment is a realm in a shared cell and cannot be {operation}")]
+    NotForPooledDeployment { operation: String },
+
+    #[error(
+        "this name is still being released by a deleted deployment: try again in a few minutes or pick another"
+    )]
+    DeploymentNameBeingReleased,
+
     #[error("Organisation not found with id: {id}")]
     OrganisationNotFound { id: Uuid },
 

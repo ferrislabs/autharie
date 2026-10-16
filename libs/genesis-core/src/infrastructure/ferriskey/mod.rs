@@ -173,6 +173,7 @@ struct FoundInstance<'a> {
     name: Option<&'a str>,
     namespace: Option<&'a str>,
     provider: &'a IdentityProvider,
+    pooled_cell: bool,
 }
 
 impl<'a> From<&'a IdentityInstance> for FoundInstance<'a> {
@@ -181,6 +182,11 @@ impl<'a> From<&'a IdentityInstance> for FoundInstance<'a> {
             name: instance.metadata.name.as_deref(),
             namespace: instance.metadata.namespace.as_deref(),
             provider: &instance.spec.provider,
+            pooled_cell: instance
+                .spec
+                .ferriskey
+                .as_ref()
+                .is_some_and(|config| config.pooled_cell),
         }
     }
 }
@@ -189,6 +195,7 @@ fn is_ferriskey_cell(found: FoundInstance<'_>, cell: &IdentityInstanceRef) -> bo
     found.name == Some(cell.name.as_str())
         && found.namespace == Some(cell.namespace.as_str())
         && *found.provider == IdentityProvider::Ferriskey
+        && found.pooled_cell
 }
 
 pub struct FerriskeyRealms {
@@ -531,6 +538,7 @@ mod tests {
             name: Some(name),
             namespace: Some(namespace),
             provider,
+            pooled_cell: true,
         };
         let name = cell.name.as_str();
 
@@ -550,6 +558,48 @@ mod tests {
             found("deployment-x", "cells-one", &IdentityProvider::Ferriskey),
             &cell
         ));
+    }
+
+    #[test]
+    fn a_ferriskey_instance_without_the_pooled_cell_marker_is_not_a_cell() {
+        let cell = IdentityInstanceRef::for_deployment(Uuid::from_u128(2), "cells-one");
+        let dedicated = FoundInstance {
+            name: Some(cell.name.as_str()),
+            namespace: Some("cells-one"),
+            provider: &IdentityProvider::Ferriskey,
+            pooled_cell: false,
+        };
+
+        assert!(!is_ferriskey_cell(dedicated, &cell));
+    }
+
+    #[test]
+    fn the_pooled_cell_marker_is_read_from_the_ferriskey_spec() {
+        let mut instance: IdentityInstance = serde_json::from_value(serde_json::json!({
+            "apiVersion": "autharie.fr/v1alpha",
+            "kind": "IdentityInstance",
+            "metadata": { "name": "deployment-2", "namespace": "cells-one" },
+            "spec": {
+                "organisationId": "org-1",
+                "provider": "ferriskey",
+                "version": "26.0.1",
+                "hostname": "cell.autharie.test",
+                "ferriskey": { "pooledCell": true },
+                "database": {
+                    "mode": "managedCluster",
+                    "managedCluster": {
+                        "instances": 2,
+                        "storage": { "size": "1Gi" },
+                        "resources": { "requests": { "cpu": "500m", "memory": "1Gi" } }
+                    }
+                }
+            }
+        }))
+        .expect("an instance");
+        assert!(FoundInstance::from(&instance).pooled_cell);
+
+        instance.spec.ferriskey = None;
+        assert!(!FoundInstance::from(&instance).pooled_cell);
     }
 
     #[test]

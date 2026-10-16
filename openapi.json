@@ -9728,10 +9728,6 @@
           }
         }
       },
-      "CellId": {
-        "type": "string",
-        "format": "uuid"
-      },
       "CellResponse": {
         "type": "object",
         "required": [
@@ -10135,7 +10131,7 @@
           },
           "offer": {
             "type": "string",
-            "description": "What they are buying: `sandbox`, `standard`, `scale` or `private`.\n\nThe size and whether the deployment gets a cluster of its own are read\nfrom it. There is no field for either, deliberately: a request that\ncould send both could contradict the offer it named, and nothing would\nbe able to say which half was meant."
+            "description": "What they are buying: `free`, `sandbox`, `standard`, `scale` or `private`.\n\nThe size and whether the deployment gets a cluster of its own are read\nfrom it. There is no field for either, deliberately: a request that\ncould send both could contradict the offer it named, and nothing would\nbe able to say which half was meant."
           },
           "region": {
             "type": [
@@ -10499,7 +10495,6 @@
         "required": [
           "id",
           "organisation_id",
-          "dataplane_id",
           "name",
           "kind",
           "version",
@@ -10819,13 +10814,9 @@
               "pooled": {
                 "type": "object",
                 "required": [
-                  "cell_id",
                   "realm"
                 ],
                 "properties": {
-                  "cell_id": {
-                    "$ref": "#/components/schemas/CellId"
-                  },
                   "realm": {
                     "$ref": "#/components/schemas/RealmName"
                   }
@@ -11269,6 +11260,17 @@
               },
               {
                 "$ref": "#/components/schemas/Provisioning"
+              }
+            ]
+          },
+          "realm": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TenantRealm",
+                "description": "The tenant realm, for a deployment hosted as a realm in a shared cell."
               }
             ]
           }
@@ -12496,6 +12498,7 @@
         "type": "string",
         "description": "One offer.\n\nNamed for what a customer recognises rather than for the infrastructure\nbehind it -- except [`Offer::Private`], where the isolation *is* what is\nbeing bought and hiding it would be coy.",
         "enum": [
+          "free",
           "sandbox",
           "standard",
           "scale",
@@ -14079,6 +14082,35 @@
           },
           "organisation": {
             "$ref": "#/components/schemas/Organisation"
+          }
+        }
+      },
+      "TenantRealm": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "issuer": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "$ref": "#/components/schemas/RealmName"
+          },
+          "refusal": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },

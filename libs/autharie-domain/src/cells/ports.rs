@@ -38,4 +38,14 @@ pub trait CellRepository: Send + Sync {
         deployment: DeploymentId,
         reason: &str,
     ) -> impl Future<Output = Result<bool, CoreError>> + Send;
+
+    fn is_instance_hostname(
+        &self,
+        hostname_slug: &str,
+    ) -> impl Future<Output = Result<bool, CoreError>> + Send;
+
+    fn realm_refusal(
+        &self,
+        deployment: DeploymentId,
+    ) -> impl Future<Output = Result<Option<String>, CoreError>> + Send;
 }

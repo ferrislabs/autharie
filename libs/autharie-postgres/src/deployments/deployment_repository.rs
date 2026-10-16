@@ -286,13 +286,19 @@ pub struct PostgresDeploymentRepository<'tx> {
 #[cfg_attr(coverage_nightly, coverage(off))]
 const HOSTNAME_SLUG_INDEX: &str = "idx_deployments_hostname_slug";
 
-fn write_error(action: &str, error: sqlx::Error) -> CoreError {
-    let name_taken = error
-        .as_database_error()
-        .is_some_and(|db| db.is_unique_violation() && db.constraint() == Some(HOSTNAME_SLUG_INDEX));
+#[cfg_attr(coverage_nightly, coverage(off))]
+const LIVE_REALM_INDEX: &str = "idx_deployments_live_realm";
 
-    if name_taken {
-        return CoreError::DeploymentNameTaken;
+fn write_error(action: &str, error: sqlx::Error) -> CoreError {
+    let violated = error
+        .as_database_error()
+        .filter(|db| db.is_unique_violation())
+        .and_then(|db| db.constraint());
+
+    match violated {
+        Some(HOSTNAME_SLUG_INDEX) => return CoreError::DeploymentNameTaken,
+        Some(LIVE_REALM_INDEX) => return CoreError::DeploymentNameBeingReleased,
+        _ => {}
     }
 
     CoreError::DatabaseError {

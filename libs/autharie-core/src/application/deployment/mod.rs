@@ -16,6 +16,7 @@ use crate::{
     backups::{
         ArchiveDestination, BackupSchedule, StoreEncryption, ports::BackupScheduleRepository,
     },
+    cells::{CellRepository, PlacementError, RealmRequests, TenantRealm},
     deployments::{
         Deployment, DeploymentId,
         commands::{CreateDeploymentCommand, UpdateDeploymentCommand},
@@ -27,6 +28,7 @@ use crate::{
     organisation::OrganisationId,
 };
 use crate::{infrastructure::role::permissions_in, policy::AuthariePolicy};
+use autharie_postgres::deployments::PostgresDeploymentRepository;
 
 /// The payload every `deployment.*` action carries.
 ///
@@ -234,13 +236,33 @@ impl AutharieService {
     }
 }
 
-impl DeploymentService for AutharieService {
-    #[transactional(deployment, user, data_plane, action, backup_schedule, organisation)]
-    async fn create_deployment(
+impl AutharieService {
+    async fn refuse_platform_hostname(
+        &self,
+        tx: &autharie_persistence::SharedTx<'_>,
+        deployment: &Deployment,
+    ) -> Result<(), CoreError> {
+        let label = deployment.hostname_slug();
+        let claimed = self.platform_labels().contains(&label)
+            || autharie_postgres::cells::PostgresCellRepository::new(tx)
+                .is_instance_hostname(&label)
+                .await?;
+        if claimed {
+            return Err(CoreError::DeploymentNameReserved {
+                name: deployment.name.0.clone(),
+            });
+        }
+
+        Ok(())
+    }
+
+    #[transactional(deployment, user, data_plane, organisation, cell)]
+    pub async fn tenant_realm_for_organisation(
         &self,
         identity: Identity,
-        command: CreateDeploymentCommand,
-    ) -> Result<Deployment, CoreError> {
+        organisation_id: OrganisationId,
+        deployment_id: DeploymentId,
+    ) -> Result<Option<TenantRealm>, CoreError> {
         let deployment = DeploymentServiceImpl::new(
             deployment_repository,
             user_repository,
@@ -250,8 +272,106 @@ impl DeploymentService for AutharieService {
             self.placement_windows(),
             AuthariePolicy::new(permissions_in(&tx)),
         )
-        .create_deployment(identity, command)
+        .get_deployment_for_organisation(identity, organisation_id, deployment_id)
         .await?;
+        if !deployment.is_pooled() {
+            return Ok(None);
+        }
+
+        let refusal = cell_repository.realm_refusal(deployment.id).await?;
+        Ok(TenantRealm::of(
+            &deployment,
+            self.deployment_domain(),
+            refusal,
+        ))
+    }
+}
+
+/// Recorded in the same transaction as the soft delete: an action that
+/// outlives a rolled-back deletion would have Genesis tear down resources for
+/// a deployment the control plane still considers live. A realm in a cell has
+/// no resources of its own, so it asks the cell to delete the realm instead.
+async fn announce_deletion<A: ActionRepository>(
+    tx: &autharie_persistence::SharedTx<'_>,
+    deployment: &Deployment,
+    action_repository: A,
+) -> Result<(), CoreError> {
+    if deployment.is_pooled() {
+        RealmRequests::new(
+            autharie_postgres::cells::PostgresCellRepository::new(tx),
+            PostgresDeploymentRepository::new(tx),
+            action_repository,
+        )
+        .delete(deployment)
+        .await?;
+        return Ok(());
+    }
+
+    let serving = Serving::of(tx, deployment).await?;
+    ActionServiceImpl::new(action_repository)
+        .record_action(RecordActionCommand::new(
+            deployment.id,
+            deployment.dataplane_id,
+            ActionType("deployment.delete".to_string()),
+            ActionTarget {
+                kind: TargetKind::Deployment,
+                id: deployment.id.0,
+            },
+            ActionPayload {
+                data: deployment_payload(deployment, serving, None, None),
+            },
+            ActionVersion(1),
+            ActionSource::System,
+        ))
+        .await?;
+
+    Ok(())
+}
+
+impl DeploymentService for AutharieService {
+    #[transactional(
+        deployment,
+        user,
+        data_plane,
+        action,
+        backup_schedule,
+        organisation,
+        cell
+    )]
+    async fn create_deployment(
+        &self,
+        identity: Identity,
+        command: CreateDeploymentCommand,
+    ) -> Result<Deployment, CoreError> {
+        let deployments = DeploymentServiceImpl::new(
+            deployment_repository,
+            user_repository,
+            data_plane_repository,
+            organisation_repository,
+            LocalClusterProvisioner,
+            self.placement_windows(),
+            AuthariePolicy::new(permissions_in(&tx)),
+        );
+
+        if command.offer.is_pooled() {
+            let zone = self.deployment_domain();
+            let deployment = deployments
+                .create_pooled(identity, command, &cell_repository, zone)
+                .await?;
+            self.refuse_platform_hostname(&tx, &deployment).await?;
+            RealmRequests::new(
+                cell_repository,
+                PostgresDeploymentRepository::new(&tx),
+                action_repository,
+            )
+            .create(&deployment, zone.ok_or(PlacementError::NoTenantZone)?)
+            .await?;
+
+            return Ok(deployment);
+        }
+
+        let deployment = deployments.create_deployment(identity, command).await?;
+        self.refuse_platform_hostname(&tx, &deployment).await?;
 
         self.announce_new_deployment(
             &deployment,
@@ -311,33 +431,7 @@ impl DeploymentService for AutharieService {
         .delete_deployment(deployment_id)
         .await?;
         crate::application::cells::refuse_if_a_cell_runs_on(&tx, deployment.id).await?;
-        let serving = Serving::of(&tx, &deployment).await?;
-
-        // Recorded in the same transaction as the soft delete, for the reason
-        // the create path records one: an action that outlives a rolled-back
-        // deletion would have Genesis tear down resources for a deployment the
-        // control plane still considers live.
-        //
-        // Without this, deleting set `status = 'deleting'` and `deleted_at`,
-        // published nothing, and left the row in `deleting` for ever with the
-        // Kubernetes resources still running. Genesis has handled
-        // `deployment.delete` since it was written; nothing ever sent one.
-        ActionServiceImpl::new(action_repository)
-            .record_action(RecordActionCommand::new(
-                deployment.id,
-                deployment.dataplane_id,
-                ActionType("deployment.delete".to_string()),
-                ActionTarget {
-                    kind: TargetKind::Deployment,
-                    id: deployment.id.0,
-                },
-                ActionPayload {
-                    data: deployment_payload(&deployment, serving, None, None),
-                },
-                ActionVersion(1),
-                ActionSource::System,
-            ))
-            .await?;
+        announce_deletion(&tx, &deployment, action_repository).await?;
 
         Ok(deployment)
     }
@@ -361,33 +455,7 @@ impl DeploymentService for AutharieService {
         .delete_deployment_for_organisation(identity, organisation_id, deployment_id)
         .await?;
         crate::application::cells::refuse_if_a_cell_runs_on(&tx, deployment.id).await?;
-        let serving = Serving::of(&tx, &deployment).await?;
-
-        // Recorded in the same transaction as the soft delete, for the reason
-        // the create path records one: an action that outlives a rolled-back
-        // deletion would have Genesis tear down resources for a deployment the
-        // control plane still considers live.
-        //
-        // Without this, deleting set `status = 'deleting'` and `deleted_at`,
-        // published nothing, and left the row in `deleting` for ever with the
-        // Kubernetes resources still running. Genesis has handled
-        // `deployment.delete` since it was written; nothing ever sent one.
-        ActionServiceImpl::new(action_repository)
-            .record_action(RecordActionCommand::new(
-                deployment.id,
-                deployment.dataplane_id,
-                ActionType("deployment.delete".to_string()),
-                ActionTarget {
-                    kind: TargetKind::Deployment,
-                    id: deployment.id.0,
-                },
-                ActionPayload {
-                    data: deployment_payload(&deployment, serving, None, None),
-                },
-                ActionVersion(1),
-                ActionSource::System,
-            ))
-            .await?;
+        announce_deletion(&tx, &deployment, action_repository).await?;
 
         Ok(deployment)
     }
@@ -489,6 +557,7 @@ impl DeploymentService for AutharieService {
         .await?;
         if renames {
             crate::application::cells::refuse_if_a_cell_runs_on(&tx, deployment_id).await?;
+            self.refuse_platform_hostname(&tx, &updated).await?;
         }
 
         Ok(updated)
@@ -516,6 +585,7 @@ impl DeploymentService for AutharieService {
         .await?;
         if renames {
             crate::application::cells::refuse_if_a_cell_runs_on(&tx, deployment_id).await?;
+            self.refuse_platform_hostname(&tx, &updated).await?;
         }
 
         Ok(updated)

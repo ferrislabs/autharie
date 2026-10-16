@@ -1,6 +1,7 @@
 use autharie_auth::Identity;
-use autharie_core::deployments::{
-    Deployment, ports::DeploymentService, provisioning::Provisioning,
+use autharie_core::{
+    cells::TenantRealm,
+    deployments::{Deployment, ports::DeploymentService, provisioning::Provisioning},
 };
 use axum::extract::{Extension, State};
 use axum_extra::routing::TypedPath;
@@ -8,13 +9,19 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
-use crate::{errors::ApiError, response::Response, state::AppState};
+use crate::{
+    errors::ApiError, handlers::deployments::TenantDeployment, response::Response, state::AppState,
+};
 
 #[derive(Serialize, ToSchema, PartialEq)]
 pub struct GetDeploymentResponse {
-    data: Deployment,
+    #[schema(value_type = Deployment)]
+    data: TenantDeployment,
     #[serde(skip_serializing_if = "Option::is_none")]
     provisioning: Option<Provisioning>,
+    /// The tenant realm, for a deployment hosted as a realm in a shared cell.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    realm: Option<TenantRealm>,
 }
 
 #[derive(TypedPath, IntoParams, Deserialize)]
@@ -58,12 +65,17 @@ pub async fn get_deployment_handler(
         .await?;
     let provisioning = state
         .service
-        .get_provisioning_for_organisation(identity, organisation_id, deployment_id)
+        .get_provisioning_for_organisation(identity.clone(), organisation_id, deployment_id)
+        .await?;
+    let realm = state
+        .service
+        .tenant_realm_for_organisation(identity, organisation_id, deployment_id)
         .await?;
 
     Ok(Response::OK(GetDeploymentResponse {
-        data: deployment,
+        data: TenantDeployment(deployment),
         provisioning,
+        realm,
     }))
 }
 

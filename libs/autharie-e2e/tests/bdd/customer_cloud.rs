@@ -156,7 +156,7 @@ impl CustomerCloudWorld {
             self.platform.clone(),
             Users,
             self.platform.clone(),
-            OneOrganisation::on(Plan::Free),
+            OneOrganisation::on(Plan::Starter),
             self.spy.clone(),
             PlacementWindows::new(chrono::Duration::seconds(90), chrono::Duration::minutes(30)),
             AllowAll,

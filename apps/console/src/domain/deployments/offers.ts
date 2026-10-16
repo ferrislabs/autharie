@@ -12,6 +12,10 @@ export type OfferAvailability = Schemas.OfferAvailability
  * one nobody looks at.
  */
 export const OFFER_COPY: Record<Offer, { label: string; description: string }> = {
+  free: {
+    label: 'Free',
+    description: 'A FerrisKey realm of your own on a shared, highly available instance.',
+  },
   sandbox: {
     label: 'Sandbox',
     description: 'Enough to try things against. Shares a cluster with other organisations.',
