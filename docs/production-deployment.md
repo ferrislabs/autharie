@@ -88,6 +88,10 @@ password, then:
 2. Inside it, create a public (SPA) client `autharie-console` with a redirect
    URI of `https://autharie.ferrislabs.fr/*` — this is `oidc.clientId` in the
    same file.
+3. In its settings, leave user registration **off**. The beta runs on an
+   access list: an account is made for each person with
+   `scripts/invite-user.sh` (section 7), and an open login page would let
+   anyone create an organisation and a free tenant.
 
 Copy the admin credentials into the `autharie` namespace — Ferriskey cannot
 hand a Secret across namespaces on its own, and the control plane's
@@ -145,3 +149,19 @@ platform:
 Commit, push to `main`, let ArgoCD's `selfHeal` pick it up. Once you have
 confirmed you hold platform rights through the console, remove the value and
 push again — it is a way back in, not a standing instruction.
+
+## 7. Beta accounts
+
+The beta is on an access list, so nobody can sign up from the login page.
+Make one account per person; the script prints a temporary password once,
+and FerrisKey asks for a new one at the first sign-in:
+
+```bash
+FERRISKEY_URL=https://id.autharie.fr/api \
+FERRISKEY_ADMIN_USER=admin \
+FERRISKEY_ADMIN_PASSWORD=<the password from section 3> \
+  scripts/invite-user.sh someone@example.com
+```
+
+Send the password through a different channel than the email address. An
+address that already has an account is refused (FerrisKey answers 400).
