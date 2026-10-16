@@ -47,18 +47,13 @@ resource "ferriskey_realm_settings" "autharie" {
   access_token_lifetime  = 300
   refresh_token_lifetime = 1800
 
-  # Self-registration, so a local stack can be signed into without a password
-  # having to be provisioned out of band.
-  #
-  # This is not a convenience that happens to be enabled -- it is the only way
-  # in. FerrisKey has no admin API for setting another user's password:
-  # `/users/{id}/credentials` is read-only, and `login-actions/update-password`
-  # applies to whoever holds the token. So a user created by Terraform exists
-  # and cannot log in.
+  # Self-registration, so a local stack can be signed into without inviting
+  # anyone first.
   #
   # Correct for a throwaway stack whose admin password is `admin`, and wrong
-  # for anything shared: on a real instance this is off, and accounts come from
-  # an identity provider or an invitation.
+  # for anything shared: on a real instance this is off, and accounts are made
+  # with `scripts/invite-user.sh`, which sets a temporary password through
+  # `PUT /users/{id}/reset-password`.
   user_registration_enabled = var.allow_self_registration
 }
 
