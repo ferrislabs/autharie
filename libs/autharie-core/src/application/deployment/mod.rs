@@ -607,7 +607,7 @@ mod tests {
     use super::*;
     use crate::ArchiveConfig;
     use crate::dataplane::value_objects::Region;
-    use crate::domain::deployments::{DeploymentKind, DeploymentName, DeploymentStatus};
+    use crate::domain::deployments::{DeploymentKind, DeploymentName};
     use crate::domain::user::UserId;
     use sqlx::postgres::PgPoolOptions;
     use std::time::Duration;
@@ -1006,8 +1006,7 @@ mod tests {
     async fn update_deployment_maps_pool_error() {
         let command = UpdateDeploymentCommand::new()
             .with_name(DeploymentName("name".to_string()))
-            .expect("a publishable name")
-            .with_status(DeploymentStatus::Pending);
+            .expect("a publishable name");
 
         let result = service()
             .update_deployment(DeploymentId(Uuid::new_v4()), command)
@@ -1020,8 +1019,7 @@ mod tests {
     async fn update_deployment_for_organisation_maps_pool_error() {
         let command = UpdateDeploymentCommand::new()
             .with_name(DeploymentName("name".to_string()))
-            .expect("a publishable name")
-            .with_status(DeploymentStatus::Pending);
+            .expect("a publishable name");
 
         let result = service()
             .update_deployment_for_organisation(

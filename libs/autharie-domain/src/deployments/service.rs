@@ -737,24 +737,6 @@ where
         if let Some(name) = command.name {
             deployment.name = name;
         }
-        if let Some(kind) = command.kind {
-            deployment.kind = kind;
-        }
-        if let Some(version) = command.version {
-            deployment.version = version;
-        }
-        if let Some(status) = command.status {
-            deployment.status = status;
-        }
-        if let Some(namespace) = command.namespace {
-            deployment.namespace = namespace;
-        }
-        if let Some(deployed_at) = command.deployed_at {
-            deployment.deployed_at = deployed_at;
-        }
-        if let Some(deleted_at) = command.deleted_at {
-            deployment.deleted_at = deleted_at;
-        }
         if let Some(log_shipping_enabled) = command.log_shipping_enabled {
             deployment.log_shipping_enabled = log_shipping_enabled;
         }
@@ -1337,12 +1319,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn update_deployment_applies_changes() {
+    async fn update_deployment_renames_and_leaves_the_platform_record_alone() {
         let mut mock_repo = MockDeploymentRepository::new();
         let mock_dataplane_repo = MockDataPlaneRepository::new();
         let deployment_id = DeploymentId(Uuid::new_v4());
         let organisation_id = OrganisationId(Uuid::new_v4());
         let deployment = sample_deployment(deployment_id, organisation_id);
+        let before = deployment.clone();
 
         mock_repo.expect_get_by_id().times(1).returning(move |_| {
             let deployment = deployment.clone();
@@ -1352,7 +1335,7 @@ mod tests {
         mock_repo
             .expect_update()
             .times(1)
-            .withf(|deployment| deployment.status == DeploymentStatus::Successful)
+            .withf(|deployment| deployment.name.0 == "renamed")
             .returning(|_| Box::pin(async { Ok(()) }));
 
         let service = DeploymentServiceImpl::new(
@@ -1364,16 +1347,34 @@ mod tests {
             windows(),
             Allowed,
         );
-        let command = UpdateDeploymentCommand::new().with_status(DeploymentStatus::Successful);
+        let command = UpdateDeploymentCommand::new()
+            .with_name(DeploymentName("renamed".to_string()))
+            .expect("a publishable name");
 
-        let result = service.update_deployment(deployment_id, command).await;
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap().status, DeploymentStatus::Successful);
+        let after = service
+            .update_deployment(deployment_id, command)
+            .await
+            .expect("renamed");
+
+        assert_eq!(after.name.0, "renamed");
+        assert_eq!(
+            (
+                after.kind,
+                &after.version,
+                after.status,
+                &after.namespace,
+                after.deployed_at
+            ),
+            (
+                before.kind,
+                &before.version,
+                before.status,
+                &before.namespace,
+                before.deployed_at
+            )
+        );
     }
 
-    /// The switch V1 (#294) reads before following a deployment's pods
-    /// continuously -- there is no console for it yet, so this update path is
-    /// how it gets turned on today.
     #[tokio::test]
     async fn update_deployment_can_turn_on_log_shipping() {
         let mut mock_repo = MockDeploymentRepository::new();

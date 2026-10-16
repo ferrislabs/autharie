@@ -1,17 +1,12 @@
 use autharie_auth::Identity;
-use autharie_core::{
-    deployments::{
-        Deployment, DeploymentKind, DeploymentName, DeploymentStatus,
-        commands::UpdateDeploymentCommand, ports::DeploymentService,
-    },
-    version::Version,
+use autharie_core::deployments::{
+    Deployment, DeploymentName, commands::UpdateDeploymentCommand, ports::DeploymentService,
 };
 use axum::{
     Json,
-    extract::{Extension, State},
+    extract::{Extension, State, rejection::JsonRejection},
 };
 use axum_extra::routing::TypedPath;
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
@@ -19,13 +14,9 @@ use uuid::Uuid;
 use crate::{errors::ApiError, response::Response, state::AppState};
 
 #[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct UpdateDeploymentRequest {
     pub name: Option<String>,
-    pub kind: Option<String>,
-    pub version: Option<String>,
-    pub status: Option<String>,
-    pub namespace: Option<String>,
-    pub deployed_at: Option<String>,
     /// Turns Herald's continuous shipping of this deployment's logs to the
     /// search index on or off (#294). The console does not drive this yet
     /// (V3, #296).
@@ -44,18 +35,30 @@ pub struct UpdateDeploymentRoute {
     pub deployment_id: Uuid,
 }
 
+fn refused(rejection: JsonRejection) -> ApiError {
+    match rejection {
+        JsonRejection::JsonDataError(error) => ApiError::Unprocessable {
+            reason: error.body_text(),
+        },
+        other => ApiError::BadRequest {
+            reason: other.body_text(),
+        },
+    }
+}
+
 #[utoipa::path(
     patch,
     path = "/{organisation_id}/deployments/{deployment_id}",
     summary = "update deployment",
     tag = "deployments",
-    description = "Update a deployment within the specified organisation.",
+    description = "Update the settings of a deployment within the specified organisation: its name and its log shipping. Any other field is refused with a 422.",
     request_body = UpdateDeploymentRequest,
     params(UpdateDeploymentRoute),
     responses(
         (status = 200, description = "Deployment updated successfully", body = UpdateDeploymentResponse),
         (status = 400, description = "Invalid request data", body = ApiError),
         (status = 401, description = "Unauthorized", body = ApiError),
+        (status = 422, description = "The body carries a field that is not a deployment setting", body = ApiError),
         (status = 500, description = "Internal Server Error", body = ApiError)
     ),
     security(
@@ -69,44 +72,15 @@ pub async fn update_deployment_handler(
     }: UpdateDeploymentRoute,
     State(state): State<AppState>,
     Extension(identity): Extension<Identity>,
-    Json(request): Json<UpdateDeploymentRequest>,
+    request: Result<Json<UpdateDeploymentRequest>, JsonRejection>,
 ) -> Result<Response<UpdateDeploymentResponse>, ApiError> {
+    let Json(request) = request.map_err(refused)?;
     let organisation_id = organisation_id.into();
     let deployment_id = deployment_id.into();
 
     let mut command = UpdateDeploymentCommand::new();
     if let Some(name) = request.name {
         command = command.with_name(DeploymentName(name))?;
-    }
-    if let Some(kind) = request.kind {
-        let kind = DeploymentKind::try_from(kind.as_str()).map_err(|e| ApiError::BadRequest {
-            reason: e.to_string(),
-        })?;
-        command = command.with_kind(kind);
-    }
-    if let Some(version) = request.version {
-        let version = Version::parse(&version).map_err(|e| ApiError::BadRequest {
-            reason: e.to_string(),
-        })?;
-        command = command.with_version(version);
-    }
-    if let Some(status) = request.status {
-        let status =
-            DeploymentStatus::try_from(status.as_str()).map_err(|e| ApiError::BadRequest {
-                reason: e.to_string(),
-            })?;
-        command = command.with_status(status);
-    }
-    if let Some(namespace) = request.namespace {
-        command = command.with_namespace(namespace);
-    }
-    if let Some(deployed_at) = request.deployed_at {
-        let parsed = DateTime::parse_from_rfc3339(&deployed_at)
-            .map_err(|e| ApiError::BadRequest {
-                reason: format!("Invalid deployed_at: {}", e),
-            })?
-            .with_timezone(&Utc);
-        command = command.with_deployed_at(Some(parsed));
     }
     if let Some(log_shipping_enabled) = request.log_shipping_enabled {
         command = command.with_log_shipping_enabled(log_shipping_enabled);
@@ -122,96 +96,81 @@ pub async fn update_deployment_handler(
 
 #[cfg(test)]
 mod tests {
+    use axum::{
+        Router,
+        body::Body,
+        http::{Request, StatusCode},
+    };
+    use axum_extra::routing::RouterExt;
+    use serde_json::Value;
+    use tower::ServiceExt;
+
     use super::*;
     use crate::test_helpers::{app_state, user_identity};
 
-    #[tokio::test]
-    async fn update_deployment_rejects_invalid_kind() {
-        let state = app_state();
-        let request = UpdateDeploymentRequest {
-            name: None,
-            kind: Some("invalid".to_string()),
-            version: None,
-            status: None,
-            namespace: None,
-            deployed_at: None,
-            log_shipping_enabled: None,
-        };
+    async fn patch(body: &str) -> (StatusCode, Value) {
+        let app = Router::new()
+            .typed_patch(update_deployment_handler)
+            .layer(Extension(user_identity(
+                "9f3f7a4d-52a3-4a1a-9b3f-0c1b9b7d9a6f",
+            )))
+            .with_state(app_state());
+        let request = Request::builder()
+            .method("PATCH")
+            .uri(format!(
+                "/organisations/{}/deployments/{}",
+                Uuid::new_v4(),
+                Uuid::new_v4()
+            ))
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .expect("a request");
 
-        let result = update_deployment_handler(
-            UpdateDeploymentRoute {
-                organisation_id: Uuid::new_v4(),
-                deployment_id: Uuid::new_v4(),
-            },
-            State(state),
-            Extension(user_identity("9f3f7a4d-52a3-4a1a-9b3f-0c1b9b7d9a6f")),
-            Json(request),
+        let response = app.oneshot(request).await.expect("a response");
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("a body");
+
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
         )
-        .await;
-
-        // The handler no longer rewrites every failure into one message.
-        // Which error a missing deployment produces is pinned in errors.rs,
-        // where it can be stated without a database.
-        assert!(result.is_err());
     }
 
     #[tokio::test]
-    async fn update_deployment_rejects_invalid_status() {
-        let state = app_state();
-        let request = UpdateDeploymentRequest {
-            name: None,
-            kind: None,
-            version: None,
-            status: Some("bad".to_string()),
-            namespace: None,
-            deployed_at: None,
-            log_shipping_enabled: None,
-        };
+    async fn every_platform_field_is_refused_by_name() {
+        for (field, value) in [
+            ("status", r#""successful""#),
+            ("namespace", r#""elsewhere""#),
+            ("kind", r#""keycloak""#),
+            ("version", r#""9.9.9""#),
+            ("deployed_at", r#""2026-01-01T00:00:00Z""#),
+            ("deleted_at", "null"),
+        ] {
+            let (status, body) = patch(&format!(r#"{{"{field}": {value}}}"#)).await;
 
-        let result = update_deployment_handler(
-            UpdateDeploymentRoute {
-                organisation_id: Uuid::new_v4(),
-                deployment_id: Uuid::new_v4(),
-            },
-            State(state),
-            Extension(user_identity("9f3f7a4d-52a3-4a1a-9b3f-0c1b9b7d9a6f")),
-            Json(request),
-        )
-        .await;
-
-        // The handler no longer rewrites every failure into one message.
-        // Which error a missing deployment produces is pinned in errors.rs,
-        // where it can be stated without a database.
-        assert!(result.is_err());
+            assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{field}: {body}");
+            assert_eq!(body["code"], "E_UNPROCESSABLE", "{field}: {body}");
+            let message = body["message"].as_str().expect("a message");
+            assert!(
+                message.contains(&format!("`{field}`")),
+                "{field}: {message}"
+            );
+        }
     }
 
     #[tokio::test]
-    async fn update_deployment_rejects_invalid_deployed_at() {
-        let state = app_state();
-        let request = UpdateDeploymentRequest {
-            name: None,
-            kind: None,
-            version: None,
-            status: None,
-            namespace: None,
-            deployed_at: Some("not-a-date".to_string()),
-            log_shipping_enabled: None,
-        };
+    async fn a_platform_field_beside_a_setting_is_still_refused() {
+        let (status, body) = patch(r#"{"name": "renamed", "status": "successful"}"#).await;
 
-        let result = update_deployment_handler(
-            UpdateDeploymentRoute {
-                organisation_id: Uuid::new_v4(),
-                deployment_id: Uuid::new_v4(),
-            },
-            State(state),
-            Extension(user_identity("9f3f7a4d-52a3-4a1a-9b3f-0c1b9b7d9a6f")),
-            Json(request),
-        )
-        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    }
 
-        // The handler no longer rewrites every failure into one message.
-        // Which error a missing deployment produces is pinned in errors.rs,
-        // where it can be stated without a database.
-        assert!(result.is_err());
+    #[tokio::test]
+    async fn malformed_json_stays_a_bad_request() {
+        let (status, body) = patch("{").await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     }
 }
