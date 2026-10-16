@@ -16,7 +16,9 @@ use crate::{
     backups::{
         ArchiveDestination, BackupSchedule, StoreEncryption, ports::BackupScheduleRepository,
     },
-    cells::{CellRepository, PlacementError, RealmRequests, TenantRealm},
+    cells::{
+        CellRepository, PlacementError, RealmRequests, TenantAdministratorRepository, TenantRealm,
+    },
     deployments::{
         Deployment, DeploymentId,
         commands::{CreateDeploymentCommand, UpdateDeploymentCommand},
@@ -279,11 +281,14 @@ impl AutharieService {
         }
 
         let refusal = cell_repository.realm_refusal(deployment.id).await?;
-        Ok(TenantRealm::of(
-            &deployment,
-            self.deployment_domain(),
-            refusal,
-        ))
+        let administrator =
+            autharie_postgres::cells::PostgresTenantAdministratorRepository::new(&tx)
+                .describe(deployment.id, chrono::Utc::now())
+                .await?;
+        Ok(
+            TenantRealm::of(&deployment, self.deployment_domain(), refusal)
+                .map(|realm| realm.with_administrator(administrator)),
+        )
     }
 }
 

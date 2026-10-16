@@ -737,6 +737,8 @@ mod tests {
                     outcome: "deleted".to_string(),
                     duration_seconds: None,
                     reason: None,
+                    administrator: None,
+                    request_id: None,
                 }])
             })
         });
@@ -792,6 +794,8 @@ mod tests {
                     outcome: "drill_succeeded".to_string(),
                     duration_seconds: Some(212),
                     reason: None,
+                    administrator: None,
+                    request_id: None,
                 }])
             })
         });
@@ -850,6 +854,8 @@ mod tests {
                     outcome: "deleted".to_string(),
                     duration_seconds: None,
                     reason: None,
+                    administrator: None,
+                    request_id: None,
                 }])
             })
         });

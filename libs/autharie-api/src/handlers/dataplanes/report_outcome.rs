@@ -1,7 +1,9 @@
 use autharie_auth::Identity;
 use autharie_core::{
-    dataplane::{ports::DataPlaneService, value_objects::DataPlaneId},
+    cells::InitialAdministrator,
+    dataplane::{credential::SecretString, ports::DataPlaneService, value_objects::DataPlaneId},
     deployments::{DeploymentId, commands::ReportDeploymentOutcomeCommand},
+    tenant_access::ReportedIssue,
 };
 use axum::{Extension, Json, extract::State};
 use axum_extra::routing::TypedPath;
@@ -9,6 +11,8 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
 use crate::{errors::ApiError, response::Response, state::AppState};
+
+const ADMINISTRATOR_ISSUED: &str = "administrator_issued";
 
 #[derive(TypedPath, IntoParams, Deserialize)]
 #[typed_path("/dataplanes/{dataplane_id}/deployments/{deployment_id}/outcome")]
@@ -19,7 +23,8 @@ pub struct ReportOutcomeRoute {
 
 #[derive(Deserialize, ToSchema)]
 pub struct ReportOutcomeRequest {
-    /// What the data plane observed: `running`, `failed` or `deleted`.
+    /// What the data plane observed: `running`, `failed` or `deleted`, or
+    /// `administrator_issued` for a realm administrator issued on request.
     ///
     /// All three are things a component saw rather than inferred -- the
     /// operator wrote `Running`/`ready` or `Failed` onto the resource, and
@@ -40,6 +45,30 @@ pub struct ReportOutcomeRequest {
     /// Why the data plane gave up, sent with `failed` when it knows.
     #[serde(default)]
     pub reason: Option<String>,
+
+    /// The realm administrator Genesis issued, sent only with the
+    /// `administrator_issued` outcome, which never changes a deployment's
+    /// status. Kept sealed until an organisation administrator reveals it.
+    #[serde(default)]
+    pub administrator: Option<ReportedAdministrator>,
+
+    /// The issue request an `administrator_issued` outcome answers. An
+    /// answer to an older request is ignored.
+    #[serde(default)]
+    pub request_id: Option<uuid::Uuid>,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct ReportedAdministrator {
+    pub username: String,
+    pub password: String,
+}
+
+impl ReportedAdministrator {
+    fn into_administrator(self) -> Result<InitialAdministrator, ApiError> {
+        InitialAdministrator::parse(&self.username, SecretString::new(self.password))
+            .map_err(|reason| ApiError::BadRequest { reason })
+    }
 }
 
 #[derive(Serialize, ToSchema, PartialEq)]
@@ -88,6 +117,30 @@ pub async fn report_outcome_handler(
     Extension(identity): Extension<Identity>,
     Json(request): Json<ReportOutcomeRequest>,
 ) -> Result<Response<ReportOutcomeResponse>, ApiError> {
+    if request.outcome == ADMINISTRATOR_ISSUED {
+        let (Some(administrator), Some(request_id)) = (request.administrator, request.request_id)
+        else {
+            return Ok(Response::OK(ReportOutcomeResponse {
+                data: ReportOutcomeResponseData { recorded: false },
+            }));
+        };
+        let recorded = state
+            .service
+            .keep_tenant_administrator(
+                identity,
+                ReportedIssue {
+                    dataplane: dataplane_id,
+                    deployment: deployment_id,
+                    request: request_id,
+                },
+                administrator.into_administrator()?,
+            )
+            .await?;
+        return Ok(Response::OK(ReportOutcomeResponse {
+            data: ReportOutcomeResponseData { recorded },
+        }));
+    }
+
     let command = ReportDeploymentOutcomeCommand::parse(
         dataplane_id,
         deployment_id,
@@ -137,5 +190,32 @@ mod tests {
                 "{outcome}"
             );
         }
+    }
+
+    #[test]
+    fn a_malformed_administrator_is_refused_without_repeating_its_password() {
+        let request: ReportOutcomeRequest = serde_json::from_value(serde_json::json!({
+            "outcome": "running",
+            "administrator": { "username": " ", "password": "Leaky-Pass-9!" },
+        }))
+        .expect("parsed");
+
+        let error = request
+            .administrator
+            .expect("present")
+            .into_administrator()
+            .err()
+            .expect("refused");
+
+        let shown = format!("{error} {error:?}");
+        assert!(!shown.contains("Leaky-Pass-9!"), "{shown}");
+    }
+
+    #[test]
+    fn an_outcome_without_an_administrator_still_parses() {
+        let request: ReportOutcomeRequest =
+            serde_json::from_value(serde_json::json!({ "outcome": "running" })).expect("parsed");
+
+        assert!(request.administrator.is_none());
     }
 }

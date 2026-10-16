@@ -1,6 +1,6 @@
 use autharie_core::{
     CoreError,
-    cells::{CellError, RealmError},
+    cells::{AdministratorCredentialError, CellError, RealmError},
     dataplane::credential::CredentialError,
 };
 use axum::{Json, http::StatusCode, response::IntoResponse};
@@ -34,6 +34,9 @@ pub enum ApiError {
 
     #[error("{reason}")]
     NotFound { reason: String },
+
+    #[error("{reason}")]
+    Gone { reason: String },
 
     #[error("{reason}")]
     Unprocessable { reason: String },
@@ -126,6 +129,11 @@ impl IntoResponse for ApiError {
                     StatusCode::NOT_FOUND,
                     reason,
                 )),
+            )
+                .into_response(),
+            ApiError::Gone { reason } => (
+                StatusCode::GONE,
+                Json(ApiErrorResponse::new("E_GONE", StatusCode::GONE, reason)),
             )
                 .into_response(),
             ApiError::Unprocessable { reason } => (
@@ -351,6 +359,22 @@ impl From<CoreError> for ApiError {
                     reason: "the credential store failed".to_string(),
                 }
             }
+            CoreError::TenantAdministrator(error) => match error {
+                AdministratorCredentialError::NotIssued => ApiError::NotFound {
+                    reason: error.to_string(),
+                },
+                AdministratorCredentialError::NotAnAdministrator => ApiError::Forbidden {
+                    reason: error.to_string(),
+                },
+                AdministratorCredentialError::AlreadyIssuing
+                | AdministratorCredentialError::NotARealm => ApiError::Conflict {
+                    reason: error.to_string(),
+                },
+                AdministratorCredentialError::AlreadyRevealed
+                | AdministratorCredentialError::Expired => ApiError::Gone {
+                    reason: error.to_string(),
+                },
+            },
             CoreError::Provision(_) => ApiError::BadGateway {
                 reason: value.to_string(),
             },
@@ -982,6 +1006,43 @@ mod tests {
                 ApiError::from(error).into_response().status(),
                 status,
                 "{message}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_realm_administrator_credential_is_gone_once_revealed_or_expired() {
+        let cases = [
+            (
+                AdministratorCredentialError::NotIssued,
+                StatusCode::NOT_FOUND,
+            ),
+            (
+                AdministratorCredentialError::NotAnAdministrator,
+                StatusCode::FORBIDDEN,
+            ),
+            (
+                AdministratorCredentialError::AlreadyRevealed,
+                StatusCode::GONE,
+            ),
+            (AdministratorCredentialError::Expired, StatusCode::GONE),
+            (
+                AdministratorCredentialError::AlreadyIssuing,
+                StatusCode::CONFLICT,
+            ),
+            (
+                AdministratorCredentialError::NotARealm,
+                StatusCode::CONFLICT,
+            ),
+        ];
+
+        for (error, status) in cases {
+            assert_eq!(
+                ApiError::from(CoreError::from(error.clone()))
+                    .into_response()
+                    .status(),
+                status,
+                "{error}"
             );
         }
     }

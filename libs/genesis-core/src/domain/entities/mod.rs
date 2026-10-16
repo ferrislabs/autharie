@@ -8,4 +8,5 @@ pub mod identity_instance;
 pub mod network_access_payload;
 pub mod outcome;
 pub mod realm_payload;
+pub mod tenant_access;
 pub mod upgrade_payload;

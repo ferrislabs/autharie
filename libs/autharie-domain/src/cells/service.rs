@@ -125,12 +125,15 @@ impl CreateCellCommand {
     }
 }
 
+pub const CELL_MIN_FERRISKEY: Version = Version::new(0, 9, 0);
+
 pub fn release_for_cells(releases: &[Release]) -> Result<Version, CellError> {
     releases
         .iter()
         .filter(|release| {
             release.id.kind == DeploymentKind::Ferriskey
                 && release.status == ReleaseStatus::Available
+                && release.id.version >= CELL_MIN_FERRISKEY
         })
         .map(|release| &release.id.version)
         .max()
@@ -388,6 +391,21 @@ mod tests {
 
         assert_eq!(release_for_cells(&releases), Ok(Version::new(2, 1, 0)));
         assert_eq!(release_for_cells(&releases[..1]), Err(CellError::NoRelease));
+    }
+
+    #[test]
+    fn a_cell_never_runs_a_release_that_lets_a_tenant_grant_what_it_does_not_hold() {
+        let below = Version::new(0, 8, 9);
+        let releases = [
+            release(below.clone(), ReleaseStatus::Available),
+            release(CELL_MIN_FERRISKEY, ReleaseStatus::Available),
+        ];
+
+        assert_eq!(release_for_cells(&releases), Ok(CELL_MIN_FERRISKEY));
+        assert_eq!(
+            release_for_cells(&[release(below, ReleaseStatus::Available)]),
+            Err(CellError::NoRelease)
+        );
     }
 
     /// @spec-fpr-12

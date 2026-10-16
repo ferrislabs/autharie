@@ -2693,6 +2693,190 @@
         ]
       }
     },
+    "/organisations/{organisation_id}/deployments/{deployment_id}/administrator/issue": {
+      "post": {
+        "tags": [
+          "deployments"
+        ],
+        "summary": "issue a new administrator credential for a free deployment's realm",
+        "description": "Asks the cell to set a new temporary password on the realm's administrator. The password in force so far stops working. The new one can be revealed once it has arrived.",
+        "operationId": "issue_administrator_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "The credential is being issued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueAdministratorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an organisation administrator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Already being issued, or not a serving realm",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/organisations/{organisation_id}/deployments/{deployment_id}/administrator/reveal": {
+      "post": {
+        "tags": [
+          "deployments"
+        ],
+        "summary": "reveal the first administrator of a free deployment's realm, once",
+        "description": "Returns the username and temporary password of the realm's first administrator and forgets the password. Every later call answers 410.",
+        "operationId": "reveal_administrator_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The credential, shown this once",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevealAdministratorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an organisation administrator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No administrator yet",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Already revealed, or expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/organisations/{organisation_id}/deployments/{deployment_id}/backup-schedule": {
       "get": {
         "tags": [
@@ -8926,6 +9110,15 @@
         "format": "int32",
         "minimum": 0
       },
+      "AdministratorCredential": {
+        "type": "string",
+        "enum": [
+          "issuing",
+          "ready",
+          "revealed",
+          "expired"
+        ]
+      },
       "AllowList": {
         "type": "array",
         "items": {
@@ -9045,6 +9238,25 @@
             ],
             "properties": {
               "NotFound": {
+                "type": "object",
+                "required": [
+                  "reason"
+                ],
+                "properties": {
+                  "reason": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "Gone"
+            ],
+            "properties": {
+              "Gone": {
                 "type": "object",
                 "required": [
                   "reason"
@@ -11778,6 +11990,17 @@
         "description": "The address an invitation is written to.\n\nLowercased, because that is how it is matched against whoever turns up\nholding the link. Two spellings of one address being treated as two\naddresses is how an invitation stops working for the person it was for.",
         "example": "colleague@acme.com"
       },
+      "IssueAdministratorResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TenantAdministrator"
+          }
+        }
+      },
       "KeyName": {
         "type": "string",
         "description": "The key inside its manager.",
@@ -13312,9 +13535,20 @@
           "outcome"
         ],
         "properties": {
+          "administrator": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReportedAdministrator",
+                "description": "The realm administrator Genesis issued, sent only with the\n`administrator_issued` outcome, which never changes a deployment's\nstatus. Kept sealed until an organisation administrator reveals it."
+              }
+            ]
+          },
           "outcome": {
             "type": "string",
-            "description": "What the data plane observed: `running`, `failed` or `deleted`.\n\nAll three are things a component saw rather than inferred -- the\noperator wrote `Running`/`ready` or `Failed` onto the resource, and\ndeletion is reported by whatever removed it. None of them is a timeout,\nwhich is why none needs a policy about when to give up."
+            "description": "What the data plane observed: `running`, `failed` or `deleted`, or\n`administrator_issued` for a realm administrator issued on request.\n\nAll three are things a component saw rather than inferred -- the\noperator wrote `Running`/`ready` or `Failed` onto the resource, and\ndeletion is reported by whatever removed it. None of them is a timeout,\nwhich is why none needs a policy about when to give up."
           },
           "reason": {
             "type": [
@@ -13322,6 +13556,14 @@
               "null"
             ],
             "description": "Why the data plane gave up, sent with `failed` when it knows."
+          },
+          "request_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The issue request an `administrator_issued` outcome answers. An\nanswer to an older request is ignored."
           },
           "version": {
             "type": [
@@ -13389,6 +13631,21 @@
           "recorded": {
             "type": "integer",
             "minimum": 0
+          }
+        }
+      },
+      "ReportedAdministrator": {
+        "type": "object",
+        "required": [
+          "username",
+          "password"
+        ],
+        "properties": {
+          "password": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
           }
         }
       },
@@ -13513,6 +13770,33 @@
             "description": "Never fewer than this many, whatever their age.\n\nNon zero, so there is no way to express a policy that deletes the last\narchive a deployment has.",
             "example": 7,
             "minimum": 0
+          }
+        }
+      },
+      "RevealAdministratorResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/RevealedAdministrator"
+          }
+        }
+      },
+      "RevealedAdministrator": {
+        "type": "object",
+        "required": [
+          "username",
+          "password"
+        ],
+        "properties": {
+          "password": {
+            "type": "string",
+            "description": "Temporary: the realm asks for a new password at the first sign-in."
+          },
+          "username": {
+            "type": "string"
           }
         }
       },
@@ -14095,12 +14379,61 @@
           }
         }
       },
+      "TenantAdministrator": {
+        "type": "object",
+        "required": [
+          "credential",
+          "stale",
+          "requested_at"
+        ],
+        "properties": {
+          "credential": {
+            "$ref": "#/components/schemas/AdministratorCredential"
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "requested_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "stale": {
+            "type": "boolean"
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "TenantRealm": {
         "type": "object",
         "required": [
           "name"
         ],
         "properties": {
+          "administrator": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TenantAdministrator"
+              }
+            ]
+          },
+          "console": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "issuer": {
             "type": [
               "string",

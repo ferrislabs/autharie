@@ -1,8 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { PROVISIONING_POLL_MS, stillProvisioning } from '@/domain/cloud-providers/provisioning'
 import { anySettling, settlingRefetchInterval } from '@/domain/deployments/settling'
+import { waitingForAdministrator } from '@/domain/deployments/tenant-realm'
 import { useResolvedOrganisationId } from '@/domain/organisations/hooks/use-resolved-organisation-id'
 import { selectAccessToken, useAuthStore } from '@/stores/auth'
+
+const ADMINISTRATOR_ISSUE_POLL_MS = 3000
 
 export const useGetDeployments = () => {
   const organisationId = useResolvedOrganisationId()
@@ -40,7 +43,10 @@ export const useGetDeployment = (deploymentId: string | null) => {
     enabled: !!organisationId && !!deploymentId && !!accessToken,
     refetchInterval: (query) =>
       settlingRefetchInterval(query.state.data?.data?.status) ||
-      (stillProvisioning(query.state.data?.provisioning) ? PROVISIONING_POLL_MS : false),
+      (stillProvisioning(query.state.data?.provisioning) ? PROVISIONING_POLL_MS : false) ||
+      (waitingForAdministrator(query.state.data?.realm?.administrator)
+        ? ADMINISTRATOR_ISSUE_POLL_MS
+        : false),
   })
 }
 
@@ -91,5 +97,47 @@ export const useGetDeploymentActions = (deploymentId: string | null) => {
       query: { limit: 50 },
     }).queryOptions,
     enabled: !!organisationId && !!deploymentId && !!accessToken,
+  })
+}
+
+/**
+ * Reveals the first administrator of a free deployment's realm. The control
+ * plane forgets the password as it answers, so the result lives in the
+ * component that asked and nowhere else.
+ */
+export const useRevealTenantAdministrator = () => {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    ...window.api.mutation(
+      'post',
+      '/organisations/{organisation_id}/deployments/{deployment_id}/administrator/reveal'
+    ).mutationOptions,
+    gcTime: 0,
+    onSettled: async (_, __, variables) => {
+      const keys = window.api.get('/organisations/{organisation_id}/deployments/{deployment_id}', {
+        path: variables.path,
+      }).queryKey
+
+      await queryClient.invalidateQueries({ queryKey: keys })
+    },
+  })
+}
+
+export const useIssueTenantAdministrator = () => {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    ...window.api.mutation(
+      'post',
+      '/organisations/{organisation_id}/deployments/{deployment_id}/administrator/issue'
+    ).mutationOptions,
+    onSettled: async (_, __, variables) => {
+      const keys = window.api.get('/organisations/{organisation_id}/deployments/{deployment_id}', {
+        path: variables.path,
+      }).queryKey
+
+      await queryClient.invalidateQueries({ queryKey: keys })
+    },
   })
 }

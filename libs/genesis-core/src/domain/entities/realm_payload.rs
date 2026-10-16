@@ -59,6 +59,8 @@ pub struct RealmPayloadV1 {
     pub realm: RealmName,
     #[serde(default)]
     pub hostname: Option<String>,
+    #[serde(default)]
+    pub request_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

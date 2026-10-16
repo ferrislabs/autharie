@@ -2666,6 +2666,7 @@ dependencies = [
  "kube",
  "lapin",
  "mockall",
+ "rand 0.9.5",
  "reqwest",
  "serde",
  "serde_json",
@@ -2675,6 +2676,7 @@ dependencies = [
  "tokio-stream",
  "tracing",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]
@@ -2877,6 +2879,7 @@ dependencies = [
  "tonic",
  "tracing",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]

@@ -9,7 +9,9 @@ import {
   isResizable,
 } from '@/domain/cloud-providers/resize'
 import { availabilityView } from '../../availability'
+import { useResolvedOrganisationId } from '@/domain/organisations/hooks/use-resolved-organisation-id'
 import { tenantRealmView } from '../../tenant-realm'
+import { TenantAdministratorFeature } from './tenant-administrator-feature'
 import { PageDeploymentDetail } from '../ui/page-deployment-detail'
 
 export default function PageDeploymentDetailFeature() {
@@ -17,6 +19,7 @@ export default function PageDeploymentDetailFeature() {
 
   const deployment = useGetDeployment(deploymentId ?? null)
   const actions = useGetDeploymentActions(deploymentId ?? null)
+  const organisationId = useResolvedOrganisationId()
 
   const canViewEstate = useHoldsPlatformRight('view_estate')
   const uptime = useGetDeploymentUptime(deploymentId ?? null, canViewEstate)
@@ -48,13 +51,24 @@ export default function PageDeploymentDetailFeature() {
   const resizable =
     subject && profile && credentialId && isResizable(subject, deployment.data?.provisioning)
 
+  const realm = tenantRealmView(deployment.data?.realm)
   return (
     <PageDeploymentDetail
       deployment={deployment.data?.data}
       actions={filteredActions}
       availability={availability}
       provisioning={deployment.data?.provisioning}
-      realm={tenantRealmView(deployment.data?.realm)}
+      realm={realm}
+      administratorPanel={
+        realm?.administrator && deploymentId ? (
+          <TenantAdministratorFeature
+            key={deploymentId}
+            organisationId={organisationId ?? undefined}
+            deploymentId={deploymentId}
+            administrator={realm.administrator}
+          />
+        ) : undefined
+      }
       clusterPanel={
         resizable ? (
           <ClusterPanelFeature
