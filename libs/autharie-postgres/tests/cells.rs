@@ -1363,11 +1363,11 @@ async fn backdate_actions(
     Ok(())
 }
 
-async fn listed_as_stalled(tx: &SharedTx<'_>, id: DeploymentId) -> Result<bool, CoreError> {
-    let stalled = PostgresCellRepository::new(tx)
-        .stalled_realms(Utc::now() - REALM_QUIET_PERIOD, 10_000)
-        .await?;
-    Ok(stalled.contains(&id))
+async fn taken_as_stalled(tx: &SharedTx<'_>) -> Result<Vec<DeploymentId>, CoreError> {
+    let now = Utc::now();
+    PostgresCellRepository::new(tx)
+        .take_stalled_realms(now, now - REALM_QUIET_PERIOD, 10_000)
+        .await
 }
 
 #[tokio::test]
@@ -1438,7 +1438,10 @@ async fn a_realm_with_a_request_still_outstanding_is_not_asked_again() {
             realm_requests(&tx).create(&tenant, "cells.test").await?;
             backdate_actions(&tx, tenant.id, status, Duration::minutes(30)).await?;
 
-            assert!(!listed_as_stalled(&tx, tenant.id).await?, "{status}");
+            assert!(
+                !taken_as_stalled(&tx).await?.contains(&tenant.id),
+                "{status}"
+            );
         }
         Ok(())
     })
@@ -1483,9 +1486,10 @@ async fn a_realm_is_not_stalled_before_ten_quiet_minutes() {
             .await?;
         backdate_actions(&tx, long_asked.id, "published", Duration::minutes(20)).await?;
 
-        assert!(!listed_as_stalled(&tx, recently_changed.id).await?);
-        assert!(!listed_as_stalled(&tx, recently_asked.id).await?);
-        assert!(listed_as_stalled(&tx, long_asked.id).await?);
+        let taken = taken_as_stalled(&tx).await?;
+        assert!(!taken.contains(&recently_changed.id));
+        assert!(!taken.contains(&recently_asked.id));
+        assert!(taken.contains(&long_asked.id));
         Ok(())
     })
     .await;
@@ -1503,7 +1507,10 @@ async fn only_a_realm_still_on_its_way_is_stalled() {
         ] {
             let tenant =
                 stalled_since(&tx, &world, cell, status.clone(), Duration::minutes(30)).await?;
-            assert!(!listed_as_stalled(&tx, tenant.id).await?, "{status:?}");
+            assert!(
+                !taken_as_stalled(&tx).await?.contains(&tenant.id),
+                "{status:?}"
+            );
         }
 
         let mut dedicated = deployment(&world, &unique("d"), Distribution::Shared);
@@ -1512,7 +1519,93 @@ async fn only_a_realm_still_on_its_way_is_stalled() {
         PostgresDeploymentRepository::new(&tx)
             .insert(dedicated.clone())
             .await?;
-        assert!(!listed_as_stalled(&tx, dedicated.id).await?);
+        assert!(!taken_as_stalled(&tx).await?.contains(&dedicated.id));
+        Ok(())
+    })
+    .await;
+}
+
+async fn resent_at(
+    tx: &SharedTx<'_>,
+    ids: &[DeploymentId],
+) -> Result<Vec<Option<DateTime<Utc>>>, CoreError> {
+    let ids: Vec<Uuid> = ids.iter().map(|id| id.0).collect();
+    sqlx::query_scalar("SELECT realm_resent_at FROM deployments WHERE id = ANY($1)")
+        .bind(ids)
+        .fetch_all(&mut ***tx.lock().await)
+        .await
+        .map_err(db_error)
+}
+
+#[tokio::test]
+async fn realms_left_out_of_a_full_run_are_taken_by_the_next_one() {
+    scratch(async |tx| {
+        let world = seed_world(&tx).await?;
+        let cell = open_cell(&tx, &world, &world.region, 40, 0).await?;
+        let mut stuck = Vec::new();
+        for _ in 0..30 {
+            let tenant = stalled_since(
+                &tx,
+                &world,
+                cell,
+                DeploymentStatus::InProgress,
+                Duration::days(20_000),
+            )
+            .await?;
+            stuck.push(tenant.id);
+        }
+        let attempted = |stamps: Vec<Option<DateTime<Utc>>>| {
+            stamps.iter().filter(|stamp| stamp.is_some()).count()
+        };
+
+        realm_requests(&tx).resend_stalled(Utc::now(), None).await?;
+        assert_eq!(attempted(resent_at(&tx, &stuck).await?), 25);
+
+        realm_requests(&tx).resend_stalled(Utc::now(), None).await?;
+        assert_eq!(attempted(resent_at(&tx, &stuck).await?), 30);
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_realm_just_asked_for_again_waits_behind_one_never_asked() {
+    scratch(async |tx| {
+        let world = seed_world(&tx).await?;
+        let cell = open_cell(&tx, &world, &world.region, 5, 0).await?;
+        let cells = PostgresCellRepository::new(&tx);
+        let now = Utc::now();
+        let older = stalled_since(
+            &tx,
+            &world,
+            cell,
+            DeploymentStatus::Deleting,
+            Duration::days(20_001),
+        )
+        .await?;
+        let younger = stalled_since(
+            &tx,
+            &world,
+            cell,
+            DeploymentStatus::Deleting,
+            Duration::days(20_000),
+        )
+        .await?;
+
+        let first = cells
+            .take_stalled_realms(now - Duration::minutes(20), now - Duration::minutes(30), 1)
+            .await?;
+        assert_eq!(first, [older.id]);
+
+        let next = cells
+            .take_stalled_realms(now, now - REALM_QUIET_PERIOD, 1)
+            .await?;
+        assert_eq!(next, [younger.id]);
+
+        let after = cells
+            .take_stalled_realms(now, now - REALM_QUIET_PERIOD, 1)
+            .await?;
+        assert_eq!(after, [older.id]);
         Ok(())
     })
     .await;

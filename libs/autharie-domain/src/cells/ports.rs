@@ -51,8 +51,9 @@ pub trait CellRepository: Send + Sync {
         deployment: DeploymentId,
     ) -> impl Future<Output = Result<Option<String>, CoreError>> + Send;
 
-    fn stalled_realms(
+    fn take_stalled_realms(
         &self,
+        attempted_at: DateTime<Utc>,
         quiet_since: DateTime<Utc>,
         limit: usize,
     ) -> impl Future<Output = Result<Vec<DeploymentId>, CoreError>> + Send;

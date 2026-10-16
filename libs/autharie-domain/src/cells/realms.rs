@@ -129,7 +129,7 @@ where
     ) -> Result<Resent, CoreError> {
         let stalled = self
             .cells
-            .stalled_realms(now - REALM_QUIET_PERIOD, REALMS_RESENT_PER_RUN)
+            .take_stalled_realms(now, now - REALM_QUIET_PERIOD, REALMS_RESENT_PER_RUN)
             .await?;
 
         let mut resent = Resent::default();
@@ -590,12 +590,14 @@ mod tests {
             .expect_find()
             .returning(|_| Box::pin(async { Ok(Some(cell(PLANE))) }));
         cells
-            .expect_stalled_realms()
-            .withf(|quiet_since, limit| {
-                *quiet_since == now() - REALM_QUIET_PERIOD && *limit == REALMS_RESENT_PER_RUN
+            .expect_take_stalled_realms()
+            .withf(|attempted_at, quiet_since, limit| {
+                *attempted_at == now()
+                    && *quiet_since == now() - REALM_QUIET_PERIOD
+                    && *limit == REALMS_RESENT_PER_RUN
             })
             .times(1)
-            .returning(move |_, _| {
+            .returning(move |_, _, _| {
                 let ids = stalled_ids.clone();
                 Box::pin(async move { Ok(ids) })
             });

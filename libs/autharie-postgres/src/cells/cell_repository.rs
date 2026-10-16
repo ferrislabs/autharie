@@ -391,8 +391,9 @@ impl CellRepository for PostgresCellRepository<'_> {
         Ok(refusal.flatten())
     }
 
-    async fn stalled_realms(
+    async fn take_stalled_realms(
         &self,
+        attempted_at: DateTime<Utc>,
         quiet_since: DateTime<Utc>,
         limit: usize,
     ) -> Result<Vec<DeploymentId>, CoreError> {
@@ -406,28 +407,35 @@ impl CellRepository for PostgresCellRepository<'_> {
 
         let stalled = sqlx::query_scalar!(
             r#"
-            SELECT d.id
-            FROM deployments d
-            WHERE d.distribution = 'pooled'
-              AND d.status IN ('pending', 'scheduling', 'in_progress', 'deleting')
-              AND d.updated_at <= $1
-              AND NOT EXISTS (
-                  SELECT 1
-                  FROM actions a
-                  WHERE a.deployment_id = d.id
-                    AND a.action_type = ANY($3)
-                    AND (a.status IN ('pending', 'leased') OR a.created_at > $1)
-              )
-            ORDER BY d.updated_at, d.id
-            LIMIT $2
+            UPDATE deployments
+            SET realm_resent_at = $1
+            WHERE id IN (
+                SELECT d.id
+                FROM deployments d
+                WHERE d.distribution = 'pooled'
+                  AND d.status IN ('pending', 'scheduling', 'in_progress', 'deleting')
+                  AND d.updated_at <= $2
+                  AND (d.realm_resent_at IS NULL OR d.realm_resent_at <= $2)
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM actions a
+                      WHERE a.deployment_id = d.id
+                        AND a.action_type = ANY($4)
+                        AND (a.status IN ('pending', 'leased') OR a.created_at > $2)
+                  )
+                ORDER BY d.realm_resent_at NULLS FIRST, d.updated_at, d.id
+                LIMIT $3
+            )
+            RETURNING id
             "#,
+            attempted_at,
             quiet_since,
             limit,
             &[REALM_CREATE.to_string(), REALM_DELETE.to_string()],
         )
         .fetch_all(&mut ***tx)
         .await
-        .map_err(database_error("list the realms whose request stalled"))?;
+        .map_err(database_error("take the realms whose request stalled"))?;
 
         Ok(stalled.into_iter().map(DeploymentId).collect())
     }
