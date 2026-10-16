@@ -382,6 +382,22 @@ fn default_ingress_tls_enabled() -> bool {
     true
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Settled {
+    Serving,
+    Failed,
+}
+
+impl IdentityInstanceStatus {
+    pub fn settled(&self) -> Option<Settled> {
+        match self.phase {
+            Some(Phase::Running) if self.ready => Some(Settled::Serving),
+            Some(Phase::Failed) => Some(Settled::Failed),
+            _ => None,
+        }
+    }
+}
+
 impl IdentityInstance {
     pub fn is_ready(&self) -> bool {
         self.status.as_ref().map(|s| s.ready).unwrap_or(false)
@@ -738,5 +754,48 @@ mod tests {
             value["iam"],
             json!({"phase": "Applied", "applied": "{}", "observedAt": "2026-01-01T00:00:00Z"})
         );
+    }
+
+    fn status_at(phase: Phase, ready: bool) -> super::IdentityInstanceStatus {
+        super::IdentityInstanceStatus {
+            phase: Some(phase),
+            ready,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_running_and_ready_instance_is_serving() {
+        assert_eq!(
+            status_at(Phase::Running, true).settled(),
+            Some(super::Settled::Serving)
+        );
+    }
+
+    #[test]
+    fn running_without_ready_is_not_settled() {
+        assert_eq!(status_at(Phase::Running, false).settled(), None);
+    }
+
+    #[test]
+    fn a_failed_instance_is_settled_as_failed_however_ready_reads() {
+        assert_eq!(
+            status_at(Phase::Failed, false).settled(),
+            Some(super::Settled::Failed)
+        );
+    }
+
+    #[test]
+    fn phases_on_the_way_are_not_settled() {
+        for phase in [
+            Phase::Pending,
+            Phase::DatabaseProvisioning,
+            Phase::Deploying,
+            Phase::Updating,
+            Phase::Upgrading,
+            Phase::Deleting,
+        ] {
+            assert_eq!(status_at(phase.clone(), true).settled(), None, "{phase:?}");
+        }
     }
 }
