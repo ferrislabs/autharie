@@ -23,9 +23,10 @@ use uuid::Uuid;
 pub const ACTIONS_EXCHANGE: &str = "autharie.actions";
 
 /// The routing keys Genesis binds its queue to: deployment lifecycle events,
-/// and the actions that target a whole data plane. A key a handler claims that
-/// no pattern here matches is published by Herald and dropped by the broker.
-pub const BINDING_KEYS: [&str; 2] = ["deployment.#", "dataplane.#"];
+/// the actions that target a whole data plane, and the realms of shared cells.
+/// A key a handler claims that no pattern here matches is published by Herald
+/// and dropped by the broker.
+pub const BINDING_KEYS: [&str; 3] = ["deployment.#", "dataplane.#", "realm.#"];
 
 /// Whether the broker would route `routing_key` to Genesis' queue, under the
 /// topic exchange's rules: words are separated by dots, `*` stands for one
@@ -293,6 +294,17 @@ mod tests {
         assert!(is_bound("deployment.create"));
         assert!(is_bound("deployment.upgrade"));
         assert!(is_bound("dataplane.upgrade"));
+    }
+
+    #[test]
+    fn every_realm_action_is_bound() {
+        use crate::application::handlers::realm::{
+            REALM_ADMINISTRATOR_ISSUE, REALM_CREATE, REALM_DELETE,
+        };
+
+        for key in [REALM_CREATE, REALM_DELETE, REALM_ADMINISTRATOR_ISSUE] {
+            assert!(is_bound(key), "{key} would be dropped by the broker");
+        }
     }
 
     #[test]
