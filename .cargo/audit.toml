@@ -1,4 +1,17 @@
 [advisories]
-ignore = ["RUSTSEC-2023-0071"]
+ignore = [
+    "RUSTSEC-2023-0071",
+    "RUSTSEC-2026-0367",
+    "RUSTSEC-2026-0368",
+    "RUSTSEC-2026-0369",
+]
+# RUSTSEC-2023-0071
 # Raison: Ne concerne que MySQL via sqlx-macros
 # Nous utilisons uniquement PostgreSQL
+#
+# RUSTSEC-2026-0367, 0368, 0369 (zip 3.0.0, fixed in 9.0.0)
+# Reason: zip is only a build dependency of utoipa-swagger-ui, whose build
+# script extracts the Swagger UI archive it downloads from its pinned source.
+# The three advisories need a crafted archive; whoever can craft that one can
+# already ship any script in the Swagger UI page. No zip runs in a binary.
+# Remove once utoipa-swagger-ui requires zip >= 9 (10.0.1 still asks ^8.6).
