@@ -45,6 +45,7 @@ NAMESPACE="${AUTHARIE_DATAPLANE_NAMESPACE:-autharie-system}"
 step() { printf '\n\033[1;35m▸ %s\033[0m\n' "$1"; }
 note() { printf '  %s\n' "$1"; }
 die()  { printf '\n\033[1;31m✗ %s\033[0m\n' "$1" >&2; exit 1; }
+warn() { printf '\n\033[1;33m! %s\033[0m\n' "$1"; }
 
 for tool in docker k3d helm kubectl terraform jq curl; do
     command -v "${tool}" >/dev/null 2>&1 || die "${tool} is required"
@@ -82,6 +83,54 @@ export AUTHARIE_BOOTSTRAP_OPERATOR="${AUTHARIE_BOOTSTRAP_OPERATOR:-}"
 export CUSTOMER_CLOUD_ENABLED="${CUSTOMER_CLOUD_ENABLED:-false}"
 export CUSTOMER_CLOUD_CONTROL_PLANE_URL="${CUSTOMER_CLOUD_CONTROL_PLANE_URL:-}"
 export CUSTOMER_CLOUD_HERALD_ISSUER="${CUSTOMER_CLOUD_HERALD_ISSUER:-}"
+# Found or created below, once there is a token to ask with. Until then the
+# control plane refuses to create a cell, which nothing before that step does.
+export CELLS_ORGANISATION_ID="${CELLS_ORGANISATION_ID:-}"
+
+# Free tenants are realms served at <realm>.<zone>, and the control plane
+# decides those names from OVH_ZONE. It *publishes* a record for them only when
+# the OVH credentials are set as well -- and a developer's .env may carry the
+# real zone and real credentials. A demo that did that would leave public
+# records for throwaway tenants in a production zone. So by default the demo
+# runs on a zone of its own with the credentials blanked: in Compose's
+# substitution the shell's environment wins over .env, empty values included.
+# *.autharie.local is also exactly what the mkcert certificate below covers.
+#
+# DEMO_PUBLISH_DNS=1 keeps whatever .env says, publishing included.
+DEMO_ZONE="${DEMO_ZONE:-autharie.local}"
+DEMO_PUBLISH_DNS="${DEMO_PUBLISH_DNS:-0}"
+if [ "${DEMO_PUBLISH_DNS}" = "1" ]; then
+    # Read through Compose, so .env and the environment combine exactly as they
+    # will for the container. Only the zone comes out; the credentials are
+    # checked for presence inside jq and never printed.
+    TENANT_ZONE=$(docker compose --profile ferriskey config --format json 2>/dev/null \
+        | jq -r '.services.autharie.environment
+            | if ([.OVH_APPLICATION_KEY, .OVH_APPLICATION_SECRET, .OVH_CONSUMER_KEY]
+                  | all(. != null and . != ""))
+              then (.OVH_ZONE // "") else "" end') || TENANT_ZONE=""
+    [ -n "${TENANT_ZONE}" ] \
+        || die "DEMO_PUBLISH_DNS=1 needs OVH_ZONE and the three OVH credentials, in .env or the environment"
+    DNS_RECORDS="published in ${TENANT_ZONE}"
+else
+    export OVH_ZONE="${DEMO_ZONE}"
+    export OVH_APPLICATION_KEY="" OVH_APPLICATION_SECRET="" OVH_CONSUMER_KEY=""
+    TENANT_ZONE="${DEMO_ZONE}"
+    DNS_RECORDS="not published (DEMO_PUBLISH_DNS=1 to publish)"
+fi
+
+# Recreated rather than restarted: the control plane reads its configuration
+# from the environment at startup, and a restart keeps the environment it had.
+# Everything exported above -- ports, bootstrap operator, zone -- goes with it.
+recreate_control_plane() {
+    docker compose --profile ferriskey up -d --force-recreate --no-deps autharie >/dev/null 2>&1 \
+        || die "$1"
+    for _ in $(seq 30); do
+        status=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 2 \
+            "${CONTROL_PLANE}/swagger" 2>/dev/null) || status=000
+        [ "${status}" != "000" ] && break
+        sleep 2
+    done
+}
 
 step "control plane (docker compose)"
 docker compose --profile ferriskey up -d --build --wait 2>&1 | tail -3 \
@@ -98,6 +147,7 @@ for _ in $(seq 60); do
 done
 [ "${status}" != "000" ] || die "the control plane never answered on ${CONTROL_PLANE}"
 note "control plane is answering"
+note "tenant zone ${TENANT_ZONE}, DNS records ${DNS_RECORDS}"
 
 # -------------------------------------------------------------------- identity
 
@@ -153,16 +203,7 @@ step "granting the platform rights"
 # broken console rather than as an empty table.
 if [ -n "${OPERATOR_SUBJECT}" ] && [ "${AUTHARIE_BOOTSTRAP_OPERATOR}" != "${OPERATOR_SUBJECT}" ]; then
     export AUTHARIE_BOOTSTRAP_OPERATOR="${OPERATOR_SUBJECT}"
-    # Recreated rather than restarted: the subject is read from the
-    # environment at startup, and a restart keeps the environment it had.
-    docker compose --profile ferriskey up -d --force-recreate --no-deps autharie >/dev/null 2>&1 \
-        || die "could not restart the control plane with a bootstrap operator"
-    for _ in $(seq 30); do
-        status=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 2 \
-            "${CONTROL_PLANE}/swagger" 2>/dev/null) || status=000
-        [ "${status}" != "000" ] && break
-        sleep 2
-    done
+    recreate_control_plane "could not restart the control plane with a bootstrap operator"
     OPERATOR_TOKEN=$(token autharie-operator-cli "${OPERATOR_SECRET}")
 fi
 note "autharie-operator-cli operates this installation"
@@ -193,6 +234,45 @@ for person in $(printf '%s' "${OPERATOR_PEOPLE}" | tr ',' ' '); do
     fi
 done
 
+# ---------------------------------------------------------- cells organisation
+
+step "the cells organisation"
+# A free tenant is a realm on a shared FerrisKey instance -- a cell -- and that
+# instance is a deployment like any other, so it belongs to an organisation.
+# One of the platform's own rather than a customer's, so no customer's quota,
+# bill or member list ever carries it. Looked up by name: running this twice
+# must not leave two organisations, one of them owning nothing.
+CELLS_ORGANISATION_NAME="Autharie cells"
+response=$(curl -sS "${CONTROL_PLANE}/users/@me/organisations" \
+    -H "Authorization: Bearer ${OPERATOR_TOKEN}" -w $'\n%{http_code}')
+code="${response##*$'\n'}"
+[ "${code#2}" != "${code}" ] || die "could not list the operator's organisations (HTTP ${code})"
+cells_org=$(printf '%s' "${response%$'\n'*}" | jq -r --arg n "${CELLS_ORGANISATION_NAME}" \
+    'first(.data[] | select(.name == $n) | .id) // empty')
+
+if [ -n "${cells_org}" ]; then
+    note "reusing ${cells_org}"
+else
+    response=$(curl -sS -X POST "${CONTROL_PLANE}/organisations" \
+        -H "Authorization: Bearer ${OPERATOR_TOKEN}" \
+        -H 'Content-Type: application/json' \
+        -d "$(jq -n --arg n "${CELLS_ORGANISATION_NAME}" '{name: $n}')" \
+        -w $'\n%{http_code}')
+    code="${response##*$'\n'}"
+    [ "${code#2}" != "${code}" ] || die "could not create the cells organisation (HTTP ${code})"
+    cells_org=$(printf '%s' "${response%$'\n'*}" | jq -r '.data.id // empty')
+    [ -n "${cells_org}" ] || die "the control plane created an organisation and did not say which"
+    note "created ${cells_org}"
+fi
+
+# Read once, at startup, like the bootstrap operator above.
+if [ "${CELLS_ORGANISATION_ID}" != "${cells_org}" ]; then
+    export CELLS_ORGANISATION_ID="${cells_org}"
+    recreate_control_plane "could not restart the control plane with the cells organisation"
+    OPERATOR_TOKEN=$(token autharie-operator-cli "${OPERATOR_SECRET}")
+fi
+note "\"${CELLS_ORGANISATION_NAME}\" owns the cells of this installation"
+
 # ------------------------------------------------------------------- k3d cluster
 
 step "data plane cluster (k3d)"
@@ -214,6 +294,28 @@ fi
 KUBECONFIG_PATH=$(k3d kubeconfig write "${CLUSTER}")
 export KUBECONFIG="${KUBECONFIG_PATH}"
 note "kubeconfig ${KUBECONFIG_PATH}"
+
+# Every pod that talks to this machine does it as host.k3d.internal: Herald to
+# the control plane, the issuer, Quickwit, RustFS. k3d's DNS entry for it does
+# not survive a Docker restart, and a Herald that cannot resolve it simply goes
+# quiet -- so it is put back if missing, then proven with a real request rather
+# than trusted.
+entry=$(AUTHARIE_CLUSTER_NAME="${CLUSTER}" ./scripts/local-cluster.sh host-entry 2>&1) \
+    || die "could not check host.k3d.internal in CoreDNS: ${entry}"
+note "${entry}"
+
+kubectl -n default delete pod autharie-reachability --ignore-not-found --wait >/dev/null 2>&1 || true
+reached=$(kubectl -n default run autharie-reachability --rm -i --quiet --restart=Never \
+    --image=curlimages/curl:8.11.1 --pod-running-timeout=2m --command -- \
+    curl -sS -o /dev/null -w '%{http_code}' --max-time 10 \
+    "http://host.k3d.internal:${AUTHARIE_API_PORT}/swagger" 2>/dev/null) || true
+reached=$(printf '%s' "${reached}" | grep -oE '[0-9]{3}' | tail -1) || true
+if [ -z "${reached}" ] || [ "${reached}" = "000" ]; then
+    die "pods in ${CLUSTER} cannot reach the control plane at http://host.k3d.internal:${AUTHARIE_API_PORT}.
+  Check the entry:  kubectl -n kube-system get configmap coredns -o jsonpath='{.data.NodeHosts}'
+  It must point at this machine as seen from the k3d-${CLUSTER} network."
+fi
+note "pods reach the control plane at host.k3d.internal (HTTP ${reached})"
 
 # ------------------------------------------------------------- data plane images
 
@@ -369,6 +471,7 @@ helm upgrade --install "${RELEASE}" charts/autharie-dataplane \
     --set "herald.otlp.enabled=true" \
     --set "gateway.tls.secretName=autharie-gateway-tls" \
     --set "gateway.publicHttpsPort=${AUTHARIE_HTTPS_PORT}" \
+    --set "genesis.tenantZone=${TENANT_ZONE}" \
     --wait --timeout 5m 2>&1 | tail -4 || die "helm install failed"
 
 # ------------------------------------------------------------------- new images
@@ -408,6 +511,88 @@ if [ "${status}" != "active" ]; then
     note "Everything else is up; a deployment created now will sit in Pending."
 fi
 
+# --------------------------------------------------------------------- the cell
+
+# A free deployment is placed in an open cell of its region, and a fresh
+# installation has none: without one, choosing the Free offer is refused with
+# "no cell has room". Creating a cell provisions a highly available FerrisKey
+# (two replicas, two database instances) on the data plane above, which is why
+# it waits for that data plane and can take minutes. DEMO_CELL=0 skips it.
+CELL_ID=""
+CELL_STATUS="not created"
+if [ "${DEMO_CELL:-1}" = "1" ]; then
+    step "a cell for free tenants"
+    if [ "${status}" != "active" ]; then
+        note "skipped: the data plane is not reporting, so nothing would build it"
+    else
+        OPERATOR_TOKEN=$(token autharie-operator-cli "${OPERATOR_SECRET}")
+        response=$(curl -sS "${CONTROL_PLANE}/platform/cells" \
+            -H "Authorization: Bearer ${OPERATOR_TOKEN}" -w $'\n%{http_code}')
+        code="${response##*$'\n'}"
+        [ "${code#2}" != "${code}" ] || die "could not list the cells (HTTP ${code})"
+        # An open cell takes tenants and a provisioning one is about to: either
+        # is what this step would otherwise create, so a second run waits on it.
+        CELL_ID=$(printf '%s' "${response%$'\n'*}" | jq -r --arg r "${REGION}" '
+            first(.data[] | select(.region == $r and .status == "open") | .id)
+            // first(.data[] | select(.region == $r and .status == "provisioning") | .id)
+            // empty')
+
+        if [ -n "${CELL_ID}" ]; then
+            note "reusing ${CELL_ID}"
+        else
+            response=$(curl -sS -X POST "${CONTROL_PLANE}/platform/cells" \
+                -H "Authorization: Bearer ${OPERATOR_TOKEN}" \
+                -H 'Content-Type: application/json' \
+                -d "$(jq -n --arg r "${REGION}" '{region: $r}')" \
+                -w $'\n%{http_code}')
+            code="${response##*$'\n'}"
+            if [ "${code#2}" != "${code}" ]; then
+                CELL_ID=$(printf '%s' "${response%$'\n'*}" | jq -r '.data.id // empty')
+                note "created ${CELL_ID}"
+            else
+                reason=$(printf '%s' "${response%$'\n'*}" | jq -r '.message // empty' 2>/dev/null) || reason=""
+                warn "could not create a cell (HTTP ${code})${reason:+: ${reason}}"
+                # 409 is the expected one on a fresh database: a cell is built
+                # from the newest FerrisKey release marked available, and the
+                # catalogue starts empty. The summary says how to publish one.
+                [ "${code}" = "409" ] && note "publish a FerrisKey release (see below), then run this again"
+            fi
+        fi
+
+        if [ -n "${CELL_ID}" ]; then
+            # Bounded: a cell that never opens is a FerrisKey that never became
+            # ready, and the rest of the stack is usable meanwhile.
+            deadline=$((SECONDS + ${DEMO_CELL_WAIT:-900}))
+            last=""
+            polls=0
+            while :; do
+                OPERATOR_TOKEN=$(token autharie-operator-cli "${OPERATOR_SECRET}")
+                CELL_STATUS=$(curl -sS "${CONTROL_PLANE}/platform/cells/${CELL_ID}" \
+                    -H "Authorization: Bearer ${OPERATOR_TOKEN}" \
+                    | jq -r '.data.status // "unknown"' 2>/dev/null) || CELL_STATUS="unknown"
+                case "${CELL_STATUS}" in
+                    open|full|draining|retired|failed) break ;;
+                esac
+                polls=$((polls + 1))
+                if [ "${CELL_STATUS}" != "${last}" ] || [ $((polls % 6)) -eq 0 ]; then
+                    note "cell ${CELL_ID}: ${CELL_STATUS}"
+                    last="${CELL_STATUS}"
+                fi
+                [ "${SECONDS}" -lt "${deadline}" ] || break
+                sleep 10
+            done
+
+            if [ "${CELL_STATUS}" = "open" ]; then
+                note "cell ${CELL_ID} is open"
+            else
+                warn "cell ${CELL_ID} is ${CELL_STATUS}"
+                note "its FerrisKey is a deployment of \"${CELLS_ORGANISATION_NAME}\"; watch it with"
+                note "  KUBECONFIG=${KUBECONFIG_PATH} kubectl get identityinstances -A"
+            fi
+        fi
+    fi
+fi
+
 cat <<SUMMARY
 
 $( [ "${status}" = "active" ] && printf '\033[1;32m✅ ready\033[0m' || printf '\033[1;33m⚠ up, data plane not reporting\033[0m' )
@@ -415,6 +600,9 @@ $( [ "${status}" = "active" ] && printf '\033[1;32m✅ ready\033[0m' || printf '
    data plane   ${DATAPLANE_ID}  (${REGION}, ${status})
    control API  ${CONTROL_PLANE}
    identity     ${ISSUER}
+   tenant zone  ${TENANT_ZONE}  (DNS records ${DNS_RECORDS})
+   cells owner  ${CELLS_ORGANISATION_ID}  (${CELLS_ORGANISATION_NAME})
+   cell         ${CELL_ID:-none}  (${CELL_STATUS})
 
    Start the console:
 
@@ -448,6 +636,28 @@ $( [ "${status}" = "active" ] && printf '\033[1;32m✅ ready\033[0m' || printf '
    Traces tabs -- Herald ships both to the Quickwit this script just pointed
    it at (http://host.k3d.internal:${QUICKWIT_PORT} from inside the cluster,
    http://localhost:${QUICKWIT_PORT} from here).
+
+   Free tenants: in the console, create a deployment with the Free offer. It
+   becomes a realm on the cell above, served at <realm>.${TENANT_ZONE}. Its page
+   shows the tenant URL and an Administrator panel: generate the credential,
+   then Reveal it -- the temporary password is shown once. Make the hostname
+   resolve, then open it on port ${AUTHARIE_HTTPS_PORT}:
+
+     sudo make local-hosts-apply
+
+   The cell's FerrisKey must be a release carrying ferriskey/ferriskey#1711,
+   or nobody can log in to a tenant realm. A cell is built from the newest
+   FerrisKey release marked available (0.9.0 or later) when it is created. To
+   use one built locally, import it and publish it in the catalogue:
+
+     k3d image import ghcr.io/ferriskey/ferriskey-api:<v> \\
+       ghcr.io/ferriskey/ferriskey-webapp:<v> --cluster ${CLUSTER}
+     curl -X POST ${CONTROL_PLANE}/releases/operator/ferriskey \\
+       -H 'Authorization: Bearer <the operator cli token>' \\
+       -H 'Content-Type: application/json' -d '{"version":"<v>","risk":"none"}'
+     curl -X PUT ${CONTROL_PLANE}/releases/operator/ferriskey/<v>/status \\
+       -H 'Authorization: Bearer <the operator cli token>' \\
+       -H 'Content-Type: application/json' -d '{"status":"available"}'
 
    Tear down:  ./scripts/demo.sh down
 
