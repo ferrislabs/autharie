@@ -51,7 +51,7 @@ spec:
       containers:
         - name: migrate
           image: {{ include "autharie-control-plane.image" (dict "root" . "component" "control-plane" "tag" .Values.image.controlPlaneTag) }}
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          imagePullPolicy: {{ include "autharie-control-plane.pullPolicy" (dict "root" . "tag" .Values.image.controlPlaneTag) }}
           command:
             - sqlx
           args:

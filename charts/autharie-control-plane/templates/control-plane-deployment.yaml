@@ -23,7 +23,7 @@ spec:
       containers:
         - name: control-plane
           image: {{ include "autharie-control-plane.image" (dict "root" . "component" "control-plane" "tag" .Values.image.controlPlaneTag) }}
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          imagePullPolicy: {{ include "autharie-control-plane.pullPolicy" (dict "root" . "tag" .Values.image.controlPlaneTag) }}
           ports:
             - name: http
               containerPort: {{ .Values.controlPlane.server.port }}
@@ -116,6 +116,10 @@ spec:
               value: {{ .Values.platform.bootstrapOperator | quote }}
             {{- with .Values.platform.dataplaneUpgradeMinVersion }}
             - name: DATAPLANE_UPGRADE_MIN_VERSION
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.platform.cellsOrganisationId }}
+            - name: CELLS_ORGANISATION_ID
               value: {{ . | quote }}
             {{- end }}
             # OVH DNS
