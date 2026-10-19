@@ -34,11 +34,12 @@ require() {
 
 usage() {
     cat <<USAGE
-usage: $(basename "$0") <up|down|status>
+usage: $(basename "$0") <up|down|status|host-entry>
 
-  up      create the cluster and install the CRDs, CloudNativePG, Envoy Gateway and KEDA
-  down    delete the cluster
-  status  show what is installed
+  up          create the cluster and install the CRDs, CloudNativePG, Envoy Gateway and KEDA
+  down        delete the cluster
+  status      show what is installed
+  host-entry  make sure pods resolve host.k3d.internal (lost when Docker restarts)
 
 Environment:
   AUTHARIE_CLUSTER_NAME   cluster name (default: autharie-local)
@@ -139,6 +140,8 @@ up() {
     "${REPO_ROOT}/scripts/generate-crds.sh" >/dev/null
     kubectl --context "${CONTEXT}" apply -f "${REPO_ROOT}/k8s/crds/"
 
+    host_entry
+
     echo
     echo "✅ ${CLUSTER_NAME} is ready"
     echo
@@ -150,6 +153,82 @@ up() {
     echo
     echo "   Then apply an example:"
     echo "     kubectl --context ${CONTEXT} apply -f k8s/examples/identity-instance-ferriskey.yaml"
+}
+
+# The host as seen from the cluster's Docker network.
+#
+# Resolved rather than assumed, because every runtime answers differently:
+# OrbStack serves host.docker.internal as 0.250.250.254, Docker Desktop as an
+# address of its own, and plain Docker on Linux not at all -- there the
+# network's gateway is the host. IPv4 only: NodeHosts wants one address, and
+# CoreDNS answering an A query with nothing is the failure this is here to fix.
+host_gateway_ip() {
+    local network="k3d-${CLUSTER_NAME}" ip
+
+    ip="$(docker run --rm --network "${network}" alpine \
+        getent hosts host.docker.internal 2>/dev/null \
+        | awk '$1 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ { print $1; exit }')" || true
+
+    if [ -z "${ip}" ]; then
+        ip="$(docker network inspect "${network}" \
+            --format '{{range .IPAM.Config}}{{.Gateway}} {{end}}' 2>/dev/null \
+            | tr ' ' '\n' \
+            | awk '$1 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ { print $1; exit }')" || true
+    fi
+
+    printf '%s' "${ip}"
+}
+
+# k3d writes `host.k3d.internal` into CoreDNS's NodeHosts when it creates or
+# starts a cluster. When Docker or OrbStack restarts, the node containers come
+# back without `k3d cluster start`, k3s rewrites NodeHosts from its nodes, and
+# the entry is gone. Every pod that reaches this machine by that name -- Herald
+# first -- then fails on DNS and says little about it: on 2026-10-17 a Herald
+# had been silent for eight days.
+#
+# Only added when missing. An entry that is there was put there by k3d, which
+# knows its runtime better than a guess here does; whether it actually works is
+# for the caller to check, with a request.
+host_entry() {
+    require kubectl
+    require docker
+    require jq
+
+    local hosts ip patch
+
+    hosts="$(kubectl --context "${CONTEXT}" -n kube-system get configmap coredns \
+        -o jsonpath='{.data.NodeHosts}')" || {
+        echo "❌ could not read CoreDNS's NodeHosts in ${CONTEXT}" >&2
+        exit 1
+    }
+
+    if printf '%s\n' "${hosts}" | awk '{ for (i = 2; i <= NF; i++) if ($i == "host.k3d.internal") found = 1 } END { exit !found }'; then
+        echo "✅ host.k3d.internal is in CoreDNS's NodeHosts"
+        return
+    fi
+
+    ip="$(host_gateway_ip)"
+    if [ -z "${ip}" ]; then
+        echo "❌ could not tell the host's address on the k3d-${CLUSTER_NAME} network" >&2
+        exit 1
+    fi
+
+    hosts="$(printf '%s\n' "${hosts}" | sed '/^[[:space:]]*$/d')"
+    if [ -n "${hosts}" ]; then
+        hosts="${hosts}"$'\n'
+    fi
+    hosts="${hosts}${ip} host.k3d.internal"
+    patch="$(jq -n --arg hosts "${hosts}" '{data: {NodeHosts: $hosts}}')"
+
+    kubectl --context "${CONTEXT}" -n kube-system patch configmap coredns \
+        --type merge -p "${patch}" >/dev/null
+    # CoreDNS reloads the file on its own, but only once the kubelet has synced
+    # the mounted ConfigMap, which can take a minute. A restart is immediate.
+    kubectl --context "${CONTEXT}" -n kube-system rollout restart deployment coredns >/dev/null
+    kubectl --context "${CONTEXT}" -n kube-system rollout status deployment coredns \
+        --timeout=2m >/dev/null
+
+    echo "🔧 host.k3d.internal was missing from CoreDNS: added as ${ip}"
 }
 
 down() {
@@ -196,5 +275,6 @@ case "${1:-}" in
     up) up ;;
     down) down ;;
     status) status ;;
+    host-entry) host_entry ;;
     *) usage; exit 1 ;;
 esac
