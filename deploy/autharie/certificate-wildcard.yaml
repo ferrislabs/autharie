@@ -1,0 +1,20 @@
+# The *.autharie.fr wildcard, issued in the `autharie` namespace for the
+# control plane to read and send to shared data planes (free tenants are
+# served at {realm}.autharie.fr). The same name exists as
+# `default/autharie-fr-tls`, but the chart grants read access in the namespace
+# of the certificate and the `autharie` AppProject deploys nowhere else.
+#
+# Applied by hand, see docs/production-upgrade.md (B2).
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: autharie-wildcard
+  namespace: autharie
+spec:
+  secretName: autharie-wildcard-tls
+  dnsNames:
+    - autharie.fr
+    - "*.autharie.fr"
+  issuerRef:
+    kind: ClusterIssuer
+    name: letsencrypt-internal
