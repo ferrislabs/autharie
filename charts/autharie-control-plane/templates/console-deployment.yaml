@@ -21,7 +21,7 @@ spec:
       containers:
         - name: console
           image: {{ include "autharie-control-plane.image" (dict "root" . "component" "console" "tag" .Values.image.consoleTag) }}
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          imagePullPolicy: {{ include "autharie-control-plane.pullPolicy" (dict "root" . "tag" .Values.image.consoleTag) }}
           ports:
             - name: http
               containerPort: 80

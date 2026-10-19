@@ -25,6 +25,23 @@ app.kubernetes.io/part-of: autharie
 {{- end }}
 
 {{/*
+The pull policy for one image. `latest` moves under the same name, so a node
+that already holds an older `latest` never fetches the new one with
+IfNotPresent: it is pulled every time. A pinned tag never moves, so it is
+pulled once. `image.pullPolicy` overrides both when set.
+*/}}
+{{- define "autharie-control-plane.pullPolicy" -}}
+{{- $tag := .tag | default .root.Chart.AppVersion -}}
+{{- if .root.Values.image.pullPolicy -}}
+{{- .root.Values.image.pullPolicy -}}
+{{- else if eq $tag "latest" -}}
+Always
+{{- else -}}
+IfNotPresent
+{{- end -}}
+{{- end }}
+
+{{/*
 The CNPG cluster's read-write service, reachable in-cluster the moment CNPG
 creates it -- before the cluster is actually ready, which is why the
 migration job waits on it separately rather than trusting DNS resolving as
