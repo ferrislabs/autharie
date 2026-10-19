@@ -15,6 +15,67 @@ Every step is idempotent — run it again after a failure rather than starting
 from a clean machine. The rest of this document is what it does, and how to do
 any one piece by hand when something goes wrong.
 
+## Free tenants (cells)
+
+A free deployment is not an instance of its own: it is a realm on a shared,
+highly available FerrisKey instance called a cell. `make demo` sets that up:
+
+- It runs the control plane on a DNS zone of its own, `autharie.local`, with the
+  OVH credentials blanked. Your `.env` may carry a real zone and real OVH
+  credentials, and with both the control plane publishes public records; the
+  demo does not, unless asked.
+- It finds or creates the organisation that owns every cell, "Autharie cells",
+  and restarts the control plane with `CELLS_ORGANISATION_ID` set to it.
+- It installs the data plane with `genesis.tenantZone` set to the same zone, so
+  Genesis accepts realm actions for `<realm>.<zone>`.
+- It checks that pods resolve `host.k3d.internal` and puts the entry back in
+  CoreDNS if a Docker or OrbStack restart removed it
+  (`./scripts/local-cluster.sh host-entry` does that on its own), then
+  checks with a real request that the control plane is reachable from the
+  cluster.
+- It creates a cell in the demo region if none is open, and waits up to
+  15 minutes for it to open.
+
+| variable | default | |
+|---|---|---|
+| `DEMO_ZONE` | `autharie.local` | zone tenants are served under. The mkcert certificate covers `*.autharie.local` only |
+| `DEMO_PUBLISH_DNS` | `0` | `1` keeps `OVH_ZONE` and the OVH credentials from `.env`, so records are published in the real zone |
+| `DEMO_CELL` | `1` | `0` skips creating the cell |
+| `DEMO_CELL_WAIT` | `900` | seconds to wait for the cell to open |
+
+A cell is built from the newest FerrisKey release marked available in the
+catalogue (0.9.0 or later), and tenant login only works on a release that
+carries ferriskey/ferriskey#1711. On a fresh database the catalogue is empty
+and creating the cell is refused with a 409. To use a FerrisKey built
+locally, import its images into k3d, publish the release, mark it available,
+then run `make demo` again:
+
+```bash
+k3d image import ghcr.io/ferriskey/ferriskey-api:<v> \
+  ghcr.io/ferriskey/ferriskey-webapp:<v> --cluster autharie-local
+curl -X POST http://localhost:7777/releases/operator/ferriskey \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"version":"<v>","risk":"none"}'
+curl -X PUT http://localhost:7777/releases/operator/ferriskey/<v>/status \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"status":"available"}'
+```
+
+`$TOKEN` is a token of `autharie-operator-cli`. The script does not build
+FerrisKey.
+
+Then, in the console: create a deployment with the **Free** offer. Once it runs,
+its page shows the tenant URL and an **Administrator** panel. Generate the
+credential, then **Reveal** it: the temporary password is shown once, and the
+realm asks for a new one at the first sign-in. To open the tenant URL in a
+browser, make its hostname resolve:
+
+```bash
+sudo make local-hosts-apply
+```
+
+The tenant is served on `https://<realm>.autharie.local:8444`.
+
 ## The split
 
 Autharie splits across two runtimes, and running it locally mirrors that split

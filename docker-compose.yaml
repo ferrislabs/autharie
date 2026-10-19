@@ -110,6 +110,10 @@ services:
       OVH_APPLICATION_SECRET: ${OVH_APPLICATION_SECRET:-}
       OVH_CONSUMER_KEY: ${OVH_CONSUMER_KEY:-}
       OVH_ZONE: ${OVH_ZONE:-}
+      # The internal organisation that owns every cell's FerrisKey instance.
+      # Empty means no cell can be created; demo.sh finds or creates the
+      # organisation and sets it.
+      CELLS_ORGANISATION_ID: ${CELLS_ORGANISATION_ID:-}
       # The oldest version a data plane may report and still be sent an
       # upgrade: the control plane refuses one for a Herald older than this,
       # which could not read the action. Set to what the local chart reports
