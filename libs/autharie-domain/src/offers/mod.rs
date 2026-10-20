@@ -26,6 +26,26 @@ use crate::{
     organisation::value_objects::Plan,
 };
 
+/// Where an instance's database runs.
+///
+/// `Shared` is one database and one role on the cluster a data plane holds for
+/// every free deployment; `Managed` is a cluster of the instance's own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DatabasePlacement {
+    Managed,
+    Shared,
+}
+
+impl fmt::Display for DatabasePlacement {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Managed => write!(f, "managed"),
+            Self::Shared => write!(f, "shared"),
+        }
+    }
+}
+
 /// One offer.
 ///
 /// Named for what a customer recognises rather than for the infrastructure
@@ -67,7 +87,11 @@ impl Offer {
     /// finds out about that from a restart, not from a release note.
     pub fn resources(self) -> DeploymentResources {
         match self {
-            Self::Free => REALM_SHARE,
+            Self::Free => DeploymentResources {
+                cpu_millis: 100,
+                memory_mib: 256,
+                storage_gib: 1,
+            },
             Self::Sandbox => DeploymentResources {
                 cpu_millis: 250,
                 memory_mib: 512,
@@ -119,8 +143,19 @@ impl Offer {
         self.open_to().contains(&plan)
     }
 
-    pub fn is_pooled(self) -> bool {
-        self == Self::Free
+    /// Where this offer's database lives.
+    ///
+    /// Decided here and nowhere else. Every caller that needs to know -- the
+    /// payload sent to a data plane, the placement refusals, the catalogue --
+    /// asks the offer, so a second offer moving to the shared cluster is one
+    /// match arm and not a hunt for every `== Offer::Free`.
+    pub fn database(self) -> DatabasePlacement {
+        match self {
+            Self::Free => DatabasePlacement::Shared,
+            Self::Sandbox | Self::Standard | Self::Scale | Self::Private => {
+                DatabasePlacement::Managed
+            }
+        }
     }
 
     /// The cheapest offer placed the same way.
@@ -134,7 +169,7 @@ impl Offer {
         // `ALL` is written cheapest first, and the test below holds that.
         Self::ALL
             .into_iter()
-            .find(|offer| !offer.is_pooled() && offer.mode() == mode)
+            .find(|offer| offer.database() == DatabasePlacement::Managed && offer.mode() == mode)
             .unwrap_or(Self::Private)
     }
 
@@ -176,12 +211,6 @@ impl std::str::FromStr for Offer {
         }
     }
 }
-
-const REALM_SHARE: DeploymentResources = DeploymentResources {
-    cpu_millis: 1,
-    memory_mib: 1,
-    storage_gib: 1,
-};
 
 impl Plan {
     /// What this organisation may choose from.
@@ -256,24 +285,70 @@ mod tests {
     }
 
     #[test]
-    fn the_free_tier_is_pooled_only() {
+    fn the_free_tier_is_offered_the_free_offer_only() {
         assert_eq!(Plan::Free.offers(), vec![Offer::Free]);
         assert!(!Offer::Sandbox.is_open_to(Plan::Free));
     }
 
     #[test]
-    fn only_the_free_tier_opens_the_pooled_offer() {
+    fn only_the_free_tier_opens_a_shared_database_offer() {
         for plan in [Plan::Starter, Plan::Business, Plan::Enterprise] {
             assert!(
-                !plan.offers().iter().any(|offer| offer.is_pooled()),
+                !plan
+                    .offers()
+                    .iter()
+                    .any(|offer| offer.database() == DatabasePlacement::Shared),
                 "{plan}"
             );
         }
     }
 
     #[test]
-    fn a_deployment_with_no_offer_never_falls_back_to_a_realm_in_a_cell() {
-        assert!(!Offer::cheapest_with_mode(DataPlaneMode::Shared).is_pooled());
+    fn a_deployment_with_no_offer_never_falls_back_to_the_shared_database() {
+        assert_eq!(
+            Offer::cheapest_with_mode(DataPlaneMode::Shared).database(),
+            DatabasePlacement::Managed
+        );
+    }
+
+    /// @spec-free-1
+    #[test]
+    fn only_the_free_offer_keeps_its_database_on_the_shared_cluster() {
+        for offer in Offer::ALL {
+            let expected = if offer == Offer::Free {
+                DatabasePlacement::Shared
+            } else {
+                DatabasePlacement::Managed
+            };
+            assert_eq!(offer.database(), expected, "{offer}");
+        }
+    }
+
+    #[test]
+    fn the_placement_is_spelled_the_way_genesis_reads_it() {
+        assert_eq!(DatabasePlacement::Shared.to_string(), "shared");
+        assert_eq!(DatabasePlacement::Managed.to_string(), "managed");
+        assert_eq!(
+            serde_json::to_value(DatabasePlacement::Shared).unwrap(),
+            serde_json::json!("shared")
+        );
+    }
+
+    #[test]
+    fn the_free_offer_is_a_real_size() {
+        assert_eq!(
+            Offer::Free.resources(),
+            DeploymentResources {
+                cpu_millis: 100,
+                memory_mib: 256,
+                storage_gib: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn the_free_offer_is_placed_on_a_shared_data_plane() {
+        assert_eq!(Offer::Free.mode(), DataPlaneMode::Shared);
     }
 
     /// Every tier can put something somewhere. A tier that opens nothing is a
@@ -295,7 +370,7 @@ mod tests {
             for offer in lower
                 .offers()
                 .into_iter()
-                .filter(|offer| !offer.is_pooled())
+                .filter(|offer| offer.database() == DatabasePlacement::Managed)
             {
                 assert!(
                     offer.is_open_to(higher),

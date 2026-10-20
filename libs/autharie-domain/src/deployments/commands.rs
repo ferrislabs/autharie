@@ -2,7 +2,7 @@ use crate::{
     CoreError,
     dataplane::value_objects::{DataPlaneId, DeploymentResources, Region},
     deployments::{environment::Environment, topology::Topology},
-    offers::Offer,
+    offers::{DatabasePlacement, Offer},
     organisation::OrganisationId,
     user::UserId,
 };
@@ -82,7 +82,7 @@ impl CreateDeploymentCommand {
         region: Region,
         offer: Offer,
     ) -> Result<Self, CoreError> {
-        if offer.is_pooled() && kind != DeploymentKind::Ferriskey {
+        if offer.database() == DatabasePlacement::Shared && kind != DeploymentKind::Ferriskey {
             return Err(DistributionError::NotPoolable { kind }.into());
         }
 
@@ -107,7 +107,9 @@ impl CreateDeploymentCommand {
         mut self,
         distribution: Distribution,
     ) -> Result<Self, DistributionError> {
-        if self.offer.is_pooled() && distribution != Distribution::Shared {
+        if self.offer.database() == DatabasePlacement::Shared
+            && distribution != Distribution::Shared
+        {
             return Err(DistributionError::PooledOfferPlacedElsewhere);
         }
         self.distribution = distribution.checked_for(&self.kind)?;
