@@ -17,6 +17,7 @@ Invariants
   - A shared database is reachable only with its own role: the role owns exactly one database and `CONNECT` is revoked from `PUBLIC`.  [test: integration, against a real Postgres]
   - Two free deployments never share a database or a role. The names derive from the deployment id, not from its display name.  [type: `SharedDatabaseName::for_deployment`]
   - Deleting a free deployment drops its database and its role, and nothing else on the cluster.  [test]
+  - A free role holds at most 10 connections (`CONNECTION LIMIT`), so one tenant cannot starve the shared cluster.  [test: integration]
   - An organisation on `Plan::Free` holds at most one deployment.  [test: existing `Plan::Free.max_instances() == 1`]
   - A free deployment's FerrisKey runs one replica of each workload, with the resources of `Offer::Free`.  [type: `Offer::resources`, `Topology::SINGLE`]
   - The superuser credentials of the shared database cluster never leave the data plane's system namespace.  [test: rendered chart + operator unit test]
@@ -122,7 +123,7 @@ Frozen contracts
 
 Risks / open questions
   - Network policies: a tenant namespace must reach the shared cluster's `-rw` Service in the system namespace. Owner: W1, checked on k3d.
-  - Connection count: every free FerrisKey holds a pool. `max_connections` on the shared cluster and FerrisKey's pool size bound how many free deployments one data plane carries. Owner: W1, sets both and records the resulting ceiling in values.
+  - Connection count: FerrisKey's pool is fixed in its code at 5 to 100 connections. Each free role is capped at 10; with max_connections 300 a data plane carries 28 free deployments at their cap. A burst past 10 fails that tenant's requests. Follow-up: make FerrisKey's pool size configurable (FerrisKey repository). Owner: W1 (values), W2 (role cap).
   - One shared cluster is one point of failure for every free tenant of a data plane. Accepted for the free offer; dumps are the recovery.
 
 Verify (exit)
@@ -132,3 +133,5 @@ Verify (exit)
   helm lint charts/autharie-dataplane
   pnpm --dir apps/console lint && pnpm --dir apps/console test
   The @spec-free-8 scenario by hand on k3d.
+
+Amended: 2026-10-20 FerrisKey's pool is 5-100, not configurable; free roles get CONNECTION LIMIT 10.
