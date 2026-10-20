@@ -7,6 +7,7 @@ use crate::dataplane::value_objects::DataPlaneId;
 pub mod action;
 pub mod audit;
 pub mod backups;
+pub mod billing;
 pub mod catalog;
 pub mod certificate;
 pub mod dataplane;
@@ -245,6 +246,9 @@ pub enum CoreError {
 
     #[error(transparent)]
     Version(#[from] crate::version::VersionError),
+
+    #[error(transparent)]
+    Billing(#[from] crate::billing::BillingError),
 
     #[error(transparent)]
     Profile(#[from] crate::dataplane::cluster_profile::ProfileError),
