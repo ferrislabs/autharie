@@ -9,45 +9,41 @@ use crate::{
         ports::{ActionRepository, ActionService},
         service::ActionServiceImpl,
     },
+    billing::ports::SubscriptionRepository,
     deployments::{Deployment, DeploymentId, ports::DeploymentRepository},
     iam_settings::{
         IAM_SETTINGS_ACTION_TYPE, IamSettings,
         ports::{IamSettingsPolicy, IamSettingsRequest, IamSettingsService, IamSettingsState},
     },
-    organisation::{
-        OrganisationId,
-        features::{IamFeature, cheapest_plan_opening},
-        ports::OrganisationRepository,
-        value_objects::Plan,
-    },
+    organisation::{OrganisationId, features::IamFeature},
 };
 
 const ACTIONS_PER_PAGE: usize = 200;
 
-pub struct IamSettingsServiceImpl<D, A, O, P>
+pub struct IamSettingsServiceImpl<D, A, S, P>
 where
     A: ActionRepository,
 {
     deployment_repository: D,
     actions: ActionServiceImpl<A>,
-    organisation_repository: O,
+    subscriptions: S,
     policy: P,
 }
 
-impl<D, A, O, P> IamSettingsServiceImpl<D, A, O, P>
+impl<D, A, S, P> IamSettingsServiceImpl<D, A, S, P>
 where
     A: ActionRepository,
 {
     pub fn new(
         deployment_repository: D,
         action_repository: A,
-        organisation_repository: O,
+        subscriptions: S,
         policy: P,
     ) -> Self {
         Self {
             deployment_repository,
             actions: ActionServiceImpl::new(action_repository),
-            organisation_repository,
+            subscriptions,
             policy,
         }
     }
@@ -61,25 +57,6 @@ pub fn payload(deployment: &Deployment) -> serde_json::Value {
     })
 }
 
-fn require_open(
-    plan: Plan,
-    feature: IamFeature,
-    opens: impl Fn(Plan, IamFeature) -> bool,
-) -> Result<(), CoreError> {
-    if opens(plan, feature) {
-        return Ok(());
-    }
-
-    let reason = match cheapest_plan_opening(feature) {
-        Some(opened_by) => {
-            format!("the {plan} plan does not open {feature}: it is available from {opened_by}")
-        }
-        None => format!("the {plan} plan does not open {feature}"),
-    };
-
-    Err(CoreError::PermissionDenied { reason })
-}
-
 fn request_of(action: &Action) -> IamSettingsRequest {
     IamSettingsRequest {
         action_id: action.id,
@@ -88,11 +65,11 @@ fn request_of(action: &Action) -> IamSettingsRequest {
     }
 }
 
-impl<D, A, O, P> IamSettingsServiceImpl<D, A, O, P>
+impl<D, A, S, P> IamSettingsServiceImpl<D, A, S, P>
 where
     D: DeploymentRepository,
     A: ActionRepository,
-    O: OrganisationRepository,
+    S: SubscriptionRepository,
     P: IamSettingsPolicy,
 {
     async fn deployment(
@@ -138,13 +115,61 @@ where
         }
     }
 
-    pub async fn set_when(
+    async fn require_branding(&self, deployment_id: DeploymentId) -> Result<(), CoreError> {
+        let subscription = self
+            .subscriptions
+            .latest_for(&deployment_id)
+            .await?
+            .ok_or_else(|| CoreError::PermissionDenied {
+                reason: "this deployment has no subscription".into(),
+            })?;
+        let terms = subscription.terms();
+
+        if !terms.opens(IamFeature::Branding) {
+            return Err(CoreError::PermissionDenied {
+                reason: format!(
+                    "the {} tier does not open {}",
+                    terms.tier,
+                    IamFeature::Branding
+                ),
+            });
+        }
+
+        Ok(())
+    }
+}
+
+impl<D, A, S, P> IamSettingsService for IamSettingsServiceImpl<D, A, S, P>
+where
+    D: DeploymentRepository,
+    A: ActionRepository,
+    S: SubscriptionRepository,
+    P: IamSettingsPolicy,
+{
+    async fn iam_settings(
+        &self,
+        identity: Identity,
+        organisation_id: OrganisationId,
+        deployment_id: DeploymentId,
+    ) -> Result<IamSettingsState, CoreError> {
+        self.policy
+            .can_view_iam_settings(identity, organisation_id)
+            .await?;
+
+        let deployment = self.deployment(organisation_id, deployment_id).await?;
+
+        Ok(IamSettingsState {
+            branding: deployment.iam_settings.branding,
+            request: self.latest_request(deployment_id).await?,
+        })
+    }
+
+    async fn set_iam_settings(
         &self,
         identity: Identity,
         organisation_id: OrganisationId,
         deployment_id: DeploymentId,
         settings: IamSettings,
-        opens: impl Fn(Plan, IamFeature) -> bool,
     ) -> Result<IamSettingsState, CoreError> {
         self.policy
             .can_change_iam_settings(identity, organisation_id)
@@ -152,15 +177,8 @@ where
 
         let mut deployment = self.deployment(organisation_id, deployment_id).await?;
 
-        let organisation = self
-            .organisation_repository
-            .find_by_id(&organisation_id)
-            .await?
-            .ok_or(CoreError::OrganisationNotFound {
-                id: organisation_id.0,
-            })?;
         if settings.branding.is_some() {
-            require_open(organisation.plan, IamFeature::Branding, opens)?;
+            self.require_branding(deployment.id).await?;
         }
 
         deployment.iam_settings = settings;
@@ -194,52 +212,12 @@ where
     }
 }
 
-impl<D, A, O, P> IamSettingsService for IamSettingsServiceImpl<D, A, O, P>
-where
-    D: DeploymentRepository,
-    A: ActionRepository,
-    O: OrganisationRepository,
-    P: IamSettingsPolicy,
-{
-    async fn iam_settings(
-        &self,
-        identity: Identity,
-        organisation_id: OrganisationId,
-        deployment_id: DeploymentId,
-    ) -> Result<IamSettingsState, CoreError> {
-        self.policy
-            .can_view_iam_settings(identity, organisation_id)
-            .await?;
-
-        let deployment = self.deployment(organisation_id, deployment_id).await?;
-
-        Ok(IamSettingsState {
-            branding: deployment.iam_settings.branding,
-            request: self.latest_request(deployment_id).await?,
-        })
-    }
-
-    async fn set_iam_settings(
-        &self,
-        identity: Identity,
-        organisation_id: OrganisationId,
-        deployment_id: DeploymentId,
-        settings: IamSettings,
-    ) -> Result<IamSettingsState, CoreError> {
-        self.set_when(
-            identity,
-            organisation_id,
-            deployment_id,
-            settings,
-            |plan, feature| plan.opens(feature),
-        )
-        .await
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::{
+        collections::BTreeSet,
+        sync::{Arc, Mutex},
+    };
 
     use chrono::{DateTime, Duration, Utc};
     use uuid::Uuid;
@@ -250,16 +228,15 @@ mod tests {
             ActionBatch, ActionCursor, ActionId, ActionMetadata, ActionStatus,
             ports::MockActionRepository,
         },
+        billing::{
+            Money, Subscription, SubscriptionTerms, TierCode, ports::MockSubscriptionRepository,
+        },
         dataplane::value_objects::{DataPlaneId, DeploymentResources},
         deployments::{
             DeploymentKind, DeploymentName, DeploymentStatus, ports::MockDeploymentRepository,
         },
         iam_settings::branding::{Branding, BrandingInput},
-        organisation::{
-            Organisation,
-            ports::MockOrganisationRepository,
-            value_objects::{OrganisationName, OrganisationSlug},
-        },
+        offers::Offer,
         user::UserId,
         version::Version,
     };
@@ -413,48 +390,63 @@ mod tests {
         mock
     }
 
-    fn organisations(plan: Plan) -> MockOrganisationRepository {
-        let mut mock = MockOrganisationRepository::new();
-        mock.expect_find_by_id().returning(move |id| {
-            let mut organisation = Organisation::new(
-                OrganisationName::new("FerrisLabs").expect("a name"),
-                OrganisationSlug::new("ferrislabs").expect("a slug"),
-                UserId(Uuid::from_u128(7)),
-                plan,
-            );
-            organisation.id = *id;
-            Box::pin(async move { Ok(Some(organisation)) })
+    fn terms_opening(features: &[IamFeature]) -> SubscriptionTerms {
+        SubscriptionTerms {
+            tier: TierCode::parse("pro-2026").expect("a tier code"),
+            monthly_price: Money::from_minor(4900),
+            offer: Offer::Standard,
+            features: features.iter().copied().collect::<BTreeSet<_>>(),
+        }
+    }
+
+    fn subscription_opening(features: &[IamFeature]) -> Subscription {
+        Subscription::open(
+            OrganisationId(ORGANISATION),
+            DeploymentId(DEPLOYMENT),
+            terms_opening(features),
+            Utc::now(),
+        )
+    }
+
+    fn subscriptions(latest: Option<Subscription>) -> MockSubscriptionRepository {
+        let mut mock = MockSubscriptionRepository::new();
+        mock.expect_latest_for().returning(move |_| {
+            let latest = latest.clone();
+            Box::pin(async move { Ok(latest) })
         });
         mock
     }
 
-    fn service(
+    fn branding_subscription() -> MockSubscriptionRepository {
+        subscriptions(Some(subscription_opening(&[IamFeature::Branding])))
+    }
+
+    type Service = IamSettingsServiceImpl<
+        MockDeploymentRepository,
+        MockActionRepository,
+        MockSubscriptionRepository,
+        StubPolicy,
+    >;
+
+    fn service(found: Option<Deployment>, writes: &Writes, policy: StubPolicy) -> Service {
+        service_holding(found, writes, policy, branding_subscription())
+    }
+
+    fn service_holding(
         found: Option<Deployment>,
         writes: &Writes,
         policy: StubPolicy,
-    ) -> IamSettingsServiceImpl<
-        MockDeploymentRepository,
-        MockActionRepository,
-        MockOrganisationRepository,
-        StubPolicy,
-    > {
+        subscriptions: MockSubscriptionRepository,
+    ) -> Service {
         IamSettingsServiceImpl::new(
             deployments(found, writes, false),
             actions(writes),
-            organisations(Plan::Free),
+            subscriptions,
             policy,
         )
     }
 
-    async fn set(
-        service: &IamSettingsServiceImpl<
-            MockDeploymentRepository,
-            MockActionRepository,
-            MockOrganisationRepository,
-            StubPolicy,
-        >,
-        value: IamSettings,
-    ) -> Result<IamSettingsState, CoreError> {
+    async fn set(service: &Service, value: IamSettings) -> Result<IamSettingsState, CoreError> {
         service
             .set_iam_settings(
                 caller(),
@@ -601,42 +593,79 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_plan_that_does_not_open_branding_is_refused_before_anything_is_written() {
+    async fn a_tier_that_does_not_open_branding_is_refused_before_anything_is_written() {
         let writes = Writes::default();
-        let subject = service(Some(deployment()), &writes, StubPolicy::allowing());
+        let subject = service_holding(
+            Some(deployment()),
+            &writes,
+            StubPolicy::allowing(),
+            subscriptions(Some(subscription_opening(&[IamFeature::Mfa]))),
+        );
 
-        let refused = subject
-            .set_when(
-                caller(),
-                OrganisationId(ORGANISATION),
-                DeploymentId(DEPLOYMENT),
-                settings(Some(branding("#112233", 6))),
-                |_, feature| feature != IamFeature::Branding,
-            )
+        let refused = set(&subject, settings(Some(branding("#112233", 6))))
             .await
             .expect_err("closed");
 
         let CoreError::PermissionDenied { reason } = refused else {
             panic!("expected a permission refusal");
         };
-        assert!(reason.contains("free"), "{reason}");
+        assert!(reason.contains("pro-2026"), "{reason}");
         assert!(reason.contains("branding"), "{reason}");
         nothing_was_written(&writes);
     }
 
     #[tokio::test]
-    async fn a_plan_that_closes_branding_still_lets_a_customer_clear_it() {
+    async fn a_deployment_without_a_subscription_is_refused_before_anything_is_written() {
         let writes = Writes::default();
-        let subject = service(Some(deployment()), &writes, StubPolicy::allowing());
+        let subject = service_holding(
+            Some(deployment()),
+            &writes,
+            StubPolicy::allowing(),
+            subscriptions(None),
+        );
 
-        subject
-            .set_when(
-                caller(),
-                OrganisationId(ORGANISATION),
-                DeploymentId(DEPLOYMENT),
-                settings(None),
-                |_, feature| feature != IamFeature::Branding,
-            )
+        let refused = set(&subject, settings(Some(branding("#112233", 6))))
+            .await
+            .expect_err("no subscription");
+
+        let CoreError::PermissionDenied { reason } = refused else {
+            panic!("expected a permission refusal");
+        };
+        assert!(reason.contains("no subscription"), "{reason}");
+        nothing_was_written(&writes);
+    }
+
+    #[tokio::test]
+    async fn a_closed_subscription_still_decides_what_the_deployment_may_set() {
+        let writes = Writes::default();
+        let closed = subscription_opening(&[IamFeature::Branding])
+            .close(Utc::now())
+            .expect("closable");
+        let subject = service_holding(
+            Some(deployment()),
+            &writes,
+            StubPolicy::allowing(),
+            subscriptions(Some(closed)),
+        );
+
+        set(&subject, settings(Some(branding("#112233", 6))))
+            .await
+            .expect("the latest subscription opens branding, open or not");
+
+        assert_eq!(writes.actions.lock().expect("not poisoned").len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_tier_that_closes_branding_still_lets_a_customer_clear_it() {
+        let writes = Writes::default();
+        let subject = service_holding(
+            Some(deployment()),
+            &writes,
+            StubPolicy::allowing(),
+            MockSubscriptionRepository::new(),
+        );
+
+        set(&subject, settings(None))
             .await
             .expect("clearing is always allowed");
 
@@ -646,51 +675,35 @@ mod tests {
     #[tokio::test]
     async fn another_feature_being_closed_does_not_refuse_branding() {
         let writes = Writes::default();
-        let subject = service(Some(deployment()), &writes, StubPolicy::allowing());
+        let subject = service_holding(
+            Some(deployment()),
+            &writes,
+            StubPolicy::allowing(),
+            subscriptions(Some(subscription_opening(&[IamFeature::Branding]))),
+        );
 
-        subject
-            .set_when(
-                caller(),
-                OrganisationId(ORGANISATION),
-                DeploymentId(DEPLOYMENT),
-                settings(None),
-                |_, feature| feature == IamFeature::Branding,
-            )
+        set(&subject, settings(Some(branding("#112233", 6))))
             .await
             .expect("open");
 
         assert_eq!(writes.actions.lock().expect("not poisoned").len(), 1);
     }
 
-    #[test]
-    fn the_gate_names_the_plan_and_the_tier_that_opens_the_feature() {
-        let refused =
-            require_open(Plan::Free, IamFeature::Branding, |_, _| false).expect_err("closed");
-
-        let CoreError::PermissionDenied { reason } = refused else {
-            panic!("expected a permission refusal");
-        };
-        assert!(reason.contains("available from"), "{reason}");
-        assert!(require_open(Plan::Free, IamFeature::Branding, |plan, f| plan.opens(f)).is_ok());
-    }
-
     #[tokio::test]
-    async fn an_organisation_that_does_not_exist_creates_nothing() {
+    async fn a_caller_without_the_right_is_refused_before_the_subscription_is_read() {
         let writes = Writes::default();
-        let mut missing = MockOrganisationRepository::new();
-        missing
-            .expect_find_by_id()
-            .returning(|_| Box::pin(async { Ok(None) }));
-        let subject = IamSettingsServiceImpl::new(
-            deployments(Some(deployment()), &writes, false),
-            actions(&writes),
-            missing,
-            StubPolicy::allowing(),
+        let subject = service_holding(
+            Some(deployment()),
+            &writes,
+            StubPolicy::refusing(),
+            MockSubscriptionRepository::new(),
         );
 
-        let refused = set(&subject, settings(None)).await.expect_err("missing");
+        let refused = set(&subject, settings(Some(branding("#112233", 6))))
+            .await
+            .expect_err("refused");
 
-        assert!(matches!(refused, CoreError::OrganisationNotFound { .. }));
+        assert!(matches!(refused, CoreError::PermissionDenied { .. }));
         nothing_was_written(&writes);
     }
 
@@ -700,7 +713,7 @@ mod tests {
         let subject = IamSettingsServiceImpl::new(
             deployments(Some(deployment()), &writes, true),
             actions(&writes),
-            organisations(Plan::Free),
+            branding_subscription(),
             StubPolicy::allowing(),
         );
 
@@ -762,7 +775,7 @@ mod tests {
         IamSettingsServiceImpl::new(
             deployments(found, &Writes::default(), false),
             history,
-            organisations(Plan::Free),
+            branding_subscription(),
             policy,
         )
         .iam_settings(

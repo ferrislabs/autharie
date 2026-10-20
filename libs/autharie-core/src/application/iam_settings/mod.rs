@@ -11,7 +11,6 @@ use autharie_domain::{
 };
 use autharie_macros::transactional;
 use autharie_permission::Permissions;
-use autharie_postgres::organisation::PostgresOrganisationRepository;
 
 pub use autharie_domain::iam_settings::{
     IAM_SETTINGS_ACTION_TYPE, IamSettings, branding, ports, service,
@@ -65,7 +64,7 @@ impl IamSettingsService for AutharieService {
         IamSettingsServiceImpl::new(
             deployment_repository,
             action_repository,
-            PostgresOrganisationRepository::new(&tx),
+            autharie_postgres::billing::PostgresSubscriptionRepository::new(&tx),
             InstanceRights {
                 permissions: permissions_in(&tx),
             },
@@ -85,7 +84,7 @@ impl IamSettingsService for AutharieService {
         IamSettingsServiceImpl::new(
             deployment_repository,
             action_repository,
-            PostgresOrganisationRepository::new(&tx),
+            autharie_postgres::billing::PostgresSubscriptionRepository::new(&tx),
             InstanceRights {
                 permissions: permissions_in(&tx),
             },

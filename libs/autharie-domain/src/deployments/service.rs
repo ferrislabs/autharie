@@ -450,7 +450,10 @@ where
         // certainly before one is provisioned.
         let organisation = self.organisation_of(&command).await?;
 
-        if command.sizing() == Sizing::Offer && command.recovery.is_none() {
+        if command.sizing() == Sizing::Offer
+            && command.recovery.is_none()
+            && !command.offer_from_tier()
+        {
             refuse_closed_offer(command.offer, organisation.plan)?;
         }
 
@@ -1133,6 +1136,90 @@ mod tests {
             crate::offers::Offer::Standard,
         )
         .expect("a creatable name")
+    }
+
+    fn a_catalogue_tier(offer: Offer) -> crate::billing::Tier {
+        crate::billing::Tier {
+            code: crate::billing::TierCode::parse("pro-2026").expect("a tier code"),
+            name: "Pro".to_string(),
+            monthly_price: crate::billing::Money::from_minor(4900),
+            offer,
+            features: std::collections::BTreeSet::new(),
+            engines: vec![DeploymentKind::Ferriskey, DeploymentKind::Keycloak],
+            hostings: vec![crate::billing::Hosting::Shared],
+            selectable: true,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_command_subscribed_to_a_catalogue_tier_is_placed_even_when_its_offer_is_closed_to_the_plan()
+     {
+        use crate::organisation::value_objects::Plan;
+
+        assert!(!Offer::Scale.is_open_to(Plan::Free));
+        let command = a_create_command()
+            .subscribed_to(&a_catalogue_tier(Offer::Scale))
+            .expect("a managed offer suits keycloak");
+
+        let created = created_on(Plan::Free, command).await;
+
+        assert_eq!(created.offer, Some(Offer::Scale));
+        assert_eq!(created.resources, Offer::Scale.resources());
+    }
+
+    #[tokio::test]
+    async fn a_legacy_command_with_an_offer_closed_to_the_plan_is_still_refused() {
+        use crate::organisation::value_objects::Plan;
+
+        let mut dataplanes = MockDataPlaneRepository::new();
+        dataplanes.expect_find_available().never();
+        let mut deployments = MockDeploymentRepository::new();
+        deployments.expect_insert().never();
+
+        let refused = DeploymentServiceImpl::new(
+            deployments,
+            StubUserRepository,
+            dataplanes,
+            organisations_on(Plan::Free),
+            no_provisioning(),
+            windows(),
+            Allowed,
+        )
+        .create_deployment(caller(), a_create_command())
+        .await
+        .expect_err("the standard offer is not open to the free tier");
+
+        assert!(
+            matches!(refused, CoreError::OfferNotOpenToPlan { .. }),
+            "{refused}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_command_requesting_a_tier_still_has_its_offer_checked_until_the_tier_is_chosen() {
+        use crate::organisation::value_objects::Plan;
+
+        let command = a_create_command().requesting_tier(Some(
+            crate::billing::TierCode::parse("pro-2026").expect("a tier code"),
+        ));
+
+        let refused = DeploymentServiceImpl::new(
+            MockDeploymentRepository::new(),
+            StubUserRepository,
+            MockDataPlaneRepository::new(),
+            organisations_on(Plan::Free),
+            no_provisioning(),
+            windows(),
+            Allowed,
+        )
+        .create_deployment(caller(), command)
+        .await
+        .expect_err("a request alone does not subscribe");
+
+        assert!(
+            matches!(refused, CoreError::OfferNotOpenToPlan { .. }),
+            "{refused}"
+        );
     }
 
     #[tokio::test]

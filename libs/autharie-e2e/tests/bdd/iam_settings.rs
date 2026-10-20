@@ -8,9 +8,8 @@ use autharie_domain::iam_settings::ports::{IamSettingsService, IamSettingsState}
 use autharie_domain::iam_settings::service::IamSettingsServiceImpl;
 use autharie_domain::organisation::OrganisationId;
 use autharie_domain::organisation::features::IamFeature;
-use autharie_domain::organisation::value_objects::Plan;
 use autharie_e2e::support::iam::{
-    DEPLOYMENT, InMemoryDeployments, InstanceRights, ORGANISATION, OneOrganisation, SpyInstances,
+    DEPLOYMENT, InMemoryDeployments, InstanceRights, ORGANISATION, OneSubscription, SpyInstances,
     branding_from, deployment_of, domain_colors, event_of, iam_settings_actions,
     resource_branding_of, resource_colors, settings_of,
 };
@@ -32,7 +31,7 @@ pub struct IamSettingsWorld {
     deployments: InMemoryDeployments,
     actions: InMemoryActions,
     rights: InstanceRights,
-    plan_closes_branding: bool,
+    tier_closes_branding: bool,
     refusal: Option<String>,
     outcome: Option<Result<IamSettingsState, CoreError>>,
     instances: Arc<SpyInstances>,
@@ -48,7 +47,7 @@ impl IamSettingsWorld {
             deployments: InMemoryDeployments::holding(deployment_of(ORGANISATION)),
             actions: InMemoryActions::default(),
             rights: InstanceRights::to_manage(),
-            plan_closes_branding: false,
+            tier_closes_branding: false,
             refusal: None,
             outcome: None,
             instances: Arc::default(),
@@ -63,28 +62,26 @@ impl IamSettingsWorld {
         let service = IamSettingsServiceImpl::new(
             self.deployments.clone(),
             self.actions.clone(),
-            OneOrganisation::on(Plan::Free),
+            if self.tier_closes_branding {
+                OneSubscription::opening(
+                    IamFeature::ALL
+                        .into_iter()
+                        .filter(|feature| *feature != IamFeature::Branding),
+                )
+            } else {
+                OneSubscription::opening_everything()
+            },
             self.rights,
         );
         let organisation = OrganisationId(ORGANISATION);
         let deployment = DeploymentId(DEPLOYMENT);
         let settings = settings_of(branding);
 
-        self.outcome = Some(if self.plan_closes_branding {
-            service
-                .set_when(
-                    caller(),
-                    organisation,
-                    deployment,
-                    settings,
-                    |_, feature| feature != IamFeature::Branding,
-                )
-                .await
-        } else {
+        self.outcome = Some(
             service
                 .set_iam_settings(caller(), organisation, deployment, settings)
-                .await
-        });
+                .await,
+        );
     }
 
     async fn save(&mut self, wire: &str) {
@@ -142,9 +139,9 @@ fn a_caller_who_may_only_view(world: &mut IamSettingsWorld) {
     world.rights = InstanceRights::to_view_only();
 }
 
-#[given("a plan that closes branding")]
-fn a_plan_that_closes_branding(world: &mut IamSettingsWorld) {
-    world.plan_closes_branding = true;
+#[given("a tier that closes branding")]
+fn a_tier_that_closes_branding(world: &mut IamSettingsWorld) {
+    world.tier_closes_branding = true;
 }
 
 #[given(expr = "the customer has saved the branding {string}")]

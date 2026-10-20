@@ -3,7 +3,13 @@ use autharie_macros::transactional;
 use chrono::Duration;
 use serde_json::json;
 
+use autharie_domain::billing::{
+    Hosting,
+    lifecycle::{SubscriptionLifecycle, TierChoice, TierRequest},
+};
 use autharie_domain::offers::DatabasePlacement;
+use autharie_domain::organisation::ports::OrganisationRepository;
+use autharie_postgres::organisation::PostgresOrganisationRepository;
 
 use crate::{
     AutharieService, CoreError,
@@ -261,7 +267,10 @@ impl DeploymentService for AutharieService {
         action,
         backup_schedule,
         organisation,
-        feature_flag
+        feature_flag,
+        tier,
+        subscription,
+        billing_account
     )]
     async fn create_deployment(
         &self,
@@ -280,6 +289,45 @@ impl DeploymentService for AutharieService {
             .await?;
         }
 
+        DeploymentPolicy::can_create_deployments(
+            &AuthariePolicy::new(permissions_in(&tx)),
+            identity.clone(),
+            command.organisation_id,
+        )
+        .await?;
+
+        let organisation = PostgresOrganisationRepository::new(&tx)
+            .find_by_id(&command.organisation_id)
+            .await?
+            .ok_or(CoreError::OrganisationNotFound {
+                id: command.organisation_id.0,
+            })?;
+
+        let lifecycle = SubscriptionLifecycle::new(
+            tier_repository,
+            subscription_repository,
+            billing_account_repository,
+            AuthariePolicy::new(permissions_in(&tx)),
+        );
+
+        let choice = lifecycle
+            .choose(
+                &identity,
+                TierRequest {
+                    organisation: &organisation,
+                    requested: command.tier.as_ref(),
+                    offer: command.offer,
+                    engine: &command.kind,
+                    hosting: Hosting::of(command.distribution()),
+                },
+            )
+            .await?;
+
+        let command = match &choice {
+            TierChoice::Catalogue(tier) => command.subscribed_to(tier)?,
+            TierChoice::Legacy(_) => command,
+        };
+
         let deployments = DeploymentServiceImpl::new(
             deployment_repository,
             user_repository,
@@ -294,6 +342,10 @@ impl DeploymentService for AutharieService {
         self.refuse_platform_hostname(&deployment)?;
 
         self.announce_new_deployment(&deployment, backup_schedule_repository, action_repository)
+            .await?;
+
+        lifecycle
+            .open(&deployment, choice.tier().terms(), deployment.created_at)
             .await?;
 
         Ok(deployment)
@@ -329,7 +381,16 @@ impl DeploymentService for AutharieService {
         .await
     }
 
-    #[transactional(deployment, user, data_plane, action, organisation)]
+    #[transactional(
+        deployment,
+        user,
+        data_plane,
+        action,
+        organisation,
+        tier,
+        subscription,
+        billing_account
+    )]
     async fn delete_deployment(
         &self,
         deployment_id: DeploymentId,
@@ -347,10 +408,28 @@ impl DeploymentService for AutharieService {
         .await?;
         announce_deletion(&deployment, action_repository).await?;
 
+        SubscriptionLifecycle::new(
+            tier_repository,
+            subscription_repository,
+            billing_account_repository,
+            AuthariePolicy::new(permissions_in(&tx)),
+        )
+        .close_open(deployment.id, chrono::Utc::now())
+        .await?;
+
         Ok(deployment)
     }
 
-    #[transactional(deployment, user, data_plane, action, organisation)]
+    #[transactional(
+        deployment,
+        user,
+        data_plane,
+        action,
+        organisation,
+        tier,
+        subscription,
+        billing_account
+    )]
     async fn delete_deployment_for_organisation(
         &self,
         identity: Identity,
@@ -369,6 +448,15 @@ impl DeploymentService for AutharieService {
         .delete_deployment_for_organisation(identity, organisation_id, deployment_id)
         .await?;
         announce_deletion(&deployment, action_repository).await?;
+
+        SubscriptionLifecycle::new(
+            tier_repository,
+            subscription_repository,
+            billing_account_repository,
+            AuthariePolicy::new(permissions_in(&tx)),
+        )
+        .close_open(deployment.id, chrono::Utc::now())
+        .await?;
 
         Ok(deployment)
     }

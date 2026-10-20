@@ -43,17 +43,17 @@ Feature: IAM settings reach the identity instance
     And the latest action carries a null branding
 
   @spec-iam-3
-  Scenario: Clearing is accepted even when the plan closes branding
+  Scenario: Clearing is accepted even when the tier closes branding
     Given a deployment of the organisation
-    And a plan that closes branding
+    And a tier that closes branding
     When the customer clears the branding
     Then the change is accepted
     And the latest action carries a null branding
 
   @spec-iam-3
-  Scenario: Setting a branding is refused when the plan closes it
+  Scenario: Setting a branding is refused when the tier closes it
     Given a deployment of the organisation
-    And a plan that closes branding
+    And a tier that closes branding
     When the customer saves the branding '{"radius":6}'
     Then the change is refused as permission denied
     And nothing is stored and no action is created

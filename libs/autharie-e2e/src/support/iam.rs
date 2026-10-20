@@ -4,6 +4,8 @@ use autharie_auth::Identity;
 use autharie_crds::v1alpha::identity_instance::{Branding as ResourceBranding, IamConfig};
 use autharie_domain::CoreError;
 use autharie_domain::action::Action;
+use autharie_domain::billing::ports::SubscriptionRepository;
+use autharie_domain::billing::{BillingPeriod, Money, Subscription, SubscriptionTerms, TierCode};
 use autharie_domain::dataplane::value_objects::{DataPlaneId, DeploymentResources};
 use autharie_domain::deployments::environment::Environment;
 use autharie_domain::deployments::network::NetworkAccess;
@@ -15,7 +17,9 @@ use autharie_domain::iam_settings::branding::{Branding, BrandingInput};
 use autharie_domain::iam_settings::ports::IamSettingsPolicy;
 use autharie_domain::iam_settings::service::payload;
 use autharie_domain::iam_settings::{IAM_SETTINGS_ACTION_TYPE, IamSettings};
+use autharie_domain::offers::Offer;
 use autharie_domain::organisation::commands::CreateOrganisationData;
+use autharie_domain::organisation::features::IamFeature;
 use autharie_domain::organisation::member::Member;
 use autharie_domain::organisation::ports::OrganisationRepository;
 use autharie_domain::organisation::value_objects::{
@@ -153,6 +157,67 @@ impl DeploymentRepository for InMemoryDeployments {
 
     async fn count_by_version(&self, _: &DeploymentKind) -> Result<Vec<(Version, u64)>, CoreError> {
         Ok(Vec::new())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct OneSubscription(Subscription);
+
+impl OneSubscription {
+    pub fn opening(features: impl IntoIterator<Item = IamFeature>) -> Self {
+        let terms = SubscriptionTerms {
+            tier: TierCode::legacy(Offer::Free),
+            monthly_price: Money::ZERO,
+            offer: Offer::Free,
+            features: features.into_iter().collect(),
+        };
+
+        Self(Subscription::open(
+            OrganisationId(ORGANISATION),
+            DeploymentId(DEPLOYMENT),
+            terms,
+            Utc::now(),
+        ))
+    }
+
+    pub fn opening_everything() -> Self {
+        Self::opening(IamFeature::ALL)
+    }
+}
+
+impl SubscriptionRepository for OneSubscription {
+    async fn open(&self, _: &Subscription) -> Result<(), CoreError> {
+        Err(unused())
+    }
+
+    async fn close(&self, _: &Subscription) -> Result<(), CoreError> {
+        Err(unused())
+    }
+
+    async fn latest_for(
+        &self,
+        deployment_id: &DeploymentId,
+    ) -> Result<Option<Subscription>, CoreError> {
+        Ok((self.0.deployment_id() == *deployment_id).then(|| self.0.clone()))
+    }
+
+    async fn list_in_period(
+        &self,
+        _: &OrganisationId,
+        _: BillingPeriod,
+    ) -> Result<Vec<Subscription>, CoreError> {
+        Err(unused())
+    }
+
+    async fn organisations_billable_in(
+        &self,
+        _: BillingPeriod,
+    ) -> Result<Vec<OrganisationId>, CoreError> {
+        Err(unused())
+    }
+
+    async fn list_open_billable(&self, _: &OrganisationId) -> Result<Vec<Subscription>, CoreError> {
+        Err(unused())
     }
 }
 

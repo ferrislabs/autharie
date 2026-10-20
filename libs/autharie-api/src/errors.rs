@@ -1,4 +1,4 @@
-use autharie_core::{CoreError, dataplane::credential::CredentialError};
+use autharie_core::{CoreError, billing::BillingError, dataplane::credential::CredentialError};
 use axum::{Json, http::StatusCode, response::IntoResponse};
 use serde::Serialize;
 use thiserror::Error;
@@ -370,6 +370,46 @@ impl From<CoreError> for ApiError {
                 }
             }
             CoreError::Provision(_) => ApiError::BadGateway {
+                reason: value.to_string(),
+            },
+            CoreError::OrganisationSuspended { .. } => ApiError::Conflict {
+                reason: value.to_string(),
+            },
+            CoreError::Billing(BillingError::TierNotFound { .. }) => ApiError::NotFound {
+                reason: value.to_string(),
+            },
+            CoreError::Billing(
+                BillingError::TierRequired
+                | BillingError::TierNotSelectable { .. }
+                | BillingError::TierDisallowsEngine { .. }
+                | BillingError::TierDisallowsHosting { .. }
+                | BillingError::InvalidTierCode { .. }
+                | BillingError::InvalidPeriod { .. }
+                | BillingError::InvalidHosting { .. }
+                | BillingError::InvalidBillingDetails { .. },
+            ) => ApiError::Unprocessable {
+                reason: value.to_string(),
+            },
+            CoreError::Billing(
+                BillingError::AccountIncomplete
+                | BillingError::NoOpenSubscription { .. }
+                | BillingError::SubscriptionClosed { .. }
+                | BillingError::SubscriptionEndsBeforeStart
+                | BillingError::InvalidStatementTransition { .. },
+            ) => ApiError::Conflict {
+                reason: value.to_string(),
+            },
+            CoreError::Billing(BillingError::InvalidEventSignature) => ApiError::BadRequest {
+                reason: value.to_string(),
+            },
+            CoreError::Billing(BillingError::Provider { .. }) => {
+                tracing::error!(error = %value, "the payment provider failed");
+
+                ApiError::BadGateway {
+                    reason: "the payment provider did not answer as expected".to_string(),
+                }
+            }
+            CoreError::Billing(BillingError::NotConfigured) => ApiError::ServiceUnavailable {
                 reason: value.to_string(),
             },
             // Everything else stays deliberately opaque to the caller: a
@@ -902,6 +942,168 @@ mod tests {
             panic!("expected a conflict, got {taken:?}");
         };
         assert_eq!(reason, "this name is already used by another deployment");
+    }
+
+    #[test]
+    fn a_suspended_organisation_is_a_conflict_that_says_so() {
+        let refused = ApiError::from(CoreError::OrganisationSuspended {
+            reason: "the organisation is suspended".to_string(),
+        });
+
+        let ApiError::Conflict { reason } = &refused else {
+            panic!("expected a conflict, got {refused:?}");
+        };
+        assert!(reason.contains("suspended"), "{reason}");
+        assert_eq!(refused.into_response().status(), StatusCode::CONFLICT);
+    }
+
+    fn billing(error: BillingError) -> ApiError {
+        ApiError::from(CoreError::Billing(error))
+    }
+
+    #[test]
+    fn a_billing_refusal_gets_the_status_that_means_something() {
+        let id = uuid::Uuid::nil();
+        let cases = [
+            (
+                BillingError::TierNotFound {
+                    code: "pro-2026".to_string(),
+                },
+                StatusCode::NOT_FOUND,
+            ),
+            (BillingError::TierRequired, StatusCode::UNPROCESSABLE_ENTITY),
+            (
+                BillingError::TierNotSelectable {
+                    code: "legacy-free".to_string(),
+                },
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+            (
+                BillingError::TierDisallowsEngine {
+                    code: "free-2026".to_string(),
+                    engine: "keycloak".to_string(),
+                },
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+            (
+                BillingError::TierDisallowsHosting {
+                    code: "free-2026".to_string(),
+                    hosting: "customer_cloud".to_string(),
+                },
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+            (
+                BillingError::InvalidTierCode {
+                    value: "Pro".to_string(),
+                },
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+            (
+                BillingError::InvalidPeriod {
+                    value: "2026-13".to_string(),
+                },
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+            (
+                BillingError::InvalidHosting {
+                    value: "moon".to_string(),
+                },
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+            (
+                BillingError::InvalidBillingDetails {
+                    field: "email",
+                    reason: "is not an address",
+                },
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+            (BillingError::AccountIncomplete, StatusCode::CONFLICT),
+            (
+                BillingError::NoOpenSubscription { deployment: id },
+                StatusCode::CONFLICT,
+            ),
+            (
+                BillingError::SubscriptionClosed { id },
+                StatusCode::CONFLICT,
+            ),
+            (
+                BillingError::SubscriptionEndsBeforeStart,
+                StatusCode::CONFLICT,
+            ),
+            (
+                BillingError::InvalidStatementTransition {
+                    id,
+                    from: "paid".to_string(),
+                    to: "draft".to_string(),
+                },
+                StatusCode::CONFLICT,
+            ),
+            (BillingError::InvalidEventSignature, StatusCode::BAD_REQUEST),
+            (
+                BillingError::Provider {
+                    reason: "card_declined".to_string(),
+                },
+                StatusCode::BAD_GATEWAY,
+            ),
+            (BillingError::NotConfigured, StatusCode::SERVICE_UNAVAILABLE),
+        ];
+
+        for (error, status) in cases {
+            let message = error.to_string();
+            assert_eq!(billing(error).into_response().status(), status, "{message}");
+        }
+    }
+
+    #[test]
+    fn a_billing_refusal_says_what_the_domain_wrote() {
+        let missing = billing(BillingError::TierNotFound {
+            code: "pro-2026".to_string(),
+        });
+        let ApiError::NotFound { reason } = &missing else {
+            panic!("expected not found, got {missing:?}");
+        };
+        assert_eq!(reason, "tier 'pro-2026' does not exist");
+
+        let incomplete = billing(BillingError::AccountIncomplete);
+        let ApiError::Conflict { reason } = &incomplete else {
+            panic!("expected a conflict, got {incomplete:?}");
+        };
+        assert!(reason.contains("billing account"), "{reason}");
+    }
+
+    #[test]
+    fn a_payment_provider_failure_never_leaks_what_the_provider_said() {
+        let failed = billing(BillingError::Provider {
+            reason: "No such customer: cus_secret".to_string(),
+        });
+
+        let ApiError::BadGateway { reason } = &failed else {
+            panic!("expected a bad gateway, got {failed:?}");
+        };
+        assert_eq!(reason, "the payment provider did not answer as expected");
+        assert!(!failed.to_string().contains("cus_secret"), "{failed}");
+    }
+
+    #[test]
+    fn the_billing_errors_nobody_can_act_on_stay_opaque() {
+        for error in [
+            BillingError::InvalidPaymentMethodStatus {
+                value: "x".to_string(),
+            },
+            BillingError::InvalidStatementStatus {
+                value: "x".to_string(),
+            },
+            BillingError::InvalidProviderReference {
+                value: "cus_secret".to_string(),
+            },
+        ] {
+            let opaque = billing(error);
+
+            let ApiError::Unknown { reason } = &opaque else {
+                panic!("expected the catch-all, got {opaque:?}");
+            };
+            assert_eq!(reason, "an unexpected error occurred");
+        }
     }
 
     #[test]

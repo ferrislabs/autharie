@@ -218,6 +218,7 @@ impl Installation {
                 "DELETE FROM backup_schedules WHERE deployment_id IN \
                  (SELECT id FROM deployments WHERE organisation_id = $1)",
                 "DELETE FROM deployments WHERE organisation_id = $1",
+                "DELETE FROM billing_subscriptions WHERE organisation_id = $1",
                 "DELETE FROM organisations WHERE id = $1",
             ] {
                 sqlx::query(statement)

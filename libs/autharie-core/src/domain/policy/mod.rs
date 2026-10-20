@@ -223,6 +223,29 @@ where
     }
 }
 
+impl<R> autharie_domain::billing::ports::BillingPolicy for AuthariePolicy<R>
+where
+    R: PermissionProvider,
+{
+    async fn can_view_billing(
+        &self,
+        identity: Identity,
+        organisation_id: OrganisationId,
+    ) -> Result<(), CoreError> {
+        self.require(identity, organisation_id, Permissions::VIEW_BILLING)
+            .await
+    }
+
+    async fn can_manage_billing(
+        &self,
+        identity: Identity,
+        organisation_id: OrganisationId,
+    ) -> Result<(), CoreError> {
+        self.require(identity, organisation_id, Permissions::MANAGE_BILLING)
+            .await
+    }
+}
+
 impl<R> autharie_domain::organisation::ports::InvitationPolicy for AuthariePolicy<R>
 where
     R: PermissionProvider,
@@ -544,6 +567,94 @@ mod tests {
         assert!(
             policy
                 .can_manage_roles(test_identity(), organisation_id)
+                .await
+                .is_ok()
+        );
+    }
+
+    fn policy_holding(permissions: Permissions) -> AuthariePolicy<StaticPermissionProvider> {
+        AuthariePolicy::new(StaticPermissionProvider { permissions })
+    }
+
+    #[tokio::test]
+    async fn a_member_holding_view_billing_may_view_billing_and_not_manage_it() {
+        use autharie_domain::billing::ports::BillingPolicy;
+
+        let policy = policy_holding(Permissions::VIEW_BILLING);
+        let organisation_id = OrganisationId(Uuid::new_v4());
+
+        assert!(
+            policy
+                .can_view_billing(test_identity(), organisation_id)
+                .await
+                .is_ok()
+        );
+        assert!(matches!(
+            policy
+                .can_manage_billing(test_identity(), organisation_id)
+                .await,
+            Err(CoreError::PermissionDenied { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_member_holding_manage_billing_may_manage_billing_and_not_view_it() {
+        use autharie_domain::billing::ports::BillingPolicy;
+
+        let policy = policy_holding(Permissions::MANAGE_BILLING);
+        let organisation_id = OrganisationId(Uuid::new_v4());
+
+        assert!(
+            policy
+                .can_manage_billing(test_identity(), organisation_id)
+                .await
+                .is_ok()
+        );
+        assert!(matches!(
+            policy
+                .can_view_billing(test_identity(), organisation_id)
+                .await,
+            Err(CoreError::PermissionDenied { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_member_holding_neither_billing_bit_may_do_neither() {
+        use autharie_domain::billing::ports::BillingPolicy;
+
+        let policy = policy_holding(Permissions::VIEW_INSTANCES | Permissions::MANAGE_INSTANCES);
+        let organisation_id = OrganisationId(Uuid::new_v4());
+
+        assert!(matches!(
+            policy
+                .can_view_billing(test_identity(), organisation_id)
+                .await,
+            Err(CoreError::PermissionDenied { .. })
+        ));
+        assert!(matches!(
+            policy
+                .can_manage_billing(test_identity(), organisation_id)
+                .await,
+            Err(CoreError::PermissionDenied { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_member_holding_both_billing_bits_may_do_both() {
+        use autharie_domain::billing::ports::BillingPolicy;
+
+        let policy = policy_holding(Permissions::VIEW_BILLING | Permissions::MANAGE_BILLING);
+        let organisation_id = OrganisationId(Uuid::new_v4());
+
+        assert!(
+            policy
+                .can_view_billing(test_identity(), organisation_id)
+                .await
+                .is_ok()
+        );
+        assert!(
+            policy
+                .can_manage_billing(test_identity(), organisation_id)
                 .await
                 .is_ok()
         );
