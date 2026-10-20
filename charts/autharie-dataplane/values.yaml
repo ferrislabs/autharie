@@ -198,15 +198,17 @@ sharedDatabase:
     limits:
       memory: 1Gi
   postgresql:
-    # What bounds how many free deployments one data plane carries. The
-    # operator sets no pool size on a FerrisKey API, so each free deployment
-    # holds the pool FerrisKey defaults to, assumed to be 20 connections
-    # (check it again when the FerrisKey image moves).
+    # What bounds how many free deployments one data plane carries.
+    # FerrisKey opens a pool of 5 to 100 connections, fixed in its code, so
+    # the operator caps each free role at 10 (CONNECTION LIMIT): no tenant
+    # can starve the others, and a burst past 10 fails that tenant's
+    # requests rather than everyone's.
     #   300 max_connections
     #   - 3  superuser_reserved_connections (PostgreSQL default)
     #   - 10 kept for CloudNativePG itself, the operator's role/database SQL,
     #        and the migration and dump Jobs, which connect beside the API
-    #   = 287 usable, / 20 per FerrisKey = 14 free deployments.
+    #   = 287 usable, / 10 per role = 28 free deployments guaranteed their
+    #   cap; about 57 while they idle at FerrisKey's 5.
     # Raise max_connections together with the memory limit above: every
     # connection costs a backend process, roughly 5-10 MiB.
     maxConnections: 300
