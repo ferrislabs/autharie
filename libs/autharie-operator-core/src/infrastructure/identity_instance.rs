@@ -37,7 +37,7 @@ use crate::domain::{OperatorError, ReconcileOutcome};
 use crate::infrastructure::archive::{
     ArchiveStore, cluster_backup_section, cluster_recovery_section,
 };
-use crate::infrastructure::dumps::{DumpTarget, build_dump_cronjob, cronjob_name};
+use crate::infrastructure::dumps::{DumpTarget, build_dump_cronjob, cluster_image, cronjob_name};
 use crate::infrastructure::edge::{
     Backend, Edge, allowed_ranges, build_route, build_security_policy, exposed,
     httproute_api_resource, route_is_ready, security_policy_api_resource,
@@ -1564,6 +1564,43 @@ impl FerriskeyProviderHandler {
         };
         ensure_archive_credentials(&self.client, instance, namespace).await?;
 
+        // Asked of the cluster, not written down: see `DumpTarget`. An error
+        // rather than a quiet return, because the error is what requeues; a
+        // quiet return from a finished reconcile would leave the tenant
+        // undumped until something else happened to touch it.
+        let cluster =
+            self.shared_cluster_of(instance)?
+                .ok_or_else(|| OperatorError::Configuration {
+                    message: format!("instance `{name}` is not in shared mode"),
+                })?;
+        let clusters: Api<DynamicObject> = Api::namespaced_with(
+            self.client.clone(),
+            &cluster.namespace,
+            &ApiResource::from_gvk(&GroupVersionKind::gvk(
+                "postgresql.cnpg.io",
+                "v1",
+                "Cluster",
+            )),
+        );
+        let shared =
+            clusters
+                .get_opt(&cluster.name)
+                .await
+                .map_err(|error| OperatorError::Kube {
+                    message: error.to_string(),
+                })?;
+        let Some(postgres_image) = shared
+            .as_ref()
+            .and_then(|shared| cluster_image(&shared.data))
+        else {
+            return Err(OperatorError::Internal {
+                message: format!(
+                    "the shared cluster `{}` does not report its image yet, so `{name}` has no dump job",
+                    cluster.name
+                ),
+            });
+        };
+
         let owner = owner_reference
             .map(serde_json::to_value)
             .transpose()
@@ -1577,6 +1614,7 @@ impl FerriskeyProviderHandler {
                 database_secret: &ferriskey_db_credentials_secret_name(&name),
                 backup,
                 region: &store.region,
+                postgres_image,
             },
             owner,
         )?;

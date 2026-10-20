@@ -23,10 +23,6 @@ use crate::infrastructure::archive::{ACCESS_KEY_ID, ACCESS_SECRET_KEY, split_des
 /// that a free tenant's storage stays a rounding error.
 pub const KEPT_DUMPS: usize = 7;
 
-/// The same major as the shared cluster. `pg_dump` refuses a server newer than
-/// itself, so this has to follow the cluster's image, not trail it.
-pub const POSTGRES_IMAGE: &str = "ghcr.io/cloudnative-pg/postgresql:17.5";
-
 /// Pinned, never `latest`: a dump that silently changes client version is a
 /// restore that changes behaviour a year later.
 pub const UPLOAD_IMAGE: &str = "amazon/aws-cli:2.27.50";
@@ -51,6 +47,27 @@ pub struct DumpTarget<'a> {
     pub database_secret: &'a str,
     pub backup: &'a BackupConfig,
     pub region: &'a str,
+    /// The image the shared cluster is running, as CloudNativePG reports it.
+    ///
+    /// `pg_dump` refuses a server newer than itself, and the cluster's major
+    /// moves with the operator's default image, so any image written down
+    /// here would one day be the wrong one and fail every night without a
+    /// word. It is asked of the cluster instead, and passed in so this stays a
+    /// pure function.
+    pub postgres_image: &'a str,
+}
+
+/// The image a CloudNativePG `Cluster` says it is running, if it says.
+///
+/// `None` until the cluster has been reconciled once. The caller waits rather
+/// than guessing: a guess that is one major behind is a dump job that exists
+/// and never succeeds.
+pub fn cluster_image(cluster: &Value) -> Option<&str> {
+    cluster
+        .get("status")
+        .and_then(|status| status.get("image"))
+        .and_then(Value::as_str)
+        .filter(|image| !image.is_empty())
 }
 
 pub fn cronjob_name(instance_name: &str) -> String {
@@ -158,7 +175,7 @@ pub fn build_dump_cronjob(
 
     let dump = json!({
         "name": "pg-dump",
-        "image": POSTGRES_IMAGE,
+        "image": target.postgres_image,
         "command": ["pg_dump", "-Fc", "--no-owner", "--no-acl", "--file", DUMP_FILE],
         "env": [
             secret_env("PGHOST", target.database_secret, "host"),
@@ -267,6 +284,7 @@ mod tests {
     use super::*;
 
     const INSTANCE: &str = "deployment-b6a1c2d3-e4f5-4a6b-8c9d-0e1f2a3b4c5d";
+    const IMAGE: &str = "ghcr.io/cloudnative-pg/postgresql:18.3-system-trixie";
     const ID: &str = "b6a1c2d3-e4f5-4a6b-8c9d-0e1f2a3b4c5d";
 
     fn backup() -> BackupConfig {
@@ -286,6 +304,7 @@ mod tests {
                 database_secret: "deployment-db",
                 backup,
                 region: "us-east-1",
+                postgres_image: IMAGE,
             },
             None,
         )
@@ -366,7 +385,7 @@ mod tests {
         let job = build(&backup());
         let init = &pod(&job)["initContainers"][0];
 
-        assert_eq!(init["image"], POSTGRES_IMAGE);
+        assert_eq!(init["image"], IMAGE);
         assert_eq!(init["command"][0], "pg_dump");
         assert_eq!(init["command"][1], "-Fc");
     }
@@ -508,11 +527,47 @@ mod tests {
     }
 
     #[test]
+    fn the_dump_runs_the_image_it_is_given() {
+        let job = build_dump_cronjob(
+            &DumpTarget {
+                instance_name: INSTANCE,
+                namespace: "tenant-a",
+                database_secret: "deployment-db",
+                backup: &backup(),
+                region: "us-east-1",
+                postgres_image: "registry.example/postgresql:17.4",
+            },
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(
+            pod(&job)["initContainers"][0]["image"],
+            "registry.example/postgresql:17.4"
+        );
+        assert_eq!(pod(&build(&backup()))["initContainers"][0]["image"], IMAGE);
+    }
+
+    #[test]
+    fn the_cluster_image_is_read_from_its_status_and_only_from_there() {
+        let ready = json!({
+            "spec": { "imageName": "spec-only" },
+            "status": { "image": IMAGE },
+        });
+
+        assert_eq!(cluster_image(&ready), Some(IMAGE));
+        assert_eq!(
+            cluster_image(&json!({ "spec": { "imageName": "x" } })),
+            None
+        );
+        assert_eq!(cluster_image(&json!({ "status": {} })), None);
+        assert_eq!(cluster_image(&json!({ "status": { "image": "" } })), None);
+    }
+
+    #[test]
     fn the_images_are_pinned() {
-        for image in [POSTGRES_IMAGE, UPLOAD_IMAGE] {
-            assert!(image.contains(':'));
-            assert!(!image.ends_with(":latest"));
-        }
+        assert!(UPLOAD_IMAGE.contains(':'));
+        assert!(!UPLOAD_IMAGE.ends_with(":latest"));
     }
 
     #[test]
@@ -527,6 +582,7 @@ mod tests {
                 database_secret: "deployment-db",
                 backup: &config,
                 region: "us-east-1",
+                postgres_image: IMAGE,
             },
             None,
         );

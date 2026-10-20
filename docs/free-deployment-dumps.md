@@ -55,6 +55,11 @@ kubectl -n <tenant-namespace> logs job/<job-name> -c upload
 kubectl -n <tenant-namespace> logs job/<job-name> -c pg-dump
 ```
 
+The dump runs the same Postgres image as the shared cluster, read from the
+cluster's status, because `pg_dump` refuses a server newer than itself. Until
+the cluster reports its image the CronJob is not created, and the operator
+retries every 30 seconds.
+
 An instance with no backup destination gets no CronJob, and loses the one it had
 if the destination is removed.
 
@@ -119,7 +124,7 @@ shared cluster. Everything in angle brackets is a placeholder.
 
 6. Check that an administrator can sign in at the deployment's address.
 
-Use a `pg_restore` of the same Postgres major as the shared cluster or newer.
+Use a `pg_restore` of the same Postgres major as the shared cluster or newer (the dump's own `pg_dump` image is the one to use).
 An older one refuses a dump taken by a newer `pg_dump`.
 
 ## Locally
