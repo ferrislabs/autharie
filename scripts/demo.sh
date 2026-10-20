@@ -84,11 +84,11 @@ export CUSTOMER_CLOUD_ENABLED="${CUSTOMER_CLOUD_ENABLED:-false}"
 export CUSTOMER_CLOUD_CONTROL_PLANE_URL="${CUSTOMER_CLOUD_CONTROL_PLANE_URL:-}"
 export CUSTOMER_CLOUD_HERALD_ISSUER="${CUSTOMER_CLOUD_HERALD_ISSUER:-}"
 
-# Free tenants are realms served at <realm>.<zone>, and the control plane
-# decides those names from OVH_ZONE. It *publishes* a record for them only when
-# the OVH credentials are set as well -- and a developer's .env may carry the
-# real zone and real credentials. A demo that did that would leave public
-# records for throwaway tenants in a production zone. So by default the demo
+# Deployments are served at <name>.<zone>, and the control plane decides those
+# names from OVH_ZONE. It *publishes* a record for them only when the OVH
+# credentials are set as well -- and a developer's .env may carry the real zone
+# and real credentials. A demo that did that would leave public records for
+# throwaway deployments in a production zone. So by default the demo
 # runs on a zone of its own with the credentials blanked: in Compose's
 # substitution the shell's environment wins over .env, empty values included.
 # *.autharie.local is also exactly what the mkcert certificate below covers.
@@ -230,54 +230,6 @@ for person in $(printf '%s' "${OPERATOR_PEOPLE}" | tr ',' ' '); do
         note "could not grant ${person} (HTTP ${granted})"
     fi
 done
-
-# ---------------------------------------------------------- cells organisation
-
-step "the cells organisation"
-# A free tenant is a realm on a shared FerrisKey instance -- a cell -- and that
-# instance is a deployment like any other, so it belongs to an organisation.
-# One of the platform's own rather than a customer's, so no customer's quota,
-# bill or member list ever carries it. Looked up by name: running this twice
-# must not leave two organisations, one of them owning nothing.
-CELLS_ORGANISATION_NAME="Autharie cells"
-response=$(curl -sS "${CONTROL_PLANE}/users/@me/organisations" \
-    -H "Authorization: Bearer ${OPERATOR_TOKEN}" -w $'\n%{http_code}')
-code="${response##*$'\n'}"
-[ "${code#2}" != "${code}" ] || die "could not list the operator's organisations (HTTP ${code})"
-cells_org=$(printf '%s' "${response%$'\n'*}" | jq -r --arg n "${CELLS_ORGANISATION_NAME}" \
-    'first(.data[] | select(.name == $n) | .id) // empty')
-
-if [ -n "${cells_org}" ]; then
-    note "reusing ${cells_org}"
-else
-    response=$(curl -sS -X POST "${CONTROL_PLANE}/organisations" \
-        -H "Authorization: Bearer ${OPERATOR_TOKEN}" \
-        -H 'Content-Type: application/json' \
-        -d "$(jq -n --arg n "${CELLS_ORGANISATION_NAME}" '{name: $n}')" \
-        -w $'\n%{http_code}')
-    code="${response##*$'\n'}"
-    [ "${code#2}" != "${code}" ] || die "could not create the cells organisation (HTTP ${code})"
-    cells_org=$(printf '%s' "${response%$'\n'*}" | jq -r '.data.id // empty')
-    [ -n "${cells_org}" ] || die "the control plane created an organisation and did not say which"
-    note "created ${cells_org}"
-fi
-
-response=$(curl -sS "${CONTROL_PLANE}/platform/cells/settings" \
-    -H "Authorization: Bearer ${OPERATOR_TOKEN}" -w $'\n%{http_code}')
-code="${response##*$'\n'}"
-[ "${code#2}" != "${code}" ] || die "could not read the cells settings (HTTP ${code})"
-current_cells_org=$(printf '%s' "${response%$'\n'*}" | jq -r '.organisation_id // empty')
-
-if [ "${current_cells_org}" != "${cells_org}" ]; then
-    response=$(curl -sS -X PUT "${CONTROL_PLANE}/platform/cells/settings" \
-        -H "Authorization: Bearer ${OPERATOR_TOKEN}" \
-        -H 'Content-Type: application/json' \
-        -d "$(jq -n --arg o "${cells_org}" '{organisation_id: $o}')" \
-        -w $'\n%{http_code}')
-    code="${response##*$'\n'}"
-    [ "${code#2}" != "${code}" ] || die "could not set the cells organisation (HTTP ${code}): ${response%$'\n'*}"
-fi
-note "\"${CELLS_ORGANISATION_NAME}\" owns the cells of this installation"
 
 # ------------------------------------------------------------------- k3d cluster
 
@@ -477,7 +429,6 @@ helm upgrade --install "${RELEASE}" charts/autharie-dataplane \
     --set "herald.otlp.enabled=true" \
     --set "gateway.tls.secretName=autharie-gateway-tls" \
     --set "gateway.publicHttpsPort=${AUTHARIE_HTTPS_PORT}" \
-    --set "genesis.tenantZone=${TENANT_ZONE}" \
     --wait --timeout 5m 2>&1 | tail -4 || die "helm install failed"
 
 # ------------------------------------------------------------------- new images
@@ -517,88 +468,6 @@ if [ "${status}" != "active" ]; then
     note "Everything else is up; a deployment created now will sit in Pending."
 fi
 
-# --------------------------------------------------------------------- the cell
-
-# A free deployment is placed in an open cell of its region, and a fresh
-# installation has none: without one, choosing the Free offer is refused with
-# "no cell has room". Creating a cell provisions a highly available FerrisKey
-# (two replicas, two database instances) on the data plane above, which is why
-# it waits for that data plane and can take minutes. DEMO_CELL=0 skips it.
-CELL_ID=""
-CELL_STATUS="not created"
-if [ "${DEMO_CELL:-1}" = "1" ]; then
-    step "a cell for free tenants"
-    if [ "${status}" != "active" ]; then
-        note "skipped: the data plane is not reporting, so nothing would build it"
-    else
-        OPERATOR_TOKEN=$(token autharie-operator-cli "${OPERATOR_SECRET}")
-        response=$(curl -sS "${CONTROL_PLANE}/platform/cells" \
-            -H "Authorization: Bearer ${OPERATOR_TOKEN}" -w $'\n%{http_code}')
-        code="${response##*$'\n'}"
-        [ "${code#2}" != "${code}" ] || die "could not list the cells (HTTP ${code})"
-        # An open cell takes tenants and a provisioning one is about to: either
-        # is what this step would otherwise create, so a second run waits on it.
-        CELL_ID=$(printf '%s' "${response%$'\n'*}" | jq -r --arg r "${REGION}" '
-            first(.data[] | select(.region == $r and .status == "open") | .id)
-            // first(.data[] | select(.region == $r and .status == "provisioning") | .id)
-            // empty')
-
-        if [ -n "${CELL_ID}" ]; then
-            note "reusing ${CELL_ID}"
-        else
-            response=$(curl -sS -X POST "${CONTROL_PLANE}/platform/cells" \
-                -H "Authorization: Bearer ${OPERATOR_TOKEN}" \
-                -H 'Content-Type: application/json' \
-                -d "$(jq -n --arg r "${REGION}" '{region: $r}')" \
-                -w $'\n%{http_code}')
-            code="${response##*$'\n'}"
-            if [ "${code#2}" != "${code}" ]; then
-                CELL_ID=$(printf '%s' "${response%$'\n'*}" | jq -r '.data.id // empty')
-                note "created ${CELL_ID}"
-            else
-                reason=$(printf '%s' "${response%$'\n'*}" | jq -r '.message // empty' 2>/dev/null) || reason=""
-                warn "could not create a cell (HTTP ${code})${reason:+: ${reason}}"
-                # 409 is the expected one on a fresh database: a cell is built
-                # from the newest FerrisKey release marked available, and the
-                # catalogue starts empty. The summary says how to publish one.
-                [ "${code}" = "409" ] && note "publish a FerrisKey release (see below), then run this again"
-            fi
-        fi
-
-        if [ -n "${CELL_ID}" ]; then
-            # Bounded: a cell that never opens is a FerrisKey that never became
-            # ready, and the rest of the stack is usable meanwhile.
-            deadline=$((SECONDS + ${DEMO_CELL_WAIT:-900}))
-            last=""
-            polls=0
-            while :; do
-                OPERATOR_TOKEN=$(token autharie-operator-cli "${OPERATOR_SECRET}")
-                CELL_STATUS=$(curl -sS "${CONTROL_PLANE}/platform/cells/${CELL_ID}" \
-                    -H "Authorization: Bearer ${OPERATOR_TOKEN}" \
-                    | jq -r '.data.status // "unknown"' 2>/dev/null) || CELL_STATUS="unknown"
-                case "${CELL_STATUS}" in
-                    open|full|draining|retired|failed) break ;;
-                esac
-                polls=$((polls + 1))
-                if [ "${CELL_STATUS}" != "${last}" ] || [ $((polls % 6)) -eq 0 ]; then
-                    note "cell ${CELL_ID}: ${CELL_STATUS}"
-                    last="${CELL_STATUS}"
-                fi
-                [ "${SECONDS}" -lt "${deadline}" ] || break
-                sleep 10
-            done
-
-            if [ "${CELL_STATUS}" = "open" ]; then
-                note "cell ${CELL_ID} is open"
-            else
-                warn "cell ${CELL_ID} is ${CELL_STATUS}"
-                note "its FerrisKey is a deployment of \"${CELLS_ORGANISATION_NAME}\"; watch it with"
-                note "  KUBECONFIG=${KUBECONFIG_PATH} kubectl get identityinstances -A"
-            fi
-        fi
-    fi
-fi
-
 cat <<SUMMARY
 
 $( [ "${status}" = "active" ] && printf '\033[1;32m✅ ready\033[0m' || printf '\033[1;33m⚠ up, data plane not reporting\033[0m' )
@@ -607,8 +476,6 @@ $( [ "${status}" = "active" ] && printf '\033[1;32m✅ ready\033[0m' || printf '
    control API  ${CONTROL_PLANE}
    identity     ${ISSUER}
    tenant zone  ${TENANT_ZONE}  (DNS records ${DNS_RECORDS})
-   cells owner  ${cells_org}  (${CELLS_ORGANISATION_NAME})
-   cell         ${CELL_ID:-none}  (${CELL_STATUS})
 
    Start the console:
 
@@ -643,18 +510,16 @@ $( [ "${status}" = "active" ] && printf '\033[1;32m✅ ready\033[0m' || printf '
    it at (http://host.k3d.internal:${QUICKWIT_PORT} from inside the cluster,
    http://localhost:${QUICKWIT_PORT} from here).
 
-   Free tenants: in the console, create a deployment with the Free offer. It
-   becomes a realm on the cell above, served at <realm>.${TENANT_ZONE}. Its page
-   shows the tenant URL and an Administrator panel: generate the credential,
-   then Reveal it -- the temporary password is shown once. Make the hostname
-   resolve, then open it on port ${AUTHARIE_HTTPS_PORT}:
+   Free deployments: in the console, create a deployment with the Free offer.
+   It is a FerrisKey instance of its own, with its database on the data
+   plane's shared database cluster, served at <name>.${TENANT_ZONE}. Make the
+   hostname resolve, then open it on port ${AUTHARIE_HTTPS_PORT}:
 
      sudo make local-hosts-apply
 
-   The cell's FerrisKey must be a release carrying ferriskey/ferriskey#1711,
-   or nobody can log in to a tenant realm. A cell is built from the newest
-   FerrisKey release marked available (0.9.0 or later) when it is created. To
-   use one built locally, import it and publish it in the catalogue:
+   A FerrisKey deployment is built from the newest FerrisKey release marked
+   available. The catalogue starts empty, so to use an image built locally,
+   import it and publish it:
 
      k3d image import ghcr.io/ferriskey/ferriskey-api:<v> \\
        ghcr.io/ferriskey/ferriskey-webapp:<v> --cluster ${CLUSTER}
