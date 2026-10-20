@@ -167,6 +167,12 @@ rules:
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete", "deletecollection"]
+  # One daily dump job per free deployment, in its own namespace. Owned by the
+  # instance, so it is removed with it; deleted directly only when the
+  # instance stops naming a destination.
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: [""]
     resources: ["services", "secrets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

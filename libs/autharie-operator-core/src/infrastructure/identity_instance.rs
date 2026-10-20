@@ -11,7 +11,7 @@ use autharie_crds::v1alpha::identity_instance::{
 use autharie_crds::v1alpha::identity_instance_upgrade::IdentityInstanceUpgrade;
 use futures::StreamExt;
 use k8s_openapi::api::apps::v1::{Deployment, DeploymentSpec};
-use k8s_openapi::api::batch::v1::{Job, JobSpec};
+use k8s_openapi::api::batch::v1::{CronJob, Job, JobSpec};
 use k8s_openapi::api::core::v1::{
     Affinity, Container, ContainerPort, EnvVar, EnvVarSource, HTTPGetAction, PodAffinityTerm,
     PodAntiAffinity, PodSpec, PodTemplateSpec, Probe, Secret, SecretKeySelector, Service,
@@ -37,6 +37,7 @@ use crate::domain::{OperatorError, ReconcileOutcome};
 use crate::infrastructure::archive::{
     ArchiveStore, cluster_backup_section, cluster_recovery_section,
 };
+use crate::infrastructure::dumps::{DumpTarget, build_dump_cronjob, cluster_image, cronjob_name};
 use crate::infrastructure::edge::{
     Backend, Edge, allowed_ranges, build_route, build_security_policy, exposed,
     httproute_api_resource, route_is_ready, security_policy_api_resource,
@@ -1515,6 +1516,122 @@ impl FerriskeyProviderHandler {
         Ok(())
     }
 
+    /// The daily dump of a shared database, or nothing when the instance names
+    /// no destination.
+    ///
+    /// In shared mode `spec.backup` is read as where the dumps go; no
+    /// CloudNativePG backup object is ever made from it, because there is no
+    /// cluster of the tenant's to back up. An instance whose destination is
+    /// taken away has its CronJob removed, so a tenant that stopped being
+    /// dumped does not keep being dumped on the strength of an old apply.
+    async fn ensure_shared_dumps(
+        &self,
+        instance: &IdentityInstance,
+        namespace: &str,
+        owner_reference: Option<OwnerReference>,
+    ) -> Result<(), OperatorError> {
+        let name = instance
+            .metadata
+            .name
+            .clone()
+            .ok_or(OperatorError::MissingName)?;
+        let jobs: Api<CronJob> = Api::namespaced(self.client.clone(), namespace);
+        let job_name = cronjob_name(&name);
+
+        let Some(backup) = instance.spec.backup.as_ref() else {
+            match jobs
+                .delete(&job_name, &kube::api::DeleteParams::default())
+                .await
+            {
+                Ok(_) => {}
+                Err(kube::Error::Api(response)) if response.code == 404 => {}
+                Err(error) => {
+                    return Err(OperatorError::Kube {
+                        message: error.to_string(),
+                    });
+                }
+            }
+            return Ok(());
+        };
+
+        let Some(store) = ArchiveStore::from_env() else {
+            return Err(OperatorError::Configuration {
+                message: format!(
+                    "instance `{name}` is dumped to {} and this data plane has no object store credentials",
+                    backup.destination_path
+                ),
+            });
+        };
+        ensure_archive_credentials(&self.client, instance, namespace).await?;
+
+        // Asked of the cluster, not written down: see `DumpTarget`. An error
+        // rather than a quiet return, because the error is what requeues; a
+        // quiet return from a finished reconcile would leave the tenant
+        // undumped until something else happened to touch it.
+        let cluster =
+            self.shared_cluster_of(instance)?
+                .ok_or_else(|| OperatorError::Configuration {
+                    message: format!("instance `{name}` is not in shared mode"),
+                })?;
+        let clusters: Api<DynamicObject> = Api::namespaced_with(
+            self.client.clone(),
+            &cluster.namespace,
+            &ApiResource::from_gvk(&GroupVersionKind::gvk(
+                "postgresql.cnpg.io",
+                "v1",
+                "Cluster",
+            )),
+        );
+        let shared =
+            clusters
+                .get_opt(&cluster.name)
+                .await
+                .map_err(|error| OperatorError::Kube {
+                    message: error.to_string(),
+                })?;
+        let Some(postgres_image) = shared
+            .as_ref()
+            .and_then(|shared| cluster_image(&shared.data))
+        else {
+            return Err(OperatorError::Internal {
+                message: format!(
+                    "the shared cluster `{}` does not report its image yet, so `{name}` has no dump job",
+                    cluster.name
+                ),
+            });
+        };
+
+        let owner = owner_reference
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(|error| OperatorError::Internal {
+                message: error.to_string(),
+            })?;
+        let cronjob = build_dump_cronjob(
+            &DumpTarget {
+                instance_name: &name,
+                namespace,
+                database_secret: &ferriskey_db_credentials_secret_name(&name),
+                backup,
+                region: &store.region,
+                postgres_image,
+            },
+            owner,
+        )?;
+
+        jobs.patch(
+            &job_name,
+            &kube::api::PatchParams::apply("autharie-operator").force(),
+            &kube::api::Patch::Apply(&cronjob),
+        )
+        .await
+        .map_err(|error| OperatorError::Kube {
+            message: error.to_string(),
+        })?;
+
+        Ok(())
+    }
+
     async fn ensure_ferriskey_route(
         &self,
         instance: &IdentityInstance,
@@ -1665,6 +1782,12 @@ impl IdentityProviderHandler for FerriskeyProviderHandler {
                 .await?;
             self.ensure_ferriskey_route(instance, &namespace, instance.controller_owner_ref(&()))
                 .await?;
+            // Last, so a destination that cannot be reached costs a tenant its
+            // dumps and not its sign-in page.
+            if instance.spec.database.mode == DatabaseMode::Shared {
+                self.ensure_shared_dumps(instance, &namespace, instance.controller_owner_ref(&()))
+                    .await?;
+            }
 
             info!(
                 name = %name,
