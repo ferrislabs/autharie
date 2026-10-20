@@ -1,0 +1,62 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                SELECT code, name, monthly_price_minor, offer, features, engines, hostings,\n                       selectable\n                FROM billing_tiers\n                ORDER BY monthly_price_minor, code\n                ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "code",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "monthly_price_minor",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "offer",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "features",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 5,
+        "name": "engines",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 6,
+        "name": "hostings",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 7,
+        "name": "selectable",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "8a6230b364a4d147d280b5c80463249b2d06fbdabc4729d22be5ba20571a3274"
+}

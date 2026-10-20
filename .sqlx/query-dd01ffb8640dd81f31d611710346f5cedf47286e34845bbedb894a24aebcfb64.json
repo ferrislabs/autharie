@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                SELECT DISTINCT organisation_id\n                FROM billing_subscriptions\n                WHERE monthly_price_minor > 0\n                  AND validity && tstzrange($1, $2, '[)')\n                ORDER BY organisation_id\n                ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "organisation_id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "dd01ffb8640dd81f31d611710346f5cedf47286e34845bbedb894a24aebcfb64"
+}

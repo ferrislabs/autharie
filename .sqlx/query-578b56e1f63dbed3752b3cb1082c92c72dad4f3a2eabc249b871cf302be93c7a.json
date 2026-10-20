@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE billing_statements\n            SET status = $2,\n                provider_invoice_id = $3,\n                hosted_invoice_url = $4,\n                updated_at = $5\n            WHERE id = $1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "578b56e1f63dbed3752b3cb1082c92c72dad4f3a2eabc249b871cf302be93c7a"
+}
