@@ -337,6 +337,19 @@ pub struct DatabaseConfig {
     pub mode: DatabaseMode,
 
     pub managed_cluster: ManagedClusterConfig,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shared: Option<SharedClusterConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SharedClusterConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cluster_name: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cluster_namespace: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
@@ -344,6 +357,7 @@ pub struct DatabaseConfig {
 pub enum DatabaseMode {
     #[default]
     ManagedCluster,
+    Shared,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -439,6 +453,7 @@ mod tests {
             replicas: 1,
             database: DatabaseConfig {
                 mode: DatabaseMode::ManagedCluster,
+                shared: None,
                 managed_cluster: ManagedClusterConfig {
                     instances: 2,
                     storage: ManagedClusterStorage {
@@ -571,6 +586,7 @@ mod tests {
     fn test_default_instances() {
         let config = DatabaseConfig {
             mode: DatabaseMode::ManagedCluster,
+            shared: None,
             managed_cluster: ManagedClusterConfig {
                 instances: super::default_instances(),
                 storage: ManagedClusterStorage {
@@ -608,6 +624,44 @@ mod tests {
         assert_eq!(config.mode, DatabaseMode::ManagedCluster);
         assert_eq!(config.managed_cluster.instances, 3);
         assert_eq!(config.managed_cluster.storage.size, "50Gi");
+        assert_eq!(config.shared, None);
+    }
+
+    #[test]
+    fn test_database_mode_absent_is_managed_cluster() {
+        let value = json!({
+            "managedCluster": { "storage": { "size": "1Gi" }, "resources": {} }
+        });
+
+        let config: DatabaseConfig = serde_json::from_value(value).unwrap();
+        assert_eq!(config.mode, DatabaseMode::ManagedCluster);
+    }
+
+    #[test]
+    fn test_database_config_deserializes_shared() {
+        let value = json!({
+            "mode": "shared",
+            "managedCluster": { "storage": { "size": "1Gi" }, "resources": {} },
+            "shared": { "clusterName": "free-db", "clusterNamespace": "autharie-system" }
+        });
+
+        let config: DatabaseConfig = serde_json::from_value(value).unwrap();
+        assert_eq!(config.mode, DatabaseMode::Shared);
+        let shared = config.shared.unwrap();
+        assert_eq!(shared.cluster_name.as_deref(), Some("free-db"));
+        assert_eq!(shared.cluster_namespace.as_deref(), Some("autharie-system"));
+    }
+
+    #[test]
+    fn test_shared_without_coordinates_leaves_them_to_the_operator() {
+        let value = json!({
+            "mode": "shared",
+            "managedCluster": { "storage": { "size": "1Gi" }, "resources": {} }
+        });
+
+        let config: DatabaseConfig = serde_json::from_value(value).unwrap();
+        assert_eq!(config.mode, DatabaseMode::Shared);
+        assert_eq!(config.shared, None);
     }
 
     #[test]
@@ -627,6 +681,7 @@ mod tests {
                 replicas: 1,
                 database: DatabaseConfig {
                     mode: DatabaseMode::ManagedCluster,
+                    shared: None,
                     managed_cluster: ManagedClusterConfig {
                         instances: 1,
                         storage: ManagedClusterStorage {
@@ -679,6 +734,7 @@ mod tests {
                 replicas: 1,
                 database: DatabaseConfig {
                     mode: DatabaseMode::ManagedCluster,
+                    shared: None,
                     managed_cluster: ManagedClusterConfig {
                         instances: 1,
                         storage: ManagedClusterStorage {
