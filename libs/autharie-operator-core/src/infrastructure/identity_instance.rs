@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use autharie_crds::common::types::Phase;
 use autharie_crds::v1alpha::identity_instance::{
-    IdentityInstance, IdentityProvider, ManagedClusterConfig,
+    DatabaseMode, IdentityInstance, IdentityProvider, ManagedClusterConfig,
 };
 use autharie_crds::v1alpha::identity_instance_upgrade::IdentityInstanceUpgrade;
 use futures::StreamExt;
@@ -32,6 +32,7 @@ use crate::application::OperatorApplication;
 use crate::domain::ports::{
     IdentityInstanceDeployer, IdentityInstanceRepository, IdentityInstanceService,
 };
+use crate::domain::shared_database::SharedDatabaseName;
 use crate::domain::{OperatorError, ReconcileOutcome};
 use crate::infrastructure::archive::{
     ArchiveStore, cluster_backup_section, cluster_recovery_section,
@@ -41,6 +42,7 @@ use crate::infrastructure::edge::{
     httproute_api_resource, route_is_ready, security_policy_api_resource,
 };
 use crate::infrastructure::ferriskey_theme::KubeInstanceTheme;
+use crate::infrastructure::shared_database::{self, SharedCluster};
 
 pub struct KubeIdentityInstanceRepository {
     client: Client,
@@ -58,6 +60,13 @@ fn status_merge_patch(
     status: &autharie_crds::v1alpha::identity_instance::IdentityInstanceStatus,
 ) -> Value {
     let mut patch = json!({ "status": status });
+    // A merge patch leaves an absent field as it was, so a status that has
+    // recovered must say so explicitly: without the null, the error of the
+    // last failed reconcile stays next to `ready: true` for ever.
+    if let Some(top) = patch["status"].as_object_mut() {
+        top.entry("error").or_insert(Value::Null);
+        top.entry("conditions").or_insert_with(|| json!([]));
+    }
     if let Some(iam) = patch["status"]
         .get_mut("iam")
         .and_then(Value::as_object_mut)
@@ -198,6 +207,7 @@ impl KubeIdentityInstanceDeployer {
         edge: Edge,
         otlp_endpoint: Option<String>,
         public_https_port: Option<u16>,
+        shared_cluster: Option<SharedCluster>,
     ) -> Self {
         let handlers: Vec<Arc<dyn IdentityProviderHandler>> = vec![
             Arc::new(KeycloakProviderHandler::new(client.clone(), edge.clone())),
@@ -206,6 +216,7 @@ impl KubeIdentityInstanceDeployer {
                 edge,
                 otlp_endpoint,
                 public_https_port,
+                shared_cluster,
             )),
         ];
         Self { client, handlers }
@@ -899,6 +910,10 @@ struct FerriskeyProviderHandler {
     otlp_endpoint: Option<String>,
     /// See [`KubeIdentityInstanceDeployer::new`]'s own comment on this field.
     public_https_port: Option<u16>,
+    /// Where this data plane's free deployments keep their databases, from
+    /// the operator's own environment. An instance in shared mode may name
+    /// another cluster in its spec; this is what it falls back to.
+    shared_cluster: Option<SharedCluster>,
 }
 
 impl FerriskeyProviderHandler {
@@ -907,13 +922,139 @@ impl FerriskeyProviderHandler {
         edge: Edge,
         otlp_endpoint: Option<String>,
         public_https_port: Option<u16>,
+        shared_cluster: Option<SharedCluster>,
     ) -> Self {
         Self {
             client,
             edge,
             otlp_endpoint,
             public_https_port,
+            shared_cluster,
         }
+    }
+
+    fn shared_cluster_of(
+        &self,
+        instance: &IdentityInstance,
+    ) -> Result<Option<SharedCluster>, OperatorError> {
+        if instance.spec.database.mode != DatabaseMode::Shared {
+            return Ok(None);
+        }
+        Ok(Some(SharedCluster::resolve(
+            instance.spec.database.shared.as_ref(),
+            self.shared_cluster.as_ref(),
+        )?))
+    }
+
+    async fn ensure_shared_database(
+        &self,
+        instance: &IdentityInstance,
+        namespace: &str,
+        owner_reference: Option<OwnerReference>,
+        cluster: &SharedCluster,
+    ) -> Result<(), OperatorError> {
+        let instance_name = instance
+            .metadata
+            .name
+            .clone()
+            .ok_or(OperatorError::MissingName)?;
+        let name = SharedDatabaseName::for_instance_name(&instance_name)?;
+        let target_secret_name = ferriskey_db_credentials_secret_name(&instance_name);
+        let secrets: Api<Secret> = Api::namespaced(self.client.clone(), namespace);
+
+        let existing = secrets
+            .get_opt(&target_secret_name)
+            .await
+            .map_err(|error| OperatorError::Kube {
+                message: error.to_string(),
+            })?;
+        let kept = existing
+            .as_ref()
+            .and_then(|secret| secret.data.as_ref())
+            .and_then(|data| secret_data_value(data, "password"));
+        let password = kept.unwrap_or_else(|| generate_password(32));
+
+        let pool = shared_database::connect(&self.client, cluster).await?;
+        let provisioned = shared_database::provision(&pool, &name, &password).await;
+        pool.close().await;
+        provisioned?;
+
+        let secret = Secret {
+            metadata: ObjectMeta {
+                name: Some(target_secret_name.clone()),
+                namespace: Some(namespace.to_string()),
+                owner_references: owner_reference.map(|owner| vec![owner]),
+                ..Default::default()
+            },
+            type_: Some("Opaque".to_string()),
+            string_data: Some(shared_database::tenant_secret_data(
+                cluster, &name, &password,
+            )),
+            ..Default::default()
+        };
+
+        secrets
+            .patch(
+                &target_secret_name,
+                &kube::api::PatchParams::apply("autharie-operator").force(),
+                &kube::api::Patch::Apply(&secret),
+            )
+            .await
+            .map_err(|error| OperatorError::Kube {
+                message: error.to_string(),
+            })?;
+
+        Ok(())
+    }
+
+    async fn drop_shared_database(
+        &self,
+        instance: &IdentityInstance,
+        cluster: &SharedCluster,
+    ) -> Result<(), OperatorError> {
+        let instance_name = instance
+            .metadata
+            .name
+            .clone()
+            .ok_or(OperatorError::MissingName)?;
+        let name = SharedDatabaseName::for_instance_name(&instance_name)?;
+
+        let pool = shared_database::connect(&self.client, cluster).await?;
+        let dropped = shared_database::drop_database(&pool, &name).await;
+        pool.close().await;
+        Ok(dropped?)
+    }
+
+    async fn shared_database_ready(
+        &self,
+        instance: &IdentityInstance,
+    ) -> Result<bool, OperatorError> {
+        let namespace =
+            instance
+                .metadata
+                .namespace
+                .clone()
+                .ok_or_else(|| OperatorError::MissingNamespace {
+                    name: instance.metadata.name.clone().unwrap_or_default(),
+                })?;
+        let secret_name = ferriskey_db_credentials_secret_name(
+            &instance
+                .metadata
+                .name
+                .clone()
+                .ok_or(OperatorError::MissingName)?,
+        );
+        let secrets: Api<Secret> = Api::namespaced(self.client.clone(), &namespace);
+        let secret = secrets
+            .get_opt(&secret_name)
+            .await
+            .map_err(|error| OperatorError::Kube {
+                message: error.to_string(),
+            })?;
+
+        Ok(secret
+            .and_then(|secret| secret.data)
+            .is_some_and(|data| data.contains_key("database-url")))
     }
 
     async fn ensure_managed_db_cluster(
@@ -1284,7 +1425,11 @@ impl FerriskeyProviderHandler {
         let web_labels = ferriskey_labels(instance, "webapp");
         let api_image = ferriskey_api_image(instance);
         let web_image = ferriskey_webapp_image(instance);
-        let db_host = ferriskey_database_host(instance, namespace);
+        let shared = self.shared_cluster_of(instance)?;
+        let db_host = match shared.as_ref() {
+            Some(cluster) => cluster.host(),
+            None => ferriskey_database_host(instance, namespace),
+        };
         let webapp_url = ferriskey_webapp_url(instance, self.public_https_port);
         let api_base_url = ferriskey_api_base_url(instance, self.public_https_port);
         let allowed_origins = ferriskey_allowed_origins(&webapp_url);
@@ -1305,6 +1450,10 @@ impl FerriskeyProviderHandler {
         )?;
         if is_pooled_cell(instance) {
             derive_webapp_url_from_request(&mut api_deployment, &instance.spec.hostname);
+        }
+        if shared.is_some() {
+            let database = SharedDatabaseName::for_instance_name(&name)?;
+            use_database_name(&mut api_deployment, database.as_str());
         }
         let api_service = build_ferriskey_service(
             &api_name,
@@ -1454,33 +1603,43 @@ impl IdentityProviderHandler for FerriskeyProviderHandler {
                 .clone()
                 .ok_or_else(|| OperatorError::MissingNamespace { name: name.clone() })?;
             let owner_reference = instance.controller_owner_ref(&());
-            self.ensure_managed_db_cluster(instance, &namespace, owner_reference.clone())
-                .await?;
-            let db_cluster_ready = self.cnpg_cluster_ready(instance).await?;
-            if !db_cluster_ready {
-                info!(
-                    name = %name,
-                    namespace = %namespace,
-                    provider = "ferriskey",
-                    "Waiting for CNPG cluster readiness before deploying provider resources"
-                );
-                return Ok(());
-            }
-            let db_secret_ready = self
-                .ensure_ferriskey_db_credentials_secret(
+            if let Some(cluster) = self.shared_cluster_of(instance)? {
+                self.ensure_shared_database(
                     instance,
                     &namespace,
                     owner_reference.clone(),
+                    &cluster,
                 )
                 .await?;
-            if !db_secret_ready {
-                info!(
-                    name = %name,
-                    namespace = %namespace,
-                    provider = "ferriskey",
-                    "Waiting for CNPG credentials secret before running Ferriskey migrations"
-                );
-                return Ok(());
+            } else {
+                self.ensure_managed_db_cluster(instance, &namespace, owner_reference.clone())
+                    .await?;
+                let db_cluster_ready = self.cnpg_cluster_ready(instance).await?;
+                if !db_cluster_ready {
+                    info!(
+                        name = %name,
+                        namespace = %namespace,
+                        provider = "ferriskey",
+                        "Waiting for CNPG cluster readiness before deploying provider resources"
+                    );
+                    return Ok(());
+                }
+                let db_secret_ready = self
+                    .ensure_ferriskey_db_credentials_secret(
+                        instance,
+                        &namespace,
+                        owner_reference.clone(),
+                    )
+                    .await?;
+                if !db_secret_ready {
+                    info!(
+                        name = %name,
+                        namespace = %namespace,
+                        provider = "ferriskey",
+                        "Waiting for CNPG credentials secret before running Ferriskey migrations"
+                    );
+                    return Ok(());
+                }
             }
 
             self.ensure_ferriskey_admin_secret(
@@ -1530,6 +1689,7 @@ impl IdentityProviderHandler for FerriskeyProviderHandler {
                 .clone()
                 .ok_or_else(|| OperatorError::MissingNamespace { name: name.clone() })?;
             let delete_params = kube::api::DeleteParams::default();
+            let shared = self.shared_cluster_of(instance)?;
             let cluster_name = cnpg_cluster_name(instance);
             let api_name = ferriskey_api_name(&name);
             let web_name = ferriskey_webapp_name(&name);
@@ -1596,6 +1756,9 @@ impl IdentityProviderHandler for FerriskeyProviderHandler {
                     message: error.to_string(),
                 });
             }
+            if let Some(cluster) = shared.as_ref() {
+                self.drop_shared_database(instance, cluster).await?;
+            }
             if let Err(error) = secrets.delete(&db_secret_name, &delete_params).await
                 && !is_not_found(&error)
             {
@@ -1604,7 +1767,8 @@ impl IdentityProviderHandler for FerriskeyProviderHandler {
                 });
             }
 
-            if let Err(error) = clusters.delete(&cluster_name, &delete_params).await
+            if shared.is_none()
+                && let Err(error) = clusters.delete(&cluster_name, &delete_params).await
                 && !is_not_found(&error)
             {
                 return Err(OperatorError::Kube {
@@ -1627,7 +1791,12 @@ impl IdentityProviderHandler for FerriskeyProviderHandler {
     }
 
     fn database_ready<'a>(&'a self, instance: &'a IdentityInstance) -> ProviderReadyFuture<'a> {
-        Box::pin(async move { self.cnpg_cluster_ready(instance).await })
+        Box::pin(async move {
+            if instance.spec.database.mode == DatabaseMode::Shared {
+                return self.shared_database_ready(instance).await;
+            }
+            self.cnpg_cluster_ready(instance).await
+        })
     }
 
     fn edge_ready<'a>(&'a self, instance: &'a IdentityInstance) -> ProviderReadyFuture<'a> {
@@ -1730,12 +1899,22 @@ pub async fn run() -> Result<(), OperatorError> {
         );
     }
 
+    let shared_cluster = SharedCluster::from_env();
+    if let Some(cluster) = shared_cluster.as_ref() {
+        info!(
+            cluster = %cluster.name,
+            namespace = %cluster.namespace,
+            "shared-mode instances keep their database on this cluster"
+        );
+    }
+
     let repository = Arc::new(KubeIdentityInstanceRepository::new(client.clone()));
     let deployer = Arc::new(KubeIdentityInstanceDeployer::new(
         client.clone(),
         edge,
         otlp_endpoint,
         public_https_port,
+        shared_cluster,
     ));
     let theme = Arc::new(KubeInstanceTheme::new(client.clone()));
     let service = Arc::new(OperatorApplication::new(
@@ -2015,6 +2194,27 @@ fn webapp_allowed_hosts(hostname: &str) -> String {
     match hostname.split_once('.') {
         Some((_, zone)) if !zone.is_empty() => format!("*.{zone}"),
         _ => hostname.to_string(),
+    }
+}
+
+const DATABASE_NAME_ENV: &str = "DATABASE_NAME";
+
+fn use_database_name(api: &mut Deployment, database: &str) {
+    let containers = api
+        .spec
+        .iter_mut()
+        .filter_map(|spec| spec.template.spec.as_mut())
+        .flat_map(|pod| pod.containers.iter_mut());
+
+    for container in containers {
+        for var in container
+            .env
+            .iter_mut()
+            .flatten()
+            .filter(|var| var.name == DATABASE_NAME_ENV)
+        {
+            var.value = Some(database.to_string());
+        }
     }
 }
 
@@ -3171,6 +3371,18 @@ mod tests {
         assert_eq!(patch["status"]["iam"]["applied"], "{}");
     }
 
+    /// The bug this exists for: an instance that recovered kept the error
+    /// and the Ready=False condition of its last failed reconcile beside
+    /// `ready: true`, because a merge patch leaves absent fields alone.
+    #[test]
+    fn a_recovered_status_clears_the_error_and_the_conditions() {
+        let patch = status_merge_patch(&Default::default());
+
+        assert_eq!(patch["status"]["error"], Value::Null);
+        assert!(patch["status"].as_object().unwrap().contains_key("error"));
+        assert_eq!(patch["status"]["conditions"], json!([]));
+    }
+
     #[test]
     fn a_status_without_iam_adds_no_iam_key() {
         let patch = status_merge_patch(&Default::default());
@@ -3202,6 +3414,7 @@ mod tests {
                 replicas: 1,
                 database: DatabaseConfig {
                     mode: DatabaseMode::ManagedCluster,
+                    shared: None,
                     managed_cluster: ManagedClusterConfig {
                         instances: 1,
                         storage: ManagedClusterStorage {
@@ -3663,6 +3876,34 @@ mod tests {
         assert!(env_value(container, "ACTIVE_OBSERVABILITY").is_none());
         assert!(env_value(container, "OTLP_ENDPOINT").is_none());
         assert!(env_value(container, "METRICS_ENDPOINT").is_none());
+    }
+
+    #[test]
+    fn a_shared_instance_connects_to_its_own_database_name() {
+        let mut deployment = build_ferriskey_api_deployment(
+            "instance-1-api",
+            "default",
+            &BTreeMap::new(),
+            "ghcr.io/ferriskey/ferriskey-api:1.0.0",
+            "instance-1-db-credentials",
+            "instance-1-admin",
+            "free-db-rw.system.svc",
+            "https://auth.acme.test",
+            "https://auth.acme.test",
+            None,
+            1,
+            None,
+        )
+        .unwrap();
+
+        use_database_name(&mut deployment, "free_abc");
+
+        let pod_spec = deployment.spec.unwrap().template.spec.unwrap();
+        assert_eq!(
+            env_value(&pod_spec.containers[0], "DATABASE_NAME")
+                .and_then(|var| var.value.as_deref()),
+            Some("free_abc")
+        );
     }
 
     /// The acceptance criterion itself, including the part only a running

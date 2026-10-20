@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use autharie_crds::common::types::Phase;
+use autharie_crds::common::types::{Condition, ConditionStatus, Phase};
 use autharie_crds::v1alpha::identity_instance::{
     IdentityInstance, IdentityInstanceStatus, IdentityProvider,
 };
@@ -13,10 +13,52 @@ use crate::domain::ports::{
     IdentityInstanceDeployer, IdentityInstanceRepository, IdentityInstanceService,
     InstanceThemePort,
 };
+use crate::domain::shared_database::SharedDatabaseError;
 use crate::domain::{OperatorError, ReconcileOutcome};
 
 const DEPLOYING_REQUEUE_SECONDS: u64 = 15;
 const STEADY_STATE_REQUEUE_SECONDS: u64 = 60;
+const READY_CONDITION: &str = "Ready";
+
+fn shared_database_failure_status(
+    current: &IdentityInstanceStatus,
+    cause: &SharedDatabaseError,
+    now: String,
+) -> IdentityInstanceStatus {
+    let reason = Some(cause.reason().to_string());
+    let message = Some(cause.to_string());
+
+    // The same failure again keeps the time it started. A fresh timestamp on
+    // every attempt makes each status write a change, each change a watch
+    // event, and each event another reconcile: a hot loop against a cluster
+    // that is already refusing.
+    let since = current
+        .conditions
+        .iter()
+        .find(|c| {
+            c.condition_type == READY_CONDITION
+                && c.status == ConditionStatus::False
+                && c.reason == reason
+                && c.message == message
+        })
+        .map(|c| c.last_transition_time.clone())
+        .unwrap_or(now);
+
+    let mut status = current.clone();
+    status.ready = false;
+    status.error = Some(cause.to_string());
+    status
+        .conditions
+        .retain(|c| c.condition_type != READY_CONDITION);
+    status.conditions.push(Condition {
+        condition_type: READY_CONDITION.to_string(),
+        status: ConditionStatus::False,
+        last_transition_time: since,
+        reason,
+        message,
+    });
+    status
+}
 
 pub struct IdentityInstanceServiceImpl<R, D, T> {
     repository: Arc<R>,
@@ -44,6 +86,10 @@ impl<R, D, T> IdentityInstanceServiceImpl<R, D, T> {
         let mut status = instance.status.clone().unwrap_or_default();
 
         status.ready = database_ready && provider_ready && edge_ready && !upgrade_in_progress;
+        status.error = None;
+        status
+            .conditions
+            .retain(|c| c.condition_type != READY_CONDITION);
         status.phase = Some(if !database_ready {
             Phase::DatabaseProvisioning
         } else if upgrade_in_progress {
@@ -76,7 +122,21 @@ where
         &self,
         instance: IdentityInstance,
     ) -> Result<ReconcileOutcome, OperatorError> {
-        self.ensure_instance(&instance).await?;
+        if let Err(error) = self.ensure_instance(&instance).await {
+            if let OperatorError::SharedDatabase(cause) = &error {
+                let status = shared_database_failure_status(
+                    &instance.status.clone().unwrap_or_default(),
+                    cause,
+                    chrono::Utc::now().to_rfc3339(),
+                );
+                if instance.status.as_ref() != Some(&status)
+                    && let Err(patch_error) = self.repository.patch_status(&instance, status).await
+                {
+                    tracing::warn!(error = %patch_error, "could not report the shared database failure");
+                }
+            }
+            return Err(error);
+        }
         let database_ready = self.deployer.database_ready(&instance).await?;
         let provider_ready = self.deployer.provider_ready(&instance).await?;
         let edge_ready = self.deployer.edge_ready(&instance).await?;
@@ -217,6 +277,7 @@ mod tests {
                 replicas: 1,
                 database: DatabaseConfig {
                     mode: DatabaseMode::ManagedCluster,
+                    shared: None,
                     managed_cluster: ManagedClusterConfig {
                         instances: 1,
                         storage: ManagedClusterStorage {
@@ -701,5 +762,67 @@ mod tests {
             Arc::new(MockInstanceThemePort::new()),
         );
         service.reconcile(instance).await.unwrap();
+    }
+
+    #[test]
+    fn a_refused_shared_database_reads_as_ready_false_with_its_reason() {
+        let status = shared_database_failure_status(
+            &IdentityInstanceStatus {
+                ready: true,
+                ..Default::default()
+            },
+            &SharedDatabaseError::Refused("no".to_string()),
+            "now".to_string(),
+        );
+
+        assert!(!status.ready);
+        assert_eq!(status.conditions.len(), 1);
+        assert_eq!(status.conditions[0].condition_type, "Ready");
+        assert_eq!(status.conditions[0].status, ConditionStatus::False);
+        assert_eq!(
+            status.conditions[0].reason.as_deref(),
+            Some("SharedDatabaseRefused")
+        );
+        assert!(status.error.is_some());
+    }
+
+    /// The loop this guards against: a new timestamp on every attempt made
+    /// each write a change, and each change another reconcile.
+    #[test]
+    fn the_same_failure_again_writes_an_identical_status() {
+        let cause = SharedDatabaseError::Refused("no".to_string());
+        let first =
+            shared_database_failure_status(&IdentityInstanceStatus::default(), &cause, "t1".into());
+        let again = shared_database_failure_status(&first, &cause, "t2".into());
+
+        assert_eq!(again, first);
+        assert_eq!(again.conditions[0].last_transition_time, "t1");
+    }
+
+    #[test]
+    fn a_different_failure_starts_a_new_transition() {
+        let first = shared_database_failure_status(
+            &IdentityInstanceStatus::default(),
+            &SharedDatabaseError::Refused("no".to_string()),
+            "t1".into(),
+        );
+        let next =
+            shared_database_failure_status(&first, &SharedDatabaseError::Unreachable, "t2".into());
+
+        assert_eq!(next.conditions[0].last_transition_time, "t2");
+    }
+
+    #[test]
+    fn an_unreachable_shared_database_has_its_own_reason() {
+        let status = shared_database_failure_status(
+            &IdentityInstanceStatus::default(),
+            &SharedDatabaseError::Unreachable,
+            "now".to_string(),
+        );
+
+        assert_eq!(
+            status.conditions[0].reason.as_deref(),
+            Some("SharedDatabaseUnreachable")
+        );
     }
 }

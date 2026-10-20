@@ -120,6 +120,11 @@ jobs:
           SQLX_OFFLINE: "true"
           REQUIRE_DATABASE_URL: "1"
 
+      - name: Shared database provisioning
+        run: cargo test -p autharie-operator-core --test shared_database
+        env:
+          REQUIRE_DATABASE_URL: "1"
+
   # Same lesson as integration-postgres, for the object store, the key
   # manager and the message bus. These tests skip themselves when their endpoint is unset, so
   # without service containers they would report success having exercised

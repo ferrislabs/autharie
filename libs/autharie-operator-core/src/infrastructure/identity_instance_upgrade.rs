@@ -1101,6 +1101,7 @@ mod tests {
                 replicas: 1,
                 database: DatabaseConfig {
                     mode: DatabaseMode::ManagedCluster,
+                    shared: None,
                     managed_cluster: ManagedClusterConfig {
                         instances: 1,
                         storage: ManagedClusterStorage {
