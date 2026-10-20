@@ -74,6 +74,19 @@ impl KubeIdentityInstancePort {
     }
 }
 
+/// The recurring archive to schedule for an instance, if it gets one.
+///
+/// None for a shared database, even with a destination: there the
+/// destination is where the operator's daily dump goes, and a schedule would
+/// make the operator create a CloudNativePG ScheduledBackup for a cluster the
+/// instance does not have.
+fn scheduled_archive(desired: &DesiredIdentityInstance) -> Option<&DesiredArchive> {
+    match desired.placement {
+        DatabasePlacement::Managed => desired.archive.as_ref(),
+        DatabasePlacement::Shared => None,
+    }
+}
+
 impl KubeIdentityInstancePort {
     /// Applies the recurring archive beside the instance it belongs to.
     ///
@@ -181,7 +194,7 @@ impl IdentityInstancePort for KubeIdentityInstancePort {
             // instance that is not there yet reconciles into an error the
             // operator retries until the instance appears, and the noise makes
             // a real failure hard to find.
-            if let Some(archive) = desired.archive.as_ref() {
+            if let Some(archive) = scheduled_archive(desired) {
                 self.apply_archive_schedule(&desired.reference, archive)
                     .await?;
             }
@@ -753,6 +766,22 @@ mod tests {
                 .pooled_cell
         );
         assert!(cell.spec.ferriskey.expect("a ferriskey block").pooled_cell);
+    }
+
+    /// A shared database keeps its destination for the dumps, and must still
+    /// get no schedule: the operator would make a ScheduledBackup of it for a
+    /// cluster the instance does not have.
+    #[test]
+    fn only_a_managed_database_gets_an_archive_schedule() {
+        let managed = archiving();
+        let shared = DesiredIdentityInstance {
+            placement: DatabasePlacement::Shared,
+            ..archiving()
+        };
+
+        assert!(scheduled_archive(&managed).is_some());
+        assert!(shared.archive.is_some(), "the dumps still need it");
+        assert!(scheduled_archive(&shared).is_none());
     }
 
     #[test]
