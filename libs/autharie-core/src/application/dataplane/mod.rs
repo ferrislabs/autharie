@@ -5,7 +5,6 @@ use autharie_domain::{
         ActionPayload, ActionSource, ActionTarget, ActionType, ActionVersion, TargetKind,
         commands::RecordActionCommand, ports::ActionService, service::ActionServiceImpl,
     },
-    cells::{PooledOutcomes, RealmRequests, Settlement},
     dataplane::value_objects::Region,
     dataplane::{
         entities::DataPlane,
@@ -25,8 +24,7 @@ use autharie_domain::{
 };
 use autharie_macros::transactional;
 use autharie_postgres::{
-    action::PostgresActionRepository, catalog::PostgresReleaseRepository,
-    cells::PostgresCellRepository, deployments::PostgresDeploymentRepository,
+    catalog::PostgresReleaseRepository, deployments::PostgresDeploymentRepository,
     organisation::PostgresOrganisationRepository,
 };
 use serde_json::json;
@@ -201,8 +199,6 @@ impl DataPlaneService for AutharieService {
         command: ReportDeploymentOutcomeCommand,
     ) -> Result<bool, CoreError> {
         let deployment_id = command.deployment_id;
-        let outcome = command.outcome;
-        let reason = command.reason.clone();
 
         let changed = DataPlaneServiceImpl::new(
             data_plane_repository,
@@ -217,29 +213,11 @@ impl DataPlaneService for AutharieService {
         .report_outcome(identity, command)
         .await?;
 
-        // A report that changed nothing says nothing about an upgrade either.
-        let settled = PooledOutcomes::new(
-            PostgresCellRepository::new(&tx),
-            PostgresDeploymentRepository::new(&tx),
-        )
-        .settle(deployment_id, outcome, reason.as_deref())
-        .await?;
-        if let Settlement::RealmOutlivedTenant(tenant) = settled {
-            RealmRequests::new(
-                PostgresCellRepository::new(&tx),
-                PostgresDeploymentRepository::new(&tx),
-                PostgresActionRepository::new(&tx),
-            )
-            .delete(&tenant)
-            .await?;
-        }
-
         if !changed {
             return Ok(false);
         }
 
-        crate::application::cells::settle_cell_instance(&tx, deployment_id).await?;
-
+        // A report that changed nothing says nothing about an upgrade either.
         // An upgrade of several versions moves one step at a time, and this is
         // where the next one starts: only once the data plane has reported the
         // last one running, which after the operator's health check means it

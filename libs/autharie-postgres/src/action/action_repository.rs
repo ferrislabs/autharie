@@ -854,7 +854,6 @@ fn target_kind_to_string(kind: &TargetKind) -> String {
     match kind {
         TargetKind::Deployment => "deployment".to_string(),
         TargetKind::DataPlane => "dataplane".to_string(),
-        TargetKind::Realm => "realm".to_string(),
         TargetKind::Database => "database".to_string(),
         TargetKind::User => "user".to_string(),
         TargetKind::Custom(value) => value.clone(),
@@ -865,7 +864,6 @@ fn parse_target_kind(raw: &str) -> TargetKind {
     match raw.to_ascii_lowercase().as_str() {
         "deployment" => TargetKind::Deployment,
         "dataplane" => TargetKind::DataPlane,
-        "realm" => TargetKind::Realm,
         "database" => TargetKind::Database,
         "user" => TargetKind::User,
         other => TargetKind::Custom(other.to_string()),
@@ -1099,7 +1097,6 @@ mod tests {
         assert_eq!(target_kind_to_string(&TargetKind::Deployment), "deployment");
         assert_eq!(target_kind_to_string(&TargetKind::DataPlane), "dataplane");
         assert_eq!(parse_target_kind("DataPlane"), TargetKind::DataPlane);
-        assert_eq!(parse_target_kind("REALM"), TargetKind::Realm);
         assert_eq!(
             parse_target_kind("CustomThing"),
             TargetKind::Custom("customthing".to_string())

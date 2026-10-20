@@ -39,7 +39,7 @@ pub fn awaiting_reconciliation<'a>(
 
     deployments
         .iter()
-        .filter(|deployment| !deployment.pooled && deployment.transition.is_some())
+        .filter(|deployment| deployment.transition.is_some())
         .filter(|deployment| deployment.changed_at.is_some_and(|at| at <= quiet_since))
         .filter(|deployment| !busy.contains(&deployment.id))
         .collect()
@@ -127,7 +127,6 @@ mod tests {
             kind: None,
             namespace: Some("autharie-acme-prod".to_string()),
             log_shipping_enabled: false,
-            pooled: false,
             transition,
             changed_at: Some(now() - Duration::minutes(11)),
         }
@@ -222,14 +221,6 @@ mod tests {
         unknown.changed_at = None;
 
         assert!(awaiting_reconciliation(&[recent, unknown], &HashSet::new(), now()).is_empty());
-    }
-
-    #[test]
-    fn a_realm_in_a_shared_cell_is_never_a_candidate() {
-        let mut realm = deployment(Uuid::new_v4(), Some(Transition::Departing));
-        realm.pooled = true;
-
-        assert!(awaiting_reconciliation(&[realm], &HashSet::new(), now()).is_empty());
     }
 
     #[test]

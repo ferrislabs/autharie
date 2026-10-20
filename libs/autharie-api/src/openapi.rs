@@ -245,11 +245,6 @@ fn served_paths() -> Vec<&'static str> {
         <platform::deployment_downtime::DeploymentDowntimeRoute as TypedPath>::PATH,
         <platform::dataplane_upgrades::DataplaneUpgradeRoute as TypedPath>::PATH,
         <platform::dataplane_upgrades::DataplaneUpgradesRoute as TypedPath>::PATH,
-        <platform::cells::CellsRoute as TypedPath>::PATH,
-        <platform::cells::CellsSettingsRoute as TypedPath>::PATH,
-        <platform::cells::CellRoute as TypedPath>::PATH,
-        <platform::cells::DrainCellRoute as TypedPath>::PATH,
-        <platform::cells::RetireCellRoute as TypedPath>::PATH,
     ]
 }
 

@@ -3,11 +3,9 @@ use autharie_domain::action::{
     Action, ActionScope,
     commands::{AckActionsCommand, ClaimActionsCommand},
 };
-use autharie_domain::cells::{HAND_OFF_FAILED, PooledOutcomes};
 use autharie_domain::dataplane::herald_identity::{hosting, speaking_for};
-use autharie_domain::deployments::{commands::DeploymentOutcome, ports::DeploymentRepository};
+use autharie_domain::deployments::ports::DeploymentRepository;
 use autharie_macros::transactional;
-use autharie_postgres::{cells::PostgresCellRepository, deployments::PostgresDeploymentRepository};
 use chrono::Utc;
 
 use crate::{
@@ -136,18 +134,6 @@ impl AutharieService {
 
             if changed {
                 deployment_repository.update(deployment).await?;
-            }
-            if changed && hand_off_failed {
-                PooledOutcomes::new(
-                    PostgresCellRepository::new(&tx),
-                    PostgresDeploymentRepository::new(&tx),
-                )
-                .settle(
-                    deployment_id,
-                    DeploymentOutcome::Failed,
-                    Some(HAND_OFF_FAILED),
-                )
-                .await?;
             }
         }
 

@@ -35,7 +35,7 @@ use autharie_macros::transactional;
 
 use crate::{
     AutharieService,
-    application::deployment::{Serving, archive_section, deployment_hostname, deployment_payload},
+    application::deployment::{archive_section, deployment_hostname, deployment_payload},
     infrastructure::{provisioner::LocalClusterProvisioner, role::permissions_in},
     policy::{AuthariePolicy, PlatformRightsPolicy},
 };
@@ -224,7 +224,6 @@ impl BackupService for AutharieService {
             // instance's real hostname back to Genesis's own fallback the
             // moment anybody turned archiving on.
             let hostname = deployment_hostname(self.deployment_domain(), &deployment);
-            let serving = Serving::of(&tx, &deployment).await?;
 
             ActionServiceImpl::new(action_repository)
                 .record_action(RecordActionCommand::new(
@@ -236,7 +235,7 @@ impl BackupService for AutharieService {
                         id: deployment.id.0,
                     },
                     ActionPayload {
-                        data: deployment_payload(&deployment, serving, archive, hostname),
+                        data: deployment_payload(&deployment, archive, hostname),
                     },
                     ActionVersion(1),
                     ActionSource::System,
@@ -332,12 +331,7 @@ impl BackupService for AutharieService {
                     // DesiredIdentityInstance::from_payload -- it only
                     // creates an IdentityInstanceBackup -- so there is
                     // nothing here for a hostname to protect.
-                    data: deployment_payload(
-                        &deployment,
-                        Serving::of(&tx, &deployment).await?,
-                        Some(archive),
-                        None,
-                    ),
+                    data: deployment_payload(&deployment, Some(archive), None),
                 },
                 ActionVersion(1),
                 ActionSource::User { user_id: asker.0 },
@@ -484,8 +478,7 @@ impl BackupService for AutharieService {
         //
         let hostname = deployment_hostname(self.deployment_domain(), &recovery);
 
-        let mut payload =
-            deployment_payload(&recovery, Serving::OneTenant, archive_directive, hostname);
+        let mut payload = deployment_payload(&recovery, archive_directive, hostname);
         payload["restore"] = restore_section(&planned, &archive);
 
         ActionServiceImpl::new(action_repository)
@@ -576,7 +569,6 @@ impl BackupService for AutharieService {
 
         for deployment in [&promote, &demote] {
             let hostname = deployment_hostname(self.deployment_domain(), deployment);
-            let serving = Serving::of(&tx, deployment).await?;
 
             actions
                 .record_action(RecordActionCommand::new(
@@ -588,7 +580,7 @@ impl BackupService for AutharieService {
                         id: deployment.id.0,
                     },
                     ActionPayload {
-                        data: deployment_payload(deployment, serving, None, hostname),
+                        data: deployment_payload(deployment, None, hostname),
                     },
                     ActionVersion(1),
                     ActionSource::User { user_id: asker.0 },

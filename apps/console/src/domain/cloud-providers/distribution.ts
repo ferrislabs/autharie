@@ -37,7 +37,6 @@ export const REGIONS: Record<Schemas.Provider, string[]> = {
 export function describeDistribution(distribution: Schemas.Distribution): string {
   if (distribution === 'shared') return 'Shared'
   if (distribution === 'self_hosted') return 'Self-hosted'
-  if ('pooled' in distribution) return `Realm ${distribution.pooled.realm} on a shared FerrisKey`
   const { mode, min_nodes, max_nodes } = distribution.customer_cloud.profile
   const nodes = min_nodes === max_nodes ? `${min_nodes}` : `${min_nodes} to ${max_nodes}`
   return `Your cloud, ${mode}, ${nodes} ${max_nodes === 1 ? 'node' : 'nodes'}`

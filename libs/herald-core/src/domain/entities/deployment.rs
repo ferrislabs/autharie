@@ -68,8 +68,6 @@ pub struct Deployment {
     /// independent of anyone watching the live tail.
     pub log_shipping_enabled: bool,
 
-    pub pooled: bool,
-
     pub transition: Option<Transition>,
     pub changed_at: Option<DateTime<Utc>>,
 }
@@ -77,10 +75,6 @@ pub struct Deployment {
 impl Deployment {
     /// Where to read this deployment's usage, when that is knowable at all.
     pub fn usage_target(&self) -> Option<UsageTarget> {
-        if self.pooled {
-            return None;
-        }
-
         Some(UsageTarget {
             deployment_id: self.id.clone(),
             kind: self.kind?,
@@ -96,10 +90,6 @@ impl Deployment {
     /// to deduplicate against, it only satisfies the shape `LogStreamRequest`
     /// already has.
     pub fn log_stream_request(&self, since_minutes: u32) -> Option<LogStreamRequest> {
-        if self.pooled {
-            return None;
-        }
-
         Some(LogStreamRequest {
             deployment_id: self.id.clone(),
             dataplane_id: self.dataplane_id.clone(),
@@ -125,19 +115,9 @@ mod tests {
             kind,
             namespace: namespace.map(str::to_string),
             log_shipping_enabled: false,
-            pooled: false,
             transition: None,
             changed_at: None,
         }
-    }
-
-    #[test]
-    fn a_realm_in_a_shared_cell_is_neither_metered_nor_followed_on_its_own() {
-        let mut realm = deployment(Some(DeploymentKind::Ferriskey), Some("cells-one"));
-        realm.pooled = true;
-
-        assert!(realm.usage_target().is_none());
-        assert!(realm.log_stream_request(5).is_none());
     }
 
     #[test]

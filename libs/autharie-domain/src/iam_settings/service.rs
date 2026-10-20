@@ -151,7 +151,6 @@ where
             .await?;
 
         let mut deployment = self.deployment(organisation_id, deployment_id).await?;
-        deployment.refuse_if_pooled("given IAM settings: they apply to its whole cell")?;
 
         let organisation = self
             .organisation_repository

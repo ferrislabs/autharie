@@ -18,8 +18,6 @@ pub mod backups;
 pub mod catalog;
 
 #[cfg_attr(coverage_nightly, coverage(off))]
-pub mod cells;
-
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod credentials;
 
@@ -84,8 +82,6 @@ pub mod registry {
         pub struct Audit;
         pub struct Backup;
         pub struct BackupSchedule;
-        pub struct Cell;
-        pub struct CellsSettings;
         pub struct CloudCredential;
         pub struct ClusterClaims;
         pub struct ClusterInventory;
@@ -148,8 +144,6 @@ mod registry_completeness {
         assert_registered::<domain::Audit>();
         assert_registered::<domain::Backup>();
         assert_registered::<domain::BackupSchedule>();
-        assert_registered::<domain::Cell>();
-        assert_registered::<domain::CellsSettings>();
         assert_registered::<domain::DataPlane>();
         assert_registered::<domain::FeatureFlag>();
         assert_registered::<domain::FleetAudit>();

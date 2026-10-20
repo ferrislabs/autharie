@@ -39,7 +39,6 @@ pub mod openapi;
 pub mod operators;
 pub mod purge;
 pub mod quickwit;
-pub mod realm_resend;
 pub mod response;
 pub mod router;
 pub mod state;

@@ -15,10 +15,10 @@ use tokio::time::{Instant, sleep};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
-/// The routing keys Genesis acts on: deployment lifecycle events, the actions
-/// that target a whole data plane, and the realms of shared cells. An action
-/// whose key no pattern here matches is published by Herald and skipped here.
-pub const BINDING_KEYS: [&str; 3] = ["deployment.#", "dataplane.#", "realm.#"];
+/// The routing keys Genesis acts on: deployment lifecycle events and the
+/// actions that target a whole data plane. An action whose key no pattern here
+/// matches is published by Herald and skipped here.
+pub const BINDING_KEYS: [&str; 2] = ["deployment.#", "dataplane.#"];
 
 /// Whether Genesis acts on `routing_key`, under the topic rules RabbitMQ used
 /// to apply for it: words are separated by dots, `*` stands for one word and
@@ -395,14 +395,8 @@ mod tests {
     }
 
     #[test]
-    fn every_realm_action_is_bound() {
-        use crate::application::handlers::realm::{
-            REALM_ADMINISTRATOR_ISSUE, REALM_CREATE, REALM_DELETE,
-        };
-
-        for key in [REALM_CREATE, REALM_DELETE, REALM_ADMINISTRATOR_ISSUE] {
-            assert!(is_bound(key), "{key} would be skipped by Genesis");
-        }
+    fn a_realm_action_is_no_longer_bound() {
+        assert!(!is_bound("realm.create"));
     }
 
     #[test]

@@ -1,9 +1,9 @@
-# Upgrading production and opening free tenants
+# Upgrading production and opening free deployments
 
 Production was installed from `NathaelB/aether` before the project moved to
 `ferrislabs/autharie`. The ArgoCD Applications still point there, at a
 repository frozen on 2026-10-03, so nothing merged since reaches production.
-Part A moves production onto this repository. Part B opens free tenants to
+Part A moves production onto this repository. Part B opens free deployments to
 the people invited to the beta.
 
 Every step here is run by a person. Commands that change the cluster are
@@ -38,11 +38,10 @@ ls -lh autharie-*.dump
 
 ### A2. Widen the OpenBao policy
 
-The control plane wraps keys under three transit keys, not one:
-`autharie-backups` (archives), `cloud-credentials` (customer cloud accounts)
-and `tenant-administrators` (the first administrator of a free realm). With
-only the first, issuing a free tenant's administrator fails. Log in to OpenBao
-with the root token, then:
+The control plane wraps keys under two transit keys, not one:
+`autharie-backups` (archives) and `cloud-credentials` (customer cloud
+accounts). With only the first, storing a customer cloud credential fails. Log
+in to OpenBao with the root token, then:
 
 ```bash
 bao policy read autharie-backups          # what is there today
@@ -53,9 +52,6 @@ path "transit/keys/autharie-backups"          { capabilities = ["read", "create"
 path "transit/encrypt/cloud-credentials"      { capabilities = ["update"] }
 path "transit/decrypt/cloud-credentials"      { capabilities = ["update"] }
 path "transit/keys/cloud-credentials"         { capabilities = ["read", "create", "update"] }
-path "transit/encrypt/tenant-administrators"  { capabilities = ["update"] }
-path "transit/decrypt/tenant-administrators"  { capabilities = ["update"] }
-path "transit/keys/tenant-administrators"     { capabilities = ["read", "create", "update"] }
 EOF
 ```
 
@@ -118,30 +114,16 @@ Re-apply the previous Application specs (saved first with
 The database has moved forward by then: the old code may not start against
 the new schema, so restoring the dump from A1 is part of the rollback.
 
-## Part B: free tenants for invited people
+## Part B: free deployments for invited people
 
-A free tenant is a realm on a shared FerrisKey instance, a cell, on a data
-plane. Steps B1 to B3 can run in any order; B4 and later need them.
+A free deployment is a FerrisKey instance of its own, with its database on the
+shared database cluster of a shared data plane (ADR 0006). There is no cell and
+no organisation to set up for it: steps B1 and B2 can run in any order, and B3
+and B4 need them.
 
-### B1. A FerrisKey release that serves a realm on its own hostname
+### B1. DNS zone and wildcard certificate for the control plane
 
-Tenant login needs ferriskey/ferriskey#1711 (`WEBAPP_URL_FROM_REQUEST`).
-Release FerrisKey with it, then raise `CELL_MIN_FERRISKEY` in
-`libs/autharie-domain/src/cells/service.rs` to that version, and publish the
-release in the catalogue as an operator:
-
-```bash
-curl -X POST https://app.autharie.fr/api/releases/operator/ferriskey \
-  -H "Authorization: Bearer $OPERATOR_TOKEN" -H 'Content-Type: application/json' \
-  -d '{"version":"<version>","risk":"none"}'
-curl -X PUT https://app.autharie.fr/api/releases/operator/ferriskey/<version>/status \
-  -H "Authorization: Bearer $OPERATOR_TOKEN" -H 'Content-Type: application/json' \
-  -d '{"status":"available"}'
-```
-
-### B2. DNS zone and wildcard certificate for the control plane
-
-A free deployment gets `{realm}.autharie.fr`, so the control plane needs the
+A free deployment gets `{name}.autharie.fr`, so the control plane needs the
 zone and the OVH credentials, and the wildcard certificate it sends to shared
 data planes.
 
@@ -176,58 +158,17 @@ certificate:
   secretNamespace: autharie
 ```
 
-### B3. A shared data plane
+### B2. A shared data plane
 
 Register it from the console (platform, data planes) as shared, in the region
-free tenants are placed in, and install the chart with the command the console
-prints, adding:
+free deployments are placed in, and install the chart with the command the
+console prints. The chart installs the shared database cluster that holds the
+database of every free deployment placed on the data plane. Herald needs `get`
+and `list` on `identityinstances`, which the chart carries since #215. A free
+deployment asks for 100m CPU, 256 MiB of memory and 1 GiB of storage on the
+data plane.
 
-```bash
---set genesis.tenantZone=autharie.fr
-```
-
-`genesis.tenantZone` must equal `ovh.zone`: Genesis refuses every realm action
-whose hostname is not `{realm}.{zone}`. Herald needs `get` and `list` on
-`identityinstances`, which the chart carries since #215. One cell asks for
-2600m CPU, 4.7 GiB of memory and 20 GiB of storage on the data plane.
-
-### B4. The organisation that owns the cells
-
-As an operator, create it once:
-
-```bash
-curl -X POST https://app.autharie.fr/api/organisations \
-  -H "Authorization: Bearer $OPERATOR_TOKEN" -H 'Content-Type: application/json' \
-  -d '{"name":"Autharie cells"}'
-```
-
-Keep only operators as its members. Then choose it as the cells organisation,
-from the Cells page of the operator console or with the API (it is stored in
-the database, so nothing is redeployed):
-
-```bash
-curl -X PUT https://app.autharie.fr/api/platform/cells/settings \
-  -H "Authorization: Bearer $OPERATOR_TOKEN" -H 'Content-Type: application/json' \
-  -d '{"organisation_id":"<id>"}'
-```
-
-Until it is set, opening a cell answers 503. It can only change while every
-cell is retired, because the instance of a cell stays owned by the organisation
-that held it at the time; a change with a live cell answers 409.
-
-### B5. Open a cell
-
-```bash
-curl -X POST https://app.autharie.fr/api/platform/cells \
-  -H "Authorization: Bearer $OPERATOR_TOKEN" -H 'Content-Type: application/json' \
-  -d '{"region":"<region of the data plane>"}'
-curl https://app.autharie.fr/api/platform/cells -H "Authorization: Bearer $OPERATOR_TOKEN"
-```
-
-It moves from `provisioning` to `open` once its instance runs two replicas on
-two database instances, a few minutes.
-
-### B6. Invite people
+### B3. Invite people
 
 Check in the FerrisKey admin of `id.autharie.fr` that user registration is off
 in the `autharie` realm, then make one account per person:
@@ -240,13 +181,10 @@ FERRISKEY_ADMIN_PASSWORD=<from autharie-ferriskey-api-admin> \
 ```
 
 Each person signs in, changes the temporary password, creates an organisation
-and a FerrisKey deployment on the free offer. On the deployment page they
-generate and reveal the administrator of their realm, then administer it at
-`https://{realm}.autharie.fr/realms/{realm}/overview`.
+and a FerrisKey deployment on the free offer. The deployment is a FerrisKey of
+its own, served at `https://{name}.autharie.fr`.
 
-### B7. Check one tenant yourself
+### B4. Check one free deployment yourself
 
 Create a free deployment from an invited account and follow it to
-`successful`, reveal its administrator, sign in on its hostname, change the
-temporary password and create a client. This is the path that was run on the
-local stack on 2026-10-17.
+`successful`, then sign in on its hostname and create a client.

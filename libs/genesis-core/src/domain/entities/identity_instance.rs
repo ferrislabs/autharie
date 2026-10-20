@@ -115,8 +115,6 @@ pub struct DesiredIdentityInstance {
 
     pub replicas: i32,
 
-    pub pooled_cell: bool,
-
     pub placement: DatabasePlacement,
 
     /// Where this instance archives. `None` is an installation that archives
@@ -204,7 +202,6 @@ impl DesiredIdentityInstance {
                 database_instances,
             ),
             replicas,
-            pooled_cell: payload.pooled_cell,
             placement: payload.database,
             // Kept for a shared database too. There it is not a base backup
             // destination: the operator reads it as where the daily dump goes,
@@ -232,23 +229,6 @@ mod tests {
     use super::*;
     use crate::domain::entities::deployment_payload::{ArchivePayloadV1, ArchiveSchedulePayloadV1};
 
-    #[test]
-    fn a_payload_that_says_nothing_is_no_pooled_cell_and_one_that_says_so_is() {
-        assert!(
-            !DesiredIdentityInstance::from_payload(&payload())
-                .unwrap()
-                .pooled_cell
-        );
-
-        let mut cell = payload();
-        cell.pooled_cell = true;
-        assert!(
-            DesiredIdentityInstance::from_payload(&cell)
-                .unwrap()
-                .pooled_cell
-        );
-    }
-
     fn payload() -> DeploymentPayloadV1 {
         DeploymentPayloadV1 {
             restore: None,
@@ -267,7 +247,6 @@ mod tests {
             hostname: None,
             replicas: None,
             database_instances: None,
-            pooled_cell: false,
             database: DatabasePlacement::Managed,
         }
     }

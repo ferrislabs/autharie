@@ -5,7 +5,7 @@ export const FREE_OFFER = 'free' as const
 export const FREE_OFFER_COPY = {
   engine: 'The free offer runs FerrisKey.',
   address:
-    'Your realm is reached at its own address, built from the deployment name. The name cannot be changed afterwards.',
+    'Your FerrisKey is reached at its own address, built from the deployment name.',
   price: 'Free',
 }
 

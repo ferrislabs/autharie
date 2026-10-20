@@ -718,7 +718,6 @@ mod tests {
             kind: Some(DeploymentKind::Ferriskey),
             namespace: Some("autharie-test".to_string()),
             log_shipping_enabled: false,
-            pooled: false,
             transition: None,
             changed_at: None,
         }
@@ -855,8 +854,6 @@ mod tests {
                     outcome: "deleted".to_string(),
                     duration_seconds: None,
                     reason: None,
-                    administrator: None,
-                    request_id: None,
                 }])
             })
         });
@@ -913,8 +910,6 @@ mod tests {
                     outcome: "drill_succeeded".to_string(),
                     duration_seconds: Some(212),
                     reason: None,
-                    administrator: None,
-                    request_id: None,
                 }])
             })
         });
@@ -1295,8 +1290,6 @@ mod tests {
                     outcome: "deleted".to_string(),
                     duration_seconds: None,
                     reason: None,
-                    administrator: None,
-                    request_id: None,
                 }])
             })
         });

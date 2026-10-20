@@ -3,7 +3,6 @@ use autharie_macros::transactional;
 use chrono::Duration;
 use serde_json::json;
 
-use autharie_domain::dataplane::value_objects::DeploymentResources;
 use autharie_domain::offers::DatabasePlacement;
 
 use crate::{
@@ -17,7 +16,6 @@ use crate::{
     backups::{
         ArchiveDestination, BackupSchedule, StoreEncryption, ports::BackupScheduleRepository,
     },
-    cells::{CellRepository, RealmRequests, TenantAdministratorRepository, TenantRealm},
     deployments::{
         Deployment, DeploymentId,
         commands::{CreateDeploymentCommand, UpdateDeploymentCommand},
@@ -31,7 +29,19 @@ use crate::{
     organisation::OrganisationId,
 };
 use crate::{infrastructure::role::permissions_in, policy::AuthariePolicy};
-use autharie_postgres::deployments::PostgresDeploymentRepository;
+
+/// Where the instance's database runs, always sent.
+///
+/// Genesis reads an absent field as `managed` so a payload recorded before
+/// this field existed still applies, but nothing written now relies on that:
+/// a data plane told nothing would build a cluster the free offer exists to
+/// avoid. A deployment older than the catalogue has no offer and so has a
+/// cluster of its own.
+fn database_placement(deployment: &Deployment) -> DatabasePlacement {
+    deployment
+        .offer
+        .map_or(DatabasePlacement::Managed, |offer| offer.database())
+}
 
 /// The payload every `deployment.*` action carries.
 ///
@@ -40,60 +50,11 @@ use autharie_postgres::deployments::PostgresDeploymentRepository;
 /// key: a delete built from a smaller subset failed on `missing field kind`
 /// and was retried until somebody read the log. Two literals could drift
 /// again; one cannot.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Serving {
-    OneTenant,
-    PooledCell,
-}
-
-impl Serving {
-    pub(crate) async fn of(
-        tx: &autharie_persistence::SharedTx<'_>,
-        deployment: &Deployment,
-    ) -> Result<Self, CoreError> {
-        use autharie_domain::cells::CellRepository;
-
-        let cell = autharie_postgres::cells::PostgresCellRepository::new(tx)
-            .find_by_instance(deployment.id)
-            .await?;
-
-        Ok(match cell {
-            Some(_) => Self::PooledCell,
-            None => Self::OneTenant,
-        })
-    }
-}
-
-impl Serving {
-    fn database_instance(self, deployment: &Deployment) -> DeploymentResources {
-        match self {
-            Self::OneTenant => deployment.resources,
-            Self::PooledCell => autharie_domain::cells::CELL_DATABASE_INSTANCE,
-        }
-    }
-}
-
-/// Where the instance's database runs, always sent.
-///
-/// Genesis reads an absent field as `managed` so a payload recorded before
-/// this field existed still applies, but nothing written now relies on that:
-/// a data plane told nothing would build a cluster the free offer exists to
-/// avoid. A deployment older than the catalogue has no offer and so has a
-/// cluster of its own, and the instance of a cell is a cell, not a tenant.
-fn database_placement(deployment: &Deployment, serving: Serving) -> DatabasePlacement {
-    match (serving, deployment.offer) {
-        (Serving::OneTenant, Some(offer)) => offer.database(),
-        (Serving::OneTenant, None) | (Serving::PooledCell, _) => DatabasePlacement::Managed,
-    }
-}
-
 pub(crate) fn deployment_payload(
     deployment: &Deployment,
-    serving: Serving,
     archive: Option<serde_json::Value>,
     hostname: Option<String>,
 ) -> serde_json::Value {
-    let database = serving.database_instance(deployment);
     let mut payload = json!({
         "deployment_id": deployment.id.0,
         "dataplane_id": deployment.dataplane_id.0,
@@ -106,13 +67,12 @@ pub(crate) fn deployment_payload(
         // The same numbers that reserved room on the data plane. Genesis used
         // to invent these, so what was reserved and what was deployed were
         // unrelated.
-        "cpu_millis": database.cpu_millis,
-        "memory_mib": database.memory_mib,
-        "storage_gib": database.storage_gib,
+        "cpu_millis": deployment.resources.cpu_millis,
+        "memory_mib": deployment.resources.memory_mib,
+        "storage_gib": deployment.resources.storage_gib,
         "replicas": deployment.topology.replicas(),
         "database_instances": deployment.topology.database_instances(),
-        "pooled_cell": serving == Serving::PooledCell,
-        "database": database_placement(deployment, serving).to_string(),
+        "database": database_placement(deployment).to_string(),
     });
 
     if let Some(archive) = archive {
@@ -180,7 +140,7 @@ fn archive_destination_for(
     use autharie_domain::deployments::distribution::Distribution;
 
     match deployment.distribution {
-        Distribution::CustomerCloud { .. } | Distribution::Pooled { .. } => None,
+        Distribution::CustomerCloud { .. } => None,
         Distribution::Shared | Distribution::SelfHosted => {
             config.destination_for(deployment.organisation_id, deployment.id)
         }
@@ -191,7 +151,6 @@ impl AutharieService {
     pub(crate) async fn announce_new_deployment<S, A>(
         &self,
         deployment: &Deployment,
-        serving: Serving,
         backup_schedule_repository: S,
         action_repository: A,
     ) -> Result<(), CoreError>
@@ -241,7 +200,7 @@ impl AutharieService {
                     id: deployment.id.0,
                 },
                 ActionPayload {
-                    data: deployment_payload(deployment, serving, archive, hostname),
+                    data: deployment_payload(deployment, archive, hostname),
                 },
                 ActionVersion(1),
                 ActionSource::User {
@@ -255,17 +214,9 @@ impl AutharieService {
 }
 
 impl AutharieService {
-    async fn refuse_platform_hostname(
-        &self,
-        tx: &autharie_persistence::SharedTx<'_>,
-        deployment: &Deployment,
-    ) -> Result<(), CoreError> {
+    fn refuse_platform_hostname(&self, deployment: &Deployment) -> Result<(), CoreError> {
         let label = deployment.hostname_slug();
-        let claimed = self.platform_labels().contains(&label)
-            || autharie_postgres::cells::PostgresCellRepository::new(tx)
-                .is_instance_hostname(&label)
-                .await?;
-        if claimed {
+        if self.platform_labels().contains(&label) {
             return Err(CoreError::DeploymentNameReserved {
                 name: deployment.name.0.clone(),
             });
@@ -273,62 +224,15 @@ impl AutharieService {
 
         Ok(())
     }
-
-    #[transactional(deployment, user, data_plane, organisation, cell)]
-    pub async fn tenant_realm_for_organisation(
-        &self,
-        identity: Identity,
-        organisation_id: OrganisationId,
-        deployment_id: DeploymentId,
-    ) -> Result<Option<TenantRealm>, CoreError> {
-        let deployment = DeploymentServiceImpl::new(
-            deployment_repository,
-            user_repository,
-            data_plane_repository,
-            organisation_repository,
-            LocalClusterProvisioner,
-            self.placement_windows(),
-            AuthariePolicy::new(permissions_in(&tx)),
-        )
-        .get_deployment_for_organisation(identity, organisation_id, deployment_id)
-        .await?;
-        if !deployment.is_pooled() {
-            return Ok(None);
-        }
-
-        let refusal = cell_repository.realm_refusal(deployment.id).await?;
-        let administrator =
-            autharie_postgres::cells::PostgresTenantAdministratorRepository::new(&tx)
-                .describe(deployment.id, chrono::Utc::now())
-                .await?;
-        Ok(
-            TenantRealm::of(&deployment, self.deployment_domain(), refusal)
-                .map(|realm| realm.with_administrator(administrator)),
-        )
-    }
 }
 
 /// Recorded in the same transaction as the soft delete: an action that
 /// outlives a rolled-back deletion would have Genesis tear down resources for
-/// a deployment the control plane still considers live. A realm in a cell has
-/// no resources of its own, so it asks the cell to delete the realm instead.
+/// a deployment the control plane still considers live.
 async fn announce_deletion<A: ActionRepository>(
-    tx: &autharie_persistence::SharedTx<'_>,
     deployment: &Deployment,
     action_repository: A,
 ) -> Result<(), CoreError> {
-    if deployment.is_pooled() {
-        RealmRequests::new(
-            autharie_postgres::cells::PostgresCellRepository::new(tx),
-            PostgresDeploymentRepository::new(tx),
-            action_repository,
-        )
-        .delete(deployment)
-        .await?;
-        return Ok(());
-    }
-
-    let serving = Serving::of(tx, deployment).await?;
     ActionServiceImpl::new(action_repository)
         .record_action(RecordActionCommand::new(
             deployment.id,
@@ -339,7 +243,7 @@ async fn announce_deletion<A: ActionRepository>(
                 id: deployment.id.0,
             },
             ActionPayload {
-                data: deployment_payload(deployment, serving, None, None),
+                data: deployment_payload(deployment, None, None),
             },
             ActionVersion(1),
             ActionSource::System,
@@ -387,15 +291,10 @@ impl DeploymentService for AutharieService {
         );
 
         let deployment = deployments.create_deployment(identity, command).await?;
-        self.refuse_platform_hostname(&tx, &deployment).await?;
+        self.refuse_platform_hostname(&deployment)?;
 
-        self.announce_new_deployment(
-            &deployment,
-            Serving::OneTenant,
-            backup_schedule_repository,
-            action_repository,
-        )
-        .await?;
+        self.announce_new_deployment(&deployment, backup_schedule_repository, action_repository)
+            .await?;
 
         Ok(deployment)
     }
@@ -446,8 +345,7 @@ impl DeploymentService for AutharieService {
         )
         .delete_deployment(deployment_id)
         .await?;
-        crate::application::cells::refuse_if_a_cell_runs_on(&tx, deployment.id).await?;
-        announce_deletion(&tx, &deployment, action_repository).await?;
+        announce_deletion(&deployment, action_repository).await?;
 
         Ok(deployment)
     }
@@ -470,8 +368,7 @@ impl DeploymentService for AutharieService {
         )
         .delete_deployment_for_organisation(identity, organisation_id, deployment_id)
         .await?;
-        crate::application::cells::refuse_if_a_cell_runs_on(&tx, deployment.id).await?;
-        announce_deletion(&tx, &deployment, action_repository).await?;
+        announce_deletion(&deployment, action_repository).await?;
 
         Ok(deployment)
     }
@@ -572,8 +469,7 @@ impl DeploymentService for AutharieService {
         .update_deployment(deployment_id, command)
         .await?;
         if renames {
-            crate::application::cells::refuse_if_a_cell_runs_on(&tx, deployment_id).await?;
-            self.refuse_platform_hostname(&tx, &updated).await?;
+            self.refuse_platform_hostname(&updated)?;
         }
 
         Ok(updated)
@@ -600,8 +496,7 @@ impl DeploymentService for AutharieService {
         .update_deployment_for_organisation(identity, organisation_id, deployment_id, command)
         .await?;
         if renames {
-            crate::application::cells::refuse_if_a_cell_runs_on(&tx, deployment_id).await?;
-            self.refuse_platform_hostname(&tx, &updated).await?;
+            self.refuse_platform_hostname(&updated)?;
         }
 
         Ok(updated)
@@ -641,7 +536,7 @@ mod tests {
     #[test]
     fn the_action_payload_carries_every_field_genesis_requires() {
         let deployment = sample_deployment();
-        let payload = deployment_payload(&deployment, Serving::OneTenant, None, None);
+        let payload = deployment_payload(&deployment, None, None);
 
         for field in [
             "deployment_id",
@@ -665,63 +560,11 @@ mod tests {
     #[test]
     fn the_action_payload_carries_the_resources_placement_reserved() {
         let deployment = sample_deployment();
-        let payload = deployment_payload(&deployment, Serving::OneTenant, None, None);
+        let payload = deployment_payload(&deployment, None, None);
 
         assert_eq!(payload["cpu_millis"], 500);
         assert_eq!(payload["memory_mib"], 1024);
         assert_eq!(payload["storage_gib"], 1);
-    }
-
-    #[test]
-    fn only_the_instance_of_a_cell_says_it_is_a_pooled_cell() {
-        let deployment = sample_deployment();
-
-        assert_eq!(
-            deployment_payload(&deployment, Serving::OneTenant, None, None)["pooled_cell"],
-            false
-        );
-        assert_eq!(
-            deployment_payload(&deployment, Serving::PooledCell, None, None)["pooled_cell"],
-            true
-        );
-    }
-
-    #[test]
-    fn every_payload_genesis_applies_whole_says_whether_it_is_a_cell() {
-        let deployment = sample_deployment();
-
-        for serving in [Serving::OneTenant, Serving::PooledCell] {
-            for archive in [None, Some(json!({"destination_path": "s3://bucket/a/b"}))] {
-                for hostname in [None, Some("auth.acme.autharie.fr".to_string())] {
-                    let payload =
-                        deployment_payload(&deployment, serving, archive.clone(), hostname);
-
-                    assert_eq!(
-                        payload["pooled_cell"],
-                        serving == Serving::PooledCell,
-                        "{serving:?}"
-                    );
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn the_database_of_a_cell_is_sized_per_instance_while_the_cell_reserves_the_whole() {
-        use autharie_domain::{
-            cells::{CELL_DATABASE_INSTANCE, cell_reservation},
-            deployments::topology::Topology,
-        };
-
-        let mut deployment = sample_deployment();
-        deployment.topology = Topology::HIGH_AVAILABILITY;
-        deployment.resources = cell_reservation(Topology::HIGH_AVAILABILITY);
-        let payload = deployment_payload(&deployment, Serving::PooledCell, None, None);
-
-        assert_eq!(payload["cpu_millis"], CELL_DATABASE_INSTANCE.cpu_millis);
-        assert_eq!(payload["memory_mib"], CELL_DATABASE_INSTANCE.memory_mib);
-        assert_eq!(payload["storage_gib"], CELL_DATABASE_INSTANCE.storage_gib);
-        assert_eq!(payload["database_instances"], 2);
     }
 
     /// @spec-free-1
@@ -733,14 +576,13 @@ mod tests {
         deployment.offer = Some(Offer::Free);
         deployment.resources = Offer::Free.resources();
         deployment.topology = Topology::SINGLE;
-        let payload = deployment_payload(&deployment, Serving::OneTenant, None, None);
+        let payload = deployment_payload(&deployment, None, None);
 
         assert_eq!(payload["database"], "shared");
         assert_eq!(payload["cpu_millis"], 100);
         assert_eq!(payload["memory_mib"], 256);
         assert_eq!(payload["storage_gib"], 1);
         assert_eq!(payload["replicas"], 1);
-        assert_eq!(payload["pooled_cell"], false);
     }
 
     /// @spec-free-6
@@ -753,7 +595,7 @@ mod tests {
             deployment.offer = Some(offer);
 
             assert_eq!(
-                deployment_payload(&deployment, Serving::OneTenant, None, None)["database"],
+                deployment_payload(&deployment, None, None)["database"],
                 "managed",
                 "{offer}"
             );
@@ -765,14 +607,14 @@ mod tests {
         let deployment = sample_deployment();
 
         assert_eq!(
-            deployment_payload(&deployment, Serving::OneTenant, None, None)["database"],
+            deployment_payload(&deployment, None, None)["database"],
             "managed"
         );
     }
 
     #[test]
     fn a_default_deployment_sends_one_replica_and_one_database_instance() {
-        let payload = deployment_payload(&sample_deployment(), Serving::OneTenant, None, None);
+        let payload = deployment_payload(&sample_deployment(), None, None);
 
         assert_eq!(payload["replicas"], 1);
         assert_eq!(payload["database_instances"], 1);
@@ -782,7 +624,7 @@ mod tests {
     fn the_action_payload_carries_the_topology_of_the_deployment() {
         let mut deployment = sample_deployment();
         deployment.topology = crate::deployments::topology::Topology::new(3, 2).unwrap();
-        let payload = deployment_payload(&deployment, Serving::OneTenant, None, None);
+        let payload = deployment_payload(&deployment, None, None);
 
         assert_eq!(payload["replicas"], 3);
         assert_eq!(payload["database_instances"], 2);
@@ -807,7 +649,6 @@ mod tests {
 
         let payload = deployment_payload(
             &deployment,
-            Serving::OneTenant,
             Some(archive_section(
                 &destination,
                 &StoreEncryption::Managed,
@@ -865,15 +706,8 @@ mod tests {
                 .expect("a profile"),
             };
 
-        let mut pooled = sample_deployment();
-        pooled.distribution = autharie_domain::deployments::distribution::Distribution::Pooled {
-            cell_id: autharie_domain::cells::CellId(uuid::Uuid::new_v4()),
-            realm: autharie_domain::cells::RealmName::try_from("acme").unwrap(),
-        };
-
         assert!(archive_destination_for(&config, &shared).is_some());
         assert!(archive_destination_for(&config, &customer).is_none());
-        assert!(archive_destination_for(&config, &pooled).is_none());
     }
 
     /// An installation that archives nowhere says so by absence. A deployment
@@ -889,7 +723,7 @@ mod tests {
                 .is_none()
         );
         assert!(
-            deployment_payload(&deployment, Serving::OneTenant, None, None)
+            deployment_payload(&deployment, None, None)
                 .get("archive")
                 .is_none()
         );
@@ -903,7 +737,7 @@ mod tests {
         let deployment = sample_deployment();
 
         assert!(
-            deployment_payload(&deployment, Serving::OneTenant, None, None)
+            deployment_payload(&deployment, None, None)
                 .get("hostname")
                 .is_none()
         );
@@ -915,12 +749,8 @@ mod tests {
     fn the_action_payload_carries_the_hostname_it_was_given() {
         let deployment = sample_deployment();
 
-        let payload = deployment_payload(
-            &deployment,
-            Serving::OneTenant,
-            None,
-            Some("auth.acme.autharie.fr".to_string()),
-        );
+        let payload =
+            deployment_payload(&deployment, None, Some("auth.acme.autharie.fr".to_string()));
 
         assert_eq!(payload["hostname"], json!("auth.acme.autharie.fr"));
     }

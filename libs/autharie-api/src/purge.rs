@@ -66,14 +66,5 @@ pub async fn purge_deleted_deployments(state: AppState) {
             Ok(purged) => info!(purged, "removed reachability checks past their retention"),
             Err(err) => error!(%err, "failed to purge reachability checks"),
         }
-
-        match state.service.purge_expired_tenant_administrators().await {
-            Ok(0) => {}
-            Ok(wiped) => info!(
-                wiped,
-                "wiped realm administrator credentials past their expiry"
-            ),
-            Err(err) => error!(%err, "failed to wipe expired realm administrator credentials"),
-        }
     }
 }

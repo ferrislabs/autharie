@@ -2693,190 +2693,6 @@
         ]
       }
     },
-    "/organisations/{organisation_id}/deployments/{deployment_id}/administrator/issue": {
-      "post": {
-        "tags": [
-          "deployments"
-        ],
-        "summary": "issue a new administrator credential for a free deployment's realm",
-        "description": "Asks the cell to set a new temporary password on the realm's administrator. The password in force so far stops working. The new one can be revealed once it has arrived.",
-        "operationId": "issue_administrator_handler",
-        "parameters": [
-          {
-            "name": "organisation_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "name": "deployment_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "responses": {
-          "202": {
-            "description": "The credential is being issued",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/IssueAdministratorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Not an organisation administrator",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Already being issued, or not a serving realm",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal Server Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/organisations/{organisation_id}/deployments/{deployment_id}/administrator/reveal": {
-      "post": {
-        "tags": [
-          "deployments"
-        ],
-        "summary": "reveal the first administrator of a free deployment's realm, once",
-        "description": "Returns the username and temporary password of the realm's first administrator and forgets the password. Every later call answers 410.",
-        "operationId": "reveal_administrator_handler",
-        "parameters": [
-          {
-            "name": "organisation_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "name": "deployment_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "The credential, shown this once",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RevealAdministratorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Not an organisation administrator",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "No administrator yet",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "410": {
-            "description": "Already revealed, or expired",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal Server Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
     "/organisations/{organisation_id}/deployments/{deployment_id}/backup-schedule": {
       "get": {
         "tags": [
@@ -6320,551 +6136,6 @@
         ]
       }
     },
-    "/platform/cells": {
-      "get": {
-        "tags": [
-          "platform"
-        ],
-        "summary": "list the cells",
-        "operationId": "list_cells_handler",
-        "responses": {
-          "200": {
-            "description": "Every cell, with its status and how many realms it holds",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CellsResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "This needs the view_estate right",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal Server Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      },
-      "post": {
-        "tags": [
-          "platform"
-        ],
-        "summary": "create a cell",
-        "description": "Creates a highly available FerrisKey instance owned by the cells organisation, and a cell on it that opens once the instance serves two replicas on two database instances.",
-        "operationId": "create_cell_handler",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateCellRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "The cell, provisioning",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CellResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "This needs the operate_fleet right",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "No FerrisKey release is available, or no data plane has room",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "The request names no region, or a capacity outside what a cell holds",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal Server Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Cells are not configured on this installation",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/platform/cells/settings": {
-      "get": {
-        "tags": [
-          "platform"
-        ],
-        "summary": "get the cells settings",
-        "operationId": "get_cells_settings_handler",
-        "responses": {
-          "200": {
-            "description": "The organisation that owns the cells, if one is chosen",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CellsSettingsView"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "This needs the view_estate right",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal Server Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      },
-      "put": {
-        "tags": [
-          "platform"
-        ],
-        "summary": "choose the organisation that owns the cells",
-        "description": "Existing cell instances stay owned by the organisation that held them, so the owner can only change while every cell is retired. Setting the current value again changes nothing. A null organisation clears the setting.",
-        "operationId": "update_cells_settings_handler",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateCellsSettingsRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "The settings, as saved",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CellsSettingsView"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "This needs the operate_fleet right",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "No such organisation",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "A cell is not retired yet",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal Server Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/platform/cells/{cell_id}": {
-      "get": {
-        "tags": [
-          "platform"
-        ],
-        "summary": "get a cell",
-        "operationId": "get_cell_handler",
-        "parameters": [
-          {
-            "name": "cell_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "The cell",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CellResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "This needs the view_estate right",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "No such cell",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal Server Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/platform/cells/{cell_id}/drain": {
-      "post": {
-        "tags": [
-          "platform"
-        ],
-        "summary": "drain a cell",
-        "description": "An open or full cell stops receiving tenants. The tenants it holds stay.",
-        "operationId": "drain_cell_handler",
-        "parameters": [
-          {
-            "name": "cell_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "The cell, draining",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CellResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "This needs the operate_fleet right",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "No such cell",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "The cell is not open or full",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal Server Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/platform/cells/{cell_id}/retire": {
-      "post": {
-        "tags": [
-          "platform"
-        ],
-        "summary": "retire a cell",
-        "description": "A draining cell that holds no realm is retired.",
-        "operationId": "retire_cell_handler",
-        "parameters": [
-          {
-            "name": "cell_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "The cell, retired",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CellResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "This needs the operate_fleet right",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "No such cell",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "The cell is not draining, or still holds realms",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal Server Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
     "/platform/dataplanes/upgrade": {
       "post": {
         "tags": [
@@ -9625,7 +8896,7 @@
           },
           "kind": {
             "$ref": "#/components/schemas/TargetKind",
-            "description": "Domain object kind (Deployment, Realm, Database, …)"
+            "description": "Domain object kind (Deployment, Database, …)"
           }
         }
       },
@@ -9636,15 +8907,6 @@
         "type": "integer",
         "format": "int32",
         "minimum": 0
-      },
-      "AdministratorCredential": {
-        "type": "string",
-        "enum": [
-          "issuing",
-          "ready",
-          "revealed",
-          "expired"
-        ]
       },
       "AllowList": {
         "type": "array",
@@ -10496,114 +9758,6 @@
           }
         }
       },
-      "CellResponse": {
-        "type": "object",
-        "required": [
-          "data"
-        ],
-        "properties": {
-          "data": {
-            "$ref": "#/components/schemas/CellView"
-          }
-        }
-      },
-      "CellStatus": {
-        "type": "string",
-        "enum": [
-          "provisioning",
-          "open",
-          "full",
-          "draining",
-          "retired",
-          "failed"
-        ]
-      },
-      "CellView": {
-        "type": "object",
-        "required": [
-          "id",
-          "region",
-          "data_plane_id",
-          "instance_deployment_id",
-          "status",
-          "capacity",
-          "realms",
-          "created_at"
-        ],
-        "properties": {
-          "capacity": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "data_plane_id": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "id": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "instance_deployment_id": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "realms": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
-          },
-          "region": {
-            "type": "string"
-          },
-          "status": {
-            "$ref": "#/components/schemas/CellStatus"
-          }
-        }
-      },
-      "CellsResponse": {
-        "type": "object",
-        "required": [
-          "data"
-        ],
-        "properties": {
-          "data": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/CellView"
-            }
-          }
-        }
-      },
-      "CellsSettingsView": {
-        "type": "object",
-        "required": [
-          "updated_at"
-        ],
-        "properties": {
-          "organisation_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid"
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "updated_by": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        }
-      },
       "CertificatePayload": {
         "type": "object",
         "description": "A certificate crossing the wire, PEM-encoded -- the same shape a\nKubernetes `kubernetes.io/tls` Secret holds it in, on both ends of this\ntrip.",
@@ -10840,25 +9994,6 @@
           },
           "min": {
             "$ref": "#/components/schemas/Money"
-          }
-        }
-      },
-      "CreateCellRequest": {
-        "type": "object",
-        "required": [
-          "region"
-        ],
-        "properties": {
-          "capacity": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32",
-            "minimum": 0
-          },
-          "region": {
-            "type": "string"
           }
         }
       },
@@ -11597,25 +10732,6 @@
                 }
               }
             }
-          },
-          {
-            "type": "object",
-            "required": [
-              "pooled"
-            ],
-            "properties": {
-              "pooled": {
-                "type": "object",
-                "required": [
-                  "realm"
-                ],
-                "properties": {
-                  "realm": {
-                    "$ref": "#/components/schemas/RealmName"
-                  }
-                }
-              }
-            }
           }
         ],
         "description": "How a deployment is hosted.\n\n`CustomerCloud` carries its credential and its profile, so a deployment\nthat is in the customer's cloud cannot exist without saying whose account\nand how big."
@@ -12148,17 +11264,6 @@
                 "$ref": "#/components/schemas/Provisioning"
               }
             ]
-          },
-          "realm": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/TenantRealm",
-                "description": "The tenant realm, for a deployment hosted as a realm in a shared cell."
-              }
-            ]
           }
         }
       },
@@ -12653,17 +11758,6 @@
         "type": "string",
         "description": "The address an invitation is written to.\n\nLowercased, because that is how it is matched against whoever turns up\nholding the link. Two spellings of one address being treated as two\naddresses is how an invitation stops working for the person it was for.",
         "example": "colleague@acme.com"
-      },
-      "IssueAdministratorResponse": {
-        "type": "object",
-        "required": [
-          "data"
-        ],
-        "properties": {
-          "data": {
-            "$ref": "#/components/schemas/TenantAdministrator"
-          }
-        }
       },
       "KeyName": {
         "type": "string",
@@ -13808,9 +12902,6 @@
         "format": "int32",
         "minimum": 0
       },
-      "RealmName": {
-        "type": "string"
-      },
       "Region": {
         "type": "string"
       },
@@ -14199,20 +13290,9 @@
           "outcome"
         ],
         "properties": {
-          "administrator": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ReportedAdministrator",
-                "description": "The realm administrator Genesis issued, sent only with the\n`administrator_issued` outcome, which never changes a deployment's\nstatus. Kept sealed until an organisation administrator reveals it."
-              }
-            ]
-          },
           "outcome": {
             "type": "string",
-            "description": "What the data plane observed: `running`, `failed` or `deleted`, or\n`administrator_issued` for a realm administrator issued on request.\n\nAll three are things a component saw rather than inferred -- the\noperator wrote `Running`/`ready` or `Failed` onto the resource, and\ndeletion is reported by whatever removed it. None of them is a timeout,\nwhich is why none needs a policy about when to give up."
+            "description": "What the data plane observed: `running`, `failed` or `deleted`.\n\nAll three are things a component saw rather than inferred -- the\noperator wrote `Running`/`ready` or `Failed` onto the resource, and\ndeletion is reported by whatever removed it. None of them is a timeout,\nwhich is why none needs a policy about when to give up."
           },
           "reason": {
             "type": [
@@ -14220,14 +13300,6 @@
               "null"
             ],
             "description": "Why the data plane gave up, sent with `failed` when it knows."
-          },
-          "request_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid",
-            "description": "The issue request an `administrator_issued` outcome answers. An\nanswer to an older request is ignored."
           },
           "version": {
             "type": [
@@ -14295,21 +13367,6 @@
           "recorded": {
             "type": "integer",
             "minimum": 0
-          }
-        }
-      },
-      "ReportedAdministrator": {
-        "type": "object",
-        "required": [
-          "username",
-          "password"
-        ],
-        "properties": {
-          "password": {
-            "type": "string"
-          },
-          "username": {
-            "type": "string"
           }
         }
       },
@@ -14434,33 +13491,6 @@
             "description": "Never fewer than this many, whatever their age.\n\nNon zero, so there is no way to express a policy that deletes the last\narchive a deployment has.",
             "example": 7,
             "minimum": 0
-          }
-        }
-      },
-      "RevealAdministratorResponse": {
-        "type": "object",
-        "required": [
-          "data"
-        ],
-        "properties": {
-          "data": {
-            "$ref": "#/components/schemas/RevealedAdministrator"
-          }
-        }
-      },
-      "RevealedAdministrator": {
-        "type": "object",
-        "required": [
-          "username",
-          "password"
-        ],
-        "properties": {
-          "password": {
-            "type": "string",
-            "description": "Temporary: the realm asks for a new password at the first sign-in."
-          },
-          "username": {
-            "type": "string"
           }
         }
       },
@@ -15015,12 +14045,6 @@
           {
             "type": "string",
             "enum": [
-              "Realm"
-            ]
-          },
-          {
-            "type": "string",
-            "enum": [
               "Database"
             ]
           },
@@ -15062,39 +14086,6 @@
           },
           "organisation": {
             "$ref": "#/components/schemas/Organisation"
-          }
-        }
-      },
-      "TenantAdministrator": {
-        "type": "object",
-        "required": [
-          "credential",
-          "stale",
-          "requested_at"
-        ],
-        "properties": {
-          "credential": {
-            "$ref": "#/components/schemas/AdministratorCredential"
-          },
-          "expires_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
-          },
-          "requested_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "stale": {
-            "type": "boolean"
-          },
-          "username": {
-            "type": [
-              "string",
-              "null"
-            ]
           }
         }
       },
@@ -15149,51 +14140,6 @@
             "items": {
               "$ref": "#/components/schemas/TenantFeatureView"
             }
-          }
-        }
-      },
-      "TenantRealm": {
-        "type": "object",
-        "required": [
-          "name"
-        ],
-        "properties": {
-          "administrator": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/TenantAdministrator"
-              }
-            ]
-          },
-          "console": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "issuer": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "name": {
-            "$ref": "#/components/schemas/RealmName"
-          },
-          "refusal": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "url": {
-            "type": [
-              "string",
-              "null"
-            ]
           }
         }
       },
@@ -15340,18 +14286,6 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
-          }
-        }
-      },
-      "UpdateCellsSettingsRequest": {
-        "type": "object",
-        "properties": {
-          "organisation_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid"
           }
         }
       },

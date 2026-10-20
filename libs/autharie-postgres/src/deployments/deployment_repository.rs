@@ -61,8 +61,6 @@ struct DeploymentRow {
     distribution: String,
     credential_id: Option<Uuid>,
     cluster_profile: Option<serde_json::Value>,
-    cell_id: Option<Uuid>,
-    realm: Option<String>,
     replicas: i16,
     database_instances: i16,
 }
@@ -130,8 +128,6 @@ impl DeploymentRow {
                 &self.distribution,
                 self.credential_id,
                 self.cluster_profile,
-                self.cell_id,
-                self.realm,
                 self.id,
             )?,
             topology: Topology::new(
@@ -286,19 +282,14 @@ pub struct PostgresDeploymentRepository<'tx> {
 #[cfg_attr(coverage_nightly, coverage(off))]
 const HOSTNAME_SLUG_INDEX: &str = "idx_deployments_hostname_slug";
 
-#[cfg_attr(coverage_nightly, coverage(off))]
-const LIVE_REALM_INDEX: &str = "idx_deployments_live_realm";
-
 fn write_error(action: &str, error: sqlx::Error) -> CoreError {
     let violated = error
         .as_database_error()
         .filter(|db| db.is_unique_violation())
         .and_then(|db| db.constraint());
 
-    match violated {
-        Some(HOSTNAME_SLUG_INDEX) => return CoreError::DeploymentNameTaken,
-        Some(LIVE_REALM_INDEX) => return CoreError::DeploymentNameBeingReleased,
-        _ => {}
+    if violated == Some(HOSTNAME_SLUG_INDEX) {
+        return CoreError::DeploymentNameTaken;
     }
 
     CoreError::DatabaseError {
@@ -322,9 +313,6 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
             DELETE FROM deployments
             WHERE status = 'deleted'
               AND updated_at < $1
-              AND NOT EXISTS (
-                  SELECT 1 FROM cells c WHERE c.instance_deployment_id = deployments.id
-              )
             "#,
                 before
             )
@@ -385,15 +373,12 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                 distribution,
                 credential_id,
                 cluster_profile,
-                cell_id,
-                realm,
-                cell_slot_held,
                 replicas,
                 database_instances
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
                     $17, $18, $19, $20, $21, $22, $23, $24, $25::TEXT[]::CIDR[], $26, $27, $28, $29,
-                    $30, $31, $32, $33, $34, $35, $36, $37, $38)
+                    $30, $31, $32, $33, $34, $35)
             "#,
                 deployment.id.0,
                 deployment.organisation_id.0,
@@ -437,9 +422,6 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                 distribution.distribution,
                 distribution.credential_id,
                 distribution.cluster_profile,
-                distribution.cell_id,
-                distribution.realm,
-                distribution.cell_slot_held,
                 i16::from(deployment.topology.replicas()),
                 i16::from(deployment.topology.database_instances()),
             )
@@ -492,8 +474,6 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                    distribution,
                    credential_id,
                    cluster_profile,
-                   cell_id,
-                   realm,
                    replicas,
                    database_instances
             FROM deployments
@@ -552,8 +532,6 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                    distribution,
                    credential_id,
                    cluster_profile,
-                   cell_id,
-                   realm,
                    replicas,
                    database_instances
             FROM deployments
@@ -768,8 +746,6 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                    distribution,
                    credential_id,
                    cluster_profile,
-                   cell_id,
-                   realm,
                    replicas,
                    database_instances
             FROM deployments
@@ -835,8 +811,6 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                    distribution,
                    credential_id,
                    cluster_profile,
-                   cell_id,
-                   realm,
                    replicas,
                    database_instances
             FROM deployments
@@ -900,8 +874,6 @@ mod tests {
             distribution: "shared".to_string(),
             credential_id: None,
             cluster_profile: None,
-            cell_id: None,
-            realm: None,
             replicas: 1,
             database_instances: 1,
         }

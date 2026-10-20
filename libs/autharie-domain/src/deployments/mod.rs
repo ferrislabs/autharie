@@ -265,30 +265,8 @@ impl Deployment {
         environment::slug(&self.name.0)
     }
 
-    pub fn is_pooled(&self) -> bool {
-        matches!(self.distribution, distribution::Distribution::Pooled { .. })
-    }
-
     pub fn deserves_a_dns_record(&self) -> bool {
-        match self.status {
-            DeploymentStatus::Deleting => false,
-            DeploymentStatus::Failed => !self.is_pooled(),
-            _ => true,
-        }
-    }
-
-    pub fn is_probed_for_reachability(&self) -> bool {
-        !self.is_pooled() || self.status == DeploymentStatus::Successful
-    }
-
-    pub fn refuse_if_pooled(&self, operation: &str) -> Result<(), crate::CoreError> {
-        if !self.is_pooled() {
-            return Ok(());
-        }
-
-        Err(crate::CoreError::NotForPooledDeployment {
-            operation: operation.to_string(),
-        })
+        self.status != DeploymentStatus::Deleting
     }
 
     /// Records that the work has been handed to a data plane.
@@ -449,42 +427,11 @@ impl Deployment {
 pub(crate) mod tests {
     use super::*;
 
-    pub(crate) fn a_deployment() -> Deployment {
-        deployment(DeploymentStatus::Pending)
-    }
-
-    fn pooled(status: DeploymentStatus) -> Deployment {
-        let mut realm = deployment(status);
-        realm.distribution = distribution::Distribution::Pooled {
-            cell_id: crate::cells::CellId(Uuid::nil()),
-            realm: crate::cells::RealmName::try_from("acme").expect("valid"),
-        };
-        realm
-    }
-
     #[test]
-    fn a_refused_realm_and_a_deployment_being_deleted_get_no_dns_record() {
-        assert!(!pooled(DeploymentStatus::Failed).deserves_a_dns_record());
-        assert!(!pooled(DeploymentStatus::Deleting).deserves_a_dns_record());
+    fn a_deployment_being_deleted_gets_no_dns_record() {
         assert!(!deployment(DeploymentStatus::Deleting).deserves_a_dns_record());
-        assert!(pooled(DeploymentStatus::Pending).deserves_a_dns_record());
+        assert!(deployment(DeploymentStatus::Pending).deserves_a_dns_record());
         assert!(deployment(DeploymentStatus::Failed).deserves_a_dns_record());
-    }
-
-    #[test]
-    fn a_realm_is_probed_only_once_it_serves() {
-        assert!(pooled(DeploymentStatus::Successful).is_probed_for_reachability());
-        for status in [
-            DeploymentStatus::Pending,
-            DeploymentStatus::Failed,
-            DeploymentStatus::Deleting,
-        ] {
-            assert!(
-                !pooled(status.clone()).is_probed_for_reachability(),
-                "{status:?}"
-            );
-        }
-        assert!(deployment(DeploymentStatus::Pending).is_probed_for_reachability());
     }
 
     fn deployment(status: DeploymentStatus) -> Deployment {

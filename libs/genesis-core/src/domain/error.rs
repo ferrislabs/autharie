@@ -31,21 +31,3 @@ pub enum GenesisError {
     #[error("Internal error: {message}")]
     Internal { message: String },
 }
-
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum RealmError {
-    #[error("the realm already exists in the cell")]
-    AlreadyExists,
-
-    #[error("the realm does not exist in the cell")]
-    NotFound,
-
-    #[error("the cell refused the realm: {reason}")]
-    Refused { reason: String },
-
-    #[error("the cell could not be reached: {message}")]
-    CellUnreachable { message: String },
-
-    #[error("the payload does not name a FerrisKey cell instance")]
-    NotACell,
-}

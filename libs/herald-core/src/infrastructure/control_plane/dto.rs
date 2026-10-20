@@ -47,9 +47,6 @@ pub struct DeploymentDto {
     pub log_shipping_enabled: bool,
 
     #[serde(default)]
-    pub distribution: Option<Value>,
-
-    #[serde(default)]
     pub status: Option<String>,
     #[serde(default)]
     pub updated_at: Option<DateTime<Utc>>,
@@ -73,11 +70,6 @@ impl From<DeploymentDto> for Deployment {
             kind: dto.kind,
             namespace: dto.namespace,
             log_shipping_enabled: dto.log_shipping_enabled,
-            pooled: dto
-                .distribution
-                .as_ref()
-                .and_then(Value::as_object)
-                .is_some_and(|distribution| distribution.contains_key("pooled")),
             transition: transition_of(dto.status.as_deref()),
             changed_at: dto.updated_at,
         }
@@ -316,27 +308,6 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn deployment_with(distribution: Value) -> Deployment {
-        serde_json::from_value::<DeploymentDto>(json!({
-            "id": "11111111-1111-1111-1111-111111111111",
-            "dataplane_id": "22222222-2222-2222-2222-222222222222",
-            "organisation_id": "44444444-4444-4444-4444-444444444444",
-            "name": "acme",
-            "kind": "ferriskey",
-            "namespace": "cells-one",
-            "distribution": distribution,
-        }))
-        .expect("a deployment")
-        .into()
-    }
-
-    #[test]
-    fn a_deployment_says_whether_it_is_a_realm_in_a_shared_cell() {
-        assert!(deployment_with(json!({"pooled": {"realm": "acme"}})).pooled);
-        assert!(!deployment_with(json!("shared")).pooled);
-        assert!(!deployment_with(Value::Null).pooled);
-    }
-
     fn deployment_in(status: &str) -> Deployment {
         serde_json::from_value::<DeploymentDto>(json!({
             "id": "11111111-1111-1111-1111-111111111111",
@@ -383,7 +354,16 @@ mod tests {
         ] {
             assert_eq!(deployment_in(status).transition, None, "{status}");
         }
-        assert_eq!(deployment_with(Value::Null).transition, None);
+
+        let unsaid: Deployment = serde_json::from_value::<DeploymentDto>(json!({
+            "id": "11111111-1111-1111-1111-111111111111",
+            "dataplane_id": "22222222-2222-2222-2222-222222222222",
+            "organisation_id": "44444444-4444-4444-4444-444444444444",
+            "name": "acme",
+        }))
+        .expect("a deployment")
+        .into();
+        assert_eq!(unsaid.transition, None);
     }
 
     fn action_json(deployment_id: Value) -> Value {

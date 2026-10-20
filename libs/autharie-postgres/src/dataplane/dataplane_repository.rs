@@ -284,7 +284,6 @@ impl DataPlaneRepository for PostgresDataPlaneRepository<'_> {
                     LEFT JOIN deployments d
                       ON d.dataplane_id = dp.id
                      AND d.deleted_at IS NULL
-                     AND d.distribution <> 'pooled'
                     WHERE dp.region = $1
                       AND dp.mode = $6
                       AND dp.status = 'active'
@@ -340,7 +339,6 @@ impl DataPlaneRepository for PostgresDataPlaneRepository<'_> {
                     LEFT JOIN deployments d
                       ON d.dataplane_id = dp.id
                      AND d.deleted_at IS NULL
-                     AND d.distribution <> 'pooled'
                     WHERE dp.mode = $5
                       AND dp.status = 'active'
                       AND dp.last_seen_at >= $4
@@ -423,7 +421,6 @@ impl DataPlaneRepository for PostgresDataPlaneRepository<'_> {
             FROM deployments
             WHERE dataplane_id = $1
               AND deleted_at IS NULL
-              AND distribution <> 'pooled'
             "#,
                 id.0
             )
@@ -514,26 +511,6 @@ impl DataPlaneRepository for PostgresDataPlaneRepository<'_> {
 
     async fn remove(&self, id: &DataPlaneId) -> Result<Removal, CoreError> {
         let mut tx = self.tx.lock().await;
-
-        let hosts_cells = sqlx::query_scalar!(
-            r#"
-            SELECT EXISTS (
-                SELECT 1
-                FROM cells
-                WHERE data_plane_id = $1
-            ) AS "hosts_cells!"
-            "#,
-            id.0
-        )
-        .fetch_one(&mut ***tx)
-        .await
-        .map_err(|e| CoreError::DatabaseError {
-            message: format!("Failed to read the cells of a data plane: {}", e),
-        })?;
-
-        if hosts_cells {
-            return Ok(Removal::HostsCells);
-        }
 
         let unreleased = sqlx::query_scalar!(
             r#"
@@ -667,7 +644,6 @@ impl DataPlaneRepository for PostgresDataPlaneRepository<'_> {
                 LEFT JOIN deployments d
                   ON d.dataplane_id = dp.id
                  AND d.deleted_at IS NULL
-                 AND d.distribution <> 'pooled'
                 WHERE dp.region = $1
                   AND dp.mode = $5
                   AND dp.status = 'active'

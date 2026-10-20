@@ -36,7 +36,6 @@ import PageTenantDetailFeature from './domain/platform/pages/feature/page-tenant
 import PageTenantsFeature from './domain/platform/pages/feature/page-tenants-feature'
 import PageUsageFeature from './domain/usage/pages/feature/page-usage-feature'
 import PageLogsFeature from './domain/logs/pages/feature/page-logs-feature'
-import PageCellsFeature from './domain/cells/pages/feature/page-cells-feature'
 import PageTracesFeature from './domain/traces/pages/feature/page-traces-feature'
 
 const rootRoute = createRootRoute({
@@ -235,12 +234,6 @@ const platformDataplaneUpgradesRoute = createRoute({
   component: PageDataplaneUpgradesFeature,
 })
 
-const platformCellsRoute = createRoute({
-  getParentRoute: () => platformLayoutRoute,
-  path: '/cells',
-  component: PageCellsFeature,
-})
-
 const platformReleasesRoute = createRoute({
   getParentRoute: () => platformLayoutRoute,
   path: '/releases',
@@ -345,7 +338,6 @@ const routeTree = rootRoute.addChildren([
     platformDataPlaneDetailRoute,
     platformDataplaneUpgradesRoute,
     platformDeploymentsRoute,
-    platformCellsRoute,
     platformOrganisationsRoute,
     platformOrganisationDetailRoute,
     platformReleasesRoute,

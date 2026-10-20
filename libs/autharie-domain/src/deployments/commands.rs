@@ -83,7 +83,7 @@ impl CreateDeploymentCommand {
         offer: Offer,
     ) -> Result<Self, CoreError> {
         if offer.database() == DatabasePlacement::Shared && kind != DeploymentKind::Ferriskey {
-            return Err(DistributionError::NotPoolable { kind }.into());
+            return Err(DistributionError::SharedDatabaseOfferIsFerriskeyOnly { kind }.into());
         }
 
         Ok(Self {
@@ -110,7 +110,7 @@ impl CreateDeploymentCommand {
         if self.offer.database() == DatabasePlacement::Shared
             && distribution != Distribution::Shared
         {
-            return Err(DistributionError::PooledOfferPlacedElsewhere);
+            return Err(DistributionError::SharedDatabaseOfferPlacedElsewhere);
         }
         self.distribution = distribution.checked_for(&self.kind)?;
         Ok(self)
@@ -367,12 +367,15 @@ mod tests {
     /// @spec-fpr-13
     #[test]
     fn only_a_ferriskey_command_can_take_the_free_offer() {
-        let refused = a_free_command(DeploymentKind::Keycloak).expect_err("keycloak is not pooled");
+        let refused = a_free_command(DeploymentKind::Keycloak)
+            .expect_err("keycloak cannot take the free offer");
 
         assert!(
             matches!(
                 refused,
-                CoreError::Distribution(DistributionError::NotPoolable { .. })
+                CoreError::Distribution(
+                    DistributionError::SharedDatabaseOfferIsFerriskeyOnly { .. }
+                )
             ),
             "{refused}"
         );
@@ -388,7 +391,7 @@ mod tests {
                 .clone()
                 .with_distribution(crate::deployments::distribution::tests::customer_cloud())
                 .err(),
-            Some(DistributionError::PooledOfferPlacedElsewhere)
+            Some(DistributionError::SharedDatabaseOfferPlacedElsewhere)
         );
         assert!(command.with_distribution(Distribution::Shared).is_ok());
     }
