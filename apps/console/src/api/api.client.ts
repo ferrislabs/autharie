@@ -149,6 +149,31 @@ export namespace Schemas {
     zone: string
   }
   export type BackupScheduleResponse = { data: BackupSchedule }
+  export type BillingAddressBody = {
+    city: string
+    country: string
+    line1: string
+    line2?: (string | null) | undefined
+    postal_code: string
+  }
+  export type BillingAccountRequest = {
+    address: BillingAddressBody
+    email: string
+    name: string
+    siren?: (string | null) | undefined
+    vat_number?: (string | null) | undefined
+  }
+  export type PaymentMethodStatus = 'missing' | 'valid' | 'failing'
+  export type BillingAccountResponse = {
+    address: BillingAddressBody
+    complete: boolean
+    email: string
+    name: string
+    payment_method: PaymentMethodStatus
+    siren?: (string | null) | undefined
+    vat_number?: (string | null) | undefined
+  }
+  export type BillingPeriod = string
   export type HexColor = string
   export type BrandingColors = Partial<{
     error: null | HexColor
@@ -183,6 +208,7 @@ export namespace Schemas {
     fingerprint: string
     private_key_pem: string
   }
+  export type ChangeSubscriptionRequest = { tier: string }
   export type ClaimActionsRequest = {
     deployment_ids: Array<DeploymentId>
     include_dataplane_actions?: boolean | undefined
@@ -253,6 +279,7 @@ export namespace Schemas {
     name: string
     offer: string
     region?: (string | null) | undefined
+    tier?: (string | null) | undefined
     version: string
   }
   export type Distribution =
@@ -380,6 +407,18 @@ export namespace Schemas {
     intervals: Array<DowntimeInterval>
   }
   export type DeploymentDowntimeResponse = { data: DeploymentDowntime }
+  export type IamFeature =
+    | 'sso_connectors'
+    | 'mfa'
+    | 'directory_federation'
+    | 'custom_domain'
+    | 'branding'
+    | 'analytics'
+    | 'compliance'
+    | 'delegated_admin'
+  export type DeploymentFeature = { feature: IamFeature; open: boolean }
+  export type TierCode = string
+  export type DeploymentFeaturesResponse = { features: Array<DeploymentFeature>; tier: TierCode }
   export type UptimeWindow = {
     covers_full_window: boolean
     uptime_percent?: (number | null) | undefined
@@ -423,6 +462,7 @@ export namespace Schemas {
   }
   export type FeatureResponse = { data: FeatureView }
   export type FeaturesResponse = { data: Array<FeatureView> }
+  export type FirstInvoiceResponse = { amount: number; period: BillingPeriod }
   export type FleetActor =
     | { kind: 'operator'; subject: string }
     | { client_id: string; kind: 'api' }
@@ -487,15 +527,7 @@ export namespace Schemas {
     id: DataPlaneId
     operator_version?: (null | Version) | undefined
   }
-  export type IamFeature =
-    | 'sso_connectors'
-    | 'mfa'
-    | 'directory_federation'
-    | 'custom_domain'
-    | 'branding'
-    | 'analytics'
-    | 'compliance'
-    | 'delegated_admin'
+  export type Hosting = 'shared' | 'self_hosted' | 'customer_cloud'
   export type IamFeatureAvailability = {
     feature: IamFeature
     open: boolean
@@ -612,6 +644,33 @@ export namespace Schemas {
     data: Array<Signal>
     next_cursor?: (string | null) | undefined
   }
+  export type StatementStatus =
+    | 'zero'
+    | 'held'
+    | 'draft'
+    | 'sent'
+    | 'paid'
+    | 'payment_failed'
+    | 'uncollectible'
+  export type StatementSummary = {
+    hosted_invoice_url?: (string | null) | undefined
+    period: BillingPeriod
+    status: StatementStatus
+    total: number
+  }
+  export type ListStatementsResponse = { data: Array<StatementSummary> }
+  export type TierResponse = {
+    code: TierCode
+    currency: string
+    engines: Array<DeploymentKind>
+    features: Array<IamFeature>
+    first_invoice?: (null | FirstInvoiceResponse) | undefined
+    hostings: Array<Hosting>
+    monthly_price: number
+    name: string
+    offer: Offer
+  }
+  export type ListTiersResponse = { data: Array<TierResponse> }
   export type LogFacetBucket = { count: number; value: string }
   export type LogFacets = {
     deployment_id: Array<LogFacetBucket>
@@ -664,6 +723,7 @@ export namespace Schemas {
   }
   export type OperatorResponse = { data: PlatformOperator }
   export type OperatorsResponse = { data: Array<PlatformOperator> }
+  export type PaymentMethodSessionResponse = { url: string }
   export type ProviderEventsResponse = { received: boolean }
   export type ProviderOffers = {
     control_planes: Array<ControlPlaneOffer>
@@ -778,6 +838,39 @@ export namespace Schemas {
     status_code: string
     status_message: string
     trace_id: string
+  }
+  export type StatementLineResponse = {
+    amount: number
+    covered_seconds: number
+    deployment_id: string
+    ends_at: string
+    monthly_price: number
+    starts_at: string
+    tier: TierCode
+  }
+  export type StatementViewStatus =
+    | 'estimate'
+    | 'zero'
+    | 'held'
+    | 'draft'
+    | 'sent'
+    | 'paid'
+    | 'payment_failed'
+    | 'uncollectible'
+  export type StatementResponse = {
+    hosted_invoice_url?: (string | null) | undefined
+    lines: Array<StatementLineResponse>
+    period: BillingPeriod
+    status: StatementViewStatus
+    total: number
+  }
+  export type SubscriptionResponse = {
+    ends_at?: (string | null) | undefined
+    features: Array<IamFeature>
+    monthly_price: number
+    offer: Offer
+    starts_at: string
+    tier: TierCode
   }
   export type Tenant = { deployments: number; members: number; organisation: Organisation }
   export type TenantFeatureView = {
@@ -1036,6 +1129,62 @@ export namespace Endpoints {
     }
     response: Schemas.ListAuditLogResponse
   }
+  export type get_Get_billing_account_handler = {
+    method: 'GET'
+    path: '/organisations/{organisation_id}/billing/account'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string }
+    }
+    response: Schemas.BillingAccountResponse
+  }
+  export type put_Put_billing_account_handler = {
+    method: 'PUT'
+    path: '/organisations/{organisation_id}/billing/account'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string }
+
+      body: Schemas.BillingAccountRequest
+    }
+    response: Schemas.BillingAccountResponse
+  }
+  export type post_Payment_method_session_handler = {
+    method: 'POST'
+    path: '/organisations/{organisation_id}/billing/payment-method-session'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string }
+    }
+    response: Schemas.PaymentMethodSessionResponse
+  }
+  export type get_List_statements_handler = {
+    method: 'GET'
+    path: '/organisations/{organisation_id}/billing/statements'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string }
+    }
+    response: Schemas.ListStatementsResponse
+  }
+  export type get_Get_statement_handler = {
+    method: 'GET'
+    path: '/organisations/{organisation_id}/billing/statements/{period}'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; period: string }
+    }
+    response: Schemas.StatementResponse
+  }
+  export type get_List_tiers_handler = {
+    method: 'GET'
+    path: '/organisations/{organisation_id}/billing/tiers'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string }
+    }
+    response: Schemas.ListTiersResponse
+  }
   export type get_List_cloud_credentials_handler = {
     method: 'GET'
     path: '/organisations/{organisation_id}/cloud-credentials'
@@ -1235,6 +1384,15 @@ export namespace Endpoints {
     }
     response: Schemas.CutoverResponse
   }
+  export type get_Get_deployment_features_handler = {
+    method: 'GET'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/features'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string }
+    }
+    response: Schemas.DeploymentFeaturesResponse
+  }
   export type get_Get_iam_settings_handler = {
     method: 'GET'
     path: '/organisations/{organisation_id}/deployments/{deployment_id}/iam-settings'
@@ -1283,6 +1441,26 @@ export namespace Endpoints {
       body: Schemas.SetNetworkAccessRequest
     }
     response: Schemas.SetNetworkAccessResponse
+  }
+  export type get_Get_subscription_handler = {
+    method: 'GET'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/subscription'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string }
+    }
+    response: Schemas.SubscriptionResponse
+  }
+  export type put_Put_subscription_handler = {
+    method: 'PUT'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/subscription'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string }
+
+      body: Schemas.ChangeSubscriptionRequest
+    }
+    response: Schemas.SubscriptionResponse
   }
   export type get_Upgrade_in_flight_handler = {
     method: 'GET'
@@ -1837,6 +2015,7 @@ export type EndpointByMethod = {
     '/deployments/{deployment_id}/usage-metrics': Endpoints.post_Report_usage_metrics_handler
     '/invitations/accept': Endpoints.post_Accept_invitation_handler
     '/organisations': Endpoints.post_Create_organisation_handler
+    '/organisations/{organisation_id}/billing/payment-method-session': Endpoints.post_Payment_method_session_handler
     '/organisations/{organisation_id}/cloud-credentials': Endpoints.post_Register_cloud_credential_handler
     '/organisations/{organisation_id}/cluster-profiles/estimate': Endpoints.post_Estimate_cluster_profile_handler
     '/organisations/{organisation_id}/deployments': Endpoints.post_Create_deployment_handler
@@ -1855,6 +2034,10 @@ export type EndpointByMethod = {
     '/dataplanes/{dataplane_id}': Endpoints.get_Get_dataplane_handler
     '/dataplanes/{dataplane_id}/deployments': Endpoints.get_List_deployments_for_dataplane_handler
     '/organisations/{organisation_id}/audit-log': Endpoints.get_List_audit_log_handler
+    '/organisations/{organisation_id}/billing/account': Endpoints.get_Get_billing_account_handler
+    '/organisations/{organisation_id}/billing/statements': Endpoints.get_List_statements_handler
+    '/organisations/{organisation_id}/billing/statements/{period}': Endpoints.get_Get_statement_handler
+    '/organisations/{organisation_id}/billing/tiers': Endpoints.get_List_tiers_handler
     '/organisations/{organisation_id}/cloud-credentials': Endpoints.get_List_cloud_credentials_handler
     '/organisations/{organisation_id}/cloud-credentials/{credential_id}/offers': Endpoints.get_List_provider_offers_handler
     '/organisations/{organisation_id}/deployments': Endpoints.get_List_deployments_handler
@@ -1864,9 +2047,11 @@ export type EndpointByMethod = {
     '/organisations/{organisation_id}/deployments/{deployment_id}/active-users': Endpoints.get_Get_active_users_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/backup-schedule': Endpoints.get_Get_backup_schedule_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/backups': Endpoints.get_List_backups_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/features': Endpoints.get_Get_deployment_features_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/iam-settings': Endpoints.get_Get_iam_settings_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/logs': Endpoints.get_Read_logs_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/network-access': Endpoints.get_Get_network_access_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/subscription': Endpoints.get_Get_subscription_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/upgrade': Endpoints.get_Upgrade_in_flight_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/usage-metrics/{metric}': Endpoints.get_Get_deployment_usage_handler
     '/organisations/{organisation_id}/feature-flags': Endpoints.get_List_enabled_features_handler
@@ -1912,10 +2097,12 @@ export type EndpointByMethod = {
   }
   put: {
     '/dataplanes/{dataplane_id}/service': Endpoints.put_Set_service_handler
+    '/organisations/{organisation_id}/billing/account': Endpoints.put_Put_billing_account_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/backup-schedule': Endpoints.put_Set_backup_schedule_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/cluster-profile': Endpoints.put_Resize_cluster_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/iam-settings': Endpoints.put_Set_iam_settings_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/network-access': Endpoints.put_Set_network_access_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/subscription': Endpoints.put_Put_subscription_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/upgrade-settings': Endpoints.put_Set_upgrade_settings_handler
     '/organisations/{organisation_id}/members/{user_id}/roles': Endpoints.put_Set_member_roles_handler
     '/platform/features/{key}': Endpoints.put_Set_feature_default_handler

@@ -3,7 +3,7 @@ use utoipa::OpenApi;
 use crate::handlers::{
     actions::ActionApiDoc,
     audit::AuditApiDoc,
-    billing::BillingApiDoc,
+    billing::{BillingApiDoc, OrganisationBillingApiDoc},
     cloud_credentials::CloudCredentialApiDoc,
     dataplanes::DataPlaneApiDoc,
     deployments::DeploymentApiDoc,
@@ -45,6 +45,7 @@ use crate::handlers::{
         (path = "/organisations", api = LogsApiDoc),
         (path = "/organisations", api = TracesApiDoc),
         (path = "/organisations", api = MetricsApiDoc),
+        (path = "/organisations", api = OrganisationBillingApiDoc),
         (path = "/deployments", api = MetricsIngestApiDoc),
         (path = "/users", api = UserApiDoc),
         (path = "/dataplanes", api = DataPlaneApiDoc),
@@ -184,6 +185,8 @@ fn served_paths() -> Vec<&'static str> {
         <deployments::backups::BackupScheduleRoute as TypedPath>::PATH,
         <deployments::cutover::CutoverRoute as TypedPath>::PATH,
         <deployments::resize_cluster::ClusterProfileRoute as TypedPath>::PATH,
+        <deployments::subscription::SubscriptionRoute as TypedPath>::PATH,
+        <deployments::features::DeploymentFeaturesRoute as TypedPath>::PATH,
         <cloud_credentials::register_credential::CloudCredentialsRoute as TypedPath>::PATH,
         <cloud_credentials::delete_credential::CloudCredentialRoute as TypedPath>::PATH,
         <cloud_credentials::list_offers::ProviderOffersRoute as TypedPath>::PATH,
@@ -248,6 +251,11 @@ fn served_paths() -> Vec<&'static str> {
         <platform::dataplane_upgrades::DataplaneUpgradeRoute as TypedPath>::PATH,
         <platform::dataplane_upgrades::DataplaneUpgradesRoute as TypedPath>::PATH,
         <billing::provider_events::ProviderEventsRoute as TypedPath>::PATH,
+        <billing::tiers::TiersRoute as TypedPath>::PATH,
+        <billing::account::BillingAccountRoute as TypedPath>::PATH,
+        <billing::payment_method_session::PaymentMethodSessionRoute as TypedPath>::PATH,
+        <billing::statements::StatementsRoute as TypedPath>::PATH,
+        <billing::statements::StatementRoute as TypedPath>::PATH,
     ]
 }
 

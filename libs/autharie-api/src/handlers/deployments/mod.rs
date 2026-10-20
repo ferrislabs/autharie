@@ -14,6 +14,7 @@ use crate::{
         create_deployment::{__path_create_deployment_handler, create_deployment_handler},
         cutover::{__path_cutover_handler, cutover_handler},
         delete_deployment::{__path_delete_deployment_handler, delete_deployment_handler},
+        features::{__path_get_deployment_features_handler, get_deployment_features_handler},
         get_deployment::{__path_get_deployment_handler, get_deployment_handler},
         iam_settings::{
             __path_get_iam_settings_handler, __path_set_iam_settings_handler,
@@ -26,6 +27,10 @@ use crate::{
         },
         read_logs::{__path_read_logs_handler, read_logs_handler},
         resize_cluster::{__path_resize_cluster_handler, resize_cluster_handler},
+        subscription::{
+            __path_get_subscription_handler, __path_put_subscription_handler,
+            get_subscription_handler, put_subscription_handler,
+        },
         update_deployment::{__path_update_deployment_handler, update_deployment_handler},
         upgrade_deployment::{__path_upgrade_deployment_handler, upgrade_deployment_handler},
         upgrade_in_flight::{__path_upgrade_in_flight_handler, upgrade_in_flight_handler},
@@ -39,12 +44,14 @@ pub mod backups;
 pub mod create_deployment;
 pub mod cutover;
 pub mod delete_deployment;
+pub mod features;
 pub mod get_deployment;
 pub mod iam_settings;
 pub mod list_deployments;
 pub mod network_access;
 pub mod read_logs;
 pub mod resize_cluster;
+pub mod subscription;
 pub mod update_deployment;
 pub mod upgrade_deployment;
 pub mod upgrade_in_flight;
@@ -73,6 +80,9 @@ pub mod upgrade_settings;
         ask_for_backup_handler,
         cutover_handler,
         resize_cluster_handler,
+        get_subscription_handler,
+        put_subscription_handler,
+        get_deployment_features_handler,
     ),
     tags(
         (name = "deployments", description = "Deployment management endpoints scoped to organisations.")
@@ -99,6 +109,9 @@ pub fn deployment_routes(app_state: AppState) -> Router<AppState> {
         .typed_post(ask_for_backup_handler)
         .typed_post(cutover_handler)
         .typed_put(resize_cluster_handler)
+        .typed_get(get_subscription_handler)
+        .typed_put(put_subscription_handler)
+        .typed_get(get_deployment_features_handler)
         .typed_get(get_deployment_handler)
         .typed_patch(update_deployment_handler)
         .typed_delete(delete_deployment_handler)

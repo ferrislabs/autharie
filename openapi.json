@@ -1644,6 +1644,541 @@
         ]
       }
     },
+    "/organisations/{organisation_id}/billing/account": {
+      "get": {
+        "tags": [
+          "billing"
+        ],
+        "summary": "read the billing account of an organisation",
+        "description": "Who is invoiced, where, and whether a payment method is on file. The payment provider's own identifiers are never part of the answer.",
+        "operationId": "get_billing_account_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The billing account",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BillingAccountResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not view this organisation's billing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such organisation, or it has no billing account yet",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "billing"
+        ],
+        "summary": "create or replace the billing account of an organisation",
+        "description": "Replaces who is invoiced and where. The payment method is not touched: it is added through a payment method session. `vat_number` and `siren` are optional and a blank one is the same as none.",
+        "operationId": "put_billing_account_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BillingAccountRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The billing account as stored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BillingAccountResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not manage this organisation's billing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such organisation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is not valid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The payment provider failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/organisations/{organisation_id}/billing/payment-method-session": {
+      "post": {
+        "tags": [
+          "billing"
+        ],
+        "summary": "open a session to add a payment method",
+        "description": "Answers the address of the payment provider's page where the customer enters a card. The organisation needs a billing account first. The customer comes back to the console afterwards, and the payment method counts once the provider confirms it.",
+        "operationId": "payment_method_session_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Where to send the customer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentMethodSessionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not manage this organisation's billing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such organisation, or it has no billing account yet",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The payment provider failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Billing is not enabled on this installation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/organisations/{organisation_id}/billing/statements": {
+      "get": {
+        "tags": [
+          "billing"
+        ],
+        "summary": "list the statements of an organisation",
+        "description": "The closed months, newest first. The month in progress is not listed: read it by its period to get an estimate. `hosted_invoice_url` is given while the invoice is open to payment, and is null otherwise.",
+        "operationId": "list_statements_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The statements",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListStatementsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not view this organisation's billing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such organisation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/organisations/{organisation_id}/billing/statements/{period}": {
+      "get": {
+        "tags": [
+          "billing"
+        ],
+        "summary": "read the statement of one month",
+        "description": "The period is `YYYY-MM`. For a closed month this is the statement as invoiced. For the month in progress nothing is stored yet, so the answer is an estimate of what has been used up to now, with the status `estimate`.",
+        "operationId": "get_statement_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "period",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "2026-11"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The statement, or the estimate of the current month",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatementResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not view this organisation's billing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such organisation, or no statement for this month",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The period is not YYYY-MM",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/organisations/{organisation_id}/billing/tiers": {
+      "get": {
+        "tags": [
+          "billing"
+        ],
+        "summary": "list the tiers a deployment can be subscribed to",
+        "description": "The tiers on sale, cheapest first. A tier that is no longer sold, such as the one a deployment was grandfathered on, is not listed. `first_invoice` says what subscribing now would bill first and for which month, and is null when billing is not enabled on this installation.",
+        "operationId": "list_tiers_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The tiers on sale",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListTiersResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not view this organisation's deployments",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such organisation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/organisations/{organisation_id}/cloud-credentials": {
       "get": {
         "tags": [
@@ -3505,6 +4040,103 @@
         ]
       }
     },
+    "/organisations/{organisation_id}/deployments/{deployment_id}/features": {
+      "get": {
+        "tags": [
+          "deployments"
+        ],
+        "summary": "list the IAM features a deployment's tier opens",
+        "description": "Every feature there is, each saying whether the tier this deployment is subscribed to opens it.",
+        "operationId": "get_deployment_features_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "What the deployment's tier opens",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeploymentFeaturesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not view this organisation's deployments",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The deployment has no open subscription",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/organisations/{organisation_id}/deployments/{deployment_id}/iam-settings": {
       "get": {
         "tags": [
@@ -3953,6 +4585,218 @@
           },
           "404": {
             "description": "No such deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/organisations/{organisation_id}/deployments/{deployment_id}/subscription": {
+      "get": {
+        "tags": [
+          "deployments"
+        ],
+        "summary": "read the subscription of a deployment",
+        "description": "The tier the deployment is on, what it costs per month and the features it opens. `ends_at` is null while the subscription is running.",
+        "operationId": "get_subscription_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The subscription",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubscriptionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not view this organisation's deployments",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The deployment has no open subscription",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "deployments"
+        ],
+        "summary": "move a deployment to another tier",
+        "description": "Closes the current subscription and opens one on the tier, from now. A paid tier needs a billing account with a valid payment method. Answering with the current subscription is what asking for the tier the deployment is already on does.",
+        "operationId": "put_subscription_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangeSubscriptionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The subscription now in force",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubscriptionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not manage this organisation's billing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment, or no such tier",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The billing account is not complete, or the deployment has no open subscription",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The tier cannot be selected, or does not fit the deployment",
             "content": {
               "application/json": {
                 "schema": {
@@ -9584,6 +10428,115 @@
           }
         }
       },
+      "BillingAccountRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "email",
+          "address"
+        ],
+        "properties": {
+          "address": {
+            "$ref": "#/components/schemas/BillingAddressBody"
+          },
+          "email": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "siren": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "123456789"
+          },
+          "vat_number": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "FR12345678901"
+          }
+        }
+      },
+      "BillingAccountResponse": {
+        "type": "object",
+        "required": [
+          "name",
+          "email",
+          "address",
+          "payment_method",
+          "complete"
+        ],
+        "properties": {
+          "address": {
+            "$ref": "#/components/schemas/BillingAddressBody"
+          },
+          "complete": {
+            "type": "boolean"
+          },
+          "email": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "payment_method": {
+            "$ref": "#/components/schemas/PaymentMethodStatus"
+          },
+          "siren": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "vat_number": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "BillingAddressBody": {
+        "type": "object",
+        "required": [
+          "line1",
+          "postal_code",
+          "city",
+          "country"
+        ],
+        "properties": {
+          "city": {
+            "type": "string"
+          },
+          "country": {
+            "type": "string",
+            "example": "FR"
+          },
+          "line1": {
+            "type": "string"
+          },
+          "line2": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "postal_code": {
+            "type": "string"
+          }
+        }
+      },
+      "BillingPeriod": {
+        "type": "string",
+        "examples": [
+          "2026-11"
+        ],
+        "pattern": "^[0-9]{4}-[0-9]{2}$"
+      },
       "Branding": {
         "type": "object",
         "properties": {
@@ -9850,6 +10803,18 @@
           },
           "private_key_pem": {
             "type": "string"
+          }
+        }
+      },
+      "ChangeSubscriptionRequest": {
+        "type": "object",
+        "required": [
+          "tier"
+        ],
+        "properties": {
+          "tier": {
+            "type": "string",
+            "example": "standard-2026"
           }
         }
       },
@@ -10141,6 +11106,13 @@
               "null"
             ],
             "description": "Refused, and present only so that it is.\n\nWhere a deployment runs is the installation's to decide: a region is\nthe fleet seen from outside, and choosing one is choosing which\ncluster serves you. Dropping the field would let a caller that still\nsends one believe it was honoured, and a request that asked for one\ncountry and was quietly given another is the worst way to find out.\n\nIt comes back the day regions are a product surface rather than a view\nof the fleet, and it comes back as a promise about where data lives."
+          },
+          "tier": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "standard-2026"
           },
           "version": {
             "type": "string"
@@ -10676,6 +11648,39 @@
           }
         }
       },
+      "DeploymentFeature": {
+        "type": "object",
+        "required": [
+          "feature",
+          "open"
+        ],
+        "properties": {
+          "feature": {
+            "$ref": "#/components/schemas/IamFeature"
+          },
+          "open": {
+            "type": "boolean"
+          }
+        }
+      },
+      "DeploymentFeaturesResponse": {
+        "type": "object",
+        "required": [
+          "tier",
+          "features"
+        ],
+        "properties": {
+          "features": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeploymentFeature"
+            }
+          },
+          "tier": {
+            "$ref": "#/components/schemas/TierCode"
+          }
+        }
+      },
       "DeploymentId": {
         "type": "string",
         "format": "uuid"
@@ -11100,6 +12105,22 @@
           }
         }
       },
+      "FirstInvoiceResponse": {
+        "type": "object",
+        "required": [
+          "period",
+          "amount"
+        ],
+        "properties": {
+          "amount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "period": {
+            "$ref": "#/components/schemas/BillingPeriod"
+          }
+        }
+      },
       "FleetActor": {
         "oneOf": [
           {
@@ -11501,6 +12522,14 @@
       },
       "HexColor": {
         "type": "string"
+      },
+      "Hosting": {
+        "type": "string",
+        "enum": [
+          "shared",
+          "self_hosted",
+          "customer_cloud"
+        ]
       },
       "IamFeature": {
         "type": "string",
@@ -12107,6 +13136,34 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "ListStatementsResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StatementSummary"
+            }
+          }
+        }
+      },
+      "ListTiersResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TierResponse"
+            }
           }
         }
       },
@@ -12729,6 +13786,25 @@
           "Active",
           "Suspended",
           "Deleted"
+        ]
+      },
+      "PaymentMethodSessionResponse": {
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "PaymentMethodStatus": {
+        "type": "string",
+        "enum": [
+          "missing",
+          "valid",
+          "failing"
         ]
       },
       "Plan": {
@@ -14113,6 +15189,170 @@
           }
         }
       },
+      "StatementLineResponse": {
+        "type": "object",
+        "required": [
+          "deployment_id",
+          "tier",
+          "monthly_price",
+          "starts_at",
+          "ends_at",
+          "covered_seconds",
+          "amount"
+        ],
+        "properties": {
+          "amount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "covered_seconds": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "deployment_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "ends_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "monthly_price": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "starts_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "tier": {
+            "$ref": "#/components/schemas/TierCode"
+          }
+        }
+      },
+      "StatementResponse": {
+        "type": "object",
+        "required": [
+          "period",
+          "status",
+          "total",
+          "lines"
+        ],
+        "properties": {
+          "hosted_invoice_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StatementLineResponse"
+            }
+          },
+          "period": {
+            "$ref": "#/components/schemas/BillingPeriod"
+          },
+          "status": {
+            "$ref": "#/components/schemas/StatementViewStatus"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "StatementStatus": {
+        "type": "string",
+        "enum": [
+          "zero",
+          "held",
+          "draft",
+          "sent",
+          "paid",
+          "payment_failed",
+          "uncollectible"
+        ]
+      },
+      "StatementSummary": {
+        "type": "object",
+        "required": [
+          "period",
+          "status",
+          "total"
+        ],
+        "properties": {
+          "hosted_invoice_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "period": {
+            "$ref": "#/components/schemas/BillingPeriod"
+          },
+          "status": {
+            "$ref": "#/components/schemas/StatementStatus"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "StatementViewStatus": {
+        "type": "string",
+        "enum": [
+          "estimate",
+          "zero",
+          "held",
+          "draft",
+          "sent",
+          "paid",
+          "payment_failed",
+          "uncollectible"
+        ]
+      },
+      "SubscriptionResponse": {
+        "type": "object",
+        "required": [
+          "tier",
+          "monthly_price",
+          "offer",
+          "features",
+          "starts_at"
+        ],
+        "properties": {
+          "ends_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "features": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IamFeature"
+            }
+          },
+          "monthly_price": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "offer": {
+            "$ref": "#/components/schemas/Offer"
+          },
+          "starts_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "tier": {
+            "$ref": "#/components/schemas/TierCode"
+          }
+        }
+      },
       "TargetKind": {
         "oneOf": [
           {
@@ -14260,6 +15500,70 @@
                 "$ref": "#/components/schemas/OrganisationId"
               }
             ]
+          }
+        }
+      },
+      "TierCode": {
+        "type": "string",
+        "example": "legacy-standard"
+      },
+      "TierResponse": {
+        "type": "object",
+        "required": [
+          "code",
+          "name",
+          "monthly_price",
+          "currency",
+          "offer",
+          "features",
+          "engines",
+          "hostings"
+        ],
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/TierCode"
+          },
+          "currency": {
+            "type": "string",
+            "example": "EUR"
+          },
+          "engines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeploymentKind"
+            }
+          },
+          "features": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IamFeature"
+            }
+          },
+          "first_invoice": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/FirstInvoiceResponse"
+              }
+            ]
+          },
+          "hostings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Hosting"
+            }
+          },
+          "monthly_price": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "offer": {
+            "$ref": "#/components/schemas/Offer"
           }
         }
       },

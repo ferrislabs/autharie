@@ -1,4 +1,5 @@
 pub mod account;
+pub mod accounts;
 pub mod closing;
 pub mod collection;
 pub mod events;
@@ -62,6 +63,10 @@ pub enum BillingError {
 
     #[error("a tier is required: pick one of the catalogue")]
     TierRequired,
+    #[error("the organisation has no billing account: give its name, e-mail and address first")]
+    NoBillingAccount,
+    #[error("there is no statement for {period}")]
+    StatementNotFound { period: String },
     #[error("tier '{code}' does not exist")]
     TierNotFound { code: String },
 
