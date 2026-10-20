@@ -1,6 +1,7 @@
 pub mod dataplane_upgrade;
 pub mod identity_instance;
 pub mod ports;
+pub mod shared_database;
 
 use std::time::Duration;
 
@@ -38,6 +39,9 @@ pub enum OperatorError {
     /// without enough to do its job.
     #[error("Operator is misconfigured: {message}")]
     Configuration { message: String },
+
+    #[error(transparent)]
+    SharedDatabase(#[from] shared_database::SharedDatabaseError),
 }
 
 #[cfg(test)]
