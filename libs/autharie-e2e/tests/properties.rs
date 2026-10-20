@@ -314,8 +314,8 @@ fn more_words() -> impl Strategy<Value = Vec<String>> {
 
 proptest! {
     #[test]
-    fn deployment_data_plane_and_realm_keys_are_bound(
-        namespace in prop::sample::select(vec!["deployment", "dataplane", "realm"]),
+    fn deployment_and_data_plane_keys_are_bound(
+        namespace in prop::sample::select(vec!["deployment", "dataplane"]),
         first in word(),
         rest in more_words(),
     ) {
@@ -331,7 +331,7 @@ proptest! {
     #[test]
     fn keys_of_any_other_namespace_are_not_bound(
         namespace in word().prop_filter("a bound namespace", |word| {
-            word != "deployment" && word != "dataplane" && word != "realm"
+            word != "deployment" && word != "dataplane"
         }),
         first in word(),
         rest in more_words(),

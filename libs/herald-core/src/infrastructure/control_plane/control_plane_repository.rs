@@ -345,17 +345,11 @@ impl ControlPlaneRepository for HttpControlPlaneRepository {
         dp_id: &DataPlaneId,
         report: &DeploymentOutcomeReport,
     ) -> Result<(), HeraldError> {
-        let mut body = serde_json::json!({
+        let body = serde_json::json!({
             "outcome": report.outcome,
             "version": report.version,
             "reason": report.reason,
         });
-        if let Some(administrator) = &report.administrator {
-            body["administrator"] = serde_json::json!(administrator);
-        }
-        if let Some(request_id) = report.request_id {
-            body["request_id"] = serde_json::json!(request_id);
-        }
         let response = self
             .client
             .post(self.outcome_url(dp_id, &report.deployment_id))
@@ -563,41 +557,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_outcome_carries_the_realm_administrator_to_the_control_plane() {
-        let server = MockServer::start();
-        let dataplane_id = DataPlaneId::new("dp-1");
-        let report: DeploymentOutcomeReport = serde_json::from_value(json!({
-            "deployment_id": "44444444-4444-4444-4444-444444444444",
-            "outcome": "administrator_issued",
-            "administrator": { "username": "admin", "password": "Tmp-Pass-1!" },
-            "request_id": "55555555-5555-5555-5555-555555555555",
-        }))
-        .expect("a report");
-
-        let mock = server.mock(|when, then| {
-            when.method(POST)
-                .path("/dataplanes/dp-1/deployments/44444444-4444-4444-4444-444444444444/outcome")
-                .json_body(json!({
-                    "outcome": "administrator_issued",
-                    "version": null,
-                    "reason": null,
-                    "administrator": { "username": "admin", "password": "Tmp-Pass-1!" },
-                    "request_id": "55555555-5555-5555-5555-555555555555",
-                }));
-            then.status(200)
-                .json_body(json!({ "data": { "recorded": true } }));
-        });
-
-        repo(&server)
-            .report_outcome(&dataplane_id, &report)
-            .await
-            .expect("reported");
-
-        mock.assert();
-    }
-
-    #[tokio::test]
-    async fn an_outcome_without_an_administrator_sends_no_administrator_key() {
+    async fn an_outcome_sends_only_what_it_observed() {
         let server = MockServer::start();
         let dataplane_id = DataPlaneId::new("dp-1");
         let report: DeploymentOutcomeReport = serde_json::from_value(json!({

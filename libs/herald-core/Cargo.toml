@@ -6,7 +6,6 @@ authors.workspace = true
 edition.workspace = true
 
 [dependencies]
-zeroize = { version = "1.8", features = ["derive"] }
 autharie-crds = { path = "../autharie-crds" }
 # Only to tell a version from a branch name before reporting it: an unparseable
 # tag is not a claim about a version and is dropped rather than sent.

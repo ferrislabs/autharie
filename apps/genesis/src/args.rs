@@ -33,14 +33,6 @@ impl Display for Environment {
 pub struct Args {
     #[command(flatten)]
     pub(crate) bus: BusArgs,
-
-    #[arg(
-        long = "tenant-zone",
-        env = "TENANT_ZONE",
-        name = "Tenant zone",
-        help = "The DNS zone pooled tenants are served under; realm actions are refused while it is unset"
-    )]
-    pub(crate) tenant_zone: Option<String>,
 }
 
 #[derive(clap::Args, Debug, Clone)]

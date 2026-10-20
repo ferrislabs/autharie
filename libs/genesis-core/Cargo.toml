@@ -7,7 +7,6 @@ edition.workspace = true
 [dependencies]
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
-reqwest = { version = "0.12.24", default-features = false, features = ["rustls-tls"] }
 autharie-iggy = { path = "../autharie-iggy" }
 kube = { version = "2.0.1", features = ["runtime"] }
 k8s-openapi = { version = "0.26.0", features = ["latest"] }
@@ -20,8 +19,6 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tokio-stream = "0.1"
 tracing = "0.1"
 uuid = { version = "1", features = ["serde", "v4"] }
-rand = "0.9"
-zeroize = { version = "1.8", features = ["derive"] }
 
 [dev-dependencies]
 mockall = "0.14"

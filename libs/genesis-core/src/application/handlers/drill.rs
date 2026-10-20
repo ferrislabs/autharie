@@ -111,7 +111,6 @@ impl DrillEventHandler {
                 1,
             ),
             replicas: 1,
-            pooled_cell: false,
             placement: DatabasePlacement::Managed,
             archive: None,
             restore: Some(DesiredRestore {
