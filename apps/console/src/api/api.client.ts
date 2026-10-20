@@ -55,13 +55,7 @@ export namespace Schemas {
     | { Pulled: { agent_id: string; at: string } }
     | { Published: { at: string } }
     | { Failed: { at: string; reason: ActionFailureReason } }
-  export type TargetKind =
-    | 'Deployment'
-    | 'DataPlane'
-    | 'Realm'
-    | 'Database'
-    | 'User'
-    | { Custom: string }
+  export type TargetKind = 'Deployment' | 'DataPlane' | 'Database' | 'User' | { Custom: string }
   export type ActionTarget = { id: string; kind: TargetKind }
   export type ActionVersion = number
   export type Action = {
@@ -76,7 +70,6 @@ export namespace Schemas {
     target: ActionTarget
     version: ActionVersion
   }
-  export type AdministratorCredential = 'issuing' | 'ready' | 'revealed' | 'expired'
   export type AllowList = Array<string>
   export type ApiError =
     | 'TokenNotFound'
@@ -185,24 +178,6 @@ export namespace Schemas {
     memory_mib: number
     storage_gib: number
   }
-  export type CellStatus = 'provisioning' | 'open' | 'full' | 'draining' | 'retired' | 'failed'
-  export type CellView = {
-    capacity: number
-    created_at: string
-    data_plane_id: string
-    id: string
-    instance_deployment_id: string
-    realms: number
-    region: string
-    status: CellStatus
-  }
-  export type CellResponse = { data: CellView }
-  export type CellsResponse = { data: Array<CellView> }
-  export type CellsSettingsView = {
-    organisation_id?: (string | null) | undefined
-    updated_at: string
-    updated_by?: (string | null) | undefined
-  }
   export type CertificatePayload = {
     certificate_pem: string
     fingerprint: string
@@ -254,7 +229,6 @@ export namespace Schemas {
   export type Every = 'all'
   export type ComponentSelection = Every | Array<string>
   export type CostEstimate = { max: Money; min: Money }
-  export type CreateCellRequest = { capacity?: (number | null) | undefined; region: string }
   export type DataPlaneMode = 'shared' | 'dedicated'
   export type Region = string
   export type CreateDataPlaneRequest = {
@@ -281,12 +255,10 @@ export namespace Schemas {
     region?: (string | null) | undefined
     version: string
   }
-  export type RealmName = string
   export type Distribution =
     | 'shared'
     | 'self_hosted'
     | { customer_cloud: { credential_id: CloudCredentialId; profile: ClusterProfile } }
-    | { pooled: { realm: RealmName } }
   export type Environment = 'production' | 'staging' | 'development'
   export type IamSettings = Partial<{ branding: null | Branding }>
   export type MaintenanceWindow = { day: string; duration: number; start: string; timezone: string }
@@ -492,25 +464,9 @@ export namespace Schemas {
     status: ProvisioningStatus
     step?: (null | ProvisioningStep) | undefined
   }
-  export type TenantAdministrator = {
-    credential: AdministratorCredential
-    expires_at?: (string | null) | undefined
-    requested_at: string
-    stale: boolean
-    username?: (string | null) | undefined
-  }
-  export type TenantRealm = {
-    administrator?: (null | TenantAdministrator) | undefined
-    console?: (string | null) | undefined
-    issuer?: (string | null) | undefined
-    name: RealmName
-    refusal?: (string | null) | undefined
-    url?: (string | null) | undefined
-  }
   export type GetDeploymentResponse = {
     data: Deployment
     provisioning?: (null | Provisioning) | undefined
-    realm?: (null | TenantRealm) | undefined
   }
   export type UsageBucketResponse = { bucket: string; value: number }
   export type GetDeploymentUsageResponse = { data: Array<UsageBucketResponse> }
@@ -579,7 +535,6 @@ export namespace Schemas {
   export type InvitationResponse = { data: Invitation }
   export type InviteRequest = { email: string; roles?: Array<string> | undefined }
   export type InviteResponse = { data: Invitation; token: string }
-  export type IssueAdministratorResponse = { data: TenantAdministrator }
   export type ListActionsResponse = {
     data: Array<Action>
     next_cursor?: (string | null) | undefined
@@ -755,12 +710,9 @@ export namespace Schemas {
   }
   export type ReportDrillOutcomeResponseData = Record<string, unknown>
   export type ReportDrillOutcomeResponse = { data: ReportDrillOutcomeResponseData }
-  export type ReportedAdministrator = { password: string; username: string }
   export type ReportOutcomeRequest = {
-    administrator?: (null | ReportedAdministrator) | undefined
     outcome: string
     reason?: (string | null) | undefined
-    request_id?: (string | null) | undefined
     version?: (string | null) | undefined
   }
   export type ReportOutcomeResponseData = { recorded: boolean }
@@ -778,8 +730,6 @@ export namespace Schemas {
   export type ResizeClusterResponse = { data: ClusterProfile }
   export type RestoreBackupRequest = { name: string; region?: (string | null) | undefined }
   export type RestoreBackupResponse = { data: Deployment }
-  export type RevealedAdministrator = { password: string; username: string }
-  export type RevealAdministratorResponse = { data: RevealedAdministrator }
   export type ReviseReleaseRequest = {
     minimum_operator_version?: (string | null) | undefined
     notes?: string | undefined
@@ -855,7 +805,6 @@ export namespace Schemas {
     hits: Array<SpanHit>
     total_hits: number
   }
-  export type UpdateCellsSettingsRequest = Partial<{ organisation_id: string | null }>
   export type UpdateDeploymentRequest = Partial<{
     log_shipping_enabled: boolean | null
     name: string | null
@@ -1203,24 +1152,6 @@ export namespace Endpoints {
       path: { organisation_id: string; deployment_id: string }
     }
     response: Schemas.GetActiveUsersResponse
-  }
-  export type post_Issue_administrator_handler = {
-    method: 'POST'
-    path: '/organisations/{organisation_id}/deployments/{deployment_id}/administrator/issue'
-    requestFormat: 'json'
-    parameters: {
-      path: { organisation_id: string; deployment_id: string }
-    }
-    response: Schemas.IssueAdministratorResponse
-  }
-  export type post_Reveal_administrator_handler = {
-    method: 'POST'
-    path: '/organisations/{organisation_id}/deployments/{deployment_id}/administrator/reveal'
-    requestFormat: 'json'
-    parameters: {
-      path: { organisation_id: string; deployment_id: string }
-    }
-    response: Schemas.RevealAdministratorResponse
   }
   export type get_Get_backup_schedule_handler = {
     method: 'GET'
@@ -1602,65 +1533,6 @@ export namespace Endpoints {
     }
     response: Schemas.ListFleetAuditLogResponse
   }
-  export type get_List_cells_handler = {
-    method: 'GET'
-    path: '/platform/cells'
-    requestFormat: 'json'
-    parameters: never
-    response: Schemas.CellsResponse
-  }
-  export type post_Create_cell_handler = {
-    method: 'POST'
-    path: '/platform/cells'
-    requestFormat: 'json'
-    parameters: {
-      body: Schemas.CreateCellRequest
-    }
-    response: Schemas.CellResponse
-  }
-  export type get_Get_cells_settings_handler = {
-    method: 'GET'
-    path: '/platform/cells/settings'
-    requestFormat: 'json'
-    parameters: never
-    response: Schemas.CellsSettingsView
-  }
-  export type put_Update_cells_settings_handler = {
-    method: 'PUT'
-    path: '/platform/cells/settings'
-    requestFormat: 'json'
-    parameters: {
-      body: Schemas.UpdateCellsSettingsRequest
-    }
-    response: Schemas.CellsSettingsView
-  }
-  export type get_Get_cell_handler = {
-    method: 'GET'
-    path: '/platform/cells/{cell_id}'
-    requestFormat: 'json'
-    parameters: {
-      path: { cell_id: string }
-    }
-    response: Schemas.CellResponse
-  }
-  export type post_Drain_cell_handler = {
-    method: 'POST'
-    path: '/platform/cells/{cell_id}/drain'
-    requestFormat: 'json'
-    parameters: {
-      path: { cell_id: string }
-    }
-    response: Schemas.CellResponse
-  }
-  export type post_Retire_cell_handler = {
-    method: 'POST'
-    path: '/platform/cells/{cell_id}/retire'
-    requestFormat: 'json'
-    parameters: {
-      path: { cell_id: string }
-    }
-    response: Schemas.CellResponse
-  }
   export type post_Upgrade_dataplanes_handler = {
     method: 'POST'
     path: '/platform/dataplanes/upgrade'
@@ -1972,9 +1844,6 @@ export type EndpointByMethod = {
     '/organisations/{organisation_id}/traces/search': Endpoints.get_Search_traces_handler
     '/organisations/{organisation_id}/traces/{trace_id}': Endpoints.get_Get_trace_handler
     '/platform/audit-log': Endpoints.get_List_fleet_audit_log_handler
-    '/platform/cells': Endpoints.get_List_cells_handler
-    '/platform/cells/settings': Endpoints.get_Get_cells_settings_handler
-    '/platform/cells/{cell_id}': Endpoints.get_Get_cell_handler
     '/platform/dataplanes/upgrades': Endpoints.get_List_dataplane_upgrades_handler
     '/platform/deployments': Endpoints.get_List_estate_deployments_handler
     '/platform/deployments/{deployment_id}/downtime': Endpoints.get_Get_deployment_downtime_handler
@@ -2010,17 +1879,12 @@ export type EndpointByMethod = {
     '/organisations/{organisation_id}/cloud-credentials': Endpoints.post_Register_cloud_credential_handler
     '/organisations/{organisation_id}/cluster-profiles/estimate': Endpoints.post_Estimate_cluster_profile_handler
     '/organisations/{organisation_id}/deployments': Endpoints.post_Create_deployment_handler
-    '/organisations/{organisation_id}/deployments/{deployment_id}/administrator/issue': Endpoints.post_Issue_administrator_handler
-    '/organisations/{organisation_id}/deployments/{deployment_id}/administrator/reveal': Endpoints.post_Reveal_administrator_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/backups': Endpoints.post_Ask_for_backup_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/backups/{backup_id}/restore': Endpoints.post_Restore_backup_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/cutover': Endpoints.post_Cutover_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/upgrade': Endpoints.post_Upgrade_deployment_handler
     '/organisations/{organisation_id}/invitations': Endpoints.post_Invite_handler
     '/organisations/{organisation_id}/roles': Endpoints.post_Create_role_handler
-    '/platform/cells': Endpoints.post_Create_cell_handler
-    '/platform/cells/{cell_id}/drain': Endpoints.post_Drain_cell_handler
-    '/platform/cells/{cell_id}/retire': Endpoints.post_Retire_cell_handler
     '/platform/dataplanes/upgrade': Endpoints.post_Upgrade_dataplanes_handler
     '/releases/operator/{kind}': Endpoints.post_Publish_release_handler
     '/releases/operator/{kind}/{version}/rollout/preview': Endpoints.post_Preview_rollout_coverage_handler
@@ -2042,7 +1906,6 @@ export type EndpointByMethod = {
     '/organisations/{organisation_id}/deployments/{deployment_id}/network-access': Endpoints.put_Set_network_access_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/upgrade-settings': Endpoints.put_Set_upgrade_settings_handler
     '/organisations/{organisation_id}/members/{user_id}/roles': Endpoints.put_Set_member_roles_handler
-    '/platform/cells/settings': Endpoints.put_Update_cells_settings_handler
     '/platform/features/{key}': Endpoints.put_Set_feature_default_handler
     '/platform/operators/{subject}': Endpoints.put_Grant_operator_handler
     '/platform/organisations/{organisation_id}/features/{key}': Endpoints.put_Set_tenant_feature_handler
