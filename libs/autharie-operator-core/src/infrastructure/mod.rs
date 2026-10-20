@@ -2,6 +2,7 @@ pub mod archive;
 pub mod crds;
 pub mod dataplane_upgrade;
 pub mod dataplane_upgrade_controller;
+pub mod dumps;
 pub mod edge;
 pub mod ferriskey_theme;
 pub mod identity_instance;
