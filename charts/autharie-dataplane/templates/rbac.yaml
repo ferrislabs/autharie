@@ -219,6 +219,43 @@ subjects:
   - kind: ServiceAccount
     name: {{ include "autharie-dataplane.fullname" . }}-operator
     namespace: {{ .Release.Namespace }}
+{{- if .Values.sharedDatabase.enabled }}
+---
+# The ClusterRole above already reads Secrets everywhere; this states what the
+# shared database needs on its own, so narrowing that rule later cannot cut the
+# operator off from the one Secret that holds the superuser credentials. They
+# are created by CloudNativePG as `<cluster>-superuser`, and stay in this
+# namespace: the operator copies a per-tenant role's credentials out, never
+# these.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "autharie-dataplane.fullname" . }}-operator-shared-db
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "autharie-dataplane.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: [{{ printf "%s-shared-db-superuser" (include "autharie-dataplane.fullname" .) | quote }}]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "autharie-dataplane.fullname" . }}-operator-shared-db
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "autharie-dataplane.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "autharie-dataplane.fullname" . }}-operator-shared-db
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "autharie-dataplane.fullname" . }}-operator
+    namespace: {{ .Release.Namespace }}
+{{- end }}
 {{- end }}
 ---
 {{- if .Values.herald.enabled }}

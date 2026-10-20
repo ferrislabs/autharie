@@ -1,0 +1,37 @@
+{{- if .Values.sharedDatabase.enabled }}
+# One cluster for every free deployment of this data plane. It has no
+# application database of its own: the operator creates a database and an owner
+# role per deployment, as superuser, which is why superuser access is on.
+# CloudNativePG then writes the credentials to `<name>-superuser`, in this
+# namespace, where only the operator's Role reaches them.
+#
+# No bootstrap block: CloudNativePG's default creates an `app` database and an
+# `app` owner nobody uses. Naming the owner `postgres` instead, which looks
+# tidier, makes CloudNativePG set the superuser's password from the `-app`
+# Secret, and the `-superuser` Secret the operator reads stops working.
+#
+# No imageName, like the clusters the operator builds per instance: the
+# PostgreSQL version is CloudNativePG's default, so a free and a paid database
+# move together.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ include "autharie-dataplane.fullname" . }}-shared-db
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "autharie-dataplane.labels" . | nindent 4 }}
+    app.kubernetes.io/component: shared-database
+spec:
+  instances: {{ .Values.sharedDatabase.instances }}
+  enableSuperuserAccess: true
+  storage:
+    size: {{ .Values.sharedDatabase.storage.size }}
+    {{- if .Values.sharedDatabase.storage.storageClass }}
+    storageClass: {{ .Values.sharedDatabase.storage.storageClass | quote }}
+    {{- end }}
+  postgresql:
+    parameters:
+      max_connections: {{ .Values.sharedDatabase.postgresql.maxConnections | quote }}
+  resources:
+    {{- toYaml .Values.sharedDatabase.resources | nindent 4 }}
+{{- end }}
