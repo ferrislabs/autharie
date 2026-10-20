@@ -4,6 +4,7 @@ ignore = [
     "RUSTSEC-2026-0367",
     "RUSTSEC-2026-0368",
     "RUSTSEC-2026-0369",
+    "RUSTSEC-2026-0381",
 ]
 # RUSTSEC-2023-0071
 # Raison: Ne concerne que MySQL via sqlx-macros
@@ -15,3 +16,12 @@ ignore = [
 # The three advisories need a crafted archive; whoever can craft that one can
 # already ship any script in the Swagger UI page. No zip runs in a binary.
 # Remove once utoipa-swagger-ui requires zip >= 9 (10.0.1 still asks ^8.6).
+#
+# RUSTSEC-2026-0381 (webpki-roots, fixed in 1.0.10)
+# Reason: the advisory is about the root certificates 1.0.9 and earlier
+# bundle. The 0.26.11 still in the lock is a shim sqlx-core 0.8 depends on,
+# with no certificates of its own: it re-exports webpki-roots 1.x, locked at
+# 1.0.10. cargo audit matches on the version number alone, so the shim stays
+# flagged although the roots it serves are fixed. The ignore is by ID, so it
+# would also hide a 1.x below 1.0.10: the lock holds 1.0.10 and must not go
+# back. Remove once sqlx depends on webpki-roots 1.x directly.
