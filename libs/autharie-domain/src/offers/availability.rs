@@ -10,7 +10,9 @@ use serde::Serialize;
 use utoipa::ToSchema;
 
 use crate::{
-    dataplane::value_objects::DeploymentResources, offers::Offer, organisation::value_objects::Plan,
+    dataplane::value_objects::DeploymentResources,
+    offers::{DatabasePlacement, Offer},
+    organisation::value_objects::Plan,
 };
 
 /// One offer, seen from an organisation on a given tier.
@@ -39,7 +41,7 @@ pub struct OfferAvailability {
 pub fn offers_for(plan: Plan) -> Vec<OfferAvailability> {
     Offer::ALL
         .into_iter()
-        .filter(|offer| !offer.is_pooled() || offer.is_open_to(plan))
+        .filter(|offer| offer.database() == DatabasePlacement::Managed || offer.is_open_to(plan))
         .map(|offer| {
             let open = offer.is_open_to(plan);
 
@@ -65,7 +67,10 @@ mod tests {
         for plan in [Plan::Free, Plan::Starter, Plan::Business, Plan::Enterprise] {
             let answered: Vec<Offer> = offers_for(plan).iter().map(|entry| entry.offer).collect();
 
-            for offer in Offer::ALL.into_iter().filter(|offer| !offer.is_pooled()) {
+            for offer in Offer::ALL
+                .into_iter()
+                .filter(|offer| offer.database() == DatabasePlacement::Managed)
+            {
                 assert!(
                     answered.contains(&offer),
                     "{plan} is not told about {offer}"

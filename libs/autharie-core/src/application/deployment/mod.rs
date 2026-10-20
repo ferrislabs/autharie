@@ -4,6 +4,7 @@ use chrono::Duration;
 use serde_json::json;
 
 use autharie_domain::dataplane::value_objects::DeploymentResources;
+use autharie_domain::offers::DatabasePlacement;
 
 use crate::{
     AutharieService, CoreError,
@@ -16,9 +17,7 @@ use crate::{
     backups::{
         ArchiveDestination, BackupSchedule, StoreEncryption, ports::BackupScheduleRepository,
     },
-    cells::{
-        CellRepository, PlacementError, RealmRequests, TenantAdministratorRepository, TenantRealm,
-    },
+    cells::{CellRepository, RealmRequests, TenantAdministratorRepository, TenantRealm},
     deployments::{
         Deployment, DeploymentId,
         commands::{CreateDeploymentCommand, UpdateDeploymentCommand},
@@ -74,6 +73,20 @@ impl Serving {
     }
 }
 
+/// Where the instance's database runs, always sent.
+///
+/// Genesis reads an absent field as `managed` so a payload recorded before
+/// this field existed still applies, but nothing written now relies on that:
+/// a data plane told nothing would build a cluster the free offer exists to
+/// avoid. A deployment older than the catalogue has no offer and so has a
+/// cluster of its own, and the instance of a cell is a cell, not a tenant.
+fn database_placement(deployment: &Deployment, serving: Serving) -> DatabasePlacement {
+    match (serving, deployment.offer) {
+        (Serving::OneTenant, Some(offer)) => offer.database(),
+        (Serving::OneTenant, None) | (Serving::PooledCell, _) => DatabasePlacement::Managed,
+    }
+}
+
 pub(crate) fn deployment_payload(
     deployment: &Deployment,
     serving: Serving,
@@ -99,6 +112,7 @@ pub(crate) fn deployment_payload(
         "replicas": deployment.topology.replicas(),
         "database_instances": deployment.topology.database_instances(),
         "pooled_cell": serving == Serving::PooledCell,
+        "database": database_placement(deployment, serving).to_string(),
     });
 
     if let Some(archive) = archive {
@@ -343,7 +357,6 @@ impl DeploymentService for AutharieService {
         action,
         backup_schedule,
         organisation,
-        cell,
         feature_flag
     )]
     async fn create_deployment(
@@ -372,23 +385,6 @@ impl DeploymentService for AutharieService {
             self.placement_windows(),
             AuthariePolicy::new(permissions_in(&tx)),
         );
-
-        if command.offer.is_pooled() {
-            let zone = self.deployment_domain();
-            let deployment = deployments
-                .create_pooled(identity, command, &cell_repository, zone)
-                .await?;
-            self.refuse_platform_hostname(&tx, &deployment).await?;
-            RealmRequests::new(
-                cell_repository,
-                PostgresDeploymentRepository::new(&tx),
-                action_repository,
-            )
-            .create(&deployment, zone.ok_or(PlacementError::NoTenantZone)?)
-            .await?;
-
-            return Ok(deployment);
-        }
 
         let deployment = deployments.create_deployment(identity, command).await?;
         self.refuse_platform_hostname(&tx, &deployment).await?;
@@ -726,6 +722,52 @@ mod tests {
         assert_eq!(payload["memory_mib"], CELL_DATABASE_INSTANCE.memory_mib);
         assert_eq!(payload["storage_gib"], CELL_DATABASE_INSTANCE.storage_gib);
         assert_eq!(payload["database_instances"], 2);
+    }
+
+    /// @spec-free-1
+    #[test]
+    fn a_free_deployment_announces_a_shared_database_and_the_free_size() {
+        use autharie_domain::{deployments::topology::Topology, offers::Offer};
+
+        let mut deployment = sample_deployment();
+        deployment.offer = Some(Offer::Free);
+        deployment.resources = Offer::Free.resources();
+        deployment.topology = Topology::SINGLE;
+        let payload = deployment_payload(&deployment, Serving::OneTenant, None, None);
+
+        assert_eq!(payload["database"], "shared");
+        assert_eq!(payload["cpu_millis"], 100);
+        assert_eq!(payload["memory_mib"], 256);
+        assert_eq!(payload["storage_gib"], 1);
+        assert_eq!(payload["replicas"], 1);
+        assert_eq!(payload["pooled_cell"], false);
+    }
+
+    /// @spec-free-6
+    #[test]
+    fn a_paid_deployment_announces_a_database_of_its_own() {
+        use autharie_domain::offers::Offer;
+
+        for offer in Offer::ALL.into_iter().filter(|offer| *offer != Offer::Free) {
+            let mut deployment = sample_deployment();
+            deployment.offer = Some(offer);
+
+            assert_eq!(
+                deployment_payload(&deployment, Serving::OneTenant, None, None)["database"],
+                "managed",
+                "{offer}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_deployment_with_no_offer_announces_a_database_of_its_own() {
+        let deployment = sample_deployment();
+
+        assert_eq!(
+            deployment_payload(&deployment, Serving::OneTenant, None, None)["database"],
+            "managed"
+        );
     }
 
     #[test]
