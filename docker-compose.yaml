@@ -270,20 +270,22 @@ services:
   # the way autharie-migrations is one, rather than teaching Quickwit's own
   # config how to create a bucket it was never asked to own.
   quickwit-bucket:
-    # quay.io, not docker.io: Docker Hub stopped serving the minio/mc
-    # namespace; quay.io/minio/mc is the same image under the same tags.
-    image: quay.io/minio/mc:latest
+    # The RustFS image: its curl signs the S3 CreateBucket call (SigV4).
+    # 409 means the bucket already exists.
+    image: rustfs/rustfs:latest
     networks:
       - autharie
     entrypoint:
       - sh
       - -c
       - |
-        until mc alias set store http://rustfs:9000 autharie autharieautharie; do
-          echo "waiting for rustfs"
-          sleep 2
-        done
-        mc mb --ignore-existing store/autharie-logs
+        code=$$(curl -sS -o /tmp/response -w '%{http_code}' -X PUT \
+          --aws-sigv4 "aws:amz:us-east-1:s3" --user autharie:autharieautharie \
+          http://rustfs:9000/autharie-logs)
+        case "$$code" in
+          200|409) exit 0 ;;
+          *) echo "creating autharie-logs failed with $$code"; cat /tmp/response; exit 1 ;;
+        esac
     depends_on:
       rustfs:
         condition: service_healthy
