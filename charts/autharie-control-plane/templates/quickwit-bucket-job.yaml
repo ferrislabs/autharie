@@ -27,23 +27,31 @@ spec:
         # Quickwit's own S3 client expects this bucket to already exist --
         # unlike autharie-s3's ensure_bucket, it never creates one itself.
         - name: create-bucket
-          # quay.io, not docker.io: Docker Hub stopped serving the minio/mc
-          # namespace; quay.io/minio/mc is the same image under the same tags.
-          image: quay.io/minio/mc:latest
+          # The RustFS image, already pulled for the store itself: its curl
+          # signs the S3 CreateBucket call (SigV4), so no separate client
+          # image is needed. 409 means the bucket already exists.
+          image: "{{ .Values.rustfs.image.repository }}:{{ .Values.rustfs.image.tag }}"
           command:
             - sh
             - -c
             - |
-              until mc alias set store "$ENDPOINT" "$ACCESS_KEY" "$SECRET_KEY"; do
-                echo "waiting for the object store"
-                sleep 2
+              while :; do
+                code=$(curl -sS -o /tmp/response -w '%{http_code}' -X PUT \
+                  --aws-sigv4 "aws:amz:$REGION:s3" --user "$ACCESS_KEY:$SECRET_KEY" \
+                  "$ENDPOINT/$BUCKET")
+                case "$code" in
+                  200|409) exit 0 ;;
+                  000) echo "waiting for the object store"; sleep 2 ;;
+                  *) echo "creating $BUCKET failed with $code"; cat /tmp/response; exit 1 ;;
+                esac
               done
-              mc mb --ignore-existing "store/$BUCKET"
           env:
             - name: ENDPOINT
               value: {{ include "autharie-control-plane.objectStoreEndpoint" . | quote }}
             - name: BUCKET
               value: {{ .Values.quickwit.bucket | quote }}
+            - name: REGION
+              value: {{ .Values.objectStore.region | quote }}
             {{- $objectStoreSecret := .Values.objectStore.existingSecret | default (printf "%s-rustfs" (include "autharie-control-plane.fullname" .)) }}
             - name: ACCESS_KEY
               valueFrom:
