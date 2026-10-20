@@ -20,8 +20,15 @@ pub enum CellError {
     #[error("cell not found with id: {id}")]
     UnknownCell { id: Uuid },
 
-    #[error("cells are not configured on this installation: set CELLS_ORGANISATION_ID")]
+    #[error(
+        "cells are not configured on this installation: choose the organisation that owns them"
+    )]
     NotConfigured,
+
+    #[error(
+        "the organisation that owns the cells cannot change while {active} cell(s) are not retired: retire them first"
+    )]
+    OwnerInUse { active: usize },
 
     #[error("no FerrisKey release recent enough is available to build a cell: publish one first")]
     NoRelease,

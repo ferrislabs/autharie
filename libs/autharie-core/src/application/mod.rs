@@ -83,7 +83,6 @@ pub struct AutharieService {
 
     credential_keys: Option<Arc<TransitKeyProvider>>,
 
-    cells_organisation: Option<autharie_domain::organisation::OrganisationId>,
     platform_labels: Vec<String>,
 }
 
@@ -129,7 +128,6 @@ impl AutharieService {
             cloud: CloudProviders::default(),
             resizers: ClusterResizers::default(),
             credential_keys: None,
-            cells_organisation: None,
             platform_labels: Vec::new(),
         }
     }
@@ -172,20 +170,6 @@ impl AutharieService {
     pub fn with_cluster_resizers(mut self, resizers: ClusterResizers) -> Self {
         self.resizers = resizers;
         self
-    }
-
-    pub fn with_cells_organisation(
-        mut self,
-        organisation: Option<autharie_domain::organisation::OrganisationId>,
-    ) -> Self {
-        self.cells_organisation = organisation;
-        self
-    }
-
-    pub(crate) fn cells_organisation(
-        &self,
-    ) -> Option<autharie_domain::organisation::OrganisationId> {
-        self.cells_organisation
     }
 
     pub(crate) fn cluster_resizers(&self) -> &ClusterResizers {

@@ -82,7 +82,10 @@ async fn pool() -> Option<PgPool> {
     )
 }
 
+const SETTINGS_LOCK: i64 = 20_261_020;
+
 struct Installation {
+    _settings_lock: sqlx::PgConnection,
     pool: PgPool,
     operator: Uuid,
     cells_organisation: Uuid,
@@ -123,7 +126,14 @@ async fn an_organisation(pool: &PgPool, id: Uuid, owner: Uuid, plan: &str, max_i
 
 impl Installation {
     async fn seed(pool: PgPool) -> Self {
+        let mut settings_lock = pool.acquire().await.expect("a connection").detach();
+        sqlx::query("SELECT pg_advisory_lock($1)")
+            .bind(SETTINGS_LOCK)
+            .execute(&mut settings_lock)
+            .await
+            .expect("the cells settings are ours");
         let installation = Self {
+            _settings_lock: settings_lock,
             pool,
             operator: Uuid::new_v4(),
             cells_organisation: Uuid::new_v4(),
@@ -147,6 +157,11 @@ impl Installation {
         )
         .await;
         an_organisation(pool, installation.tenant, installation.owner, "free", 1).await;
+        sqlx::query("UPDATE platform_cells_settings SET organisation_id = $1")
+            .bind(installation.cells_organisation)
+            .execute(pool)
+            .await
+            .expect("the cells organisation is chosen");
         sqlx::query(
             "INSERT INTO releases (kind, version, status, risk) \
              VALUES ('ferriskey', $1, 'available', 'none')",
@@ -161,7 +176,6 @@ impl Installation {
 
     fn service(&self) -> AutharieService {
         AutharieService::new(self.pool.clone())
-            .with_cells_organisation(Some(OrganisationId(self.cells_organisation)))
             .with_domain(Some(ZONE.to_string()))
             .with_platform_labels(vec!["control".to_string()])
             .with_credential_keys(self.keys.get().map(|address| transit(address)))

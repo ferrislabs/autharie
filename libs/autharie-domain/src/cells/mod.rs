@@ -8,6 +8,7 @@ mod ports;
 mod realm_name;
 mod realms;
 mod service;
+mod settings;
 mod tenant_realm;
 
 pub use administrator::{
@@ -30,4 +31,7 @@ pub use service::{
     CELL_API_REPLICA, CELL_DATABASE_INSTANCE, CELL_MIN_FERRISKEY, CELL_WEBAPP_REPLICA,
     CellServiceImpl, CreateCellCommand, cell_reservation, release_for_cells,
 };
+#[cfg(test)]
+pub use settings::MockCellsSettingsRepository;
+pub use settings::{CellsSettings, CellsSettingsRepository, CellsSettingsService};
 pub use tenant_realm::TenantRealm;
