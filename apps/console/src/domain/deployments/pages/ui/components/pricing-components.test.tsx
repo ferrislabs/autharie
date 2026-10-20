@@ -1,30 +1,10 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { EnginePicker } from './engine-picker'
-import { KeycloakNotice } from './keycloak-notice'
 import { PlanPicker } from './plan-picker'
 import { PriceSummary } from './price-summary'
 import { VolumePicker } from './volume-picker'
 
 const noop = () => {}
-
-describe('the engine cards', () => {
-  const html = renderToStaticMarkup(<EnginePicker engine='ferriskey' onSelect={noop} />)
-
-  it('carry the badges and the copy', () => {
-    expect(html).toContain('Recommended')
-    expect(html).toContain('Cloud-native &amp; ultra-light')
-    expect(html).toContain('+30% infrastructure cost')
-  })
-})
-
-describe('the Keycloak notice markup', () => {
-  it('names what is missing and offers to switch', () => {
-    const html = renderToStaticMarkup(<KeycloakNotice hosting='managed' onSwitch={noop} />)
-    expect(html).toContain('Distributed ReBAC and the MCP Hub are not available on this engine.')
-    expect(html).toContain('Switch to FerrisKey')
-  })
-})
 
 describe('the plan cards', () => {
   const selection = { hosting: 'managed', engine: 'ferriskey', plan: 'business', volume: 10000 } as const
@@ -47,11 +27,12 @@ describe('the plan cards', () => {
     expect(html).toContain('disabled')
   })
 
-  it('cross out what is FerrisKey only on Keycloak', () => {
+  it('disable a plan that no open offer serves and say so', () => {
     const html = renderToStaticMarkup(
-      <PlanPicker selection={{ ...selection, engine: 'keycloak' }} onSelect={noop} />,
+      <PlanPicker selection={selection} onSelect={noop} closedPlans={['scale']} />,
     )
-    expect(html).toContain('line-through')
+    expect(html).toContain('Not available on your plan.')
+    expect(html).toContain('disabled')
   })
 
   it('use the plans of the hosting', () => {

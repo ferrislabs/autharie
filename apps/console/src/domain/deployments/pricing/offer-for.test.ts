@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Offer, OfferAvailability } from '../offers'
-import { offerFor, resolveOffer } from './offer-for'
+import { firstOpenPlan, isOpen, offerFor, offersOfPlan, planIsOpen } from './offer-for'
 import type { PlanId } from './model'
 
 describe('the offer a plan and a volume start on', () => {
@@ -48,21 +48,33 @@ const catalogue = [
   entry('private', false),
 ]
 
-describe('resolving the offer against what the platform opens', () => {
-  it('uses the derived offer when it is open', () => {
-    expect(resolveOffer('sandbox', catalogue)).toEqual({ offer: 'sandbox' })
+describe('what the platform opens', () => {
+  it('lists the offers a plan can start on', () => {
+    expect(offersOfPlan('starter')).toEqual(['sandbox', 'standard'])
+    expect(offersOfPlan('business')).toEqual(['sandbox', 'standard', 'scale'])
+    expect(offersOfPlan('scale')).toEqual(['scale'])
   })
 
-  it('selects the first open offer and says why when the derived one is closed', () => {
-    const resolved = resolveOffer('standard', catalogue)
-    expect(resolved.offer).toBe('sandbox')
-    expect(resolved.because).toBe(
-      'Standard fits this choice, but it is closed. Available from the Scale plan. Sandbox is selected instead.',
-    )
+  it('knows whether an offer is open', () => {
+    expect(isOpen('sandbox', catalogue)).toBe(true)
+    expect(isOpen('standard', catalogue)).toBe(false)
+    expect(isOpen('private', [])).toBe(false)
   })
 
-  it('selects nothing when nothing is open', () => {
-    expect(resolveOffer('standard', [entry('sandbox', false)]).offer).toBeUndefined()
-    expect(resolveOffer('standard', []).offer).toBeUndefined()
+  it('does not let a plan be chosen when none of its offers is open', () => {
+    expect(planIsOpen('starter', catalogue)).toBe(true)
+    expect(planIsOpen('business', catalogue)).toBe(true)
+    expect(planIsOpen('scale', catalogue)).toBe(false)
+  })
+
+  it('starts on the first plan that can be chosen', () => {
+    expect(firstOpenPlan(catalogue)).toBe('business')
+    expect(firstOpenPlan([entry('scale', true)])).toBe('business')
+    expect(firstOpenPlan([entry('standard', false)])).toBeUndefined()
+    expect(firstOpenPlan([])).toBeUndefined()
+  })
+
+  it('never substitutes another offer for a closed one', () => {
+    expect(isOpen(offerFor('starter', 5000), catalogue)).toBe(false)
   })
 })

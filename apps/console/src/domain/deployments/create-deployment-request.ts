@@ -1,10 +1,9 @@
 import type { Schemas } from '@/api/api.client'
-import { type DeploymentKind, type Environment } from './types/deployment'
+import { type Environment } from './types/deployment'
 import type { Offer } from './offers'
 
 export interface CreateDeploymentForm {
   name: string
-  kind: DeploymentKind
   /**
    * Exact, taken from the catalogue. It used to be the string `latest`, which
    * the platform refuses: a deployment records the version it runs, and a tag
@@ -14,7 +13,6 @@ export interface CreateDeploymentForm {
   environment: Environment
   /** What they are buying. The size and the isolation come with it. */
   offer: Offer
-  distribution?: Schemas.DistributionRequest
 }
 
 export function toCreateDeploymentRequest(
@@ -22,10 +20,9 @@ export function toCreateDeploymentRequest(
 ): Schemas.CreateDeploymentRequest {
   return {
     name: form.name,
-    kind: form.kind,
+    kind: 'ferriskey',
     version: form.version,
     environment: form.environment,
     offer: form.offer,
-    ...(form.distribution ? { distribution: form.distribution } : {}),
   }
 }

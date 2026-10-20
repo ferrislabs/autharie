@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Offer, OfferAvailability } from './offers'
-import { OFFER_COPY, describeResources, firstOpen, whyClosed } from './offers'
+import { OFFER_COPY, describeResources, openOffers } from './offers'
 
 function entry(overrides: Partial<OfferAvailability> = {}): OfferAvailability {
   return {
@@ -27,26 +27,6 @@ describe('the copy', () => {
   })
 })
 
-describe('why an offer cannot be chosen', () => {
-  it('says nothing about an offer that can', () => {
-    expect(whyClosed(entry())).toBeNull()
-  })
-
-  /**
-   * Hiding a closed offer makes an upsell invisible; showing it without
-   * saying what opens it makes the reader guess between four tiers.
-   */
-  it('names the tier that would open it', () => {
-    expect(whyClosed(entry({ open: false, opened_by: 'Enterprise' }))).toBe(
-      'Available from the Enterprise plan.',
-    )
-  })
-
-  it('still says something when the platform names no tier', () => {
-    expect(whyClosed(entry({ open: false }))).toBe('Not available on your plan.')
-  })
-})
-
 describe('what an offer gives', () => {
   it('reads in the units somebody came for', () => {
     expect(describeResources(entry())).toBe('500m vCPU · 1 Gi RAM · 1 Gi disk')
@@ -58,27 +38,15 @@ describe('what an offer gives', () => {
   })
 })
 
-describe('where the form starts', () => {
-  /**
-   * Opening the page on a card the customer cannot choose makes the first
-   * thing they do an error.
-   */
-  it('is the first offer the organisation may actually choose', () => {
+describe('the offers shown', () => {
+  it('keeps only the offers the organisation may choose', () => {
     const catalogue = [
       entry({ offer: 'sandbox', open: false, opened_by: 'Starter' }),
       entry({ offer: 'standard', open: true }),
       entry({ offer: 'private', open: false, opened_by: 'Enterprise' }),
     ]
 
-    expect(firstOpen(catalogue)).toBe('standard')
-  })
-
-  /**
-   * A tier that opens nothing is a state the screen has to say out loud,
-   * not present as a form with nothing selected.
-   */
-  it('is nothing when the tier opens nothing', () => {
-    expect(firstOpen([entry({ open: false, opened_by: 'Business' })])).toBeUndefined()
-    expect(firstOpen([])).toBeUndefined()
+    expect(openOffers(catalogue).map((item) => item.offer)).toEqual(['standard'])
+    expect(openOffers([])).toEqual([])
   })
 })

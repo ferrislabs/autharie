@@ -8,9 +8,10 @@ interface Props {
   selection: Selection
   onSelect: (plan: PlanId) => void
   movedNotice?: string
+  closedPlans?: PlanId[]
 }
 
-export function PlanPicker({ selection, onSelect, movedNotice }: Props) {
+export function PlanPicker({ selection, onSelect, movedNotice, closedPlans = [] }: Props) {
   const { hosting, engine, plan } = selection
 
   return (
@@ -24,22 +25,25 @@ export function PlanPicker({ selection, onSelect, movedNotice }: Props) {
         {PLAN_ORDER.map((id) => {
           const copy = PLANS[hosting][id]
           const price = priceOf({ ...selection, plan: id })
+          const closed = closedPlans.includes(id)
           const unavailable = price.kind === 'unavailable'
 
           return (
             <OptionCard
               key={id}
               selected={plan === id}
-              disabled={unavailable}
+              disabled={unavailable || closed}
               onSelect={() => onSelect(id)}
               label={copy.name}
               description={copy.tagline}
               footer={
                 <span className='flex flex-col gap-2'>
                   <span className='text-sm font-semibold'>
-                    {unavailable
-                      ? 'Up to 25,000 accounts. Beyond that, choose Business.'
-                      : describePrice(price)}
+                    {closed
+                      ? 'Not available on your plan.'
+                      : unavailable
+                        ? 'Up to 25,000 accounts. Beyond that, choose Business.'
+                        : describePrice(price)}
                   </span>
                   <ul className='space-y-1 text-xs text-muted-foreground'>
                     {copy.features.map((feature) => {
