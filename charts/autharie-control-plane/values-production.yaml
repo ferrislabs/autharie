@@ -7,6 +7,11 @@
 # rather than `<release>-autharie-control-plane-...` -- every hardcoded
 # in-cluster hostname below assumes this.
 fullnameOverride: autharie
+# The Deployments in production were created when the chart was named
+# aether-control-plane, and a Deployment's selector cannot change. Keep the
+# old name in the `app.kubernetes.io/name` label so the selectors stay as
+# they are.
+nameOverride: aether-control-plane
 
 image:
   # No release has been tagged yet; CI pushes `latest` on every merge to
