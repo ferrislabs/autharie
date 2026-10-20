@@ -60,6 +60,13 @@ fn status_merge_patch(
     status: &autharie_crds::v1alpha::identity_instance::IdentityInstanceStatus,
 ) -> Value {
     let mut patch = json!({ "status": status });
+    // A merge patch leaves an absent field as it was, so a status that has
+    // recovered must say so explicitly: without the null, the error of the
+    // last failed reconcile stays next to `ready: true` for ever.
+    if let Some(top) = patch["status"].as_object_mut() {
+        top.entry("error").or_insert(Value::Null);
+        top.entry("conditions").or_insert_with(|| json!([]));
+    }
     if let Some(iam) = patch["status"]
         .get_mut("iam")
         .and_then(Value::as_object_mut)
@@ -3362,6 +3369,18 @@ mod tests {
 
         assert_eq!(patch["status"]["iam"]["message"], "waiting");
         assert_eq!(patch["status"]["iam"]["applied"], "{}");
+    }
+
+    /// The bug this exists for: an instance that recovered kept the error
+    /// and the Ready=False condition of its last failed reconcile beside
+    /// `ready: true`, because a merge patch leaves absent fields alone.
+    #[test]
+    fn a_recovered_status_clears_the_error_and_the_conditions() {
+        let patch = status_merge_patch(&Default::default());
+
+        assert_eq!(patch["status"]["error"], Value::Null);
+        assert!(patch["status"].as_object().unwrap().contains_key("error"));
+        assert_eq!(patch["status"]["conditions"], json!([]));
     }
 
     #[test]
