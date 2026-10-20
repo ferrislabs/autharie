@@ -6,8 +6,10 @@ use crate::{
     handlers::platform::{
         cells::{
             __path_create_cell_handler, __path_drain_cell_handler, __path_get_cell_handler,
-            __path_list_cells_handler, __path_retire_cell_handler, create_cell_handler,
-            drain_cell_handler, get_cell_handler, list_cells_handler, retire_cell_handler,
+            __path_get_cells_settings_handler, __path_list_cells_handler,
+            __path_retire_cell_handler, __path_update_cells_settings_handler, create_cell_handler,
+            drain_cell_handler, get_cell_handler, get_cells_settings_handler, list_cells_handler,
+            retire_cell_handler, update_cells_settings_handler,
         },
         dataplane_upgrades::{
             __path_list_dataplane_upgrades_handler, __path_upgrade_dataplanes_handler,
@@ -71,7 +73,9 @@ pub mod signals;
         list_cells_handler,
         get_cell_handler,
         drain_cell_handler,
-        retire_cell_handler
+        retire_cell_handler,
+        get_cells_settings_handler,
+        update_cells_settings_handler
     ),
     tags(
         (name = "platform", description = "What the installation runs, for whoever runs it.")
@@ -100,6 +104,8 @@ pub fn platform_routes(app_state: AppState) -> Router<AppState> {
         .typed_get(get_cell_handler)
         .typed_post(drain_cell_handler)
         .typed_post(retire_cell_handler)
+        .typed_get(get_cells_settings_handler)
+        .typed_put(update_cells_settings_handler)
         .layer(from_fn_with_state(
             app_state.clone(),
             service_auth_middleware,

@@ -197,6 +197,11 @@ export namespace Schemas {
   }
   export type CellResponse = { data: CellView }
   export type CellsResponse = { data: Array<CellView> }
+  export type CellsSettingsView = {
+    organisation_id?: (string | null) | undefined
+    updated_at: string
+    updated_by?: (string | null) | undefined
+  }
   export type CertificatePayload = {
     certificate_pem: string
     fingerprint: string
@@ -825,6 +830,7 @@ export namespace Schemas {
     hits: Array<SpanHit>
     total_hits: number
   }
+  export type UpdateCellsSettingsRequest = Partial<{ organisation_id: string | null }>
   export type UpdateDeploymentRequest = Partial<{
     log_shipping_enabled: boolean | null
     name: string | null
@@ -1578,6 +1584,22 @@ export namespace Endpoints {
     }
     response: Schemas.CellResponse
   }
+  export type get_Get_cells_settings_handler = {
+    method: 'GET'
+    path: '/platform/cells/settings'
+    requestFormat: 'json'
+    parameters: never
+    response: Schemas.CellsSettingsView
+  }
+  export type put_Update_cells_settings_handler = {
+    method: 'PUT'
+    path: '/platform/cells/settings'
+    requestFormat: 'json'
+    parameters: {
+      body: Schemas.UpdateCellsSettingsRequest
+    }
+    response: Schemas.CellsSettingsView
+  }
   export type get_Get_cell_handler = {
     method: 'GET'
     path: '/platform/cells/{cell_id}'
@@ -1878,6 +1900,7 @@ export type EndpointByMethod = {
     '/organisations/{organisation_id}/traces/{trace_id}': Endpoints.get_Get_trace_handler
     '/platform/audit-log': Endpoints.get_List_fleet_audit_log_handler
     '/platform/cells': Endpoints.get_List_cells_handler
+    '/platform/cells/settings': Endpoints.get_Get_cells_settings_handler
     '/platform/cells/{cell_id}': Endpoints.get_Get_cell_handler
     '/platform/dataplanes/upgrades': Endpoints.get_List_dataplane_upgrades_handler
     '/platform/deployments': Endpoints.get_List_estate_deployments_handler
@@ -1944,6 +1967,7 @@ export type EndpointByMethod = {
     '/organisations/{organisation_id}/deployments/{deployment_id}/network-access': Endpoints.put_Set_network_access_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/upgrade-settings': Endpoints.put_Set_upgrade_settings_handler
     '/organisations/{organisation_id}/members/{user_id}/roles': Endpoints.put_Set_member_roles_handler
+    '/platform/cells/settings': Endpoints.put_Update_cells_settings_handler
     '/platform/operators/{subject}': Endpoints.put_Grant_operator_handler
     '/platform/organisations/{organisation_id}/plan': Endpoints.put_Move_tenant_plan_handler
     '/releases/operator/{kind}/{version}/rollout': Endpoints.put_Widen_rollout_handler

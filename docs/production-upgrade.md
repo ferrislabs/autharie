@@ -201,13 +201,19 @@ curl -X POST https://app.autharie.fr/api/organisations \
   -d '{"name":"Autharie cells"}'
 ```
 
-Keep only operators as its members. Put its id in `values-production.yaml`
-through a PR:
+Keep only operators as its members. Then choose it as the cells organisation,
+from the Cells page of the operator console or with the API (it is stored in
+the database, so nothing is redeployed):
 
-```yaml
-platform:
-  cellsOrganisationId: <id>
+```bash
+curl -X PUT https://app.autharie.fr/api/platform/cells/settings \
+  -H "Authorization: Bearer $OPERATOR_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"organisation_id":"<id>"}'
 ```
+
+Until it is set, opening a cell answers 503. It can only change while every
+cell is retired, because the instance of a cell stays owned by the organisation
+that held it at the time; a change with a live cell answers 409.
 
 ### B5. Open a cell
 

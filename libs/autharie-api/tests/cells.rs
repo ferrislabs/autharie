@@ -3,8 +3,8 @@ use std::{sync::Arc, time::Duration};
 use autharie_api::{
     args::Args,
     handlers::platform::cells::{
-        create_cell_handler, drain_cell_handler, get_cell_handler, list_cells_handler,
-        retire_cell_handler,
+        create_cell_handler, drain_cell_handler, get_cell_handler, get_cells_settings_handler,
+        list_cells_handler, retire_cell_handler, update_cells_settings_handler,
     },
     state::AppState,
 };
@@ -22,7 +22,6 @@ use autharie_core::{
         ports::DeploymentService,
         topology::Topology,
     },
-    organisation::OrganisationId,
 };
 use axum::{
     Extension, Router,
@@ -32,7 +31,7 @@ use axum::{
 use axum_extra::routing::RouterExt;
 use futures::FutureExt;
 use serde_json::{Value, json};
-use sqlx::{PgPool, postgres::PgPoolOptions};
+use sqlx::{PgConnection, PgPool, postgres::PgPoolOptions};
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -60,7 +59,10 @@ async fn pool() -> Option<PgPool> {
     )
 }
 
+const SETTINGS_LOCK: i64 = 20_261_020;
+
 struct Installation {
+    _settings_lock: PgConnection,
     pool: PgPool,
     operator: Uuid,
     organisation: Uuid,
@@ -71,6 +73,12 @@ struct Installation {
 
 impl Installation {
     async fn seed(pool: PgPool) -> Self {
+        let mut settings_lock = pool.acquire().await.expect("a connection").detach();
+        sqlx::query("SELECT pg_advisory_lock($1)")
+            .bind(SETTINGS_LOCK)
+            .execute(&mut settings_lock)
+            .await
+            .expect("the cells settings are ours");
         let operator = Uuid::new_v4();
         let organisation = Uuid::new_v4();
         let release = format!("0.9.{}", rand_patch());
@@ -103,7 +111,14 @@ impl Installation {
         .await
         .expect("a release");
 
+        sqlx::query("UPDATE platform_cells_settings SET organisation_id = $1")
+            .bind(organisation)
+            .execute(&pool)
+            .await
+            .expect("the cells organisation is chosen");
+
         Self {
+            _settings_lock: settings_lock,
             pool,
             operator,
             organisation,
@@ -115,7 +130,6 @@ impl Installation {
 
     fn service(&self) -> AutharieService {
         AutharieService::new(self.pool.clone())
-            .with_cells_organisation(Some(OrganisationId(self.organisation)))
     }
 
     async fn serve_region(&self) {
@@ -225,6 +239,8 @@ fn app(service: AutharieService, identity: Identity) -> Router {
         .typed_get(get_cell_handler)
         .typed_post(drain_cell_handler)
         .typed_post(retire_cell_handler)
+        .typed_get(get_cells_settings_handler)
+        .typed_put(update_cells_settings_handler)
         .layer(Extension(identity))
         .with_state(AppState {
             args: Arc::new(Args::default()),
@@ -410,30 +426,117 @@ async fn an_operator_creates_a_cell_sees_it_provisioning_then_open_then_drains_a
 }
 
 #[tokio::test]
-async fn without_a_cells_organisation_creating_a_cell_is_unavailable_and_says_why() {
+async fn without_a_cells_organisation_creating_a_cell_is_unavailable_until_one_is_chosen() {
     let Some(pool) = pool().await else {
         return;
     };
     let installation = Installation::seed(pool.clone()).await;
     installation.serve_region().await;
-    let app = app(AutharieService::new(pool), operator(installation.operator));
+    sqlx::query("UPDATE platform_cells_settings SET organisation_id = NULL")
+        .execute(&pool)
+        .await
+        .expect("no cells organisation");
+    let app = app(installation.service(), operator(installation.operator));
+    let create = || {
+        call(
+            &app,
+            Method::POST,
+            "/platform/cells",
+            Some(json!({"region": installation.region})),
+        )
+    };
 
-    let (status, refused) = call(
+    let (status, refused) = create().await;
+    let (listed, _) = call(&app, Method::GET, "/platform/cells", None).await;
+    let (read_status, read) = call(&app, Method::GET, "/platform/cells/settings", None).await;
+    let (saved_status, saved) = call(
         &app,
-        Method::POST,
-        "/platform/cells",
-        Some(json!({"region": installation.region})),
+        Method::PUT,
+        "/platform/cells/settings",
+        Some(json!({"organisation_id": installation.organisation})),
     )
     .await;
-    let (listed, _) = call(&app, Method::GET, "/platform/cells", None).await;
+    let (created_status, created) = create().await;
 
     installation.forget().await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{refused}");
     assert!(
-        refused.to_string().contains("CELLS_ORGANISATION_ID"),
+        refused.to_string().contains("choose the organisation"),
         "{refused}"
     );
     assert_eq!(listed, StatusCode::OK);
+    assert_eq!(read_status, StatusCode::OK, "{read}");
+    assert_eq!(read["organisation_id"], Value::Null);
+    assert_eq!(saved_status, StatusCode::OK, "{saved}");
+    assert_eq!(
+        saved["organisation_id"],
+        installation.organisation.to_string()
+    );
+    assert_eq!(saved["updated_by"], installation.operator.to_string());
+    assert_eq!(created_status, StatusCode::CREATED, "{created}");
+}
+
+#[tokio::test]
+async fn the_cells_organisation_changes_only_while_every_cell_is_retired() {
+    let Some(pool) = pool().await else {
+        return;
+    };
+    let installation = Installation::seed(pool.clone()).await;
+    installation.serve_region().await;
+    let app = app(installation.service(), operator(installation.operator));
+    let other = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO organisations \
+         (id, name, slug, owner_id, status, plan, max_instances, max_users, \
+          max_storage_gb, created_at, updated_at) \
+         VALUES ($1, 'cells', $2, $3, 'active', 'free', 100, 100, 100, now(), now())",
+    )
+    .bind(other)
+    .bind(format!("cells-other-{other}"))
+    .bind(installation.operator)
+    .execute(&pool)
+    .await
+    .expect("another organisation");
+    let put = |organisation: Value| {
+        call(
+            &app,
+            Method::PUT,
+            "/platform/cells/settings",
+            Some(json!({ "organisation_id": organisation })),
+        )
+    };
+
+    let (cell_id, _) = create_a_cell(&app, &installation.region).await;
+    let (held, held_body) = put(json!(other)).await;
+    let (cleared_held, _) = put(Value::Null).await;
+    let (unchanged, unchanged_body) = put(json!(installation.organisation)).await;
+    let (unknown, _) = put(json!(Uuid::new_v4())).await;
+    let (retired, _) = call(
+        &app,
+        Method::POST,
+        &format!("/platform/cells/{cell_id}/retire"),
+        None,
+    )
+    .await;
+    let (moved, moved_body) = put(json!(other)).await;
+    let (_, read) = call(&app, Method::GET, "/platform/cells/settings", None).await;
+    let (cleared, cleared_body) = put(Value::Null).await;
+
+    sqlx::query("DELETE FROM organisations WHERE id = $1")
+        .bind(other)
+        .execute(&pool)
+        .await
+        .expect("cleanup");
+    installation.forget().await;
+    assert_eq!(held, StatusCode::CONFLICT, "{held_body}");
+    assert_eq!(cleared_held, StatusCode::CONFLICT);
+    assert_eq!(unchanged, StatusCode::OK, "{unchanged_body}");
+    assert_eq!(unknown, StatusCode::NOT_FOUND);
+    assert_eq!(retired, StatusCode::OK);
+    assert_eq!(moved, StatusCode::OK, "{moved_body}");
+    assert_eq!(read["organisation_id"], other.to_string());
+    assert_eq!(cleared, StatusCode::OK, "{cleared_body}");
+    assert_eq!(cleared_body["organisation_id"], Value::Null);
 }
 
 #[tokio::test]
@@ -499,6 +602,45 @@ fn status_of(error: autharie_core::CoreError) -> StatusCode {
     autharie_api::errors::ApiError::from(error)
         .into_response()
         .status()
+}
+
+#[tokio::test]
+async fn the_cells_settings_need_view_estate_to_read_and_operate_fleet_to_change() {
+    let Some(pool) = pool().await else {
+        return;
+    };
+    let installation = Installation::seed(pool.clone()).await;
+    installation
+        .service()
+        .ensure_first_operator(&installation.operator.to_string())
+        .await
+        .expect("the operator holds every right");
+    let reader = Uuid::new_v4();
+    let stranger = Uuid::new_v4();
+    grant(&pool, reader, &["view_estate"]).await;
+    let body = Some(json!({"organisation_id": installation.organisation}));
+
+    let mut answers = Vec::new();
+    for (who, expected) in [
+        (installation.operator, [StatusCode::OK, StatusCode::OK]),
+        (reader, [StatusCode::OK, StatusCode::FORBIDDEN]),
+        (stranger, [StatusCode::FORBIDDEN, StatusCode::FORBIDDEN]),
+    ] {
+        let app = app(installation.service(), operator(who));
+        for (method, body, expected) in [
+            (Method::GET, None, expected[0]),
+            (Method::PUT, body.clone(), expected[1]),
+        ] {
+            let (status, _) = call(&app, method.clone(), "/platform/cells/settings", body).await;
+            answers.push((who, method, status, expected));
+        }
+    }
+
+    revoke(&pool, reader).await;
+    installation.forget().await;
+    for (who, method, status, expected) in answers {
+        assert_eq!(status, expected, "{who} {method}");
+    }
 }
 
 #[tokio::test]

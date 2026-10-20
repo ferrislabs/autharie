@@ -1,7 +1,8 @@
 use autharie_auth::Identity;
 use autharie_core::{
-    cells::{Cell, CellId, CellStatus, CreateCellCommand},
+    cells::{Cell, CellId, CellStatus, CellsSettings, CreateCellCommand},
     dataplane::value_objects::Region,
+    organisation::OrganisationId,
 };
 use axum::{Extension, Json, extract::State};
 use axum_extra::routing::TypedPath;
@@ -15,6 +16,10 @@ use crate::{errors::ApiError, response::Response, state::AppState};
 #[derive(TypedPath)]
 #[typed_path("/platform/cells")]
 pub struct CellsRoute;
+
+#[derive(TypedPath)]
+#[typed_path("/platform/cells/settings")]
+pub struct CellsSettingsRoute;
 
 #[derive(TypedPath, IntoParams, Deserialize)]
 #[typed_path("/platform/cells/{cell_id}")]
@@ -78,6 +83,28 @@ pub struct CellsResponse {
     pub data: Vec<CellView>,
 }
 
+#[derive(Deserialize, ToSchema)]
+pub struct UpdateCellsSettingsRequest {
+    pub organisation_id: Option<Uuid>,
+}
+
+#[derive(Debug, Serialize, ToSchema, PartialEq)]
+pub struct CellsSettingsView {
+    pub organisation_id: Option<Uuid>,
+    pub updated_at: DateTime<Utc>,
+    pub updated_by: Option<String>,
+}
+
+impl From<CellsSettings> for CellsSettingsView {
+    fn from(settings: CellsSettings) -> Self {
+        Self {
+            organisation_id: settings.organisation_id.map(|id| id.0),
+            updated_at: settings.updated_at,
+            updated_by: settings.updated_by,
+        }
+    }
+}
+
 impl CreateCellRequest {
     fn into_command(self) -> Result<CreateCellCommand, ApiError> {
         let region = self.region.trim();
@@ -90,6 +117,62 @@ impl CreateCellRequest {
         CreateCellCommand::new(Region::new(region.to_string()), self.capacity)
             .map_err(|error| ApiError::from(autharie_core::CoreError::from(error)))
     }
+}
+
+#[utoipa::path(
+    get,
+    path = "/cells/settings",
+    summary = "get the cells settings",
+    tag = "platform",
+    responses(
+        (status = 200, description = "The organisation that owns the cells, if one is chosen", body = CellsSettingsView),
+        (status = 401, description = "Unauthorized", body = ApiError),
+        (status = 403, description = "This needs the view_estate right", body = ApiError),
+        (status = 500, description = "Internal Server Error", body = ApiError)
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn get_cells_settings_handler(
+    _: CellsSettingsRoute,
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+) -> Result<Response<CellsSettingsView>, ApiError> {
+    let settings = state.service.get_cells_settings(identity).await?;
+
+    Ok(Response::OK(settings.into()))
+}
+
+#[utoipa::path(
+    put,
+    path = "/cells/settings",
+    summary = "choose the organisation that owns the cells",
+    tag = "platform",
+    description = "Existing cell instances stay owned by the organisation that held them, so \
+                   the owner can only change while every cell is retired. Setting the current \
+                   value again changes nothing. A null organisation clears the setting.",
+    request_body = UpdateCellsSettingsRequest,
+    responses(
+        (status = 200, description = "The settings, as saved", body = CellsSettingsView),
+        (status = 401, description = "Unauthorized", body = ApiError),
+        (status = 403, description = "This needs the operate_fleet right", body = ApiError),
+        (status = 404, description = "No such organisation", body = ApiError),
+        (status = 409, description = "A cell is not retired yet", body = ApiError),
+        (status = 500, description = "Internal Server Error", body = ApiError)
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn update_cells_settings_handler(
+    _: CellsSettingsRoute,
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Json(request): Json<UpdateCellsSettingsRequest>,
+) -> Result<Response<CellsSettingsView>, ApiError> {
+    let settings = state
+        .service
+        .set_cells_organisation(identity, request.organisation_id.map(OrganisationId))
+        .await?;
+
+    Ok(Response::OK(settings.into()))
 }
 
 #[utoipa::path(

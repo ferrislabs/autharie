@@ -1,5 +1,7 @@
 mod cell_repository;
+mod cells_settings_repository;
 mod tenant_administrator_repository;
 
 pub use cell_repository::PostgresCellRepository;
+pub use cells_settings_repository::PostgresCellsSettingsRepository;
 pub use tenant_administrator_repository::PostgresTenantAdministratorRepository;

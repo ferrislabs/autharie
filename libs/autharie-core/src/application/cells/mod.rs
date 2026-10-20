@@ -3,12 +3,14 @@ use autharie_domain::{
     CoreError,
     catalog::ports::ReleaseRepository,
     cells::{
-        Cell, CellError, CellId, CellRepository, CellServiceImpl, CellStatus, CreateCellCommand,
-        RealmRequests, Resent, release_for_cells,
+        Cell, CellError, CellId, CellRepository, CellServiceImpl, CellStatus, CellsSettings,
+        CellsSettingsRepository, CellsSettingsService, CreateCellCommand, RealmRequests, Resent,
+        release_for_cells,
     },
     deployments::{
         DeploymentId, DeploymentKind, ports::DeploymentRepository, service::DeploymentServiceImpl,
     },
+    organisation::OrganisationId,
     user::ports::UserRepository,
 };
 use autharie_macros::transactional;
@@ -29,6 +31,7 @@ use crate::{
 impl AutharieService {
     #[transactional(
         cell,
+        cells_settings,
         platform_operator,
         release,
         deployment,
@@ -49,7 +52,11 @@ impl AutharieService {
         );
         cells.authorise_creation(identity.clone()).await?;
 
-        let organisation = self.cells_organisation().ok_or(CellError::NotConfigured)?;
+        let organisation = cells_settings_repository
+            .get()
+            .await?
+            .organisation_id
+            .ok_or(CellError::NotConfigured)?;
         let created_by = user_repository
             .find_by_sub(identity.id())
             .await?
@@ -84,6 +91,34 @@ impl AutharieService {
         .await?;
 
         Ok(cell)
+    }
+
+    #[transactional(cells_settings, cell, organisation, platform_operator)]
+    pub async fn get_cells_settings(&self, identity: Identity) -> Result<CellsSettings, CoreError> {
+        CellsSettingsService::new(
+            cells_settings_repository,
+            cell_repository,
+            organisation_repository,
+            PlatformRightsPolicy::new(platform_operator_repository),
+        )
+        .get(identity)
+        .await
+    }
+
+    #[transactional(cells_settings, cell, organisation, platform_operator)]
+    pub async fn set_cells_organisation(
+        &self,
+        identity: Identity,
+        organisation: Option<OrganisationId>,
+    ) -> Result<CellsSettings, CoreError> {
+        CellsSettingsService::new(
+            cells_settings_repository,
+            cell_repository,
+            organisation_repository,
+            PlatformRightsPolicy::new(platform_operator_repository),
+        )
+        .set_organisation(identity, organisation)
+        .await
     }
 
     #[transactional(cell, deployment, action)]

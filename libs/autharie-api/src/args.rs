@@ -137,11 +137,6 @@ pub struct PlatformArgs {
     /// the only authority, which is where this is headed.
     #[arg(long, env = "AUTHARIE_BOOTSTRAP_OPERATOR", default_value = "")]
     pub bootstrap_operator: String,
-
-    /// The internal organisation that owns the FerrisKey instance of every
-    /// cell. Unset means no cell can be created.
-    #[arg(long, env = "CELLS_ORGANISATION_ID")]
-    pub cells_organisation_id: Option<uuid::Uuid>,
 }
 
 /// Creating clusters in a customer's own cloud account.
