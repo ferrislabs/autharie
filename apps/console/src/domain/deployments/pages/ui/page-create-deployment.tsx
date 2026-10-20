@@ -1,6 +1,5 @@
 import type { Schemas } from '@/api/api.client'
 import { Button } from '@/components/ui/button'
-import { Skeleton } from '@/components/ui/skeleton'
 import { newestInstallable } from '@/domain/releases/catalogue'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -13,44 +12,35 @@ import {
 } from '@/components/ui/select'
 import { Page, PageTitle, Section } from '@/components/layout/page'
 import { useOrganisationPath } from '@/domain/organisations/hooks/use-organisation-path'
-import { Link, useNavigate } from '@tanstack/react-router'
-import { useMemo, useState, type ReactNode } from 'react'
-import { KIND_LABELS, type DeploymentKind, type Environment } from '../../types/deployment'
-import { type Offer, type OfferAvailability } from '../../offers'
+import { useNavigate } from '@tanstack/react-router'
+import { useState } from 'react'
+import { type Environment } from '../../types/deployment'
+import { OFFER_COPY, openOffers, type Offer, type OfferAvailability } from '../../offers'
 import { FREE_OFFER, FREE_OFFER_COPY, isFreeOnly } from '../../free-offer'
-import { offerFor, resolveOffer } from '../../pricing/offer-for'
-import { priceOf, type Hosting, type PlanId, type Selection } from '../../pricing/model'
+import { firstOpenPlan, isOpen, offerFor, planIsOpen } from '../../pricing/offer-for'
+import { priceOf, type PlanId, type Selection } from '../../pricing/model'
 import { applyChange, STARTER_MOVED_NOTICE } from '../../pricing/selection'
-import { customerCloudAvailability } from '@/domain/cloud-providers/distribution'
-import { EnginePicker } from './components/engine-picker'
 import { FreeOfferSection } from './components/free-offer-section'
-import { HostingPicker } from './components/hosting-picker'
-import { KeycloakNotice } from './components/keycloak-notice'
 import { PlanPicker } from './components/plan-picker'
 import { PriceSummary } from './components/price-summary'
 import { VolumePicker } from './components/volume-picker'
 
+const PLANS: PlanId[] = ['starter', 'business', 'scale']
+
 interface Props {
   onSubmit: (data: {
     name: string
-    kind: DeploymentKind
     version: string
     environment: Environment
     offer: Offer
-    distribution?: Schemas.DistributionRequest
   }) => void
   isSubmitting?: boolean
   /** What the platform said when the last attempt failed. */
   refusal?: string
   offers: OfferAvailability[]
   offersLoading: boolean
-  releases: Record<DeploymentKind, Schemas.Release[]>
+  releases: Schemas.Release[]
   releasesLoading: boolean
-  credentials: Schemas.CloudCredentialResponse[]
-  credentialsLoading: boolean
-  customerCloud: ReactNode
-  distribution: Schemas.DistributionRequest | null
-  clusterEstimate?: string
 }
 
 export default function PageCreateDeployment({
@@ -61,57 +51,47 @@ export default function PageCreateDeployment({
   offersLoading,
   releases,
   releasesLoading,
-  credentials,
-  credentialsLoading,
-  customerCloud,
-  distribution,
-  clusterEstimate,
 }: Props) {
   const navigate = useNavigate()
   const organisationPath = useOrganisationPath()
 
   const [name, setName] = useState('')
-  const [picked, setKind] = useState<DeploymentKind>('ferriskey')
-  const freeOnly = isFreeOnly(offers)
-  const kind: DeploymentKind = freeOnly ? 'ferriskey' : picked
   const [environment, setEnvironment] = useState<Environment>('development')
-  const [wantsCustomerCloud, setWantsCustomerCloud] = useState(false)
-  const [plan, setPlan] = useState<PlanId>('business')
+  const [picked, setPlan] = useState<PlanId>('business')
   const [volume, setVolume] = useState(10000)
   const [movedToBusiness, setMovedToBusiness] = useState(false)
 
-  const version = newestInstallable(releases[kind]) ?? ''
+  const open = openOffers(offers)
+  const freeOnly = isFreeOnly(open)
+  const version = newestInstallable(releases) ?? ''
 
-  const availability = customerCloudAvailability(kind, credentials)
-  const onCustomerCloud = !freeOnly && wantsCustomerCloud && availability !== 'hidden'
-  const placement = onCustomerCloud ? (distribution ?? undefined) : undefined
-  const hosting: Hosting = onCustomerCloud ? 'byoc' : 'managed'
+  const closedPlans = PLANS.filter((id) => !planIsOpen(id, open))
+  const plan = closedPlans.includes(picked) ? firstOpenPlan(open) : picked
 
-  const selection = useMemo<Selection>(
-    () => ({ hosting, engine: kind, plan, volume }),
-    [hosting, kind, plan, volume],
-  )
+  const selection: Selection = {
+    hosting: 'managed',
+    engine: 'ferriskey',
+    plan: plan ?? picked,
+    volume,
+  }
   const price = priceOf(selection)
 
-  const derived = offerFor(plan, hosting === 'byoc' ? null : volume)
-  const resolved = freeOnly ? { offer: FREE_OFFER } : resolveOffer(derived, offers)
-  const chosen = resolved.offer
+  const derived = offerFor(selection.plan, volume)
+  const derivedClosed = !freeOnly && plan !== undefined && !isOpen(derived, open)
+  const chosen: Offer | undefined = freeOnly
+    ? FREE_OFFER
+    : plan !== undefined && !derivedClosed
+      ? derived
+      : undefined
 
   const commit = (patch: Partial<Selection>) => {
     const change = applyChange(selection, patch)
     setPlan(change.selection.plan)
     setVolume(change.selection.volume)
     setMovedToBusiness(change.movedToBusiness)
-    if (patch.engine) setKind(patch.engine)
-    if (patch.hosting) setWantsCustomerCloud(patch.hosting === 'byoc')
   }
 
-  const canSubmit =
-    !!chosen &&
-    name.trim() !== '' &&
-    version !== '' &&
-    !isSubmitting &&
-    (!onCustomerCloud || (availability === 'available' && !!placement))
+  const canSubmit = !!chosen && name.trim() !== '' && version !== '' && !isSubmitting
 
   return (
     <Page className='max-w-3xl'>
@@ -124,11 +104,9 @@ export default function PageCreateDeployment({
           if (chosen) {
             onSubmit({
               name,
-              kind,
               version,
               environment,
               offer: chosen,
-              ...(placement ? { distribution: placement } : {}),
             })
           }
         }}
@@ -165,82 +143,25 @@ export default function PageCreateDeployment({
           </div>
         </Section>
 
-        <Section title='Identity provider'>
-          {freeOnly ? (
-            <p className='text-sm text-muted-foreground'>{FREE_OFFER_COPY.engine}</p>
-          ) : (
-            <EnginePicker engine={kind} onSelect={(engine) => commit({ engine })} />
-          )}
-
-          {kind === 'keycloak' && (
-            <KeycloakNotice hosting={hosting} onSwitch={() => commit({ engine: 'ferriskey' })} />
-          )}
-
-          <div className='mt-4 space-y-2'>
-            <Label>Version</Label>
-            {releasesLoading ? (
-              <Skeleton className='h-9 w-full sm:w-72' />
-            ) : version === '' ? (
-              <p className='rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200'>
-                No version of {KIND_LABELS[kind]} is available yet, so there is nothing to create.
-                Someone operating the platform publishes one and makes it available.
-              </p>
-            ) : (
-              <>
-                <p className='font-mono text-sm'>{version}</p>
-                <p className='text-xs text-muted-foreground'>
-                  The newest available version, chosen for you. It can be upgraded afterwards,
-                  which is where choosing a version belongs.
-                </p>
-              </>
-            )}
-          </div>
-        </Section>
-
         {freeOnly ? (
           <Section title='Offer'>
-            <FreeOfferSection catalogue={offers} />
+            <FreeOfferSection />
           </Section>
         ) : (
           <>
-            <Section title='Hosting'>
-              <HostingPicker
-                hosting={hosting}
-                onSelect={(next) => commit({ hosting: next })}
-                customerCloudAvailable={availability !== 'hidden'}
-              />
-
-              {onCustomerCloud &&
-                (credentialsLoading ? (
-                  <Skeleton className='h-24 w-full' />
-                ) : availability === 'needs_credentials' ? (
-                  <p className='rounded-md border bg-muted/30 px-3 py-3 text-sm text-muted-foreground'>
-                    No cloud account is registered yet.{' '}
-                    <Link
-                      to={organisationPath('/cloud-accounts')}
-                      className='font-medium text-foreground underline'
-                    >
-                      Add one on the Cloud accounts page
-                    </Link>{' '}
-                    to run a deployment in your own cloud.
-                  </p>
-                ) : (
-                  customerCloud
-                ))}
-            </Section>
-
             <Section title='Plan'>
               <PlanPicker
                 selection={selection}
                 onSelect={(next) => commit({ plan: next })}
                 movedNotice={movedToBusiness ? STARTER_MOVED_NOTICE : undefined}
+                closedPlans={closedPlans}
               />
             </Section>
 
             <Section title='Expected volume'>
               <VolumePicker
-                hosting={hosting}
-                engine={kind}
+                hosting='managed'
+                engine='ferriskey'
                 volume={volume}
                 onChange={(next) => commit({ volume: next })}
               />
@@ -248,15 +169,23 @@ export default function PageCreateDeployment({
           </>
         )}
 
-        {!offersLoading && offers.length === 0 && (
+        {!releasesLoading && version === '' && (
+          <p className='rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200'>
+            No version of FerrisKey is available yet, so there is nothing to create. Someone
+            operating the platform publishes one and makes it available.
+          </p>
+        )}
+
+        {!offersLoading && open.length === 0 && (
           <p className='rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive'>
             This organisation's plan opens no offer, so there is nothing to deploy on.
           </p>
         )}
 
-        {resolved.because && (
+        {derivedClosed && (
           <p className='rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200'>
-            {resolved.because}
+            {OFFER_COPY[derived].label} fits this choice, but it is not available on your plan.
+            Choose another plan or volume.
           </p>
         )}
 
@@ -273,7 +202,7 @@ export default function PageCreateDeployment({
               <span className='text-xl font-semibold'>{FREE_OFFER_COPY.price}</span>
             </div>
           ) : (
-            <PriceSummary hosting={hosting} price={price} clusterEstimate={clusterEstimate} />
+            <PriceSummary hosting='managed' price={price} />
           )}
           <div className='flex items-center justify-end gap-2'>
             <Button

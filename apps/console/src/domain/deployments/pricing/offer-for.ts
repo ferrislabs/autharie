@@ -1,5 +1,6 @@
-import { firstOpen, OFFER_COPY, whyClosed, type Offer, type OfferAvailability } from '../offers'
+import type { Offer, OfferAvailability } from '../offers'
 import type { PlanId } from './model'
+import { STARTER_MAX_VOLUME, VOLUMES } from './model'
 
 /*
  * Which platform offer a plan and an expected volume start on. This is a product
@@ -21,23 +22,21 @@ export function offerFor(plan: PlanId, volume: number | null): Offer {
   return 'scale'
 }
 
-export interface ResolvedOffer {
-  offer: Offer | undefined
-  because?: string
+export function isOpen(offer: Offer, catalogue: OfferAvailability[]): boolean {
+  return catalogue.some((entry) => entry.offer === offer && entry.open)
 }
 
-export function resolveOffer(derived: Offer, catalogue: OfferAvailability[]): ResolvedOffer {
-  const open = (offer: Offer) => catalogue.find((entry) => entry.offer === offer)?.open === true
+export function offersOfPlan(plan: PlanId): Offer[] {
+  const volumes = plan === 'starter' ? VOLUMES.filter((v) => v <= STARTER_MAX_VOLUME) : VOLUMES
+  return [...new Set(volumes.map((volume) => offerFor(plan, volume)))]
+}
 
-  if (open(derived)) return { offer: derived }
+export function planIsOpen(plan: PlanId, catalogue: OfferAvailability[]): boolean {
+  return offersOfPlan(plan).some((offer) => isOpen(offer, catalogue))
+}
 
-  const fallback = firstOpen(catalogue)
-  const closed = catalogue.find((entry) => entry.offer === derived)
-  if (!fallback) return { offer: undefined }
+const PLAN_PREFERENCE: PlanId[] = ['business', 'starter', 'scale']
 
-  const reason = closed ? (whyClosed(closed) ?? '') : 'The platform does not offer it.'
-  return {
-    offer: fallback,
-    because: `${OFFER_COPY[derived].label} fits this choice, but it is closed. ${reason} ${OFFER_COPY[fallback].label} is selected instead.`,
-  }
+export function firstOpenPlan(catalogue: OfferAvailability[]): PlanId | undefined {
+  return PLAN_PREFERENCE.find((plan) => planIsOpen(plan, catalogue))
 }

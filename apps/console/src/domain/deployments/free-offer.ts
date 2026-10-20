@@ -1,4 +1,4 @@
-import { OFFER_COPY, whyClosed, type OfferAvailability } from './offers'
+import { openOffers, type OfferAvailability } from './offers'
 
 export const FREE_OFFER = 'free' as const
 
@@ -9,23 +9,7 @@ export const FREE_OFFER_COPY = {
   price: 'Free',
 }
 
-export interface LockedOffer {
-  label: string
-  description: string
-  reason: string
-}
-
 export function isFreeOnly(catalogue: OfferAvailability[]): boolean {
-  const open = catalogue.filter((entry) => entry.open)
+  const open = openOffers(catalogue)
   return open.length === 1 && open[0].offer === FREE_OFFER
-}
-
-export function lockedOffers(catalogue: OfferAvailability[]): LockedOffer[] {
-  return catalogue
-    .filter((entry) => !entry.open)
-    .map((entry) => ({
-      label: OFFER_COPY[entry.offer].label,
-      description: OFFER_COPY[entry.offer].description,
-      reason: whyClosed(entry) ?? '',
-    }))
 }

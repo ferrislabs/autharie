@@ -34,26 +34,6 @@ export const OFFER_COPY: Record<Offer, { label: string; description: string }> =
   },
 }
 
-/** The tier as the platform names it, rendered as a reader expects it. */
-function tierName(plan: string): string {
-  return plan.charAt(0).toUpperCase() + plan.slice(1).toLowerCase()
-}
-
-/**
- * Why an offer cannot be chosen, said as the next step rather than as a
- * refusal.
- *
- * `null` when it can. Hiding a closed offer makes an upsell invisible; showing
- * it without saying what opens it makes the reader guess between four tiers.
- */
-export function whyClosed(entry: OfferAvailability): string | null {
-  if (entry.open) return null
-
-  const tier = entry.opened_by ? tierName(entry.opened_by) : undefined
-
-  return tier ? `Available from the ${tier} plan.` : 'Not available on your plan.'
-}
-
 /** What an offer gives, in one line. */
 export function describeResources(entry: OfferAvailability): string {
   const { cpu_millis, memory_mib, storage_gib } = entry.resources
@@ -69,16 +49,8 @@ function formatMemory(mib: number): string {
   return mib >= 1024 ? `${mib / 1024} Gi RAM` : `${mib} Mi RAM`
 }
 
-/**
- * Which offer a form should start on.
- *
- * The first one the organisation may actually choose, so a customer whose tier
- * opens two of four does not open the page on a disabled card. `undefined`
- * when the tier opens nothing, which is a state the screen has to say out loud
- * rather than present as an empty form.
- */
-export function firstOpen(catalogue: OfferAvailability[]): Offer | undefined {
-  return catalogue.find((entry) => entry.open)?.offer
+export function openOffers(catalogue: OfferAvailability[]): OfferAvailability[] {
+  return catalogue.filter((entry) => entry.open)
 }
 
 /**

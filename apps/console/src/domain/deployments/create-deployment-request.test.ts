@@ -5,7 +5,6 @@ import { toCreateDeploymentRequest } from './create-deployment-request'
 function form(overrides: Partial<CreateDeploymentForm> = {}): CreateDeploymentForm {
   return {
     name: 'acme api',
-    kind: 'ferriskey',
     version: '0.5.0',
     environment: 'production',
     offer: 'standard',
@@ -43,41 +42,12 @@ describe('what the form sends', () => {
     expect(toCreateDeploymentRequest(form())).not.toHaveProperty('region')
   })
 
-  it('sends the customer cloud distribution with the exact profile', () => {
-    const request = toCreateDeploymentRequest(
-      form({
-        distribution: {
-          type: 'customer_cloud',
-          credential_id: 'cred-1',
-          region: 'fr-par',
-          profile: {
-            mode: 'standard',
-            control_plane_id: 'mutualized',
-            node_type: 'DEV1-M',
-            min_nodes: 2,
-            max_nodes: 4,
-            replication: 2,
-          },
-        },
-      }),
-    )
-
-    expect(JSON.parse(JSON.stringify(request.distribution))).toEqual({
-      type: 'customer_cloud',
-      credential_id: 'cred-1',
-      region: 'fr-par',
-      profile: {
-        mode: 'standard',
-        control_plane_id: 'mutualized',
-        node_type: 'DEV1-M',
-        min_nodes: 2,
-        max_nodes: 4,
-        replication: 2,
-      },
-    })
+  it('sends no distribution, so the deployment stays on the shared platform', () => {
+    expect(toCreateDeploymentRequest(form())).not.toHaveProperty('distribution')
   })
 
-  it('sends no distribution when the deployment stays on the shared platform', () => {
-    expect(toCreateDeploymentRequest(form())).not.toHaveProperty('distribution')
+  it('is always FerrisKey', () => {
+    expect(toCreateDeploymentRequest(form()).kind).toBe('ferriskey')
+    expect(toCreateDeploymentRequest(form({ offer: 'free' })).kind).toBe('ferriskey')
   })
 })
