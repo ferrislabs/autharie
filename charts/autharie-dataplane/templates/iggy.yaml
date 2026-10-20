@@ -1,0 +1,160 @@
+{{- $fullname := include "autharie-dataplane.fullname" . }}
+{{- $bundled := and .Values.iggy.enabled (not .Values.iggy.externalUrl) }}
+# The connection string Herald and Genesis read, and the password the bundled
+# broker starts with. A Secret rather than plain env: the bootstrapper mints a
+# password per data plane, and a pod spec is readable by far more people than
+# a Secret is.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $fullname }}-iggy
+  labels:
+    {{- include "autharie-dataplane.labels" . | nindent 4 }}
+    app.kubernetes.io/component: iggy
+type: Opaque
+stringData:
+  url: {{ include "autharie-dataplane.iggyUrl" . | quote }}
+  {{- if $bundled }}
+  password: {{ .Values.iggy.auth.password | quote }}
+  {{- end }}
+{{- if $bundled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-iggy
+  labels:
+    {{- include "autharie-dataplane.labels" . | nindent 4 }}
+    app.kubernetes.io/component: iggy
+spec:
+  ports:
+    - name: tcp
+      port: 8090
+      targetPort: 8090
+  selector:
+    app.kubernetes.io/name: {{ include "autharie-dataplane.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: iggy
+{{- if .Values.iggy.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $fullname }}-iggy
+  labels:
+    {{- include "autharie-dataplane.labels" . | nindent 4 }}
+    app.kubernetes.io/component: iggy
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- with .Values.iggy.persistence.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.iggy.persistence.size }}
+{{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-iggy
+  labels:
+    {{- include "autharie-dataplane.labels" . | nindent 4 }}
+    app.kubernetes.io/component: iggy
+spec:
+  replicas: 1
+  # One writer per volume: a rolling update would start the new broker while
+  # the old one still holds the data directory.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "autharie-dataplane.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: iggy
+  template:
+    metadata:
+      labels:
+        {{- include "autharie-dataplane.labels" . | nindent 8 }}
+        app.kubernetes.io/component: iggy
+      annotations:
+        # The password is read on first start only, but a changed connection
+        # string still has to reach the clients; restart alongside them.
+        checksum/secret: {{ include "autharie-dataplane.iggyUrl" . | sha256sum }}
+    spec:
+      # Iggy does its I/O through io_uring, which the container runtime's
+      # default seccomp profile refuses: the broker exits at startup with
+      # "Cannot create server bootstrap executor: Operation not permitted".
+      # Unconfined is the narrowest setting that lets it run; it applies to
+      # this pod only.
+      securityContext:
+        seccompProfile:
+          type: Unconfined
+      containers:
+        - name: iggy
+          image: {{ .Values.iggy.image | quote }}
+          env:
+            - name: IGGY_ROOT_USERNAME
+              value: {{ .Values.iggy.auth.username | quote }}
+            - name: IGGY_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $fullname }}-iggy
+                  key: password
+            - name: IGGY_PATH
+              value: /data
+            # Every interface, so the Service reaches it; the address it tells
+            # clients is the Service's.
+            - name: IGGY_TCP_ADDRESS
+              value: "0.0.0.0:8090"
+            - name: IGGY_NODE_ADVERTISED_ADDRESS
+              value: {{ printf "%s-iggy" $fullname | quote }}
+            # TCP is the only transport Herald and Genesis use.
+            - name: IGGY_HTTP_ENABLED
+              value: "false"
+            - name: IGGY_QUIC_ENABLED
+              value: "false"
+            - name: IGGY_WEBSOCKET_ENABLED
+              value: "false"
+            # One shard, not pinned. The default is a shard per core, each
+            # bound to its NUMA node, which fails inside a container and is
+            # far past a few messages a minute.
+            - name: IGGY_SHARDING_CPU_ALLOCATION
+              value: "1"
+            - name: IGGY_SHARDING_PIN_CORES
+              value: "false"
+            # The pool reserves up to 4 GiB as load grows; at this volume it
+            # would only ever push the pod into its memory limit.
+            - name: IGGY_MEMORY_POOL_ENABLED
+              value: "false"
+            # Logs go to stdout, where every other component's go. The default
+            # also writes up to 4 GB of them onto the data volume.
+            - name: IGGY_LOGGING_FILE_ENABLED
+              value: "false"
+          ports:
+            - name: tcp
+              containerPort: 8090
+          readinessProbe:
+            tcpSocket:
+              port: tcp
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: tcp
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            {{- toYaml .Values.iggy.resources | nindent 12 }}
+      volumes:
+        - name: data
+          {{- if .Values.iggy.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ $fullname }}-iggy
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- end }}

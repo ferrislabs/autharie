@@ -18,6 +18,9 @@ spec:
       labels:
         {{- include "autharie-dataplane.labels" . | nindent 8 }}
         app.kubernetes.io/component: genesis
+      annotations:
+        # It reads the broker connection string once, at startup.
+        checksum/iggy: {{ include "autharie-dataplane.iggyUrl" . | sha256sum }}
     spec:
       # Genesis applies IdentityInstance resources, so it needs the same
       # cluster access the operator has. It writes the custom resource; the
@@ -28,10 +31,13 @@ spec:
           image: {{ include "autharie-dataplane.image" (dict "root" . "component" "genesis") }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
-            - name: AMQP_URL
-              value: {{ include "autharie-dataplane.amqpUrl" . | quote }}
-            - name: AMQP_QUEUE
-              value: {{ .Values.genesis.queue | quote }}
+            - name: IGGY_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "autharie-dataplane.fullname" . }}-iggy
+                  key: url
+            - name: IGGY_CONSUMER
+              value: {{ .Values.genesis.consumer | quote }}
             {{- with .Values.genesis.tenantZone }}
             # The zone pooled tenants are served under. Unset, every realm
             # action is refused rather than trusting the hostname a payload

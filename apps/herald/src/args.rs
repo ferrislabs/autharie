@@ -10,7 +10,7 @@ pub struct Args {
     pub(crate) control_plane: ControlPlaneArgs,
 
     #[command(flatten)]
-    pub(crate) amqp: AmqpArgs,
+    pub(crate) bus: BusArgs,
 
     #[arg(
         long = "dataplane-id",
@@ -261,19 +261,11 @@ pub struct ControlPlaneArgs {
 }
 
 #[derive(clap::Args, Debug, Clone)]
-pub struct AmqpArgs {
+pub struct BusArgs {
     #[arg(
-        long = "amqp-url",
-        env = "AMQP_URL",
-        help = "AMQP connection URL, e.g. amqp://guest:guest@localhost:5672/%2f"
+        long = "iggy-url",
+        env = "IGGY_URL",
+        help = "Iggy connection string, e.g. iggy://user:password@localhost:8090"
     )]
-    pub amqp_url: String,
-
-    #[arg(
-        long = "amqp-exchange",
-        env = "AMQP_EXCHANGE",
-        default_value = "autharie.actions",
-        help = "Durable topic exchange actions are published to"
-    )]
-    pub amqp_exchange: String,
+    pub iggy_url: String,
 }

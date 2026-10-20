@@ -1,158 +1,150 @@
-use autharie_amqp::{Link, Live};
-use lapin::options::{
-    BasicAckOptions, BasicGetOptions, ExchangeDeclareOptions, QueueBindOptions, QueueDeclareOptions,
+use autharie_iggy::iggy::prelude::{
+    Consumer, ConsumerOffsetClient, Identifier, IggyClient, MessageClient, PollingStrategy,
 };
-use lapin::types::FieldTable;
-use lapin::{Channel, ExchangeKind};
+use autharie_iggy::{OUTCOMES_TOPIC, PARTITION, STREAM, bounded, named};
 use serde_json::from_slice;
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::domain::entities::outcome::DeploymentOutcomeReport;
 use crate::domain::error::HeraldError;
 use crate::domain::ports::OutcomeInboxRepository;
 
-/// Bound outside the `deployment.#` namespace Genesis consumes, so the two
-/// directions of traffic cannot feed each other on the same exchange.
-const OUTCOME_BINDING_KEY: &str = "outcome.#";
-
-pub struct RabbitMqOutcomeInbox {
-    // A link rather than a channel, for the reason the publisher holds one:
-    // lapin does not reconnect, and a channel kept from startup stops working
-    // the moment the broker restarts or drops an idle connection.
-    link: Link,
-    exchange: String,
-    queue: String,
+/// Reads what Genesis published on the outcomes topic.
+///
+/// Each Herald reads under a consumer name of its own, so every one of them
+/// sees every outcome -- what the queue per shard bound to `outcome.#` did on
+/// RabbitMQ -- and the broker remembers how far each one got.
+pub struct IggyOutcomeInbox {
+    // One client for the life of the process: it reconnects and signs in
+    // again on its own when the broker restarts or drops the connection.
+    client: IggyClient,
+    consumer: Consumer,
 }
 
-impl RabbitMqOutcomeInbox {
-    pub async fn connect(
-        amqp_url: &str,
-        exchange: &str,
-        queue: impl Into<String>,
-    ) -> Result<Self, HeraldError> {
-        let inbox = Self {
-            link: Link::to(amqp_url),
-            exchange: exchange.to_string(),
-            queue: queue.into(),
-        };
+impl IggyOutcomeInbox {
+    /// Connects, declares the outcomes topic, and places a consumer reading
+    /// for the first time at the end of what is already there.
+    ///
+    /// At the end rather than the start because that is what a queue does: it
+    /// receives what is published after it exists. Starting at the beginning
+    /// would replay a week of outcomes -- statuses long since superseded -- on
+    /// the first start of every new shard.
+    pub async fn connect(url: &str, consumer: &str) -> Result<Self, HeraldError> {
+        let client = autharie_iggy::connect_with_retry(url, autharie_iggy::DEFAULT_BUDGET)
+            .await
+            .map_err(|err| HeraldError::MessageBus {
+                message: format!("failed to reach the broker: {err}"),
+            })?;
 
-        // Connected here rather than lazily so a broker that is unreachable at
-        // startup still fails the pod.
-        inbox.channel().await?;
+        autharie_iggy::ensure_topic(&client, OUTCOMES_TOPIC)
+            .await
+            .map_err(|err| HeraldError::MessageBus {
+                message: format!("failed to declare the '{OUTCOMES_TOPIC}' topic: {err}"),
+            })?;
+
+        let consumer =
+            Consumer::new(
+                Identifier::named(consumer).map_err(|err| HeraldError::MessageBus {
+                    message: format!("'{consumer}' cannot name a consumer: {err}"),
+                })?,
+            );
+
+        let inbox = Self { client, consumer };
+        inbox.start_at_the_end().await?;
 
         Ok(inbox)
     }
 
-    /// A channel with the exchange, the queue and the binding declared on it.
-    ///
-    /// All three whenever the channel is new: a fresh channel carries none of
-    /// the topology the old one had, and a `basic_get` against a queue this
-    /// connection never declared is the same `invalid channel state` in
-    /// another costume.
-    async fn channel(&self) -> Result<Channel, HeraldError> {
-        let live = self
-            .link
-            .channel()
+    async fn start_at_the_end(&self) -> Result<(), HeraldError> {
+        let stored = autharie_iggy::stored_offset(&self.client, &self.consumer, OUTCOMES_TOPIC)
             .await
-            .map_err(|err| HeraldError::MessageBus {
-                message: format!("failed to reach RabbitMQ: {err}"),
-            })?;
+            .map_err(bus_error)?;
 
-        if let Live::Existing(channel) = live {
-            return Ok(channel);
+        if stored.is_some() {
+            return Ok(());
         }
 
-        let channel = live.into_channel();
-
-        channel
-            .exchange_declare(
-                &self.exchange,
-                ExchangeKind::Topic,
-                ExchangeDeclareOptions {
-                    durable: true,
-                    ..Default::default()
-                },
-                FieldTable::default(),
-            )
+        // Nothing published yet: the first message to arrive is this
+        // consumer's first, so there is nothing to skip.
+        let Some(last) = autharie_iggy::last_offset(&self.client, OUTCOMES_TOPIC)
             .await
-            .map_err(|err| HeraldError::MessageBus {
-                message: format!("failed to declare exchange '{}': {err}", self.exchange),
-            })?;
+            .map_err(bus_error)?
+        else {
+            return Ok(());
+        };
 
-        // Durable, because an outcome lost to a restart is a deployment stuck
-        // in a transient state with nothing left to move it -- the exact bug
-        // this queue exists to fix.
-        channel
-            .queue_declare(
-                &self.queue,
-                QueueDeclareOptions {
-                    durable: true,
-                    ..Default::default()
-                },
-                FieldTable::default(),
-            )
-            .await
-            .map_err(|err| HeraldError::MessageBus {
-                message: format!("failed to declare queue '{}': {err}", self.queue),
-            })?;
+        bounded(
+            "an offset store",
+            self.client.store_consumer_offset(
+                &self.consumer,
+                &named(STREAM).map_err(bus_error)?,
+                &named(OUTCOMES_TOPIC).map_err(bus_error)?,
+                Some(PARTITION),
+                last,
+            ),
+        )
+        .await
+        .map_err(bus_error)?;
 
-        channel
-            .queue_bind(
-                &self.queue,
-                &self.exchange,
-                OUTCOME_BINDING_KEY,
-                QueueBindOptions::default(),
-                FieldTable::default(),
-            )
-            .await
-            .map_err(|err| HeraldError::MessageBus {
-                message: format!("failed to bind queue '{}': {err}", self.queue),
-            })?;
+        info!(
+            skipped_through = last,
+            "reading outcomes from the end of the topic"
+        );
 
-        Ok(channel)
+        Ok(())
     }
 }
 
-impl OutcomeInboxRepository for RabbitMqOutcomeInbox {
+impl OutcomeInboxRepository for IggyOutcomeInbox {
     async fn drain(&self, limit: usize) -> Result<Vec<DeploymentOutcomeReport>, HeraldError> {
-        let mut reports = Vec::new();
-        // Once per drain, not once per message: a channel that dies mid-drain
-        // fails the read, and the next tick re-establishes it.
-        let channel = self.channel().await?;
+        let count = u32::try_from(limit).unwrap_or(u32::MAX);
+        if count == 0 {
+            return Ok(Vec::new());
+        }
 
-        for _ in 0..limit {
-            let delivery = channel
-                .basic_get(&self.queue, BasicGetOptions { no_ack: false })
-                .await
-                .map_err(|err| HeraldError::MessageBus {
-                    message: format!("failed to read the outcome queue: {err}"),
-                })?;
+        // Committed as it is read, deliberately. The alternative is holding
+        // the offset until the control plane confirms, which turns one
+        // unreachable control plane into a topic that never drains. A lost
+        // report costs a status that stays stale; a stuck inbox costs every
+        // report behind it.
+        let polled = bounded(
+            "a poll",
+            self.client.poll_messages(
+                &named(STREAM).map_err(bus_error)?,
+                &named(OUTCOMES_TOPIC).map_err(bus_error)?,
+                Some(PARTITION),
+                &self.consumer,
+                &PollingStrategy::next(),
+                count,
+                true,
+            ),
+        )
+        .await
+        .map_err(|err| HeraldError::MessageBus {
+            message: format!("failed to read the outcomes topic: {err}"),
+        })?;
 
-            let Some(delivery) = delivery else {
-                break;
-            };
+        let mut reports = Vec::with_capacity(polled.messages.len());
 
-            match from_slice::<DeploymentOutcomeReport>(&delivery.data) {
-                Ok(report) => {
-                    // Acked before it is reported, deliberately. The
-                    // alternative is holding the message until the control
-                    // plane confirms, which turns one unreachable control plane
-                    // into a queue that never drains. A lost report costs a
-                    // status that stays stale; a stuck queue costs every report
-                    // behind it.
-                    delivery.ack(BasicAckOptions::default()).await.ok();
-                    reports.push(report);
-                }
-                Err(err) => {
-                    // Dropped, not requeued: a message this Herald cannot parse
-                    // will not parse on the next attempt either, and requeueing
-                    // it is the hot loop this project has already met once.
-                    warn!(%err, "discarding an unreadable outcome");
-                    delivery.ack(BasicAckOptions::default()).await.ok();
-                }
+        for message in polled.messages {
+            match from_slice::<DeploymentOutcomeReport>(&message.payload) {
+                Ok(report) => reports.push(report),
+                // Skipped, not retried: a message this Herald cannot parse
+                // will not parse on the next attempt either.
+                Err(err) => warn!(
+                    %err,
+                    offset = message.header.offset,
+                    "discarding an unreadable outcome"
+                ),
             }
         }
 
         Ok(reports)
+    }
+}
+
+fn bus_error(err: autharie_iggy::Error) -> HeraldError {
+    HeraldError::MessageBus {
+        message: err.to_string(),
     }
 }

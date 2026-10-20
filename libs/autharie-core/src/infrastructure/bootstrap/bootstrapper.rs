@@ -148,7 +148,7 @@ pub(crate) fn values(
     config: &HelmConfig,
     id: DataPlaneId,
     minted: &MintedHeraldIdentity,
-    rabbitmq_password: &str,
+    broker_password: &str,
 ) -> Value {
     let mut values = json!({
         "dataplane": { "id": id.0.to_string() },
@@ -160,7 +160,7 @@ pub(crate) fn values(
                 "clientSecret": minted.secret,
             },
         },
-        "rabbitmq": { "auth": { "password": rabbitmq_password } },
+        "iggy": { "auth": { "password": broker_password } },
     });
 
     if let Some(registry) = &config.image_registry {

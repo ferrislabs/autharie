@@ -24,7 +24,7 @@ use genesis_core::domain::entities::dataplane_upgrade_payload::{
     DataplaneUpgradePayloadV1, UpgradeComponent as GenesisComponent,
     UpgradeStrategy as GenesisStrategy,
 };
-use genesis_core::infrastructure::rabbitmq::consumer::is_bound;
+use genesis_core::infrastructure::message_bus::consumer::is_bound;
 use proptest::prelude::*;
 use uuid::Uuid;
 

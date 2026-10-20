@@ -18,10 +18,9 @@ use genesis_core::infrastructure::kubernetes::identity_instance::KubeIdentityIns
 use genesis_core::infrastructure::kubernetes::identity_instance_upgrade::KubeIdentityInstanceUpgradePort;
 use genesis_core::infrastructure::kubernetes::status_watcher::IdentityInstanceStatusWatcher;
 use genesis_core::infrastructure::kubernetes::tenant_route::KubeTenantRoutes;
+use genesis_core::infrastructure::message_bus::consumer::IggyConsumer;
+use genesis_core::infrastructure::message_bus::outcome_publisher::IggyOutcomePublisher;
 use genesis_core::infrastructure::postgres::database_probe::SqlxDatabaseProbe;
-use genesis_core::infrastructure::rabbitmq::consumer::ACTIONS_EXCHANGE;
-use genesis_core::infrastructure::rabbitmq::consumer::RabbitMqConsumer;
-use genesis_core::infrastructure::rabbitmq::outcome_publisher::RabbitMqOutcomePublisher;
 use kube::Client;
 use std::sync::Arc;
 use tracing::info;
@@ -57,10 +56,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
 
     let args = Args::parse();
-    let queue = args.amqp.amqp_queue.clone();
-    let amqp_url = args.amqp.amqp_url.clone();
+    let consumer_name = args.bus.iggy_consumer.clone();
+    let iggy_url = args.bus.iggy_url.clone();
 
-    info!(%amqp_url, %queue, "starting genesis");
+    // Not the URL: it carries the broker password.
+    info!(consumer = %consumer_name, "starting genesis");
 
     let kube = Client::try_default().await?;
     let identity_instances: Arc<dyn IdentityInstancePort> =
@@ -78,7 +78,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // its channel for the lifetime of the run loop, and threading a publisher
     // through it would couple two things that fail independently.
     let outcomes: Arc<dyn OutcomePublisher> =
-        Arc::new(RabbitMqOutcomePublisher::connect(&amqp_url, ACTIONS_EXCHANGE).await?);
+        Arc::new(IggyOutcomePublisher::connect(&iggy_url).await?);
     let database: Arc<dyn DatabaseProbe> = Arc::new(SqlxDatabaseProbe);
 
     let handlers: Vec<Arc<dyn EventHandler>> = vec![
@@ -123,7 +123,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ];
 
     let dispatcher = Arc::new(EventDispatcher::new(handlers));
-    let consumer = RabbitMqConsumer::new(amqp_url, queue, dispatcher);
+    let consumer = IggyConsumer::new(iggy_url, consumer_name, dispatcher);
 
     // Watching what the operator decided is the other half of Genesis's job,
     // and it is independent of the queue: a broker outage must not stop status

@@ -25,15 +25,16 @@ app.kubernetes.io/part-of: autharie
 {{- end }}
 
 {{/*
-The broker URL every component talks to. An external broker wins over the
-in-chart one, so pointing at a real cluster does not require disabling
-anything twice.
+The broker connection string every component talks to. An external broker
+wins over the in-chart one, so pointing at a real one does not require
+disabling anything twice. It carries the password, so it only ever goes into
+the Secret, never into a pod spec.
 */}}
-{{- define "autharie-dataplane.amqpUrl" -}}
-{{- if .Values.rabbitmq.externalUrl -}}
-{{ .Values.rabbitmq.externalUrl }}
+{{- define "autharie-dataplane.iggyUrl" -}}
+{{- if .Values.iggy.externalUrl -}}
+{{ .Values.iggy.externalUrl }}
 {{- else -}}
-{{ printf "amqp://%s:%s@%s-rabbitmq:5672" .Values.rabbitmq.auth.username .Values.rabbitmq.auth.password (include "autharie-dataplane.fullname" .) }}
+{{ printf "iggy://%s:%s@%s-iggy:8090" .Values.iggy.auth.username .Values.iggy.auth.password (include "autharie-dataplane.fullname" .) }}
 {{- end -}}
 {{- end }}
 

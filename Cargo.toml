@@ -10,7 +10,7 @@ members = [
     "libs/autharie-permission",
     "libs/autharie-operator-core",
     "libs/autharie-crds",
-    "libs/autharie-amqp",
+    "libs/autharie-iggy",
     "libs/autharie-macros", "libs/herald-core", "libs/autharie-persistence",
     "libs/autharie-s3",
     "libs/autharie-transit", "libs/autharie-postgres", "libs/autharie-domain", "apps/aegis", "libs/aegis-core", "apps/genesis", "libs/genesis-core", "apps/herald",

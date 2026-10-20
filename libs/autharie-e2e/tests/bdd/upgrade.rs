@@ -180,9 +180,7 @@ fn reconciles(world: &mut UpgradeWorld) {
 
 #[cucumber::when(expr = "Genesis' queue is asked about the routing key {string}")]
 fn asked_about(world: &mut UpgradeWorld, key: String) {
-    world.bound = Some(genesis_core::infrastructure::rabbitmq::consumer::is_bound(
-        &key,
-    ));
+    world.bound = Some(genesis_core::infrastructure::message_bus::consumer::is_bound(&key));
 }
 
 #[cucumber::then("the control plane accepts the request")]

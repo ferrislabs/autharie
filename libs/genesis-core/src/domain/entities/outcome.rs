@@ -15,7 +15,7 @@ use crate::domain::entities::tenant_access::InitialAdministrator;
 /// something would trust the wrong one.
 ///
 /// Published to the broker rather than sent to the control plane directly, and
-/// that is the point: Genesis holds AMQP credentials and Herald holds control
+/// that is the point: Genesis holds broker credentials and Herald holds control
 /// plane credentials, and this keeps it that way. Reporting directly would
 /// mean a second component learning how to authenticate against the control
 /// plane, and duplicating the token refresh that already lives in Herald.

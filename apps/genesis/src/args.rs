@@ -32,7 +32,7 @@ impl Display for Environment {
 #[command(about, version)]
 pub struct Args {
     #[command(flatten)]
-    pub(crate) amqp: AmqpArgs,
+    pub(crate) bus: BusArgs,
 
     #[arg(
         long = "tenant-zone",
@@ -44,31 +44,31 @@ pub struct Args {
 }
 
 #[derive(clap::Args, Debug, Clone)]
-pub struct AmqpArgs {
+pub struct BusArgs {
     #[arg(
-        long = "amqp-url",
-        env = "AMQP_URL",
-        default_value = "amqp://autharie:autharie@localhost:5672",
-        name = "AMQP URL",
-        help = "The AMQP URL for connecting to RabbitMQ (e.g. amqp://user:pass@host:port)"
+        long = "iggy-url",
+        env = "IGGY_URL",
+        default_value = "iggy://autharie:autharie@localhost:8090",
+        name = "Iggy URL",
+        help = "The Iggy connection string (e.g. iggy://user:password@host:port)"
     )]
-    pub amqp_url: String,
+    pub iggy_url: String,
 
     #[arg(
-        long = "amqp-queue",
-        env = "AMQP_QUEUE",
-        default_value = "genesis.actions",
-        name = "AMQP Queue",
-        help = "The name of the AMQP queue to consume from"
+        long = "iggy-consumer",
+        env = "IGGY_CONSUMER",
+        default_value = "genesis",
+        name = "Iggy consumer",
+        help = "The name Genesis reads the actions topic under; the broker keeps its offset by this name"
     )]
-    pub amqp_queue: String,
+    pub iggy_consumer: String,
 }
 
-impl Default for AmqpArgs {
+impl Default for BusArgs {
     fn default() -> Self {
         Self {
-            amqp_url: "amqp://autharie:autharie@localhost:5672".into(),
-            amqp_queue: "genesis.actions".into(),
+            iggy_url: "iggy://autharie:autharie@localhost:8090".into(),
+            iggy_consumer: "genesis".into(),
         }
     }
 }

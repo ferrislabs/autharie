@@ -180,7 +180,7 @@ async fn the_secret_is_in_the_values_file_and_not_on_the_command_line() {
     let values: serde_json::Value =
         serde_json::from_str(seen.last().unwrap().values.as_ref().unwrap()).unwrap();
     assert_eq!(values["controlPlane"]["auth"]["clientSecret"], SECRET);
-    let password = values["rabbitmq"]["auth"]["password"].as_str().unwrap();
+    let password = values["iggy"]["auth"]["password"].as_str().unwrap();
     assert!(password.len() >= 32);
     assert_ne!(password, "autharie");
     for call in seen.iter() {
@@ -197,7 +197,7 @@ async fn the_secret_is_in_the_values_file_and_not_on_the_command_line() {
 }
 
 #[tokio::test]
-async fn each_install_gets_its_own_rabbitmq_password() {
+async fn each_install_gets_its_own_broker_password() {
     let mut passwords = Vec::new();
     for _ in 0..2 {
         let identities = Identities::new();
@@ -209,7 +209,7 @@ async fn each_install_gets_its_own_rabbitmq_password() {
             .unwrap();
         let values: serde_json::Value =
             serde_json::from_str(chart_call(&runner).values.as_ref().unwrap()).unwrap();
-        passwords.push(values["rabbitmq"]["auth"]["password"].to_string());
+        passwords.push(values["iggy"]["auth"]["password"].to_string());
     }
 
     assert_ne!(passwords[0], passwords[1]);
@@ -335,12 +335,12 @@ async fn an_error_never_echoes_the_generated_password() {
             let values = args.windows(2).find(|w| w[0] == "--values").unwrap();
             let content = std::fs::read_to_string(&values[1]).unwrap();
             let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
-            match parsed["rabbitmq"]["auth"]["password"].as_str() {
+            match parsed["iggy"]["auth"]["password"].as_str() {
                 Some(password) => {
                     *self.0.lock().unwrap() = Some(password.to_string());
                     Ok(HelmOutcome {
                         code: Some(1),
-                        last_line: format!("Error: amqp://u:{password}@host"),
+                        last_line: format!("Error: iggy://u:{password}@host"),
                     })
                 }
                 None => Ok(HelmOutcome {

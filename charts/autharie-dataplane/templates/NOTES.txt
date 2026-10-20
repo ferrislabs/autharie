@@ -11,14 +11,13 @@ Check that Herald is reaching the control plane:
 A data plane only becomes selectable for new deployments once its first
 heartbeat lands. Until then the control plane reports it as never seen, and
 placement skips it.
-On a fresh install, Herald and Genesis restart a few times before settling:
-neither retries its first connection to the broker, so both exit while RabbitMQ
-is still starting and Kubernetes restarts them until it answers. Expect a
-minute of CrashLoopBackOff on a cold cluster; it is not a broken install.
-{{- if and .Values.rabbitmq.enabled (not .Values.rabbitmq.externalUrl) }}
+On a fresh install, Herald and Genesis wait up to two minutes for the broker
+to answer before giving up, so a cold cluster settles without restarts. A pod
+that does restart after that wait is a broker it cannot reach, not a slow one.
+{{- if and .Values.iggy.enabled (not .Values.iggy.externalUrl) (not .Values.iggy.persistence.enabled) }}
 
-The bundled RabbitMQ has no persistence: queued actions are lost when its pod
-restarts. Set rabbitmq.externalUrl for anything beyond a local cluster.
+The bundled Iggy has no volume: every message still waiting is lost when its
+pod restarts. Turn iggy.persistence on for anything beyond a throwaway cluster.
 {{- end }}
 
 {{- $gateway := .Values.gateway | default dict }}
