@@ -206,19 +206,18 @@ impl DesiredIdentityInstance {
             replicas,
             pooled_cell: payload.pooled_cell,
             placement: payload.database,
-            archive: payload
-                .archive
-                .as_ref()
-                .filter(|_| payload.database == DatabasePlacement::Managed)
-                .map(|archive| DesiredArchive {
-                    destination_path: archive.destination_path.clone(),
-                    encryption: archive.encryption.clone(),
-                    schedule: DesiredArchiveSchedule {
-                        cron: archive.schedule.cron.clone(),
-                        zone: archive.schedule.zone.clone(),
-                        enabled: archive.schedule.enabled,
-                    },
-                }),
+            // Kept for a shared database too. There it is not a base backup
+            // destination: the operator reads it as where the daily dump goes,
+            // and creates no CloudNativePG backup object from it.
+            archive: payload.archive.as_ref().map(|archive| DesiredArchive {
+                destination_path: archive.destination_path.clone(),
+                encryption: archive.encryption.clone(),
+                schedule: DesiredArchiveSchedule {
+                    cron: archive.schedule.cron.clone(),
+                    zone: archive.schedule.zone.clone(),
+                    enabled: archive.schedule.enabled,
+                },
+            }),
             restore: payload.restore.as_ref().map(|restore| DesiredRestore {
                 destination_path: restore.destination_path.clone(),
                 server_name: restore.server_name.clone(),
@@ -274,7 +273,7 @@ mod tests {
     }
 
     #[test]
-    fn a_shared_database_has_no_base_backup_archive() {
+    fn a_shared_database_keeps_the_destination_its_dumps_are_written_to() {
         let mut shared = payload();
         shared.database = DatabasePlacement::Shared;
         shared.archive = Some(ArchivePayloadV1 {
@@ -287,11 +286,12 @@ mod tests {
             },
         });
 
-        assert!(
+        assert_eq!(
             DesiredIdentityInstance::from_payload(&shared)
                 .unwrap()
                 .archive
-                .is_none()
+                .map(|archive| archive.destination_path),
+            Some("s3://bucket/org/dep".to_string())
         );
 
         shared.database = DatabasePlacement::Managed;

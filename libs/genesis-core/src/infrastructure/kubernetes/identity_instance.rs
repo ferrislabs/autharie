@@ -654,6 +654,22 @@ mod tests {
         assert_eq!(backup.encryption.as_deref(), Some("AES256"));
     }
 
+    #[test]
+    fn a_shared_instance_still_carries_the_destination_for_its_dumps() {
+        let shared = DesiredIdentityInstance {
+            placement: DatabasePlacement::Shared,
+            ..archiving()
+        };
+
+        let spec = to_identity_instance(&shared).spec;
+
+        assert_eq!(spec.database.mode, DatabaseMode::Shared);
+        assert_eq!(
+            spec.backup.expect("dumps go somewhere").destination_path,
+            "s3://autharie-backups/an-org/a-deployment"
+        );
+    }
+
     /// Absent, not empty. An empty `barmanObjectStore` is a destination of "",
     /// which CloudNativePG accepts and then fails on at archive time.
     #[test]
