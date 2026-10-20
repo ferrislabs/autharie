@@ -17,8 +17,7 @@ serde_json = "1.0.145"
 thiserror = "2.0.17"
 uuid = { version = "1.19.0", features = ["serde", "v4"] }
 reqwest = { version = "0.12.24", features = ["json"] }
-lapin = "2"
-autharie-amqp = { path = "../autharie-amqp" }
+autharie-iggy = { path = "../autharie-iggy" }
 tokio = { version = "1.49.0", features = ["sync", "rt", "time", "macros", "net"] }
 tracing = "0.1"
 futures = "0.3"

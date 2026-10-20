@@ -1,4 +1,4 @@
-.PHONY: help crds install-crds uninstall-crds verify-crds test test-objectstore test-keys build local-up local-down local-status local-hosts local-hosts-apply local-hosts-remove bootstrap-auth demo demo-down expose expose-down
+.PHONY: help crds install-crds uninstall-crds verify-crds test test-objectstore test-keys test-bus build local-up local-down local-status local-hosts local-hosts-apply local-hosts-remove bootstrap-auth demo demo-down expose expose-down
 
 help: ## Afficher l'aide
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -100,6 +100,16 @@ test-keys: ## Lancer les tests qui ont besoin d'un vrai gestionnaire de clefs
 	}
 	cargo test -p autharie-transit --test key_provider
 	cargo test -p autharie-api --test wrapping_key
+
+test-bus: ## Lancer les tests qui ont besoin d'un vrai Iggy
+	@test -n "$$IGGY_URL" || { \
+		echo "IGGY_URL n'est pas défini : les tests se skipperaient en silence."; \
+		echo "Voir .env.example — docker compose up -d iggy, puis iggy://autharie:autharie@localhost:8090."; \
+		exit 1; \
+	}
+	cargo test -p autharie-iggy --test broker
+	cargo test -p genesis-core --test message_bus
+	cargo test -p herald-core --test outcome_inbox
 
 test-integration: ## Lancer les tests qui ont besoin d'un vrai Postgres
 	@test -n "$$DATABASE_URL" || { \

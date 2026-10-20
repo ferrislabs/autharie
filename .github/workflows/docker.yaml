@@ -120,8 +120,8 @@ jobs:
           SQLX_OFFLINE: "true"
           REQUIRE_DATABASE_URL: "1"
 
-  # Same lesson as integration-postgres, for the object store and the key
-  # manager. These tests skip themselves when their endpoint is unset, so
+  # Same lesson as integration-postgres, for the object store, the key
+  # manager and the message bus. These tests skip themselves when their endpoint is unset, so
   # without service containers they would report success having exercised
   # nothing -- and what they cover is exactly what a mock cannot answer: path
   # style addressing, absence of a key, prefix listing, whether the store
@@ -149,12 +149,32 @@ jobs:
           BAO_DEV_ROOT_TOKEN_ID: autharie-root
         ports:
           - 8200:8200
+      # Same settings as the broker in docker-compose.yaml, where each is
+      # explained. No wait step: the clients under test wait for it.
+      iggy:
+        image: apache/iggy:0.9.0
+        options: --security-opt seccomp=unconfined
+        env:
+          IGGY_ROOT_USERNAME: autharie
+          IGGY_ROOT_PASSWORD: autharie
+          IGGY_TCP_ADDRESS: 0.0.0.0:8090
+          IGGY_NODE_ADVERTISED_ADDRESS: localhost
+          IGGY_HTTP_ENABLED: "false"
+          IGGY_QUIC_ENABLED: "false"
+          IGGY_WEBSOCKET_ENABLED: "false"
+          IGGY_SHARDING_CPU_ALLOCATION: "1"
+          IGGY_SHARDING_PIN_CORES: "false"
+          IGGY_MEMORY_POOL_ENABLED: "false"
+          IGGY_LOGGING_FILE_ENABLED: "false"
+        ports:
+          - 8090:8090
     env:
       OBJECT_STORE_ENDPOINT: http://localhost:9000
       OBJECT_STORE_ACCESS_KEY: autharie
       OBJECT_STORE_SECRET_KEY: autharieautharie
       KEY_MANAGER_ADDRESS: http://localhost:8200
       KEY_MANAGER_TOKEN: autharie-root
+      IGGY_URL: iggy://autharie:autharie@localhost:8090
     steps:
       - uses: actions/checkout@v5
 
@@ -204,6 +224,15 @@ jobs:
         env:
           SQLX_OFFLINE: "true"
           REQUIRE_KEY_MANAGER_ADDRESS: "1"
+
+      - name: Message bus tests
+        run: |
+          cargo test -p autharie-iggy --test broker
+          cargo test -p genesis-core --test message_bus
+          cargo test -p herald-core --test outcome_inbox
+        env:
+          SQLX_OFFLINE: "true"
+          REQUIRE_IGGY_URL: "1"
 
   coverage-rust:
     runs-on: ubuntu-24.04

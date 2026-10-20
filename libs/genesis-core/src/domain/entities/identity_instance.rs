@@ -30,7 +30,7 @@ impl IdentityInstanceRef {
 /// this is what keeps the local `.autharie.local` hostname fallback below a
 /// valid one. Duplicated from the equivalent helper in `autharie-domain` rather
 /// than depending on that crate: genesis-core consumes JSON action-event
-/// payloads over AMQP and deliberately shares no Rust types with the control
+/// payloads from the broker and deliberately shares no Rust types with the control
 /// plane.
 fn slug(value: &str) -> String {
     let mut out = String::with_capacity(value.len());

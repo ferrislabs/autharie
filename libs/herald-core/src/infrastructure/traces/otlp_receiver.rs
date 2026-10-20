@@ -38,7 +38,7 @@ struct ReceiverState {
 /// stops or binding fails.
 ///
 /// No graceful-shutdown hook: this runs for the lifetime of the Herald
-/// process the same way the AMQP connections it shares a runtime with do,
+/// process the same way the broker connections it shares a runtime with do,
 /// and stops the same way they do, by the process exiting.
 pub async fn run_otlp_receiver(
     listen_addr: SocketAddr,

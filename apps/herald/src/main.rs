@@ -22,8 +22,8 @@ use herald_core::infrastructure::health::{bind as bind_health, serve_health};
 use herald_core::infrastructure::instances::kubernetes::KubeInstanceStateSource;
 use herald_core::infrastructure::logs::kubernetes::KubePodLogSource;
 use herald_core::infrastructure::logs::quickwit::QuickwitLogIndexSink;
-use herald_core::infrastructure::message_bus::outcome_inbox::RabbitMqOutcomeInbox;
-use herald_core::infrastructure::message_bus::rabbitmq_repository::RabbitMqMessageBusRepository;
+use herald_core::infrastructure::message_bus::iggy_repository::IggyMessageBusRepository;
+use herald_core::infrastructure::message_bus::outcome_inbox::IggyOutcomeInbox;
 use herald_core::infrastructure::traces::otlp_grpc_receiver::run_otlp_grpc_receiver;
 use herald_core::infrastructure::traces::otlp_receiver::run_otlp_receiver;
 use herald_core::infrastructure::traces::pod_resolver::KubeDeploymentResolver;
@@ -88,7 +88,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         total_shards = args.sharding.total_shards,
         dataplane_id = %args.dataplane_id,
         control_plane_url = %args.control_plane.control_plane_url,
-        amqp_exchange = %args.amqp.amqp_exchange,
         poll_interval_seconds = args.poll_interval_seconds,
         "starting herald"
     );
@@ -142,18 +141,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .reporting_gateway_address(gateway_address),
     );
 
-    let message_bus = Arc::new(
-        RabbitMqMessageBusRepository::connect(&args.amqp.amqp_url, &args.amqp.amqp_exchange)
-            .await?,
-    );
+    let message_bus = Arc::new(IggyMessageBusRepository::connect(&args.bus.iggy_url).await?);
 
-    // The queue Genesis's outcomes land in, named after the shard so two
-    // Heralds on one cluster do not take each other's reports.
+    // Read under a consumer name per shard, so two Heralds on one cluster each
+    // see every outcome rather than taking each other's.
     let outcomes = Arc::new(
-        RabbitMqOutcomeInbox::connect(
-            &args.amqp.amqp_url,
-            &args.amqp.amqp_exchange,
-            format!("herald.outcomes.{}", args.sharding.shard_id),
+        IggyOutcomeInbox::connect(
+            &args.bus.iggy_url,
+            &format!("herald.outcomes.{}", args.sharding.shard_id),
         )
         .await?,
     );

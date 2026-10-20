@@ -1,0 +1,17 @@
+[package]
+name = "autharie-iggy"
+description = "The message bus between Herald and Genesis, on Apache Iggy"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+[dependencies]
+# Pinned exactly: the SDK's 0.x releases change its API, and each one pairs
+# with one server release (0.11.0 speaks to apache/iggy:0.9.0).
+iggy = "=0.11.0"
+tokio = { version = "1.49.0", features = ["time", "sync"] }
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1.49.0", features = ["macros", "rt-multi-thread", "time", "test-util"] }
+uuid = { version = "1", features = ["v4"] }

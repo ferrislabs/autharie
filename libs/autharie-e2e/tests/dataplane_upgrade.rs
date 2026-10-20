@@ -189,7 +189,7 @@ fn genesis_receives_the_routing_key_the_control_plane_gives_a_data_plane_upgrade
 
     assert_eq!(key, autharie_domain::action::DATAPLANE_UPGRADE_ACTION_TYPE);
     assert!(
-        genesis_core::infrastructure::rabbitmq::consumer::is_bound(&key),
+        genesis_core::infrastructure::message_bus::consumer::is_bound(&key),
         "Herald publishes under '{key}' and the broker drops it unless Genesis' queue is bound to it"
     );
 }

@@ -149,7 +149,9 @@ herald:
 genesis:
   enabled: true
   replicaCount: 1
-  queue: genesis.actions
+  # The name Genesis reads the actions topic under. The broker keeps how far
+  # it got by this name, so changing it replays every action still retained.
+  consumer: genesis
   # DNS zone of pooled tenants ({realm}.{zone}); empty refuses realm actions.
   tenantZone: ""
   resources:
@@ -170,23 +172,34 @@ operator:
     limits:
       memory: 256Mi
 
-# A single-node broker, adequate for a local cluster and nothing else. Point
-# `externalUrl` at a real broker and set `enabled: false` for anything durable:
-# this one loses every queued action when its pod restarts.
-rabbitmq:
+# The message bus between Herald and Genesis: a single-node Apache Iggy.
+# Messages are written to disk before a publish returns, so a broker restart
+# loses nothing that was acknowledged -- provided `persistence` is on.
+#
+# Point `externalUrl` at a broker of your own (an iggy:// connection string,
+# credentials included) and set `enabled: false` to use one.
+iggy:
   enabled: true
-  image: rabbitmq:4-management
+  # The SDK in Herald and Genesis is pinned to the release that speaks to this
+  # server; move both together.
+  image: apache/iggy:0.9.0
   externalUrl: ""
   auth:
     username: autharie
+    # Read once, on the broker's first start: it stores the root user on its
+    # volume and ignores this value afterwards. Changing it on an installed
+    # data plane needs the volume emptied as well.
     password: autharie
-  exchange: autharie.actions
+  persistence:
+    enabled: true
+    size: 1Gi
+    storageClass: ""
   resources:
     requests:
-      cpu: 100m
-      memory: 256Mi
+      cpu: 50m
+      memory: 96Mi
     limits:
-      memory: 512Mi
+      memory: 256Mi
 
 # The shared edge every managed instance is served through. Envoy Gateway
 # provisions one Envoy deployment per Gateway, so this data plane runs one and

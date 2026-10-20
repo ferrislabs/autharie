@@ -322,28 +322,47 @@ services:
       start_period: 15s
       timeout: 5s
 
-  # === RabbitMQ ===
-  rabbitmq:
-    image: rabbitmq:4-management
+  # === Iggy ===
+  # The message bus between Herald and Genesis. Same settings as the bundled
+  # broker in charts/autharie-dataplane/templates/iggy.yaml, where each is
+  # explained.
+  iggy:
+    image: apache/iggy:0.9.0
+    # io_uring, which Docker's default seccomp profile refuses.
+    security_opt:
+      - seccomp=unconfined
     ports:
-      - "${RABBITMQ_PORT:-5672}:5672"
-      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+      - "${IGGY_PORT:-8090}:8090"
     environment:
-      RABBITMQ_DEFAULT_USER: autharie
-      RABBITMQ_DEFAULT_PASS: autharie
+      IGGY_ROOT_USERNAME: autharie
+      IGGY_ROOT_PASSWORD: autharie
+      IGGY_PATH: /data
+      IGGY_TCP_ADDRESS: 0.0.0.0:8090
+      IGGY_NODE_ADVERTISED_ADDRESS: iggy
+      IGGY_HTTP_ENABLED: "false"
+      IGGY_QUIC_ENABLED: "false"
+      IGGY_WEBSOCKET_ENABLED: "false"
+      IGGY_SHARDING_CPU_ALLOCATION: "1"
+      IGGY_SHARDING_PIN_CORES: "false"
+      IGGY_MEMORY_POOL_ENABLED: "false"
+      IGGY_LOGGING_FILE_ENABLED: "false"
     volumes:
-      - rabbitmqdata:/var/lib/rabbitmq
+      - iggydata:/data
     networks:
       - autharie
     healthcheck:
       test:
         - CMD
-        - rabbitmq-diagnostics
+        - iggy
+        - --username
+        - autharie
+        - --password
+        - autharie
         - ping
       interval: 10s
       retries: 5
-      start_period: 30s
-      timeout: 10s
+      start_period: 10s
+      timeout: 5s
 
 networks:
   autharie:
@@ -351,6 +370,6 @@ networks:
 
 volumes:
   pgdata:
-  rabbitmqdata:
+  iggydata:
   rustfsdata:
   quickwitdata:
