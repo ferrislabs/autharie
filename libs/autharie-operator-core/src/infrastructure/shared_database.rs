@@ -13,6 +13,12 @@ use crate::domain::shared_database::{SharedDatabaseError, SharedDatabaseName};
 pub const CLUSTER_ENV: &str = "AUTHARIE_SHARED_DATABASE_CLUSTER";
 pub const NAMESPACE_ENV: &str = "AUTHARIE_SHARED_DATABASE_NAMESPACE";
 
+/// The most connections one free deployment holds on the shared cluster.
+///
+/// FerrisKey's pool is fixed in its code at 5 to 100 connections, so without
+/// a cap one tenant under load takes a third of a 300-connection cluster and
+/// the others fail to connect. 10 covers its idle 5 with room for a burst; a
+/// burst past that fails that tenant's requests, not everyone's.
 pub const ROLE_CONNECTION_LIMIT: u32 = 10;
 
 const POSTGRES_PORT: u16 = 5432;
@@ -171,6 +177,14 @@ pub async fn provision(
         .map_err(classify)
 }
 
+// ALTER on the existing-role path rather than leaving the role as it is: the
+// tenant Secret is the source of truth for the password, so a role that
+// drifted -- recreated by hand, restored from a dump -- converges back to it,
+// and a cap changed in this file reaches roles created before the change.
+//
+// CREATE DATABASE has no IF NOT EXISTS and cannot run in a transaction, so
+// existence is checked first and a concurrent reconcile winning the race is
+// read as success rather than an error.
 async fn provision_inner(
     pool: &PgPool,
     name: &SharedDatabaseName,
@@ -199,11 +213,18 @@ async fn provision_inner(
         return Err(error);
     }
 
+    // Every role may connect to every database by default. Revoking it from
+    // PUBLIC is what keeps one tenant's role out of another tenant's data.
     sqlx::query(&revoke_public_sql(name)).execute(pool).await?;
     sqlx::query(&grant_connect_sql(name)).execute(pool).await?;
     Ok(())
 }
 
+/// Drops one tenant's database and role, and nothing else on the cluster.
+///
+/// WITH (FORCE) because the tenant's FerrisKey may still hold connections
+/// while its namespace is being torn down; without it the drop fails and the
+/// finalizer never completes.
 pub async fn drop_database(
     pool: &PgPool,
     name: &SharedDatabaseName,
