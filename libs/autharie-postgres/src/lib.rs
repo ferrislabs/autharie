@@ -15,6 +15,9 @@ pub mod audit;
 pub mod backups;
 
 #[cfg_attr(coverage_nightly, coverage(off))]
+pub mod billing;
+
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub mod catalog;
 
 #[cfg_attr(coverage_nightly, coverage(off))]
@@ -82,6 +85,8 @@ pub mod registry {
         pub struct Audit;
         pub struct Backup;
         pub struct BackupSchedule;
+        pub struct BillingAccount;
+        pub struct BillingSuspension;
         pub struct CloudCredential;
         pub struct ClusterClaims;
         pub struct ClusterInventory;
@@ -92,10 +97,14 @@ pub mod registry {
         pub struct Metrics;
         pub struct Release;
         pub struct Signal;
+        pub struct Statement;
+        pub struct Subscription;
+        pub struct Tier;
         pub struct UpgradeRun;
         pub struct Estate;
         pub struct Organisation;
         pub struct PlatformOperator;
+        pub struct ProviderEvent;
         pub struct Role;
         pub struct User;
         pub struct ReachabilityCheck;
@@ -160,5 +169,11 @@ mod registry_completeness {
         assert_registered::<domain::ClusterClaims>();
         assert_registered::<domain::ClusterInventory>();
         assert_registered::<domain::SealedSecret>();
+        assert_registered::<domain::Tier>();
+        assert_registered::<domain::Subscription>();
+        assert_registered::<domain::BillingAccount>();
+        assert_registered::<domain::Statement>();
+        assert_registered::<domain::ProviderEvent>();
+        assert_registered::<domain::BillingSuspension>();
     }
 }

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE billing_suspensions SET lifted_at = $2 WHERE id = $1 AND lifted_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a3f7e0f0e12d64d08517da24c5040868caf5c19aa8bef06dcc6b6b3bd0574f36"
+}

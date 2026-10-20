@@ -1,0 +1,88 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                SELECT organisation_id, name, email, address_line1, address_line2, postal_code,\n                       city, country, vat_number, siren, provider_customer_id, payment_method\n                FROM billing_accounts\n                WHERE organisation_id = $1\n                ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "organisation_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "email",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "address_line1",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "address_line2",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "postal_code",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "city",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "country",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "vat_number",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "siren",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "provider_customer_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "payment_method",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "acc45c661f20c3118054b5dfb79df991fde1aa6c338eb87d2d66ecc71f862718"
+}

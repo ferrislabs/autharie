@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                INSERT INTO billing_provider_events (id, received_at)\n                VALUES ($1, $2)\n                ON CONFLICT (id) DO NOTHING\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "983aa78573b8cc868a48975f9c380ce936f21d9ac58c9c623db00c324115196b"
+}

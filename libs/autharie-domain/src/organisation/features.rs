@@ -72,6 +72,19 @@ impl fmt::Display for IamFeature {
     }
 }
 
+impl std::str::FromStr for IamFeature {
+    type Err = CoreError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::ALL
+            .into_iter()
+            .find(|feature| feature.to_string() == value)
+            .ok_or_else(|| CoreError::UnknownFeature {
+                value: value.to_string(),
+            })
+    }
+}
+
 impl Plan {
     /// Cheapest first.
     pub const TIERS: [Self; 4] = [Self::Free, Self::Starter, Self::Business, Self::Enterprise];
@@ -138,6 +151,14 @@ pub trait FeatureService: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_feature_round_trips_through_its_name() {
+        for feature in IamFeature::ALL {
+            assert_eq!(feature.to_string().parse::<IamFeature>().unwrap(), feature);
+        }
+        assert!("sso".parse::<IamFeature>().is_err());
+    }
 
     #[test]
     fn every_feature_is_listed() {

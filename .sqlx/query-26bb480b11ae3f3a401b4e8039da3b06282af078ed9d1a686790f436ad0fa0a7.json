@@ -1,0 +1,70 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                SELECT statement_id, deployment_id, subscription_id, tier_code,\n                       monthly_price_minor, starts_at, ends_at, covered_seconds, amount_minor\n                FROM billing_statement_lines\n                WHERE statement_id = ANY($1)\n                ORDER BY statement_id, position\n                ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "statement_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "deployment_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "subscription_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "tier_code",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "monthly_price_minor",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "starts_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "ends_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "covered_seconds",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 8,
+        "name": "amount_minor",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "26bb480b11ae3f3a401b4e8039da3b06282af078ed9d1a686790f436ad0fa0a7"
+}

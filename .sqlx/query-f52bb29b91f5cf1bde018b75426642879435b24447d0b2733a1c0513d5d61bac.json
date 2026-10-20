@@ -1,0 +1,58 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                SELECT id, organisation_id, statement_id, stopped_deployments,\n                       suspended_organisation, suspended_at, lifted_at\n                FROM billing_suspensions\n                WHERE organisation_id = $1 AND lifted_at IS NULL\n                ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "organisation_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "statement_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "stopped_deployments",
+        "type_info": "UuidArray"
+      },
+      {
+        "ordinal": 4,
+        "name": "suspended_organisation",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 5,
+        "name": "suspended_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "lifted_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "f52bb29b91f5cf1bde018b75426642879435b24447d0b2733a1c0513d5d61bac"
+}

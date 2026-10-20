@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE billing_subscriptions SET ends_at = $2 WHERE id = $1 AND ends_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e8fefa8fc3e169161f3fa20bec41e51ef80cb8becd1467d84b87185eb58edffa"
+}

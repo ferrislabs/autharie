@@ -1,0 +1,70 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                SELECT id, organisation_id, deployment_id, tier_code, monthly_price_minor, offer,\n                       features, starts_at, ends_at\n                FROM billing_subscriptions\n                WHERE organisation_id = $1\n                  AND ends_at IS NULL\n                  AND monthly_price_minor > 0\n                ORDER BY deployment_id, starts_at\n                ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "organisation_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "deployment_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "tier_code",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "monthly_price_minor",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "offer",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "features",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 7,
+        "name": "starts_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "ends_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "49200ca12a440aa7d7fe8e80711e1d7018b2bf79f06198f70b53414a0b9e5c04"
+}
