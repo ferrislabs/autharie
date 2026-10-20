@@ -615,6 +615,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "mockall",
+ "proptest",
  "rand 0.9.5",
  "semver",
  "serde",
