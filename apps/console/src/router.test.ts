@@ -167,6 +167,7 @@ describe('the route tree', () => {
       '/platform/dataplanes',
       '/platform/dataplane-upgrades',
       '/platform/releases',
+      '/platform/features',
       '/platform/trail',
     ]) {
       expect(router.getMatchedRoutes(path).foundRoute, path).toBeDefined()

@@ -7,6 +7,7 @@ import {
   useGetTenant,
   useMoveTenantPlan,
 } from '@/api/platform.api'
+import TenantFeaturesFeature from '@/domain/features/pages/feature/tenant-features-feature'
 import { useHoldsPlatformRight } from '@/domain/organisations/hooks/use-is-operator'
 import { PageTenantDetail } from '../ui/page-tenant-detail'
 
@@ -78,6 +79,7 @@ export default function PageTenantDetailFeature() {
       canAct={canAct}
       onMoveToPlan={moveToPlan}
       moving={move.isPending}
+      features={<TenantFeaturesFeature organisationId={organisationId} />}
     />
   )
 }

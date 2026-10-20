@@ -35,6 +35,7 @@ interface Props {
   canAct: boolean
   onMoveToPlan: (plan: Plan) => void
   moving: boolean
+  features?: React.ReactNode
 }
 
 /**
@@ -123,6 +124,7 @@ export function PageTenantDetail({
   canAct,
   onMoveToPlan,
   moving,
+  features,
 }: Props) {
   if (isLoading) {
     return (
@@ -238,6 +240,8 @@ export function PageTenantDetail({
           {outcome.message}
         </div>
       )}
+
+      {features}
 
       {/* Below the organisation's own facts rather than instead of them: an
           operator opening a tenant wants to know what it is before what it
