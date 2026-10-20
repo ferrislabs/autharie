@@ -115,7 +115,6 @@ pub struct DesiredIdentityInstance {
 
     pub replicas: i32,
 
-
     pub placement: DatabasePlacement,
 
     /// Where this instance archives. `None` is an installation that archives
