@@ -68,6 +68,20 @@ pub struct DeploymentPayloadV1 {
     /// own hostnames. Absent is an ordinary instance.
     #[serde(default)]
     pub pooled_cell: bool,
+
+    /// Where the database lives: `"shared"` on the data plane's shared
+    /// cluster, `"managed"` on a cluster of its own. Absent is `managed`,
+    /// which is what every deployment had before the control plane sent it.
+    #[serde(default)]
+    pub database: DatabasePlacement,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DatabasePlacement {
+    #[default]
+    Managed,
+    Shared,
 }
 
 /// The restore half of a `deployment.restore` payload.
@@ -258,6 +272,47 @@ mod tests {
         assert_eq!(payload.kind, "keycloak");
         assert_eq!(payload.version, "25.0.0");
         assert_eq!(payload.namespace, "autharie-acme-prod");
+    }
+
+    fn minimal_with(database: Option<serde_json::Value>) -> Value {
+        let mut raw = json!({
+            "deployment_id": "b6a1c2d3-e4f5-4a6b-8c9d-0e1f2a3b4c5d",
+            "dataplane_id": "1c2b3a4d-5e6f-4a7b-8c9d-0e1f2a3b4c5e",
+            "organisation_id": "9f8e7d6c-5b4a-3c2d-1e0f-a1b2c3d4e5f6",
+            "name": "acme-prod",
+            "kind": "ferriskey",
+            "version": "1.0.0",
+            "namespace": "autharie-acme-prod",
+            "created_by": "11111111-2222-3333-4444-555555555555"
+        });
+        if let Some(database) = database {
+            raw["database"] = database;
+        }
+        raw
+    }
+
+    #[test]
+    fn an_absent_database_is_managed() {
+        let payload = DeploymentPayloadV1::from_value(&minimal_with(None)).unwrap();
+
+        assert_eq!(payload.database, DatabasePlacement::Managed);
+    }
+
+    #[test]
+    fn the_database_is_read_under_its_wire_values() {
+        let shared = DeploymentPayloadV1::from_value(&minimal_with(Some(json!("shared")))).unwrap();
+        let managed =
+            DeploymentPayloadV1::from_value(&minimal_with(Some(json!("managed")))).unwrap();
+
+        assert_eq!(shared.database, DatabasePlacement::Shared);
+        assert_eq!(managed.database, DatabasePlacement::Managed);
+    }
+
+    #[test]
+    fn an_unknown_database_is_refused() {
+        let result = DeploymentPayloadV1::from_value(&minimal_with(Some(json!("pooled"))));
+
+        assert!(matches!(result, Err(GenesisError::InvalidPayload { .. })));
     }
 
     #[test]

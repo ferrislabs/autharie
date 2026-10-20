@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
 use crate::domain::entities::action_event::ActionEvent;
+use crate::domain::entities::deployment_payload::DatabasePlacement;
 use crate::domain::entities::drill_payload::DrillPayloadV1;
 use crate::domain::entities::identity_instance::{
     DesiredDatabase, DesiredIdentityInstance, DesiredRestore, IdentityInstanceProvider,
@@ -111,6 +112,7 @@ impl DrillEventHandler {
             ),
             replicas: 1,
             pooled_cell: false,
+            placement: DatabasePlacement::Managed,
             archive: None,
             restore: Some(DesiredRestore {
                 destination_path: payload.source.destination_path.clone(),

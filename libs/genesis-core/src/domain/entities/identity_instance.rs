@@ -1,6 +1,6 @@
 use uuid::Uuid;
 
-use crate::domain::entities::deployment_payload::DeploymentPayloadV1;
+use crate::domain::entities::deployment_payload::{DatabasePlacement, DeploymentPayloadV1};
 use crate::domain::error::GenesisError;
 
 /// Identifies the `IdentityInstance` custom resource that corresponds to a deployment.
@@ -117,6 +117,8 @@ pub struct DesiredIdentityInstance {
 
     pub pooled_cell: bool,
 
+    pub placement: DatabasePlacement,
+
     /// Where this instance archives. `None` is an installation that archives
     /// nowhere, and it leaves an existing schedule alone: the control plane
     /// saying nothing is not the same as it saying stop.
@@ -203,15 +205,20 @@ impl DesiredIdentityInstance {
             ),
             replicas,
             pooled_cell: payload.pooled_cell,
-            archive: payload.archive.as_ref().map(|archive| DesiredArchive {
-                destination_path: archive.destination_path.clone(),
-                encryption: archive.encryption.clone(),
-                schedule: DesiredArchiveSchedule {
-                    cron: archive.schedule.cron.clone(),
-                    zone: archive.schedule.zone.clone(),
-                    enabled: archive.schedule.enabled,
-                },
-            }),
+            placement: payload.database,
+            archive: payload
+                .archive
+                .as_ref()
+                .filter(|_| payload.database == DatabasePlacement::Managed)
+                .map(|archive| DesiredArchive {
+                    destination_path: archive.destination_path.clone(),
+                    encryption: archive.encryption.clone(),
+                    schedule: DesiredArchiveSchedule {
+                        cron: archive.schedule.cron.clone(),
+                        zone: archive.schedule.zone.clone(),
+                        enabled: archive.schedule.enabled,
+                    },
+                }),
             restore: payload.restore.as_ref().map(|restore| DesiredRestore {
                 destination_path: restore.destination_path.clone(),
                 server_name: restore.server_name.clone(),
@@ -224,6 +231,7 @@ impl DesiredIdentityInstance {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::entities::deployment_payload::{ArchivePayloadV1, ArchiveSchedulePayloadV1};
 
     #[test]
     fn a_payload_that_says_nothing_is_no_pooled_cell_and_one_that_says_so_is() {
@@ -261,7 +269,57 @@ mod tests {
             replicas: None,
             database_instances: None,
             pooled_cell: false,
+            database: DatabasePlacement::Managed,
         }
+    }
+
+    #[test]
+    fn a_shared_database_has_no_base_backup_archive() {
+        let mut shared = payload();
+        shared.database = DatabasePlacement::Shared;
+        shared.archive = Some(ArchivePayloadV1 {
+            destination_path: "s3://bucket/org/dep".to_string(),
+            encryption: None,
+            schedule: ArchiveSchedulePayloadV1 {
+                cron: "0 30 2 * * *".to_string(),
+                zone: "UTC".to_string(),
+                enabled: true,
+            },
+        });
+
+        assert!(
+            DesiredIdentityInstance::from_payload(&shared)
+                .unwrap()
+                .archive
+                .is_none()
+        );
+
+        shared.database = DatabasePlacement::Managed;
+        assert!(
+            DesiredIdentityInstance::from_payload(&shared)
+                .unwrap()
+                .archive
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn a_shared_payload_gives_a_shared_placement_and_any_other_a_managed_one() {
+        assert_eq!(
+            DesiredIdentityInstance::from_payload(&payload())
+                .unwrap()
+                .placement,
+            DatabasePlacement::Managed
+        );
+
+        let mut shared = payload();
+        shared.database = DatabasePlacement::Shared;
+        assert_eq!(
+            DesiredIdentityInstance::from_payload(&shared)
+                .unwrap()
+                .placement,
+            DatabasePlacement::Shared
+        );
     }
 
     #[test]

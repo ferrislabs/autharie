@@ -17,6 +17,7 @@ use kube::core::ObjectMeta;
 use kube::{Api, Client};
 use tracing::info;
 
+use crate::domain::entities::deployment_payload::DatabasePlacement;
 use crate::domain::entities::iam_settings_payload::Branding;
 use crate::domain::entities::identity_instance::{
     DesiredArchive, DesiredIdentityInstance, IdentityInstanceProvider, IdentityInstanceRef,
@@ -482,7 +483,11 @@ fn to_identity_instance(desired: &DesiredIdentityInstance) -> IdentityInstance {
         hostname: desired.hostname.clone(),
         replicas: desired.replicas,
         database: DatabaseConfig {
-            mode: DatabaseMode::ManagedCluster,
+            mode: match desired.placement {
+                DatabasePlacement::Managed => DatabaseMode::ManagedCluster,
+                DatabasePlacement::Shared => DatabaseMode::Shared,
+            },
+            shared: None,
             managed_cluster: ManagedClusterConfig {
                 instances: desired.database.instances,
                 storage: ManagedClusterStorage {
@@ -560,6 +565,7 @@ mod tests {
             database: DesiredDatabase::from_reserved(500, 1024, 1, 1),
             replicas: 1,
             pooled_cell: false,
+            placement: DatabasePlacement::Managed,
             archive: None,
         }
     }
@@ -731,6 +737,19 @@ mod tests {
                 .pooled_cell
         );
         assert!(cell.spec.ferriskey.expect("a ferriskey block").pooled_cell);
+    }
+
+    #[test]
+    fn a_shared_placement_becomes_the_shared_database_mode() {
+        let managed = to_identity_instance(&desired(IdentityInstanceProvider::Ferriskey));
+        let shared = to_identity_instance(&DesiredIdentityInstance {
+            placement: DatabasePlacement::Shared,
+            ..desired(IdentityInstanceProvider::Ferriskey)
+        });
+
+        assert_eq!(managed.spec.database.mode, DatabaseMode::ManagedCluster);
+        assert_eq!(shared.spec.database.mode, DatabaseMode::Shared);
+        assert_eq!(shared.spec.database.shared, None);
     }
 
     #[test]
