@@ -26,7 +26,7 @@ use crate::{
         Deployment, DeploymentId,
         commands::{CreateDeploymentCommand, UpdateDeploymentCommand},
         distribution::Distribution,
-        ports::{DeploymentPolicy, DeploymentService},
+        ports::{DeploymentPolicy, DeploymentRepository, DeploymentService},
         provisioning::Provisioning,
         service::DeploymentServiceImpl,
     },
@@ -408,13 +408,19 @@ impl DeploymentService for AutharieService {
         .await?;
         announce_deletion(&deployment, action_repository).await?;
 
+        let deleted_at = autharie_postgres::deployments::PostgresDeploymentRepository::new(&tx)
+            .get_by_id(deployment.id)
+            .await?
+            .and_then(|stored| stored.deleted_at)
+            .unwrap_or_else(chrono::Utc::now);
+
         SubscriptionLifecycle::new(
             tier_repository,
             subscription_repository,
             billing_account_repository,
             AuthariePolicy::new(permissions_in(&tx)),
         )
-        .close_open(deployment.id, chrono::Utc::now())
+        .close_open(deployment.id, deleted_at)
         .await?;
 
         Ok(deployment)
@@ -449,13 +455,19 @@ impl DeploymentService for AutharieService {
         .await?;
         announce_deletion(&deployment, action_repository).await?;
 
+        let deleted_at = autharie_postgres::deployments::PostgresDeploymentRepository::new(&tx)
+            .get_by_id(deployment.id)
+            .await?
+            .and_then(|stored| stored.deleted_at)
+            .unwrap_or_else(chrono::Utc::now);
+
         SubscriptionLifecycle::new(
             tier_repository,
             subscription_repository,
             billing_account_repository,
             AuthariePolicy::new(permissions_in(&tx)),
         )
-        .close_open(deployment.id, chrono::Utc::now())
+        .close_open(deployment.id, deleted_at)
         .await?;
 
         Ok(deployment)

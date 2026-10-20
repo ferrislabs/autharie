@@ -471,8 +471,19 @@ async fn deleting_a_deployment_closes_its_subscription_at_the_deletion() {
         let (_, tier, _, _, _, starts_at, ends_at) = &subscriptions[0];
         let ends_at = ends_at.expect("the subscription is closed");
 
+        let deleted_at: DateTime<Utc> =
+            sqlx::query_scalar("SELECT deleted_at FROM deployments WHERE id = $1")
+                .bind(deployment)
+                .fetch_one(&installation.pool)
+                .await
+                .expect("the deployment is deleted");
+
         assert_eq!(tier, "legacy-standard");
         assert_eq!(*starts_at, opened[0].5, "closing does not move the start");
+        assert_eq!(
+            ends_at, deleted_at,
+            "the subscription ends at the very instant the deployment is deleted"
+        );
         assert!(
             started <= ends_at && ends_at <= finished,
             "{started} <= {ends_at} <= {finished}"

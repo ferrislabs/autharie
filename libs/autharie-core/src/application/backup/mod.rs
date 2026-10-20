@@ -404,6 +404,29 @@ impl BackupService for AutharieService {
 
         let planned = plan_restore(&archive, &source, source_mode, bucket.as_str())?;
 
+        let restorer = if PlatformRightsPolicy::new(
+            autharie_postgres::platform::PostgresOperatorRepository::new(&tx),
+        )
+        .require(identity.clone(), PlatformRight::ActOnTenant)
+        .await
+        .is_ok()
+        {
+            Restorer::Staff
+        } else {
+            Restorer::Member(identity.clone())
+        };
+
+        let lifecycle = SubscriptionLifecycle::new(
+            tier_repository,
+            subscription_repository,
+            billing_account_repository,
+            AuthariePolicy::new(permissions_in(&tx)),
+        );
+
+        let terms = lifecycle
+            .restore_terms(&restorer, source.id, command.organisation_id, planned.offer)
+            .await?;
+
         let recovery = DeploymentServiceImpl::new(
             deployment_repository,
             user_repository,
@@ -441,26 +464,9 @@ impl BackupService for AutharieService {
         )
         .await?;
 
-        let restorer = if PlatformRightsPolicy::new(
-            autharie_postgres::platform::PostgresOperatorRepository::new(&tx),
-        )
-        .require(identity.clone(), PlatformRight::ActOnTenant)
-        .await
-        .is_ok()
-        {
-            Restorer::Staff
-        } else {
-            Restorer::Member
-        };
-
-        SubscriptionLifecycle::new(
-            tier_repository,
-            subscription_repository,
-            billing_account_repository,
-            AuthariePolicy::new(permissions_in(&tx)),
-        )
-        .open_restored(&restorer, &source, &recovery, recovery.created_at)
-        .await?;
+        lifecycle
+            .open(&recovery, terms, recovery.created_at)
+            .await?;
 
         // The recovery archives on the platform's default terms from the
         // moment it exists, for the reason a created deployment does: the

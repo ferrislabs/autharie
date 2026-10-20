@@ -39,10 +39,10 @@ impl TierChoice {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum Restorer {
     Staff,
-    Member,
+    Member(Identity),
 }
 
 pub struct SubscriptionLifecycle<T, S, A, P> {
@@ -78,7 +78,13 @@ where
         let any_selectable = self.tiers.list().await?.iter().any(|tier| tier.selectable);
 
         if !any_selectable {
-            let tier = self.tier(&TierCode::legacy(request.offer)).await?;
+            let tier = self.legacy_tier(request.offer).await?;
+
+            if tier.is_billable() {
+                self.require_paying(identity, request.organisation.id)
+                    .await?;
+            }
+
             return Ok(TierChoice::Legacy(tier));
         }
 
@@ -88,10 +94,7 @@ where
         tier.allows(request.engine, request.hosting)?;
 
         if tier.is_billable() {
-            self.policy
-                .can_manage_billing(identity.clone(), request.organisation.id)
-                .await?;
-            self.require_complete_account(&request.organisation.id)
+            self.require_paying(identity, request.organisation.id)
                 .await?;
         }
 
@@ -173,27 +176,25 @@ where
         Ok(Some(closed))
     }
 
-    pub async fn open_restored(
+    pub async fn restore_terms(
         &self,
         restorer: &Restorer,
-        source: &Deployment,
-        target: &Deployment,
-        at: DateTime<Utc>,
-    ) -> Result<Subscription, CoreError> {
-        let terms = match self.terms_of(source.id).await? {
+        source: DeploymentId,
+        organisation_id: OrganisationId,
+        offer: Offer,
+    ) -> Result<SubscriptionTerms, CoreError> {
+        let terms = match self.terms_of(source).await? {
             Some(terms) => terms,
-            None => {
-                let offer = target.offer.unwrap_or(Offer::Standard);
-                self.tier(&TierCode::legacy(offer)).await?.terms()
-            }
+            None => self.legacy_tier(offer).await?.terms(),
         };
 
-        if matches!(restorer, Restorer::Member) && terms.is_billable() {
-            self.require_complete_account(&target.organisation_id)
-                .await?;
+        if let Restorer::Member(identity) = restorer
+            && terms.is_billable()
+        {
+            self.require_paying(identity, organisation_id).await?;
         }
 
-        self.open(target, terms, at).await
+        Ok(terms)
     }
 
     pub async fn terms_of(
@@ -214,6 +215,26 @@ where
             }
             .into()
         })
+    }
+
+    async fn legacy_tier(&self, offer: Offer) -> Result<Tier, CoreError> {
+        let code = TierCode::legacy(offer);
+
+        self.tiers.find(&code).await?.ok_or_else(|| {
+            CoreError::InternalError(format!("the {code} tier is missing from the catalogue"))
+        })
+    }
+
+    async fn require_paying(
+        &self,
+        identity: &Identity,
+        organisation_id: OrganisationId,
+    ) -> Result<(), CoreError> {
+        self.policy
+            .can_manage_billing(identity.clone(), organisation_id)
+            .await?;
+
+        self.require_complete_account(&organisation_id).await
     }
 
     async fn require_complete_account(
@@ -1055,12 +1076,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn while_no_tier_is_selectable_the_legacy_tier_is_chosen_even_when_a_tier_is_requested() {
+    async fn while_no_tier_is_selectable_a_free_legacy_tier_is_chosen_without_a_gate() {
         let hidden = Tier {
             selectable: false,
             ..pro()
         };
-        let fixture = Fixture::new(vec![legacy(Offer::Standard, 4900), hidden.clone()]).refusing();
+        let fixture = Fixture::new(vec![legacy(Offer::Standard, 0), hidden.clone()]).refusing();
         let organisation = organisation();
 
         let choice = fixture
@@ -1083,7 +1104,94 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn while_no_tier_is_selectable_a_missing_legacy_tier_is_not_found() {
+    async fn while_no_tier_is_selectable_a_priced_legacy_tier_keeps_the_paid_gate() {
+        let hidden = Tier {
+            selectable: false,
+            ..pro()
+        };
+        let organisation = organisation();
+        let fixture = Fixture::new(vec![legacy(Offer::Standard, 4900), hidden.clone()])
+            .with_account(account(&organisation, PaymentMethodStatus::Valid));
+
+        let choice = fixture
+            .lifecycle()
+            .choose(
+                &caller(),
+                request(
+                    &organisation,
+                    Some(&hidden.code),
+                    &DeploymentKind::Ferriskey,
+                    Hosting::Shared,
+                ),
+            )
+            .await
+            .expect("legacy");
+
+        assert!(!choice.is_catalogue());
+        assert_eq!(choice.tier().code.as_str(), "legacy-standard");
+        assert_eq!(fixture.asked.all(), vec!["manage", "account"]);
+    }
+
+    #[tokio::test]
+    async fn while_no_tier_is_selectable_a_priced_legacy_tier_is_refused_to_a_caller_who_cannot_manage_billing()
+     {
+        let organisation = organisation();
+        let fixture = Fixture::new(vec![legacy(Offer::Standard, 4900)])
+            .with_account(account(&organisation, PaymentMethodStatus::Valid))
+            .refusing();
+
+        let refused = fixture
+            .lifecycle()
+            .choose(
+                &caller(),
+                request(
+                    &organisation,
+                    None,
+                    &DeploymentKind::Ferriskey,
+                    Hosting::Shared,
+                ),
+            )
+            .await
+            .expect_err("no right to manage billing");
+
+        assert!(matches!(refused, CoreError::PermissionDenied { .. }));
+        assert_eq!(fixture.asked.all(), vec!["manage"]);
+    }
+
+    #[tokio::test]
+    async fn while_no_tier_is_selectable_a_priced_legacy_tier_is_refused_while_the_account_is_incomplete()
+     {
+        let organisation = organisation();
+
+        for held in [
+            None,
+            Some(account(&organisation, PaymentMethodStatus::Missing)),
+            Some(account(&organisation, PaymentMethodStatus::Failing)),
+        ] {
+            let mut fixture = Fixture::new(vec![legacy(Offer::Standard, 4900)]);
+            fixture.account = held.clone();
+
+            let refused = fixture
+                .lifecycle()
+                .choose(
+                    &caller(),
+                    request(
+                        &organisation,
+                        None,
+                        &DeploymentKind::Ferriskey,
+                        Hosting::Shared,
+                    ),
+                )
+                .await
+                .expect_err("an incomplete account");
+
+            assert!(incomplete(&refused), "{held:?}: {refused}");
+            assert_eq!(fixture.asked.all(), vec!["manage", "account"]);
+        }
+    }
+
+    #[tokio::test]
+    async fn while_no_tier_is_selectable_a_missing_legacy_tier_is_an_internal_error() {
         let fixture = Fixture::new(Vec::new());
         let organisation = organisation();
 
@@ -1101,10 +1209,14 @@ mod tests {
             .await
             .expect_err("no legacy tier");
 
-        assert!(matches!(
-            refused,
-            CoreError::Billing(BillingError::TierNotFound { .. })
-        ));
+        assert!(
+            matches!(
+                &refused,
+                CoreError::InternalError(message)
+                    if message == "the legacy-standard tier is missing from the catalogue"
+            ),
+            "{refused}"
+        );
     }
 
     #[tokio::test]
@@ -1201,11 +1313,20 @@ mod tests {
             )
             .await
             .expect_err("suspended");
-        let restored = fixture
-            .lifecycle()
-            .open_restored(&Restorer::Staff, &source, &target, at(8, 0))
+        let lifecycle = fixture.lifecycle();
+        let terms = lifecycle
+            .restore_terms(
+                &Restorer::Staff,
+                source.id,
+                organisation.id,
+                Offer::Standard,
+            )
             .await
             .expect("a restore is not refused for that");
+        let restored = lifecycle
+            .open(&target, terms, at(8, 0))
+            .await
+            .expect("opened");
 
         assert!(
             matches!(
@@ -1260,11 +1381,15 @@ mod tests {
         }
     }
 
+    fn member() -> Restorer {
+        Restorer::Member(caller())
+    }
+
     #[tokio::test]
-    async fn a_restore_copies_the_terms_of_the_latest_subscription_of_the_source() {
+    async fn a_restore_copies_the_terms_of_the_latest_subscription_of_the_source_and_writes_nothing()
+     {
         let organisation = organisation();
         let source = deployment_of(&organisation);
-        let target = deployment_of(&organisation);
         let earlier = subscription_of(&source, &free(), at(1, 0))
             .close(at(2, 0))
             .unwrap();
@@ -1273,68 +1398,119 @@ mod tests {
             .holding(earlier)
             .holding(latest.clone());
 
-        let restored = fixture
+        let terms = fixture
             .lifecycle()
-            .open_restored(&Restorer::Staff, &source, &target, at(8, 0))
+            .restore_terms(&Restorer::Staff, source.id, organisation.id, Offer::Scale)
             .await
             .expect("restored");
 
-        assert_eq!(restored.terms(), latest.terms());
-        assert_eq!(restored.deployment_id(), target.id);
-        assert_eq!(restored.organisation_id(), target.organisation_id);
-        assert_eq!(restored.starts_at(), at(8, 0));
-        assert_eq!(fixture.ledger.all(), vec![Written::Opened(restored)]);
+        assert_eq!(&terms, latest.terms());
+        assert!(fixture.ledger.is_empty());
     }
 
     #[tokio::test]
-    async fn a_member_restoring_paid_terms_needs_a_complete_account_and_staff_does_not() {
+    async fn a_member_restoring_paid_terms_is_refused_without_the_right_to_manage_billing() {
         let organisation = organisation();
         let source = deployment_of(&organisation);
-        let target = deployment_of(&organisation);
-        let member = Restorer::Member;
         let fixture = Fixture::new(vec![pro()])
             .holding(subscription_of(&source, &pro(), at(1, 0)))
-            .with_account(account(&organisation, PaymentMethodStatus::Failing));
+            .with_account(account(&organisation, PaymentMethodStatus::Valid))
+            .refusing();
 
         let refused = fixture
             .lifecycle()
-            .open_restored(&member, &source, &target, at(8, 0))
+            .restore_terms(&member(), source.id, organisation.id, Offer::Standard)
             .await
-            .expect_err("the account cannot pay");
-        assert!(incomplete(&refused), "{refused}");
+            .expect_err("no right to manage billing");
+
+        assert!(matches!(refused, CoreError::PermissionDenied { .. }));
+        assert_eq!(fixture.asked.all(), vec!["manage"]);
         assert!(fixture.ledger.is_empty());
-
-        let staff = fixture
-            .lifecycle()
-            .open_restored(&Restorer::Staff, &source, &target, at(8, 0))
-            .await
-            .expect("staff restores whatever the account");
-        assert_eq!(staff.terms(), &pro().terms());
-
-        let valid = Fixture::new(vec![pro()])
-            .holding(subscription_of(&source, &pro(), at(1, 0)))
-            .with_account(account(&organisation, PaymentMethodStatus::Valid));
-        valid
-            .lifecycle()
-            .open_restored(&member, &source, &target, at(8, 0))
-            .await
-            .expect("a complete account");
     }
 
     #[tokio::test]
-    async fn a_member_restoring_free_terms_needs_no_account() {
+    async fn a_member_restoring_paid_terms_is_refused_while_the_account_is_incomplete() {
         let organisation = organisation();
         let source = deployment_of(&organisation);
-        let target = deployment_of(&organisation);
-        let fixture =
-            Fixture::new(vec![free()]).holding(subscription_of(&source, &free(), at(1, 0)));
 
-        fixture
+        for held in [
+            None,
+            Some(account(&organisation, PaymentMethodStatus::Missing)),
+            Some(account(&organisation, PaymentMethodStatus::Failing)),
+        ] {
+            let mut fixture =
+                Fixture::new(vec![pro()]).holding(subscription_of(&source, &pro(), at(1, 0)));
+            fixture.account = held.clone();
+
+            let refused = fixture
+                .lifecycle()
+                .restore_terms(&member(), source.id, organisation.id, Offer::Standard)
+                .await
+                .expect_err("the account cannot pay");
+
+            assert!(incomplete(&refused), "{held:?}: {refused}");
+            assert_eq!(fixture.asked.all(), vec!["manage", "account"]);
+            assert!(fixture.ledger.is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn a_member_restoring_paid_terms_succeeds_with_the_right_and_a_complete_account() {
+        let organisation = organisation();
+        let source = deployment_of(&organisation);
+        let fixture = Fixture::new(vec![pro()])
+            .holding(subscription_of(&source, &pro(), at(1, 0)))
+            .with_account(account(&organisation, PaymentMethodStatus::Valid));
+
+        let terms = fixture
             .lifecycle()
-            .open_restored(&Restorer::Member, &source, &target, at(8, 0))
+            .restore_terms(&member(), source.id, organisation.id, Offer::Standard)
+            .await
+            .expect("a complete account");
+
+        assert_eq!(terms, pro().terms());
+        assert_eq!(fixture.asked.all(), vec!["manage", "account"]);
+    }
+
+    #[tokio::test]
+    async fn staff_restoring_paid_terms_is_asked_for_nothing() {
+        let organisation = organisation();
+        let source = deployment_of(&organisation);
+        let fixture = Fixture::new(vec![pro()])
+            .holding(subscription_of(&source, &pro(), at(1, 0)))
+            .with_account(account(&organisation, PaymentMethodStatus::Failing))
+            .refusing();
+
+        let terms = fixture
+            .lifecycle()
+            .restore_terms(
+                &Restorer::Staff,
+                source.id,
+                organisation.id,
+                Offer::Standard,
+            )
+            .await
+            .expect("staff restores whatever the account");
+
+        assert_eq!(terms, pro().terms());
+        assert!(fixture.asked.all().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_member_restoring_free_terms_needs_no_right_and_no_account() {
+        let organisation = organisation();
+        let source = deployment_of(&organisation);
+        let fixture = Fixture::new(vec![free()])
+            .holding(subscription_of(&source, &free(), at(1, 0)))
+            .refusing();
+
+        let terms = fixture
+            .lifecycle()
+            .restore_terms(&member(), source.id, organisation.id, Offer::Standard)
             .await
             .expect("free terms");
 
+        assert_eq!(terms, free().terms());
         assert!(fixture.asked.all().is_empty());
     }
 
@@ -1342,8 +1518,6 @@ mod tests {
     async fn a_restore_without_a_source_subscription_falls_back_to_the_legacy_tier_of_the_offer() {
         let organisation = organisation();
         let source = deployment_of(&organisation);
-        let mut target = deployment_of(&organisation);
-        target.offer = Some(Offer::Scale);
         let fixture = Fixture::new(vec![
             legacy(Offer::Standard, 4900),
             legacy(Offer::Scale, 9900),
@@ -1351,54 +1525,62 @@ mod tests {
 
         let scale = fixture
             .lifecycle()
-            .open_restored(&Restorer::Staff, &source, &target, at(8, 0))
+            .restore_terms(&Restorer::Staff, source.id, organisation.id, Offer::Scale)
             .await
             .expect("legacy scale");
-        target.offer = None;
         let standard = fixture
             .lifecycle()
-            .open_restored(&Restorer::Staff, &source, &target, at(8, 0))
+            .restore_terms(
+                &Restorer::Staff,
+                source.id,
+                organisation.id,
+                Offer::Standard,
+            )
             .await
             .expect("legacy standard");
 
-        assert_eq!(scale.terms(), &legacy(Offer::Scale, 9900).terms());
-        assert_eq!(standard.terms(), &legacy(Offer::Standard, 4900).terms());
-    }
-
-    #[tokio::test]
-    async fn a_member_restoring_legacy_paid_terms_needs_a_complete_account() {
-        let organisation = organisation();
-        let source = deployment_of(&organisation);
-        let target = deployment_of(&organisation);
-        let fixture = Fixture::new(vec![legacy(Offer::Standard, 4900)]);
-
-        let refused = fixture
-            .lifecycle()
-            .open_restored(&Restorer::Member, &source, &target, at(8, 0))
-            .await
-            .expect_err("no account");
-
-        assert!(incomplete(&refused), "{refused}");
+        assert_eq!(scale, legacy(Offer::Scale, 9900).terms());
+        assert_eq!(standard, legacy(Offer::Standard, 4900).terms());
         assert!(fixture.ledger.is_empty());
     }
 
     #[tokio::test]
-    async fn a_restore_without_a_source_subscription_or_a_legacy_tier_is_not_found() {
+    async fn a_member_restoring_legacy_paid_terms_goes_through_the_paid_gate() {
         let organisation = organisation();
         let source = deployment_of(&organisation);
-        let target = deployment_of(&organisation);
+        let fixture = Fixture::new(vec![legacy(Offer::Standard, 4900)]);
+
+        let refused = fixture
+            .lifecycle()
+            .restore_terms(&member(), source.id, organisation.id, Offer::Standard)
+            .await
+            .expect_err("no account");
+
+        assert!(incomplete(&refused), "{refused}");
+        assert_eq!(fixture.asked.all(), vec!["manage", "account"]);
+        assert!(fixture.ledger.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_restore_without_a_source_subscription_or_a_legacy_tier_is_an_internal_error() {
+        let organisation = organisation();
+        let source = deployment_of(&organisation);
         let fixture = Fixture::new(Vec::new());
 
         let refused = fixture
             .lifecycle()
-            .open_restored(&Restorer::Staff, &source, &target, at(8, 0))
+            .restore_terms(&Restorer::Staff, source.id, organisation.id, Offer::Scale)
             .await
             .expect_err("nothing to copy");
 
-        assert!(matches!(
-            refused,
-            CoreError::Billing(BillingError::TierNotFound { .. })
-        ));
+        assert!(
+            matches!(
+                &refused,
+                CoreError::InternalError(message)
+                    if message == "the legacy-scale tier is missing from the catalogue"
+            ),
+            "{refused}"
+        );
         assert!(fixture.ledger.is_empty());
     }
 
