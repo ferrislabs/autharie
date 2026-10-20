@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n                SELECT id,\n                       actor_type,\n                       actor_subject,\n                       actor_client_id,\n                       action,\n                       target_dataplane_id,\n                       target_subject,\n                       change_before,\n                       change_after,\n                       recorded_at\n                FROM fleet_audit_log\n                ORDER BY recorded_at DESC, id DESC\n                LIMIT $1\n                ",
+  "query": "\n                SELECT id,\n                       actor_type,\n                       actor_subject,\n                       actor_client_id,\n                       action,\n                       target_dataplane_id,\n                       target_subject,\n                       target_feature,\n                       change_before,\n                       change_after,\n                       recorded_at\n                FROM fleet_audit_log\n                WHERE (recorded_at, id) < ($1, $2)\n                ORDER BY recorded_at DESC, id DESC\n                LIMIT $3\n                ",
   "describe": {
     "columns": [
       {
@@ -40,22 +40,29 @@
       },
       {
         "ordinal": 7,
+        "name": "target_feature",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
         "name": "change_before",
         "type_info": "Jsonb"
       },
       {
-        "ordinal": 8,
+        "ordinal": 9,
         "name": "change_after",
         "type_info": "Jsonb"
       },
       {
-        "ordinal": 9,
+        "ordinal": 10,
         "name": "recorded_at",
         "type_info": "Timestamptz"
       }
     ],
     "parameters": {
       "Left": [
+        "Timestamptz",
+        "Uuid",
         "Int8"
       ]
     },
@@ -69,8 +76,9 @@
       true,
       true,
       true,
+      true,
       false
     ]
   },
-  "hash": "7423342c96c9f5a58c848732d93309e27c7c333eb34fcae7f6794e57eeed3888"
+  "hash": "32c40cced03f73d0939cf61ced09a83f48c04cb95b37d2ed6bbe01336349d199"
 }

@@ -19,6 +19,12 @@ use crate::{
             __path_get_deployment_downtime_handler, get_deployment_downtime_handler,
         },
         deployment_uptime::{__path_get_deployment_uptime_handler, get_deployment_uptime_handler},
+        features::{
+            __path_list_platform_features_handler, __path_list_tenant_features_handler,
+            __path_set_feature_default_handler, __path_set_tenant_feature_handler,
+            list_platform_features_handler, list_tenant_features_handler,
+            set_feature_default_handler, set_tenant_feature_handler,
+        },
         fleet_audit_log::{__path_list_fleet_audit_log_handler, list_fleet_audit_log_handler},
         list_estate_deployments::{
             __path_list_estate_deployments_handler, list_estate_deployments_handler,
@@ -44,6 +50,7 @@ pub mod cells;
 pub mod dataplane_upgrades;
 pub mod deployment_downtime;
 pub mod deployment_uptime;
+pub mod features;
 pub mod fleet_audit_log;
 pub mod list_estate_deployments;
 pub mod list_tenants;
@@ -61,6 +68,10 @@ pub mod signals;
         get_deployment_uptime_handler,
         list_estate_deployments_handler,
         list_fleet_audit_log_handler,
+        list_platform_features_handler,
+        set_feature_default_handler,
+        list_tenant_features_handler,
+        set_tenant_feature_handler,
         list_signals_handler,
         list_tenants_handler,
         get_tenant_handler,
@@ -91,6 +102,10 @@ pub fn platform_routes(app_state: AppState) -> Router<AppState> {
         .typed_get(get_deployment_uptime_handler)
         .typed_get(list_estate_deployments_handler)
         .typed_get(list_fleet_audit_log_handler)
+        .typed_get(list_platform_features_handler)
+        .typed_put(set_feature_default_handler)
+        .typed_get(list_tenant_features_handler)
+        .typed_put(set_tenant_feature_handler)
         .typed_get(list_signals_handler)
         .typed_get(list_tenants_handler)
         .typed_get(get_tenant_handler)

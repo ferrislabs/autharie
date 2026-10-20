@@ -65,6 +65,20 @@ describe('what a trail entry says', () => {
     expect(toTrailLine(revoked).detail).toBe('view_estate, operate_fleet → nothing')
   })
 
+  it('reads a default change as the state it went from and to', () => {
+    const changed = entry({
+      action: 'feature.default_changed',
+      target: { kind: 'feature', key: 'customer_cloud' },
+      change: { before: { enabled_by_default: false }, after: { enabled_by_default: true } },
+    })
+
+    expect(toTrailLine(changed)).toMatchObject({
+      action: 'Changed the default of a feature',
+      target: 'customer_cloud',
+      detail: 'off → on',
+    })
+  })
+
   /**
    * A shape nobody wrote a reading for is left out rather than dumped as
    * JSON. It still takes the room, and nobody can read it.

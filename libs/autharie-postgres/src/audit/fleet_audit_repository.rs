@@ -23,6 +23,7 @@ struct FleetAuditRow {
     action: String,
     target_dataplane_id: Option<Uuid>,
     target_subject: Option<String>,
+    target_feature: Option<String>,
     change_before: Option<serde_json::Value>,
     change_after: Option<serde_json::Value>,
     recorded_at: DateTime<Utc>,
@@ -36,7 +37,11 @@ impl FleetAuditRow {
             self.actor_client_id.as_deref(),
         )?;
 
-        let target = parse_target(self.target_dataplane_id, self.target_subject)?;
+        let target = parse_target(
+            self.target_dataplane_id,
+            self.target_subject,
+            self.target_feature,
+        )?;
 
         let change = match (self.change_before, self.change_after) {
             (Some(before), Some(after)) => Some(AuditChange::new(before, after)?),
@@ -76,7 +81,7 @@ impl<'tx> PostgresFleetAuditRepository<'tx> {
 impl FleetAuditRepository for PostgresFleetAuditRepository<'_> {
     async fn append(&self, entry: FleetAuditEntry) -> Result<(), CoreError> {
         let (actor_type, actor_subject, actor_client_id) = actor_to_row(&entry.actor);
-        let (target_dataplane_id, target_subject) = target_to_row(&entry.target);
+        let (target_dataplane_id, target_subject, target_feature) = target_to_row(&entry.target);
         let (change_before, change_after) = match &entry.change {
             Some(change) => (Some(change.before().clone()), Some(change.after().clone())),
             None => (None, None),
@@ -94,12 +99,13 @@ impl FleetAuditRepository for PostgresFleetAuditRepository<'_> {
                 action,
                 target_dataplane_id,
                 target_subject,
+                target_feature,
                 change_before,
                 change_after,
                 recorded_at
             )
             VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
             )
             "#,
                 entry.id.0,
@@ -109,6 +115,7 @@ impl FleetAuditRepository for PostgresFleetAuditRepository<'_> {
                 entry.action.to_string(),
                 target_dataplane_id,
                 target_subject,
+                target_feature,
                 change_before,
                 change_after,
                 entry.recorded_at,
@@ -142,6 +149,7 @@ impl FleetAuditRepository for PostgresFleetAuditRepository<'_> {
                        action,
                        target_dataplane_id,
                        target_subject,
+                       target_feature,
                        change_before,
                        change_after,
                        recorded_at
@@ -173,6 +181,7 @@ impl FleetAuditRepository for PostgresFleetAuditRepository<'_> {
                        action,
                        target_dataplane_id,
                        target_subject,
+                       target_feature,
                        change_before,
                        change_after,
                        recorded_at
@@ -245,33 +254,30 @@ fn parse_actor(
     }
 }
 
-fn target_to_row(target: &FleetTarget) -> (Option<Uuid>, Option<String>) {
+fn target_to_row(target: &FleetTarget) -> (Option<Uuid>, Option<String>, Option<String>) {
     match target {
-        FleetTarget::DataPlane { id } => (Some(id.0), None),
-        FleetTarget::Operator { subject } => (None, Some(subject.clone())),
+        FleetTarget::DataPlane { id } => (Some(id.0), None, None),
+        FleetTarget::Operator { subject } => (None, Some(subject.clone()), None),
+        FleetTarget::Feature { key } => (None, None, Some(key.clone())),
     }
 }
 
-/// Exactly one of the two columns, which the table's own check already
-/// enforces on the way in.
-///
-/// Read back defensively all the same: a row that satisfied the check when it
-/// was written is not a row that still does after somebody's migration, and an
-/// entry naming two targets or none is one the trail cannot honestly display.
 fn parse_target(
     dataplane_id: Option<Uuid>,
     subject: Option<String>,
+    feature: Option<String>,
 ) -> Result<FleetTarget, CoreError> {
-    match (dataplane_id, subject) {
-        (Some(id), None) => Ok(FleetTarget::DataPlane {
+    match (dataplane_id, subject, feature) {
+        (Some(id), None, None) => Ok(FleetTarget::DataPlane {
             id: DataPlaneId(id),
         }),
-        (None, Some(subject)) => Ok(FleetTarget::Operator { subject }),
-        (None, None) => Err(CoreError::InternalError(
+        (None, Some(subject), None) => Ok(FleetTarget::Operator { subject }),
+        (None, None, Some(key)) => Ok(FleetTarget::Feature { key }),
+        (None, None, None) => Err(CoreError::InternalError(
             "fleet audit entry names no target".to_string(),
         )),
-        (Some(_), Some(_)) => Err(CoreError::InternalError(
-            "fleet audit entry names both a data plane and a subject".to_string(),
+        _ => Err(CoreError::InternalError(
+            "fleet audit entry names more than one target".to_string(),
         )),
     }
 }
@@ -349,20 +355,27 @@ mod tests {
         let cluster = FleetTarget::DataPlane {
             id: DataPlaneId(Uuid::new_v4()),
         };
-        let (id, subject) = target_to_row(&cluster);
-        assert_eq!(parse_target(id, subject).expect("known"), cluster);
+        let (id, subject, feature) = target_to_row(&cluster);
+        assert_eq!(parse_target(id, subject, feature).expect("known"), cluster);
 
         let operator = FleetTarget::Operator {
             subject: "operator-1".to_string(),
         };
-        let (id, subject) = target_to_row(&operator);
-        assert_eq!(parse_target(id, subject).expect("known"), operator);
+        let (id, subject, feature) = target_to_row(&operator);
+        assert_eq!(parse_target(id, subject, feature).expect("known"), operator);
+
+        let flag = FleetTarget::Feature {
+            key: "customer_cloud".to_string(),
+        };
+        let (id, subject, feature) = target_to_row(&flag);
+        assert_eq!(parse_target(id, subject, feature).expect("known"), flag);
     }
 
     #[test]
     fn a_row_naming_no_target_or_two_is_refused() {
-        assert!(parse_target(None, None).is_err());
-        assert!(parse_target(Some(Uuid::new_v4()), Some("s".to_string())).is_err());
+        assert!(parse_target(None, None, None).is_err());
+        assert!(parse_target(Some(Uuid::new_v4()), Some("s".to_string()), None).is_err());
+        assert!(parse_target(None, Some("s".to_string()), Some("f".to_string())).is_err());
     }
 
     /// Every action name is written by `Display` and read back by `FromStr`,

@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { StatusBadge } from '@/components/ui/status-badge'
 import { format, formatDistanceToNow } from 'date-fns'
-import { ScrollText, Server, UserCog } from 'lucide-react'
+import { Flag, ScrollText, Server, UserCog } from 'lucide-react'
 import { platformPath } from '@/lib/paths'
 import { Link } from '@tanstack/react-router'
 import { interrupts, toTrailLine } from '../../fleet-trail'
@@ -25,9 +25,11 @@ interface Props {
  */
 function Target({ target, label }: { target: Schemas.FleetTarget; label: string }) {
   if (target.kind !== 'data_plane') {
+    const Icon = target.kind === 'feature' ? Flag : UserCog
+
     return (
       <span className='inline-flex items-center gap-1.5 font-mono text-xs text-muted-foreground'>
-        <UserCog className='h-3.5 w-3.5' />
+        <Icon className='h-3.5 w-3.5' />
         {label}
       </span>
     )

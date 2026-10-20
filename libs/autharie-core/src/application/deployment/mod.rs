@@ -22,10 +22,12 @@ use crate::{
     deployments::{
         Deployment, DeploymentId,
         commands::{CreateDeploymentCommand, UpdateDeploymentCommand},
-        ports::DeploymentService,
+        distribution::Distribution,
+        ports::{DeploymentPolicy, DeploymentService},
         provisioning::Provisioning,
         service::DeploymentServiceImpl,
     },
+    features::{Feature, service::require_enabled},
     infrastructure::provisioner::LocalClusterProvisioner,
     organisation::OrganisationId,
 };
@@ -341,13 +343,26 @@ impl DeploymentService for AutharieService {
         action,
         backup_schedule,
         organisation,
-        cell
+        cell,
+        feature_flag
     )]
     async fn create_deployment(
         &self,
         identity: Identity,
         command: CreateDeploymentCommand,
     ) -> Result<Deployment, CoreError> {
+        if matches!(command.distribution(), Distribution::CustomerCloud { .. }) {
+            AuthariePolicy::new(permissions_in(&tx))
+                .can_create_deployments(identity.clone(), command.organisation_id)
+                .await?;
+            require_enabled(
+                &feature_flag_repository,
+                command.organisation_id,
+                Feature::CustomerCloud,
+            )
+            .await?;
+        }
+
         let deployments = DeploymentServiceImpl::new(
             deployment_repository,
             user_repository,

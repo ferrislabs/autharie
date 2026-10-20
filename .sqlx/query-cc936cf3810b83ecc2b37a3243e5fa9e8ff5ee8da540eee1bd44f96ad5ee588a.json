@@ -1,0 +1,32 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                SELECT key,\n                       COUNT(*) FILTER (WHERE enabled) AS \"on!\",\n                       COUNT(*) FILTER (WHERE NOT enabled) AS \"off!\"\n                FROM organisation_feature_flags\n                GROUP BY key\n                ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "key",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "on!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "off!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      null,
+      null
+    ]
+  },
+  "hash": "cc936cf3810b83ecc2b37a3243e5fa9e8ff5ee8da540eee1bd44f96ad5ee588a"
+}
