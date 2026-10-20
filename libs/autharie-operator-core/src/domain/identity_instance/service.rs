@@ -25,6 +25,25 @@ fn shared_database_failure_status(
     cause: &SharedDatabaseError,
     now: String,
 ) -> IdentityInstanceStatus {
+    let reason = Some(cause.reason().to_string());
+    let message = Some(cause.to_string());
+
+    // The same failure again keeps the time it started. A fresh timestamp on
+    // every attempt makes each status write a change, each change a watch
+    // event, and each event another reconcile: a hot loop against a cluster
+    // that is already refusing.
+    let since = current
+        .conditions
+        .iter()
+        .find(|c| {
+            c.condition_type == READY_CONDITION
+                && c.status == ConditionStatus::False
+                && c.reason == reason
+                && c.message == message
+        })
+        .map(|c| c.last_transition_time.clone())
+        .unwrap_or(now);
+
     let mut status = current.clone();
     status.ready = false;
     status.error = Some(cause.to_string());
@@ -34,9 +53,9 @@ fn shared_database_failure_status(
     status.conditions.push(Condition {
         condition_type: READY_CONDITION.to_string(),
         status: ConditionStatus::False,
-        last_transition_time: now,
-        reason: Some(cause.reason().to_string()),
-        message: Some(cause.to_string()),
+        last_transition_time: since,
+        reason,
+        message,
     });
     status
 }
@@ -110,7 +129,9 @@ where
                     cause,
                     chrono::Utc::now().to_rfc3339(),
                 );
-                if let Err(patch_error) = self.repository.patch_status(&instance, status).await {
+                if instance.status.as_ref() != Some(&status)
+                    && let Err(patch_error) = self.repository.patch_status(&instance, status).await
+                {
                     tracing::warn!(error = %patch_error, "could not report the shared database failure");
                 }
             }
@@ -763,6 +784,32 @@ mod tests {
             Some("SharedDatabaseRefused")
         );
         assert!(status.error.is_some());
+    }
+
+    /// The loop this guards against: a new timestamp on every attempt made
+    /// each write a change, and each change another reconcile.
+    #[test]
+    fn the_same_failure_again_writes_an_identical_status() {
+        let cause = SharedDatabaseError::Refused("no".to_string());
+        let first =
+            shared_database_failure_status(&IdentityInstanceStatus::default(), &cause, "t1".into());
+        let again = shared_database_failure_status(&first, &cause, "t2".into());
+
+        assert_eq!(again, first);
+        assert_eq!(again.conditions[0].last_transition_time, "t1");
+    }
+
+    #[test]
+    fn a_different_failure_starts_a_new_transition() {
+        let first = shared_database_failure_status(
+            &IdentityInstanceStatus::default(),
+            &SharedDatabaseError::Refused("no".to_string()),
+            "t1".into(),
+        );
+        let next =
+            shared_database_failure_status(&first, &SharedDatabaseError::Unreachable, "t2".into());
+
+        assert_eq!(next.conditions[0].last_transition_time, "t2");
     }
 
     #[test]
