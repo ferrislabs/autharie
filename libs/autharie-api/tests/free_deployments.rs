@@ -331,15 +331,6 @@ async fn a_free_organisation_gets_an_instance_on_a_shared_data_plane() {
                 .expect("the stored plane");
         assert_eq!(placed_on, plane);
 
-        let cells: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM deployments WHERE id = $1 AND cell_id IS NOT NULL",
-        )
-        .bind(id.parse::<Uuid>().expect("a uuid"))
-        .fetch_one(&installation.pool)
-        .await
-        .expect("count");
-        assert_eq!(cells, 0, "a free deployment is not a realm in a cell");
-
         let actions = installation.actions_of(id).await;
         assert_eq!(actions.len(), 1, "{actions:?}");
         let (action_type, payload) = &actions[0];
@@ -350,7 +341,6 @@ async fn a_free_organisation_gets_an_instance_on_a_shared_data_plane() {
         assert_eq!(payload["storage_gib"], 1);
         assert_eq!(payload["replicas"], 1);
         assert_eq!(payload["database_instances"], 1);
-        assert_eq!(payload["pooled_cell"], false);
         assert_eq!(payload["hostname"], format!("acme-login.{ZONE}"));
     })
     .await;

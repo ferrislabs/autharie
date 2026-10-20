@@ -8,7 +8,6 @@ pub mod action;
 pub mod audit;
 pub mod backups;
 pub mod catalog;
-pub mod cells;
 pub mod certificate;
 pub mod dataplane;
 pub mod deployments;
@@ -126,14 +125,6 @@ pub enum CoreError {
 
     #[error("this name is already used by another deployment")]
     DeploymentNameTaken,
-
-    #[error("this deployment is a realm in a shared cell and cannot be {operation}")]
-    NotForPooledDeployment { operation: String },
-
-    #[error(
-        "this name is still being released by a deleted deployment: try again in a few minutes or pick another"
-    )]
-    DeploymentNameBeingReleased,
 
     #[error("Organisation not found with id: {id}")]
     OrganisationNotFound { id: Uuid },
@@ -277,18 +268,6 @@ pub enum CoreError {
 
     #[error(transparent)]
     Provision(#[from] crate::dataplane::provisioner::ProvisionError),
-
-    #[error(transparent)]
-    Cell(#[from] crate::cells::CellError),
-
-    #[error(transparent)]
-    Placement(#[from] crate::cells::PlacementError),
-
-    #[error(transparent)]
-    Realm(#[from] crate::cells::RealmError),
-
-    #[error(transparent)]
-    TenantAdministrator(#[from] crate::cells::AdministratorCredentialError),
 
     #[error(transparent)]
     ObjectStore(#[from] crate::backups::ObjectStoreError),

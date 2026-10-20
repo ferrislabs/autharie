@@ -293,7 +293,7 @@ where
             // do is reserve room for a deployment that no longer exists.
             let live: Vec<&Deployment> = placed
                 .iter()
-                .filter(|deployment| deployment.deleted_at.is_none() && !deployment.is_pooled())
+                .filter(|deployment| deployment.deleted_at.is_none())
                 .collect();
 
             let used = live.iter().fold(
@@ -494,11 +494,6 @@ where
                 )
                 .await?
             }
-            (Distribution::Pooled { .. }, _) => {
-                return Err(CoreError::InternalError(
-                    "a pooled deployment is placed by its offer, not by a distribution".to_string(),
-                ));
-            }
             (_, DataPlaneMode::Shared) => {
                 self.place_on_shared(command.organisation_id, &command.region, mode, resources)
                     .await?
@@ -678,12 +673,6 @@ where
             })?;
 
         refuse_if_busy(&deployment, "changed")?;
-        if command.name.is_some() {
-            deployment.refuse_if_pooled("renamed: its name is its realm and its address")?;
-        }
-        if command.log_shipping_enabled.is_some() {
-            deployment.refuse_if_pooled("given log shipping: its logs are those of the cell")?;
-        }
 
         if let Some(name) = command.name {
             deployment.name = name;
@@ -714,7 +703,6 @@ where
         let deployment = self
             .get_deployment_for_organisation(identity, organisation_id, deployment_id)
             .await?;
-        deployment.refuse_if_pooled("changed: its name is its realm and the rest is its cell's")?;
 
         self.update_deployment(deployment.id, command).await
     }
@@ -863,7 +851,6 @@ mod tests {
     }
 
     use super::*;
-    use crate::cells::RealmName;
     use crate::dataplane::value_objects::DeploymentResources;
     use crate::dataplane::{herald_identity::HeraldBinding, provisioner::ProvisionedCluster};
     use crate::{
@@ -1780,41 +1767,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_pooled_deployment_is_refused_before_any_data_plane_is_placed_or_saved() {
-        let mut mock_repo = MockDeploymentRepository::new();
-        mock_repo.expect_insert().times(0);
-
-        let mut mock_dataplane_repo = MockDataPlaneRepository::new();
-        mock_dataplane_repo.expect_find_available().times(0);
-        mock_dataplane_repo
-            .expect_find_dedicated_for_organisation()
-            .times(0);
-        mock_dataplane_repo.expect_save().times(0);
-
-        let service = DeploymentServiceImpl::new(
-            mock_repo,
-            StubUserRepository,
-            mock_dataplane_repo,
-            organisations_on(crate::organisation::value_objects::Plan::Enterprise),
-            MockClusterProvisioner::new(),
-            windows(),
-            Allowed,
-        );
-        let mut command = command_for("fr-par", DataPlaneMode::Shared);
-        command.kind = DeploymentKind::Ferriskey;
-        let command = command
-            .with_distribution(Distribution::Pooled {
-                cell_id: crate::cells::CellId(uuid::Uuid::new_v4()),
-                realm: crate::cells::RealmName::try_from("acme").expect("a valid name"),
-            })
-            .expect("ferriskey may be pooled");
-
-        let refused = service.create_deployment(caller(), command).await;
-
-        assert!(refused.is_err());
-    }
-
-    #[tokio::test]
     async fn a_customer_cloud_deployment_saves_a_provisioning_plane_and_never_calls_the_provisioner()
      {
         let mut mock_repo = MockDeploymentRepository::new();
@@ -2326,61 +2278,6 @@ mod tests {
             }
             other => panic!("expected DataPlaneAtDeploymentLimit, got {other:?}"),
         }
-    }
-
-    #[tokio::test]
-    async fn realms_in_a_cell_take_no_room_and_no_count_on_a_dedicated_plane() {
-        let organisation_id = OrganisationId(Uuid::new_v4());
-        let capacity = Capacity::new(2_000, 4_096, 20)
-            .unwrap()
-            .with_max_deployments(1)
-            .expect("non-zero bound");
-
-        let mut mock_repo = MockDeploymentRepository::new();
-        mock_repo
-            .expect_list_by_dataplane()
-            .times(1)
-            .returning(move |dataplane_id| {
-                let mut realm = sample_deployment(DeploymentId(Uuid::new_v4()), organisation_id);
-                realm.dataplane_id = *dataplane_id;
-                realm.resources = crate::offers::Offer::Private.resources();
-                realm.distribution = Distribution::Pooled {
-                    cell_id: crate::cells::CellId(Uuid::new_v4()),
-                    realm: RealmName::try_from("tenant").expect("valid"),
-                };
-                Box::pin(async move { Ok(vec![realm]) })
-            });
-        mock_repo
-            .expect_insert()
-            .times(1)
-            .returning(|_| Box::pin(async { Ok(()) }));
-
-        let mut mock_dataplane_repo = MockDataPlaneRepository::new();
-        mock_dataplane_repo
-            .expect_find_dedicated_for_organisation()
-            .times(1)
-            .returning(move |_, _| {
-                let dataplane = dedicated_dataplane(organisation_id, capacity);
-                Box::pin(async move { Ok(Some(dataplane)) })
-            });
-
-        let service = DeploymentServiceImpl::new(
-            mock_repo,
-            StubUserRepository,
-            mock_dataplane_repo,
-            organisations_on(crate::organisation::value_objects::Plan::Enterprise),
-            no_provisioning(),
-            windows(),
-            Allowed,
-        );
-
-        let mut command = command_for("eu-west", DataPlaneMode::Dedicated);
-        command.organisation_id = organisation_id;
-
-        service
-            .create_deployment(caller(), command)
-            .await
-            .expect("the realm reserves nothing on the plane");
     }
 
     /// A plane with no count bound behaves exactly as it did before this

@@ -1,7 +1,7 @@
 pub use autharie_domain::{
     ArchiveConfig, AuthConfig, AutharieConfig, CoreError, DataPlaneConfig, DatabaseConfig, action,
-    audit, backups, catalog, cells, certificate, dataplane, deployments, dns, features, logs,
-    metrics, offers, organisation, platform, role, signals, traces, upgrades, user, version,
+    audit, backups, catalog, certificate, dataplane, deployments, dns, features, logs, metrics,
+    offers, organisation, platform, role, signals, traces, upgrades, user, version,
 };
 
 pub mod auth;

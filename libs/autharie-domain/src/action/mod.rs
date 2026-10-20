@@ -66,7 +66,7 @@ pub struct ActionVersion(pub u32);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct ActionTarget {
-    /// Domain object kind (Deployment, Realm, Database, …)
+    /// Domain object kind (Deployment, Database, …)
     pub kind: TargetKind,
 
     /// Stable identifier of the target object
@@ -77,7 +77,6 @@ pub struct ActionTarget {
 pub enum TargetKind {
     Deployment,
     DataPlane,
-    Realm,
     Database,
     User,
     Custom(String),

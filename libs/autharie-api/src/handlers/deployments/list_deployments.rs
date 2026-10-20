@@ -6,14 +6,12 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
-use crate::{
-    errors::ApiError, handlers::deployments::TenantDeployment, response::Response, state::AppState,
-};
+use crate::{errors::ApiError, response::Response, state::AppState};
 
 #[derive(Serialize, ToSchema, PartialEq)]
 pub struct ListDeploymentsResponse {
     #[schema(value_type = Vec<Deployment>)]
-    data: Vec<TenantDeployment>,
+    data: Vec<Deployment>,
 }
 
 #[derive(TypedPath, IntoParams, Deserialize)]
@@ -47,9 +45,7 @@ pub async fn list_deployments_handler(
         .list_deployments_by_organisation(identity, organisation_id)
         .await?;
 
-    Ok(Response::OK(ListDeploymentsResponse {
-        data: deployments.into_iter().map(TenantDeployment).collect(),
-    }))
+    Ok(Response::OK(ListDeploymentsResponse { data: deployments }))
 }
 
 #[cfg(test)]

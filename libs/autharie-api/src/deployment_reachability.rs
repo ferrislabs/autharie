@@ -49,10 +49,7 @@ pub async fn run_deployment_reachability_probe(state: AppState) {
             }
         };
 
-        for deployment in deployments
-            .into_iter()
-            .filter(|deployment| deployment.is_probed_for_reachability())
-        {
+        for deployment in deployments {
             let Some(zone) = state.args.ovh.domain() else {
                 continue;
             };

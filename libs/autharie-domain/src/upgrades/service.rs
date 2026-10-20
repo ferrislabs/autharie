@@ -207,7 +207,6 @@ where
             .ok_or(CoreError::DeploymentNotFound {
                 id: command.deployment_id.0,
             })?;
-        before.refuse_if_pooled("given upgrade settings: its cell is upgraded for it")?;
 
         let mut after = before.clone();
         after.auto_upgrade = command.auto_upgrade;
@@ -255,7 +254,6 @@ where
             .ok_or(CoreError::DeploymentNotFound {
                 id: command.deployment_id.0,
             })?;
-        deployment.refuse_if_pooled("upgraded: its cell is upgraded for it")?;
 
         // Settled first, before anything is looked up. Upgrading something
         // that is still coming up, already upgrading, or being torn down puts
@@ -755,37 +753,6 @@ mod tests {
         assert_eq!(accepted.change, VersionChange::Patch);
         assert_eq!(accepted.deployment.status, DeploymentStatus::Upgrading);
         assert_eq!(writes.lock().expect("not poisoned").len(), 1);
-    }
-
-    #[tokio::test]
-    async fn a_realm_in_a_cell_is_upgraded_with_its_cell_not_on_its_own() {
-        let writes = Arc::new(Mutex::new(Vec::new()));
-        let mut pooled = deployment(DeploymentStatus::Successful, Version::new(26, 0, 0));
-        pooled.distribution = crate::deployments::distribution::Distribution::Pooled {
-            cell_id: crate::cells::CellId(Uuid::from_u128(5)),
-            realm: crate::cells::RealmName::try_from("acme").expect("valid"),
-        };
-        let service = UpgradeServiceImpl::new(
-            repository(Some(pooled), writes.clone()),
-            StubReleases::holding(vec![release(
-                Version::new(26, 0, 1),
-                ReleaseStatus::Available,
-            )]),
-            StubRuns::empty(),
-            organisations(),
-            StubPolicy::allowing(),
-        );
-
-        let refused = service
-            .request_upgrade(caller(), command(Version::new(26, 0, 1)))
-            .await
-            .expect_err("a realm has no instance of its own");
-
-        assert!(
-            matches!(refused, CoreError::NotForPooledDeployment { .. }),
-            "{refused}"
-        );
-        assert!(writes.lock().expect("not poisoned").is_empty());
     }
 
     /// Upgrading something that is still coming up, already upgrading, or

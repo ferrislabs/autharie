@@ -22,7 +22,7 @@ use uuid::Uuid;
 
 use crate::{
     errors::ApiError, handlers::cloud_credentials::profile::ClusterProfileRequest,
-    handlers::deployments::TenantDeployment, response::Response, state::AppState,
+    response::Response, state::AppState,
 };
 
 #[derive(Deserialize, ToSchema)]
@@ -84,7 +84,7 @@ enum RequestedDistribution {
 #[derive(Serialize, ToSchema, PartialEq)]
 pub struct CreateDeploymentResponse {
     #[schema(value_type = Deployment)]
-    data: TenantDeployment,
+    data: Deployment,
 }
 
 struct ParsedCreateDeploymentRequest {
@@ -263,7 +263,7 @@ pub async fn create_deployment_handler(
     ));
 
     Ok(Response::Created(CreateDeploymentResponse {
-        data: TenantDeployment(deployment),
+        data: deployment,
     }))
 }
 

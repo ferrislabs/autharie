@@ -142,7 +142,6 @@ where
         let deployment = self
             .deployment_in(command.organisation_id, command.deployment_id)
             .await?;
-        deployment.refuse_if_pooled("backed up: a realm has no archive of its own")?;
 
         Ok(deployment)
     }
@@ -207,7 +206,6 @@ where
         let source = self
             .deployment_in(organisation_id, archive.deployment_id)
             .await?;
-        source.refuse_if_pooled("restored: a realm has no archive of its own")?;
 
         Ok((archive, source))
     }
@@ -233,8 +231,6 @@ where
         let demote = self
             .deployment_in(command.organisation_id, command.demote)
             .await?;
-        promote.refuse_if_pooled("cut over")?;
-        demote.refuse_if_pooled("cut over")?;
 
         if !self.related_by_a_restore(&promote, &demote).await? {
             return Err(CoreError::CutoverRefused {
@@ -334,8 +330,6 @@ where
         let deployment = self
             .deployment_in(command.organisation_id, command.deployment_id)
             .await?;
-        deployment
-            .refuse_if_pooled("given a backup schedule: a realm has no archive of its own")?;
 
         let now = Utc::now();
         let existing = self.schedules.get(&command.deployment_id).await?;

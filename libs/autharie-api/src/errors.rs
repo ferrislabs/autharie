@@ -1,8 +1,4 @@
-use autharie_core::{
-    CoreError,
-    cells::{AdministratorCredentialError, CellError, RealmError},
-    dataplane::credential::CredentialError,
-};
+use autharie_core::{CoreError, dataplane::credential::CredentialError};
 use axum::{Json, http::StatusCode, response::IntoResponse};
 use serde::Serialize;
 use thiserror::Error;
@@ -342,8 +338,6 @@ impl From<CoreError> for ApiError {
                 reason: value.to_string(),
             },
             CoreError::DeploymentNameTaken
-            | CoreError::DeploymentNameBeingReleased
-            | CoreError::NotForPooledDeployment { .. }
             | CoreError::OrganisationLimitReached { .. } => ApiError::Conflict {
                 reason: value.to_string(),
             },
@@ -375,64 +369,9 @@ impl From<CoreError> for ApiError {
                     reason: "the credential store failed".to_string(),
                 }
             }
-            CoreError::TenantAdministrator(error) => match error {
-                AdministratorCredentialError::NotIssued => ApiError::NotFound {
-                    reason: error.to_string(),
-                },
-                AdministratorCredentialError::NotAnAdministrator => ApiError::Forbidden {
-                    reason: error.to_string(),
-                },
-                AdministratorCredentialError::AlreadyIssuing
-                | AdministratorCredentialError::NotARealm => ApiError::Conflict {
-                    reason: error.to_string(),
-                },
-                AdministratorCredentialError::AlreadyRevealed
-                | AdministratorCredentialError::Expired => ApiError::Gone {
-                    reason: error.to_string(),
-                },
-            },
             CoreError::Provision(_) => ApiError::BadGateway {
                 reason: value.to_string(),
             },
-            CoreError::Placement(_) => ApiError::ServiceUnavailable {
-                reason: value.to_string(),
-            },
-            CoreError::Cell(
-                CellError::Full
-                | CellError::NotOpen
-                | CellError::InvalidTransition
-                | CellError::NoRelease
-                | CellError::InstanceInUse { .. }
-                | CellError::OwnerInUse { .. },
-            )
-            | CoreError::Realm(RealmError::AlreadyExists) => ApiError::Conflict {
-                reason: value.to_string(),
-            },
-            CoreError::Realm(RealmError::InvalidName { .. }) => ApiError::Unprocessable {
-                reason: value.to_string(),
-            },
-            CoreError::Cell(CellError::CapacityInvalid) => ApiError::Unprocessable {
-                reason: value.to_string(),
-            },
-            CoreError::Cell(CellError::NotConfigured) => ApiError::ServiceUnavailable {
-                reason: value.to_string(),
-            },
-            CoreError::Cell(CellError::UnknownCell { .. }) => ApiError::NotFound {
-                reason: value.to_string(),
-            },
-            CoreError::Cell(CellError::Inconsistent { .. }) => {
-                tracing::error!(error = %value, "a cell's stored state is inconsistent");
-
-                ApiError::InternalServerError {
-                    reason: "a cell's stored state is inconsistent".to_string(),
-                }
-            }
-            CoreError::Realm(RealmError::CellUnreachable | RealmError::Refused { .. }) => {
-                ApiError::BadGateway {
-                    reason: value.to_string(),
-                }
-            }
-
             // Everything else stays deliberately opaque to the caller: a
             // database error or an internal invariant is not something they
             // can act on, and its message may name things they should not see.
@@ -481,79 +420,6 @@ mod tests {
         })
         .into_response();
         assert_eq!(response.status(), StatusCode::CONFLICT);
-    }
-
-    #[test]
-    fn the_errors_of_a_cell_say_who_is_at_fault() {
-        let status = |error: CoreError| ApiError::from(error).into_response().status();
-
-        assert_eq!(
-            status(CoreError::Placement(
-                autharie_core::cells::PlacementError::NoOpenCell {
-                    region: "fr-par".to_string(),
-                }
-            )),
-            StatusCode::SERVICE_UNAVAILABLE
-        );
-        assert_eq!(
-            status(CoreError::Cell(CellError::Full)),
-            StatusCode::CONFLICT
-        );
-        assert_eq!(
-            status(CoreError::Cell(CellError::InvalidTransition)),
-            StatusCode::CONFLICT
-        );
-        assert_eq!(
-            status(CoreError::Realm(RealmError::InvalidName {
-                reason: "too long".to_string(),
-            })),
-            StatusCode::UNPROCESSABLE_ENTITY
-        );
-        assert_eq!(
-            status(CoreError::Realm(RealmError::CellUnreachable)),
-            StatusCode::BAD_GATEWAY
-        );
-        assert_eq!(
-            status(CoreError::Cell(CellError::NotConfigured)),
-            StatusCode::SERVICE_UNAVAILABLE
-        );
-        assert_eq!(
-            status(CoreError::Cell(CellError::NoRelease)),
-            StatusCode::CONFLICT
-        );
-        assert_eq!(
-            status(CoreError::Cell(CellError::InstanceInUse {
-                cell: uuid::Uuid::nil(),
-            })),
-            StatusCode::CONFLICT
-        );
-        assert_eq!(
-            status(CoreError::Cell(CellError::OwnerInUse { active: 1 })),
-            StatusCode::CONFLICT
-        );
-        assert_eq!(
-            status(CoreError::Cell(CellError::CapacityInvalid)),
-            StatusCode::UNPROCESSABLE_ENTITY
-        );
-        assert_eq!(
-            status(CoreError::Cell(CellError::UnknownCell {
-                id: uuid::Uuid::nil(),
-            })),
-            StatusCode::NOT_FOUND
-        );
-    }
-
-    #[test]
-    fn an_inconsistent_cell_is_the_platform_at_fault_and_names_nothing() {
-        let response = ApiError::from(CoreError::Cell(CellError::Inconsistent {
-            reason: "deployment 1234 is not on the data plane of cell 5678".to_string(),
-        }));
-
-        assert!(!format!("{response:?}").contains("1234"));
-        assert_eq!(
-            response.into_response().status(),
-            StatusCode::INTERNAL_SERVER_ERROR
-        );
     }
 
     #[test]
@@ -1040,34 +906,15 @@ mod tests {
 
     #[test]
     fn the_refusals_of_a_free_deployment_say_what_is_in_the_way() {
-        let cases = [
-            (
-                CoreError::from(autharie_core::cells::PlacementError::NoOpenCell {
-                    region: "fr-par".to_string(),
-                }),
-                StatusCode::SERVICE_UNAVAILABLE,
-                "try again later",
-            ),
-            (
-                CoreError::from(autharie_core::cells::PlacementError::NoTenantZone),
-                StatusCode::SERVICE_UNAVAILABLE,
-                "free deployments are not available",
-            ),
-            (
-                CoreError::DeploymentNameBeingReleased,
-                StatusCode::CONFLICT,
-                "still being released",
-            ),
-            (
-                CoreError::OrganisationLimitReached {
-                    limit_type: "instances".to_string(),
-                    max: 1,
-                    current: 1,
-                },
-                StatusCode::CONFLICT,
-                "instances",
-            ),
-        ];
+        let cases = [(
+            CoreError::OrganisationLimitReached {
+                limit_type: "instances".to_string(),
+                max: 1,
+                current: 1,
+            },
+            StatusCode::CONFLICT,
+            "instances",
+        )];
 
         for (error, status, says) in cases {
             let message = error.to_string();
@@ -1076,43 +923,6 @@ mod tests {
                 ApiError::from(error).into_response().status(),
                 status,
                 "{message}"
-            );
-        }
-    }
-
-    #[test]
-    fn a_realm_administrator_credential_is_gone_once_revealed_or_expired() {
-        let cases = [
-            (
-                AdministratorCredentialError::NotIssued,
-                StatusCode::NOT_FOUND,
-            ),
-            (
-                AdministratorCredentialError::NotAnAdministrator,
-                StatusCode::FORBIDDEN,
-            ),
-            (
-                AdministratorCredentialError::AlreadyRevealed,
-                StatusCode::GONE,
-            ),
-            (AdministratorCredentialError::Expired, StatusCode::GONE),
-            (
-                AdministratorCredentialError::AlreadyIssuing,
-                StatusCode::CONFLICT,
-            ),
-            (
-                AdministratorCredentialError::NotARealm,
-                StatusCode::CONFLICT,
-            ),
-        ];
-
-        for (error, status) in cases {
-            assert_eq!(
-                ApiError::from(CoreError::from(error.clone()))
-                    .into_response()
-                    .status(),
-                status,
-                "{error}"
             );
         }
     }
