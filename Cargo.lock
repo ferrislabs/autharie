@@ -789,6 +789,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "autharie-stripe"
+version = "0.1.0"
+dependencies = [
+ "autharie-domain",
+ "chrono",
+ "hex",
+ "hmac 0.12.1",
+ "httpmock",
+ "reqwest 0.12.28",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "autharie-transit"
 version = "0.1.0"
 dependencies = [
