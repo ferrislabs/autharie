@@ -30,6 +30,7 @@ import PageBackupsFeature from './domain/backups/pages/feature/page-backups-feat
 import PageEstateFeature from './domain/platform/pages/feature/page-estate-feature'
 import PageOverviewFeature from './domain/platform/pages/feature/page-overview-feature'
 import PageDataplaneUpgradesFeature from './domain/platform/pages/feature/page-dataplane-upgrades-feature'
+import PageFeaturesFeature from './domain/features/pages/feature/page-features-feature'
 import PageFleetTrailFeature from './domain/platform/pages/feature/page-fleet-trail-feature'
 import PageTenantDetailFeature from './domain/platform/pages/feature/page-tenant-detail-feature'
 import PageTenantsFeature from './domain/platform/pages/feature/page-tenants-feature'
@@ -269,6 +270,12 @@ const platformTrailRoute = createRoute({
   component: PageFleetTrailFeature,
 })
 
+const platformFeaturesRoute = createRoute({
+  getParentRoute: () => platformLayoutRoute,
+  path: '/features',
+  component: PageFeaturesFeature,
+})
+
 const platformOrganisationsRoute = createRoute({
   getParentRoute: () => platformLayoutRoute,
   path: '/organisations',
@@ -342,6 +349,7 @@ const routeTree = rootRoute.addChildren([
     platformOrganisationsRoute,
     platformOrganisationDetailRoute,
     platformReleasesRoute,
+    platformFeaturesRoute,
     platformTrailRoute,
   ]),
   onboardingLayoutRoute.addChildren([createOrganisationRoute]),

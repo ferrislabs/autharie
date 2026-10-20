@@ -30,6 +30,9 @@ pub mod deployments;
 pub mod dataplane;
 
 #[cfg_attr(coverage_nightly, coverage(off))]
+pub mod features;
+
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub mod metrics;
 
 #[cfg_attr(coverage_nightly, coverage(off))]
@@ -87,6 +90,7 @@ pub mod registry {
         pub struct ClusterClaims;
         pub struct ClusterInventory;
         pub struct DataPlane;
+        pub struct FeatureFlag;
         pub struct FleetAudit;
         pub struct Deployment;
         pub struct Metrics;
@@ -147,6 +151,7 @@ mod registry_completeness {
         assert_registered::<domain::Cell>();
         assert_registered::<domain::CellsSettings>();
         assert_registered::<domain::DataPlane>();
+        assert_registered::<domain::FeatureFlag>();
         assert_registered::<domain::FleetAudit>();
         assert_registered::<domain::Deployment>();
         assert_registered::<domain::Metrics>();

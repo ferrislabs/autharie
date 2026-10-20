@@ -166,6 +166,38 @@ async fn an_operator_entry_round_trips_as_a_subject() {
     assert!(found[0].change.is_none());
 }
 
+#[tokio::test]
+async fn a_feature_entry_round_trips_as_a_key() {
+    let Some(pool) = pool().await else {
+        return;
+    };
+
+    let target = FleetTarget::Feature {
+        key: "customer_cloud".to_string(),
+    };
+    let written = entry(
+        FleetAuditAction::FeatureDefaultChanged,
+        target.clone(),
+        None,
+        now(),
+    );
+
+    let result: Result<FleetAuditBatch, CoreError> = with_tx(&pool, map_err, async |tx| {
+        let trail = PostgresFleetAuditRepository::new(&tx);
+        trail.append(written.clone()).await?;
+        trail.list(None, 200).await
+    })
+    .await;
+
+    let batch = result.expect("committed");
+    forget(&pool, &[written.id.0]).await;
+
+    let found = mine(&batch, &[written.id.0]);
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].target, target);
+    assert_eq!(found[0].action, FleetAuditAction::FeatureDefaultChanged);
+}
+
 /// The acceptance criterion #271 exists for. A customer reading their own
 /// trail must never see a fleet action, and somebody reading the fleet's must
 /// never see a tenant's -- and the reason it holds is that the two rows are

@@ -110,6 +110,8 @@ pub enum FleetAuditAction {
     OperatorGranted,
     #[serde(rename = "operator.revoked")]
     OperatorRevoked,
+    #[serde(rename = "feature.default_changed")]
+    FeatureDefaultChanged,
 }
 
 impl FleetAuditAction {
@@ -118,7 +120,7 @@ impl FleetAuditAction {
     /// Walked by the round trip test below, the same way
     /// [`crate::platform::PlatformRight::ALL`] is: an action with no name is
     /// one the trail silently drops.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::DataPlaneRegistered,
         Self::DataPlaneDrained,
         Self::DataPlaneDisabled,
@@ -127,6 +129,7 @@ impl FleetAuditAction {
         Self::DataPlaneRemoved,
         Self::OperatorGranted,
         Self::OperatorRevoked,
+        Self::FeatureDefaultChanged,
     ];
 }
 
@@ -141,6 +144,7 @@ impl fmt::Display for FleetAuditAction {
             Self::DataPlaneRemoved => "dataplane.removed",
             Self::OperatorGranted => "operator.granted",
             Self::OperatorRevoked => "operator.revoked",
+            Self::FeatureDefaultChanged => "feature.default_changed",
         };
 
         write!(f, "{name}")
@@ -160,6 +164,7 @@ impl FromStr for FleetAuditAction {
             "dataplane.removed" => Ok(Self::DataPlaneRemoved),
             "operator.granted" => Ok(Self::OperatorGranted),
             "operator.revoked" => Ok(Self::OperatorRevoked),
+            "feature.default_changed" => Ok(Self::FeatureDefaultChanged),
             other => Err(CoreError::InternalError(format!(
                 "unknown fleet audit action '{other}'"
             ))),
@@ -178,6 +183,7 @@ impl FromStr for FleetAuditAction {
 pub enum FleetTarget {
     DataPlane { id: DataPlaneId },
     Operator { subject: String },
+    Feature { key: String },
 }
 
 /// One statement about something that happened to the installation, never

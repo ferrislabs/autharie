@@ -173,6 +173,15 @@ async fn tenant(pool: &PgPool) -> Tenant {
     .execute(pool)
     .await
     .expect("an organisation");
+    sqlx::query(
+        "INSERT INTO organisation_feature_flags \
+         (organisation_id, key, enabled, updated_at, updated_by) \
+         VALUES ($1, 'customer_cloud', true, now(), 'test')",
+    )
+    .bind(organisation)
+    .execute(pool)
+    .await
+    .expect("the customer cloud feature");
 
     Tenant {
         organisation,
@@ -934,4 +943,91 @@ async fn a_stranger_cannot_resize_a_cluster() {
 
     forget(&pool, &mine).await;
     forget(&pool, &theirs).await;
+}
+
+#[tokio::test]
+async fn a_customer_cloud_deployment_is_refused_while_the_feature_is_off_and_accepted_once_it_is_on()
+ {
+    let Some(pool) = pool().await else { return };
+    let _ = captured_logs();
+    let server = MockServer::start_async().await;
+    let tenant = tenant(&pool).await;
+    let app = app(
+        state(pool.clone(), FixedVerdict::Accept, transit(&server)),
+        tenant.owner,
+    );
+    sqlx::query("UPDATE organisations SET plan = 'enterprise' WHERE id = $1")
+        .bind(tenant.organisation)
+        .execute(&pool)
+        .await
+        .expect("a plan");
+    sqlx::query("UPDATE organisation_feature_flags SET enabled = false WHERE organisation_id = $1")
+        .bind(tenant.organisation)
+        .execute(&pool)
+        .await
+        .expect("the feature switched off");
+    let base = format!("/organisations/{}", tenant.organisation);
+    let (_, created) = call(
+        &app,
+        Method::POST,
+        &format!("{base}/cloud-credentials"),
+        Some(register_body()),
+    )
+    .await;
+    let credential = created["id"].as_str().expect("an id").to_string();
+    let request = || {
+        json!({
+            "name": format!("tenant-{}", Uuid::new_v4()), "kind": "ferriskey", "version": "1.0.0",
+            "environment": "production", "offer": "standard",
+            "distribution": {
+                "type": "customer_cloud",
+                "credential_id": credential,
+                "region": "fr-par",
+                "profile": {
+                    "mode": "dev", "control_plane_id": "mutualized", "node_type": "small",
+                    "min_nodes": 1, "max_nodes": 1, "replication": 1
+                }
+            }
+        })
+    };
+
+    let (refused, refusal) = call(
+        &app,
+        Method::POST,
+        &format!("{base}/deployments"),
+        Some(request()),
+    )
+    .await;
+    let created_while_off: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM deployments WHERE organisation_id = $1")
+            .bind(tenant.organisation)
+            .fetch_one(&pool)
+            .await
+            .expect("a count");
+
+    sqlx::query("UPDATE organisation_feature_flags SET enabled = true WHERE organisation_id = $1")
+        .bind(tenant.organisation)
+        .execute(&pool)
+        .await
+        .expect("the feature switched on");
+    let (accepted, accepted_body) = call(
+        &app,
+        Method::POST,
+        &format!("{base}/deployments"),
+        Some(request()),
+    )
+    .await;
+
+    assert_eq!(refused, StatusCode::FORBIDDEN, "{refusal}");
+    assert_eq!(refusal["code"], "E_FEATURE_NOT_ENABLED");
+    assert!(
+        refusal["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("customer_cloud")),
+        "{refusal}"
+    );
+    assert_eq!(created_while_off, 0, "a refused request created something");
+    assert_eq!(accepted, StatusCode::CREATED, "{accepted_body}");
+
+    forget(&pool, &tenant).await;
 }

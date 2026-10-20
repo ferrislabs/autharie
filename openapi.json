@@ -4501,6 +4501,74 @@
         ]
       }
     },
+    "/organisations/{organisation_id}/feature-flags": {
+      "get": {
+        "tags": [
+          "organisations"
+        ],
+        "summary": "list the feature flags enabled for an organisation",
+        "description": "The keys that apply to this organisation after the installation default and the organisation's own override are resolved. A flag that is off is absent.",
+        "operationId": "list_enabled_features_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The enabled feature keys",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnabledFeaturesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller is not in this organisation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/organisations/{organisation_id}/features": {
       "get": {
         "tags": [
@@ -7251,6 +7319,150 @@
         ]
       }
     },
+    "/platform/features": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "list the feature flags",
+        "description": "Every flag the code defines, with its installation-wide default and how many organisations deviate from it.",
+        "operationId": "list_platform_features_handler",
+        "responses": {
+          "200": {
+            "description": "Every feature flag",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeaturesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "This needs the view_estate right",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/platform/features/{key}": {
+      "put": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "set the default of a feature flag",
+        "description": "Applies to every organisation without an override of its own.",
+        "operationId": "set_feature_default_handler",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetFeatureDefaultRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The flag, with its new default",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeatureResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "This needs the operate_fleet right",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such feature",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/platform/operators": {
       "get": {
         "tags": [
@@ -7624,6 +7836,180 @@
           },
           "404": {
             "description": "No such organisation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/platform/organisations/{organisation_id}/features": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "list the feature flags of an organisation",
+        "description": "Each flag with the installation default, the organisation's own override when it has one, and the value that applies.",
+        "operationId": "list_tenant_features_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Every feature flag as this organisation sees it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TenantFeaturesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "This needs the view_estate right",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such organisation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/platform/organisations/{organisation_id}/features/{key}": {
+      "put": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "set or clear a feature flag for an organisation",
+        "description": "`true` or `false` overrides the installation default for this organisation; `null` clears the override.",
+        "operationId": "set_tenant_feature_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetTenantFeatureRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The flag as this organisation now sees it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TenantFeatureResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "This needs the act_on_tenant right",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such organisation or feature",
             "content": {
               "application/json": {
                 "schema": {
@@ -9361,6 +9747,25 @@
               "Conflict": {
                 "type": "object",
                 "description": "The request was understood and cannot be satisfied in the current state\nof the installation -- no data plane with room, no provisioner to make\none. Not the caller's mistake, so not a 400; not a server fault either,\nso not a 500.",
+                "required": [
+                  "reason"
+                ],
+                "properties": {
+                  "reason": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "FeatureNotEnabled"
+            ],
+            "properties": {
+              "FeatureNotEnabled": {
+                "type": "object",
                 "required": [
                   "reason"
                 ],
@@ -11301,6 +11706,20 @@
           }
         }
       },
+      "EnabledFeaturesResponse": {
+        "type": "object",
+        "required": [
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Feature"
+            }
+          }
+        }
+      },
       "Ending": {
         "type": "string",
         "description": "Why a data plane is stopping.\n\nTwo variants rather than the domain's three: `silent` is the control\nplane's own verdict about a data plane that said nothing, so a data plane\nmust not be able to claim it.",
@@ -11431,6 +11850,66 @@
           "all"
         ]
       },
+      "Feature": {
+        "type": "string",
+        "enum": [
+          "customer_cloud"
+        ]
+      },
+      "FeatureResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/FeatureView"
+          }
+        }
+      },
+      "FeatureView": {
+        "type": "object",
+        "required": [
+          "key",
+          "description",
+          "enabled_by_default",
+          "overrides_on",
+          "overrides_off"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "enabled_by_default": {
+            "type": "boolean"
+          },
+          "key": {
+            "$ref": "#/components/schemas/Feature"
+          },
+          "overrides_off": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "overrides_on": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "FeaturesResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FeatureView"
+            }
+          }
+        }
+      },
       "FleetActor": {
         "oneOf": [
           {
@@ -11498,7 +11977,8 @@
           "dataplane.credential_reissued",
           "dataplane.removed",
           "operator.granted",
-          "operator.revoked"
+          "operator.revoked",
+          "feature.default_changed"
         ]
       },
       "FleetAuditEntry": {
@@ -11579,6 +12059,24 @@
               },
               "subject": {
                 "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "key",
+              "kind"
+            ],
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "feature"
+                ]
               }
             }
           }
@@ -14201,6 +14699,17 @@
           }
         }
       },
+      "SetFeatureDefaultRequest": {
+        "type": "object",
+        "required": [
+          "enabled_by_default"
+        ],
+        "properties": {
+          "enabled_by_default": {
+            "type": "boolean"
+          }
+        }
+      },
       "SetIamSettingsRequest": {
         "type": "object",
         "properties": {
@@ -14273,6 +14782,17 @@
           "service": {
             "$ref": "#/components/schemas/ServiceIntent",
             "description": "`draining`, `disabled` or `in_service`.\n\nThree, where the status has five. `provisioning`, `active` and\n`failed` are what the system observed rather than what anybody chose,\nso there is no way to ask for them here."
+          }
+        }
+      },
+      "SetTenantFeatureRequest": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
           }
         }
       },
@@ -14575,6 +15095,60 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "TenantFeatureResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TenantFeatureView"
+          }
+        }
+      },
+      "TenantFeatureView": {
+        "type": "object",
+        "required": [
+          "key",
+          "description",
+          "default",
+          "effective"
+        ],
+        "properties": {
+          "default": {
+            "type": "boolean"
+          },
+          "description": {
+            "type": "string"
+          },
+          "effective": {
+            "type": "boolean"
+          },
+          "key": {
+            "$ref": "#/components/schemas/Feature"
+          },
+          "override": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        }
+      },
+      "TenantFeaturesResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TenantFeatureView"
+            }
           }
         }
       },

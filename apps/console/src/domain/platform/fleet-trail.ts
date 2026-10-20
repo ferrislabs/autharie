@@ -30,6 +30,7 @@ const ACTIONS: Record<Schemas.FleetAuditAction, string> = {
   'dataplane.removed': 'Removed a data plane',
   'operator.granted': 'Granted platform rights',
   'operator.revoked': 'Revoked platform rights',
+  'feature.default_changed': 'Changed the default of a feature',
 }
 
 /**
@@ -53,7 +54,14 @@ export function interrupts(action: Schemas.FleetAuditAction): boolean {
  * a name the identity provider issued, and half of one identifies nobody.
  */
 function describeTarget(target: Schemas.FleetTarget): string {
-  return target.kind === 'data_plane' ? target.id.slice(0, 8) : target.subject
+  switch (target.kind) {
+    case 'data_plane':
+      return target.id.slice(0, 8)
+    case 'operator':
+      return target.subject
+    case 'feature':
+      return target.key
+  }
 }
 
 function describeActor(actor: Schemas.FleetActor): string {
@@ -88,6 +96,12 @@ function describeChange(change: Schemas.AuditChange | null | undefined): string 
     const held = (rights: unknown[]) => (rights.length === 0 ? 'nothing' : rights.join(', '))
 
     return `${held(before.rights)} → ${held(after.rights)}`
+  }
+
+  if (typeof before?.enabled_by_default === 'boolean' && typeof after?.enabled_by_default === 'boolean') {
+    const state = (enabled: boolean) => (enabled ? 'on' : 'off')
+
+    return `${state(before.enabled_by_default)} → ${state(after.enabled_by_default)}`
   }
 
   return undefined

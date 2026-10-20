@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO feature_flags (key, enabled_by_default, updated_at, updated_by)\n            VALUES ($1, $2, $3, $4)\n            ON CONFLICT (key) DO UPDATE\n                SET enabled_by_default = EXCLUDED.enabled_by_default,\n                    updated_at = EXCLUDED.updated_at,\n                    updated_by = EXCLUDED.updated_by\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Bool",
+        "Timestamptz",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "81a5029e8b75e6d1594c0042bb2ec85d2dba2f5c0897798b029dd007da692f1f"
+}

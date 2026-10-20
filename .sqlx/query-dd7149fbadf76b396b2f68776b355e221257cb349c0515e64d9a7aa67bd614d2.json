@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                    INSERT INTO organisation_feature_flags\n                        (organisation_id, key, enabled, updated_at, updated_by)\n                    VALUES ($1, $2, $3, $4, $5)\n                    ON CONFLICT (organisation_id, key) DO UPDATE\n                        SET enabled = EXCLUDED.enabled,\n                            updated_at = EXCLUDED.updated_at,\n                            updated_by = EXCLUDED.updated_by\n                    ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Bool",
+        "Timestamptz",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "dd7149fbadf76b396b2f68776b355e221257cb349c0515e64d9a7aa67bd614d2"
+}

@@ -85,6 +85,7 @@ export namespace Schemas {
     | { InternalServerError: { reason: string } }
     | { Forbidden: { reason: string } }
     | { Conflict: { reason: string } }
+    | { FeatureNotEnabled: { reason: string } }
     | { NotFound: { reason: string } }
     | { Gone: { reason: string } }
     | { Unprocessable: { reason: string } }
@@ -418,6 +419,8 @@ export namespace Schemas {
     uptime_7d: UptimeWindow
   }
   export type DeploymentUptimeResponse = { data: DeploymentUptime }
+  export type Feature = 'customer_cloud'
+  export type EnabledFeaturesResponse = { enabled: Array<Feature> }
   export type Ending = 'finished' | 'unreadable'
   export type EstateOwner = { id: OrganisationId; name: string }
   export type EstateDeployment = {
@@ -439,6 +442,15 @@ export namespace Schemas {
     region: string
     replication: number
   }
+  export type FeatureView = {
+    description: string
+    enabled_by_default: boolean
+    key: Feature
+    overrides_off: number
+    overrides_on: number
+  }
+  export type FeatureResponse = { data: FeatureView }
+  export type FeaturesResponse = { data: Array<FeatureView> }
   export type FleetActor =
     | { kind: 'operator'; subject: string }
     | { client_id: string; kind: 'api' }
@@ -452,10 +464,12 @@ export namespace Schemas {
     | 'dataplane.removed'
     | 'operator.granted'
     | 'operator.revoked'
+    | 'feature.default_changed'
   export type FleetAuditEntryId = string
   export type FleetTarget =
     | { id: DataPlaneId; kind: 'data_plane' }
     | { kind: 'operator'; subject: string }
+    | { key: string; kind: 'feature' }
   export type FleetAuditEntry = {
     action: FleetAuditAction
     actor: FleetActor
@@ -789,12 +803,14 @@ export namespace Schemas {
     keep_last: number
     zone: string
   }
+  export type SetFeatureDefaultRequest = { enabled_by_default: boolean }
   export type SetIamSettingsRequest = Partial<{ branding: null | BrandingInput }>
   export type SetMemberRolesRequest = Partial<{ roles: Array<string> }>
   export type SetMemberRolesResponse = { data: Member }
   export type SetNetworkAccessRequest = Partial<{ allowed_cidrs: Array<string> }>
   export type SetNetworkAccessResponse = { data: Deployment }
   export type SetServiceRequest = { service: ServiceIntent }
+  export type SetTenantFeatureRequest = Partial<{ enabled: boolean | null }>
   export type SetUpgradeSettingsRequest = {
     auto_upgrade: AutoUpgradePolicy
     maintenance_window?: (null | MaintenanceWindowRequest) | undefined
@@ -813,6 +829,15 @@ export namespace Schemas {
     trace_id: string
   }
   export type Tenant = { deployments: number; members: number; organisation: Organisation }
+  export type TenantFeatureView = {
+    default: boolean
+    description: string
+    effective: boolean
+    key: Feature
+    override?: (boolean | null) | undefined
+  }
+  export type TenantFeatureResponse = { data: TenantFeatureView }
+  export type TenantFeaturesResponse = { data: Array<TenantFeatureView> }
   export type TenantResponse = { data: Tenant }
   export type TenantsResponse = {
     data: Array<Tenant>
@@ -1358,6 +1383,15 @@ export namespace Endpoints {
     }
     response: Schemas.GetDeploymentUsageResponse
   }
+  export type get_List_enabled_features_handler = {
+    method: 'GET'
+    path: '/organisations/{organisation_id}/feature-flags'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string }
+    }
+    response: Schemas.EnabledFeaturesResponse
+  }
   export type get_List_features_handler = {
     method: 'GET'
     path: '/organisations/{organisation_id}/features'
@@ -1678,6 +1712,24 @@ export namespace Endpoints {
     }
     response: Schemas.DeploymentUptimeResponse
   }
+  export type get_List_platform_features_handler = {
+    method: 'GET'
+    path: '/platform/features'
+    requestFormat: 'json'
+    parameters: never
+    response: Schemas.FeaturesResponse
+  }
+  export type put_Set_feature_default_handler = {
+    method: 'PUT'
+    path: '/platform/features/{key}'
+    requestFormat: 'json'
+    parameters: {
+      path: { key: string }
+
+      body: Schemas.SetFeatureDefaultRequest
+    }
+    response: Schemas.FeatureResponse
+  }
   export type get_List_operators_handler = {
     method: 'GET'
     path: '/platform/operators'
@@ -1722,6 +1774,26 @@ export namespace Endpoints {
       path: { organisation_id: string }
     }
     response: Schemas.TenantResponse
+  }
+  export type get_List_tenant_features_handler = {
+    method: 'GET'
+    path: '/platform/organisations/{organisation_id}/features'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string }
+    }
+    response: Schemas.TenantFeaturesResponse
+  }
+  export type put_Set_tenant_feature_handler = {
+    method: 'PUT'
+    path: '/platform/organisations/{organisation_id}/features/{key}'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; key: string }
+
+      body: Schemas.SetTenantFeatureRequest
+    }
+    response: Schemas.TenantFeatureResponse
   }
   export type put_Move_tenant_plan_handler = {
     method: 'PUT'
@@ -1886,6 +1958,7 @@ export type EndpointByMethod = {
     '/organisations/{organisation_id}/deployments/{deployment_id}/network-access': Endpoints.get_Get_network_access_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/upgrade': Endpoints.get_Upgrade_in_flight_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/usage-metrics/{metric}': Endpoints.get_Get_deployment_usage_handler
+    '/organisations/{organisation_id}/feature-flags': Endpoints.get_List_enabled_features_handler
     '/organisations/{organisation_id}/features': Endpoints.get_List_features_handler
     '/organisations/{organisation_id}/invitations': Endpoints.get_List_invitations_handler
     '/organisations/{organisation_id}/logs/group': Endpoints.get_Group_logs_handler
@@ -1906,9 +1979,11 @@ export type EndpointByMethod = {
     '/platform/deployments': Endpoints.get_List_estate_deployments_handler
     '/platform/deployments/{deployment_id}/downtime': Endpoints.get_Get_deployment_downtime_handler
     '/platform/deployments/{deployment_id}/uptime': Endpoints.get_Get_deployment_uptime_handler
+    '/platform/features': Endpoints.get_List_platform_features_handler
     '/platform/operators': Endpoints.get_List_operators_handler
     '/platform/organisations': Endpoints.get_List_tenants_handler
     '/platform/organisations/{organisation_id}': Endpoints.get_Get_tenant_handler
+    '/platform/organisations/{organisation_id}/features': Endpoints.get_List_tenant_features_handler
     '/platform/rights': Endpoints.get_My_rights_handler
     '/platform/signals': Endpoints.get_List_signals_handler
     '/regions': Endpoints.get_List_regions_handler
@@ -1968,7 +2043,9 @@ export type EndpointByMethod = {
     '/organisations/{organisation_id}/deployments/{deployment_id}/upgrade-settings': Endpoints.put_Set_upgrade_settings_handler
     '/organisations/{organisation_id}/members/{user_id}/roles': Endpoints.put_Set_member_roles_handler
     '/platform/cells/settings': Endpoints.put_Update_cells_settings_handler
+    '/platform/features/{key}': Endpoints.put_Set_feature_default_handler
     '/platform/operators/{subject}': Endpoints.put_Grant_operator_handler
+    '/platform/organisations/{organisation_id}/features/{key}': Endpoints.put_Set_tenant_feature_handler
     '/platform/organisations/{organisation_id}/plan': Endpoints.put_Move_tenant_plan_handler
     '/releases/operator/{kind}/{version}/rollout': Endpoints.put_Widen_rollout_handler
     '/releases/operator/{kind}/{version}/status': Endpoints.put_Move_release_handler

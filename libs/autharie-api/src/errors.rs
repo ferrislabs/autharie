@@ -33,6 +33,9 @@ pub enum ApiError {
     Conflict { reason: String },
 
     #[error("{reason}")]
+    FeatureNotEnabled { reason: String },
+
+    #[error("{reason}")]
     NotFound { reason: String },
 
     #[error("{reason}")]
@@ -110,6 +113,15 @@ impl IntoResponse for ApiError {
                     "E_FORBIDDEN",
                     StatusCode::FORBIDDEN,
                     format!("forbidden: {reason}"),
+                )),
+            )
+                .into_response(),
+            ApiError::FeatureNotEnabled { reason } => (
+                StatusCode::FORBIDDEN,
+                Json(ApiErrorResponse::new(
+                    "E_FEATURE_NOT_ENABLED",
+                    StatusCode::FORBIDDEN,
+                    reason,
                 )),
             )
                 .into_response(),
@@ -199,7 +211,11 @@ impl From<CoreError> for ApiError {
                     reason: value.to_string(),
                 }
             }
-            CoreError::ReleaseNotFound { .. }
+            CoreError::FeatureNotEnabled { .. } => ApiError::FeatureNotEnabled {
+                reason: value.to_string(),
+            },
+            CoreError::UnknownFeature { .. }
+            | CoreError::ReleaseNotFound { .. }
             | CoreError::DeploymentNotFound { .. }
             | CoreError::BackupNotFound { .. }
             | CoreError::OrganisationNotFound { .. }
@@ -930,6 +946,35 @@ mod tests {
 
             assert_eq!(said.into_response().status(), expected, "{carries}");
         }
+    }
+
+    #[tokio::test]
+    async fn a_feature_that_is_off_is_a_403_with_its_own_code_naming_it() {
+        let response = ApiError::from(CoreError::FeatureNotEnabled {
+            feature: "customer_cloud".to_string(),
+        })
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("a body");
+        let body: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+        assert_eq!(body["code"], "E_FEATURE_NOT_ENABLED");
+        assert!(
+            body["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("customer_cloud"))
+        );
+    }
+
+    #[test]
+    fn a_feature_nobody_defined_is_not_found() {
+        let said = ApiError::from(CoreError::UnknownFeature {
+            value: "nope".to_string(),
+        });
+
+        assert_eq!(said.into_response().status(), StatusCode::NOT_FOUND);
     }
 
     /// The refusal names the right. Without the name, an operator reads

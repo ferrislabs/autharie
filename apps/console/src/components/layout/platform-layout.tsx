@@ -3,8 +3,9 @@ import {
   ArrowUpCircle,
   Boxes,
   Building2,
-  Rows3,
+  Flag,
   LayoutDashboard,
+  Rows3,
   ScrollText,
   Server,
   ShieldAlert,
@@ -27,6 +28,7 @@ const TABS: Tab[] = [
   { label: 'Data planes', to: platformPath('/dataplanes'), icon: Server },
   { label: 'Upgrades', to: platformPath('/dataplane-upgrades'), icon: ArrowUpCircle },
   { label: 'Releases', to: platformPath('/releases'), icon: Tag },
+  { label: 'Features', to: platformPath('/features'), icon: Flag },
   { label: 'Trail', to: platformPath('/trail'), icon: ScrollText },
 ]
 

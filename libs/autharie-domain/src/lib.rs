@@ -13,6 +13,7 @@ pub mod certificate;
 pub mod dataplane;
 pub mod deployments;
 pub mod dns;
+pub mod features;
 pub mod iam_settings;
 pub mod logs;
 pub mod metrics;
@@ -300,6 +301,12 @@ pub enum CoreError {
     /// started, so the caller can tell "already running" from "ignored me".
     #[error("an archive of this deployment was asked for at {since} and has not arrived yet")]
     BackupAlreadyUnderway { since: String },
+
+    #[error("the {feature} feature is not enabled for this organisation")]
+    FeatureNotEnabled { feature: String },
+
+    #[error("'{value}' is not a feature")]
+    UnknownFeature { value: String },
 
     #[error("'{value}' is not a platform right")]
     UnknownPlatformRight { value: String },

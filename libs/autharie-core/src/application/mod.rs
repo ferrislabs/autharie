@@ -27,6 +27,7 @@ pub mod dataplane_upgrade;
 pub mod dataplane_upgrade_request;
 mod deployment;
 mod dns;
+mod feature_flags;
 pub mod iam_settings;
 mod invitation;
 mod logs;

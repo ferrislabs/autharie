@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO fleet_audit_log (\n                id,\n                actor_type,\n                actor_subject,\n                actor_client_id,\n                action,\n                target_dataplane_id,\n                target_subject,\n                target_feature,\n                change_before,\n                change_after,\n                recorded_at\n            )\n            VALUES (\n                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11\n            )\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Uuid",
+        "Text",
+        "Text",
+        "Jsonb",
+        "Jsonb",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6da9f7c403e043a7a85c6763fdbc0a9550ad3d3ec5e40802a70413616b13b927"
+}
