@@ -18,10 +18,10 @@ use utoipa_swagger_ui::SwaggerUi;
 use crate::{
     errors::ApiError,
     handlers::{
-        actions::action_routes, audit::audit_routes, cloud_credentials::cloud_credential_routes,
-        dataplanes::dataplanes_routes, deployments::deployment_routes,
-        invitations::invitation_routes, logs::logs_routes, members::member_routes,
-        metrics::metrics_routes, organisations::organisation_routes,
+        actions::action_routes, audit::audit_routes, billing::billing_routes,
+        cloud_credentials::cloud_credential_routes, dataplanes::dataplanes_routes,
+        deployments::deployment_routes, invitations::invitation_routes, logs::logs_routes,
+        members::member_routes, metrics::metrics_routes, organisations::organisation_routes,
         permissions::permissions_routes, platform::platform_routes, regions::regions_routes,
         releases::releases_routes, roles::role_routes, traces::traces_routes, users::user_routes,
     },
@@ -118,6 +118,7 @@ pub fn router(state: AppState) -> Result<Router, ApiError> {
         .merge(releases_routes(state.clone()))
         .merge(metrics_routes(state.clone()))
         .merge(platform_routes(state.clone()))
+        .merge(billing_routes(state.clone()))
         .layer(trace_layer)
         .layer(cors)
         .with_state(state);

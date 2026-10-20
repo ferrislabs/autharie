@@ -142,6 +142,7 @@ fn resizing_state(
         certificate_source: None,
         quickwit_search: None,
         quickwit_traces: None,
+        billing: None,
     }
 }
 

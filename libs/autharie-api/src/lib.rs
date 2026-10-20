@@ -25,6 +25,8 @@ pub mod action_stuck_signal;
 pub mod args;
 pub mod auth;
 pub mod backup_signal;
+pub mod billing;
+pub mod billing_periods;
 pub mod certificate;
 pub mod deployment_reachability;
 pub mod dns;
@@ -65,6 +67,7 @@ pub(crate) mod test_helpers {
             certificate_source: None,
             quickwit_search: None,
             quickwit_traces: None,
+            billing: None,
         }
     }
 

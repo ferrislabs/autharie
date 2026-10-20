@@ -6,6 +6,7 @@ use autharie_api::{
     action_stuck_signal::run_action_stuck_signal_probe,
     args::Args,
     backup_signal::run_backup_signal_probe,
+    billing_periods::close_billing_periods,
     deployment_reachability::run_deployment_reachability_probe,
     dns::reconcile_dns_records,
     drill::run_restore_drills,
@@ -44,6 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     warn_if_nobody_operates(app_state.clone()).await;
 
     tokio::spawn(purge_deleted_deployments(app_state.clone()));
+    tokio::spawn(close_billing_periods(app_state.clone()));
     tokio::spawn(ensure_archive_bucket(args.clone()));
     tokio::spawn(ensure_wrapping_key(args.clone()));
     tokio::spawn(reconcile_dns_records(app_state.clone()));

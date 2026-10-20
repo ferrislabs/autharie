@@ -664,6 +664,7 @@ export namespace Schemas {
   }
   export type OperatorResponse = { data: PlatformOperator }
   export type OperatorsResponse = { data: Array<PlatformOperator> }
+  export type ProviderEventsResponse = { received: boolean }
   export type ProviderOffers = {
     control_planes: Array<ControlPlaneOffer>
     node_types: Array<NodeOffer>
@@ -834,6 +835,16 @@ export namespace Schemas {
 export namespace Endpoints {
   // <Endpoints>
 
+  export type post_Provider_events_handler = {
+    method: 'POST'
+    path: '/billing/provider-events'
+    requestFormat: 'json'
+    parameters: {
+      header: { 'Stripe-Signature': string }
+      body: string
+    }
+    response: Schemas.ProviderEventsResponse
+  }
   export type get_List_dataplanes_handler = {
     method: 'GET'
     path: '/dataplanes'
@@ -1811,6 +1822,34 @@ export namespace Endpoints {
 
 // <EndpointByMethod>
 export type EndpointByMethod = {
+  post: {
+    '/billing/provider-events': Endpoints.post_Provider_events_handler
+    '/dataplanes': Endpoints.post_Create_dataplane_handler
+    '/dataplanes/{dataplane_id}/actions:ack': Endpoints.post_Ack_dataplane_actions_handler
+    '/dataplanes/{dataplane_id}/actions:claim': Endpoints.post_Claim_actions_handler
+    '/dataplanes/{dataplane_id}/credential': Endpoints.post_Reissue_herald_credential_handler
+    '/dataplanes/{dataplane_id}/deployments/{deployment_id}/actions:ack': Endpoints.post_Ack_actions_handler
+    '/dataplanes/{dataplane_id}/deployments/{deployment_id}/archive': Endpoints.post_Report_archive_handler
+    '/dataplanes/{dataplane_id}/deployments/{deployment_id}/drill': Endpoints.post_Report_drill_outcome_handler
+    '/dataplanes/{dataplane_id}/deployments/{deployment_id}/logs/{session_id}': Endpoints.post_Push_logs_handler
+    '/dataplanes/{dataplane_id}/deployments/{deployment_id}/outcome': Endpoints.post_Report_outcome_handler
+    '/dataplanes/{dataplane_id}/heartbeat': Endpoints.post_Heartbeat_handler
+    '/deployments/{deployment_id}/usage-metrics': Endpoints.post_Report_usage_metrics_handler
+    '/invitations/accept': Endpoints.post_Accept_invitation_handler
+    '/organisations': Endpoints.post_Create_organisation_handler
+    '/organisations/{organisation_id}/cloud-credentials': Endpoints.post_Register_cloud_credential_handler
+    '/organisations/{organisation_id}/cluster-profiles/estimate': Endpoints.post_Estimate_cluster_profile_handler
+    '/organisations/{organisation_id}/deployments': Endpoints.post_Create_deployment_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/backups': Endpoints.post_Ask_for_backup_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/backups/{backup_id}/restore': Endpoints.post_Restore_backup_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/cutover': Endpoints.post_Cutover_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/upgrade': Endpoints.post_Upgrade_deployment_handler
+    '/organisations/{organisation_id}/invitations': Endpoints.post_Invite_handler
+    '/organisations/{organisation_id}/roles': Endpoints.post_Create_role_handler
+    '/platform/dataplanes/upgrade': Endpoints.post_Upgrade_dataplanes_handler
+    '/releases/operator/{kind}': Endpoints.post_Publish_release_handler
+    '/releases/operator/{kind}/{version}/rollout/preview': Endpoints.post_Preview_rollout_coverage_handler
+  }
   get: {
     '/dataplanes': Endpoints.get_List_dataplanes_handler
     '/dataplanes/{dataplane_id}': Endpoints.get_Get_dataplane_handler
@@ -1862,33 +1901,6 @@ export type EndpointByMethod = {
     '/releases/{kind}': Endpoints.get_List_releases_handler
     '/users/@me/organisations': Endpoints.get_Get_user_organisations_handler
   }
-  post: {
-    '/dataplanes': Endpoints.post_Create_dataplane_handler
-    '/dataplanes/{dataplane_id}/actions:ack': Endpoints.post_Ack_dataplane_actions_handler
-    '/dataplanes/{dataplane_id}/actions:claim': Endpoints.post_Claim_actions_handler
-    '/dataplanes/{dataplane_id}/credential': Endpoints.post_Reissue_herald_credential_handler
-    '/dataplanes/{dataplane_id}/deployments/{deployment_id}/actions:ack': Endpoints.post_Ack_actions_handler
-    '/dataplanes/{dataplane_id}/deployments/{deployment_id}/archive': Endpoints.post_Report_archive_handler
-    '/dataplanes/{dataplane_id}/deployments/{deployment_id}/drill': Endpoints.post_Report_drill_outcome_handler
-    '/dataplanes/{dataplane_id}/deployments/{deployment_id}/logs/{session_id}': Endpoints.post_Push_logs_handler
-    '/dataplanes/{dataplane_id}/deployments/{deployment_id}/outcome': Endpoints.post_Report_outcome_handler
-    '/dataplanes/{dataplane_id}/heartbeat': Endpoints.post_Heartbeat_handler
-    '/deployments/{deployment_id}/usage-metrics': Endpoints.post_Report_usage_metrics_handler
-    '/invitations/accept': Endpoints.post_Accept_invitation_handler
-    '/organisations': Endpoints.post_Create_organisation_handler
-    '/organisations/{organisation_id}/cloud-credentials': Endpoints.post_Register_cloud_credential_handler
-    '/organisations/{organisation_id}/cluster-profiles/estimate': Endpoints.post_Estimate_cluster_profile_handler
-    '/organisations/{organisation_id}/deployments': Endpoints.post_Create_deployment_handler
-    '/organisations/{organisation_id}/deployments/{deployment_id}/backups': Endpoints.post_Ask_for_backup_handler
-    '/organisations/{organisation_id}/deployments/{deployment_id}/backups/{backup_id}/restore': Endpoints.post_Restore_backup_handler
-    '/organisations/{organisation_id}/deployments/{deployment_id}/cutover': Endpoints.post_Cutover_handler
-    '/organisations/{organisation_id}/deployments/{deployment_id}/upgrade': Endpoints.post_Upgrade_deployment_handler
-    '/organisations/{organisation_id}/invitations': Endpoints.post_Invite_handler
-    '/organisations/{organisation_id}/roles': Endpoints.post_Create_role_handler
-    '/platform/dataplanes/upgrade': Endpoints.post_Upgrade_dataplanes_handler
-    '/releases/operator/{kind}': Endpoints.post_Publish_release_handler
-    '/releases/operator/{kind}/{version}/rollout/preview': Endpoints.post_Preview_rollout_coverage_handler
-  }
   delete: {
     '/dataplanes/{dataplane_id}': Endpoints.delete_Delete_dataplane_handler
     '/organisations/{organisation_id}/cloud-credentials/{credential_id}': Endpoints.delete_Delete_cloud_credential_handler
@@ -1923,8 +1935,8 @@ export type EndpointByMethod = {
 // </EndpointByMethod>
 
 // <EndpointByMethod.Shorthands>
-export type GetEndpoints = EndpointByMethod['get']
 export type PostEndpoints = EndpointByMethod['post']
+export type GetEndpoints = EndpointByMethod['get']
 export type DeleteEndpoints = EndpointByMethod['delete']
 export type PutEndpoints = EndpointByMethod['put']
 export type PatchEndpoints = EndpointByMethod['patch']
@@ -1997,17 +2009,6 @@ export class ApiClient {
     return response.text() as unknown as T
   }
 
-  // <ApiClient.get>
-  get<Path extends keyof GetEndpoints, TEndpoint extends GetEndpoints[Path]>(
-    path: Path,
-    ...params: MaybeOptionalArg<TEndpoint['parameters']>
-  ): Promise<TEndpoint['response']> {
-    return this.fetcher('get', this.baseUrl + path, params[0]).then((response) =>
-      this.parseResponse(response)
-    ) as Promise<TEndpoint['response']>
-  }
-  // </ApiClient.get>
-
   // <ApiClient.post>
   post<Path extends keyof PostEndpoints, TEndpoint extends PostEndpoints[Path]>(
     path: Path,
@@ -2018,6 +2019,17 @@ export class ApiClient {
     ) as Promise<TEndpoint['response']>
   }
   // </ApiClient.post>
+
+  // <ApiClient.get>
+  get<Path extends keyof GetEndpoints, TEndpoint extends GetEndpoints[Path]>(
+    path: Path,
+    ...params: MaybeOptionalArg<TEndpoint['parameters']>
+  ): Promise<TEndpoint['response']> {
+    return this.fetcher('get', this.baseUrl + path, params[0]).then((response) =>
+      this.parseResponse(response)
+    ) as Promise<TEndpoint['response']>
+  }
+  // </ApiClient.get>
 
   // <ApiClient.delete>
   delete<Path extends keyof DeleteEndpoints, TEndpoint extends DeleteEndpoints[Path]>(

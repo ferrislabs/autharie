@@ -132,6 +132,7 @@ mod tests {
             certificate_source: None,
             quickwit_search: None,
             quickwit_traces: None,
+            billing: None,
         }
     }
 

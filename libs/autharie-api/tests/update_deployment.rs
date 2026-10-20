@@ -145,6 +145,7 @@ fn app(pool: PgPool, owner: Uuid) -> Router {
         certificate_source: None,
         quickwit_search: None,
         quickwit_traces: None,
+        billing: None,
     };
 
     Router::new()
