@@ -25,7 +25,8 @@ highly available FerrisKey instance called a cell. `make demo` sets that up:
   credentials, and with both the control plane publishes public records; the
   demo does not, unless asked.
 - It finds or creates the organisation that owns every cell, "Autharie cells",
-  and restarts the control plane with `CELLS_ORGANISATION_ID` set to it.
+  and chooses it as the cells organisation through
+  `PUT /platform/cells/settings`.
 - It installs the data plane with `genesis.tenantZone` set to the same zone, so
   Genesis accepts realm actions for `<realm>.<zone>`.
 - It checks that pods resolve `host.k3d.internal` and puts the entry back in

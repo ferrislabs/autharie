@@ -83,9 +83,6 @@ export AUTHARIE_BOOTSTRAP_OPERATOR="${AUTHARIE_BOOTSTRAP_OPERATOR:-}"
 export CUSTOMER_CLOUD_ENABLED="${CUSTOMER_CLOUD_ENABLED:-false}"
 export CUSTOMER_CLOUD_CONTROL_PLANE_URL="${CUSTOMER_CLOUD_CONTROL_PLANE_URL:-}"
 export CUSTOMER_CLOUD_HERALD_ISSUER="${CUSTOMER_CLOUD_HERALD_ISSUER:-}"
-# Found or created below, once there is a token to ask with. Until then the
-# control plane refuses to create a cell, which nothing before that step does.
-export CELLS_ORGANISATION_ID="${CELLS_ORGANISATION_ID:-}"
 
 # Free tenants are realms served at <realm>.<zone>, and the control plane
 # decides those names from OVH_ZONE. It *publishes* a record for them only when
@@ -265,11 +262,20 @@ else
     note "created ${cells_org}"
 fi
 
-# Read once, at startup, like the bootstrap operator above.
-if [ "${CELLS_ORGANISATION_ID}" != "${cells_org}" ]; then
-    export CELLS_ORGANISATION_ID="${cells_org}"
-    recreate_control_plane "could not restart the control plane with the cells organisation"
-    OPERATOR_TOKEN=$(token autharie-operator-cli "${OPERATOR_SECRET}")
+response=$(curl -sS "${CONTROL_PLANE}/platform/cells/settings" \
+    -H "Authorization: Bearer ${OPERATOR_TOKEN}" -w $'\n%{http_code}')
+code="${response##*$'\n'}"
+[ "${code#2}" != "${code}" ] || die "could not read the cells settings (HTTP ${code})"
+current_cells_org=$(printf '%s' "${response%$'\n'*}" | jq -r '.organisation_id // empty')
+
+if [ "${current_cells_org}" != "${cells_org}" ]; then
+    response=$(curl -sS -X PUT "${CONTROL_PLANE}/platform/cells/settings" \
+        -H "Authorization: Bearer ${OPERATOR_TOKEN}" \
+        -H 'Content-Type: application/json' \
+        -d "$(jq -n --arg o "${cells_org}" '{organisation_id: $o}')" \
+        -w $'\n%{http_code}')
+    code="${response##*$'\n'}"
+    [ "${code#2}" != "${code}" ] || die "could not set the cells organisation (HTTP ${code}): ${response%$'\n'*}"
 fi
 note "\"${CELLS_ORGANISATION_NAME}\" owns the cells of this installation"
 
@@ -601,7 +607,7 @@ $( [ "${status}" = "active" ] && printf '\033[1;32m✅ ready\033[0m' || printf '
    control API  ${CONTROL_PLANE}
    identity     ${ISSUER}
    tenant zone  ${TENANT_ZONE}  (DNS records ${DNS_RECORDS})
-   cells owner  ${CELLS_ORGANISATION_ID}  (${CELLS_ORGANISATION_NAME})
+   cells owner  ${cells_org}  (${CELLS_ORGANISATION_NAME})
    cell         ${CELL_ID:-none}  (${CELL_STATUS})
 
    Start the console:
