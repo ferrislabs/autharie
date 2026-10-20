@@ -50,6 +50,17 @@ spec:
             - name: AUTHARIE_PUBLIC_HTTPS_PORT
               value: {{ .Values.gateway.publicHttpsPort | quote }}
             {{- end }}
+            {{- if .Values.sharedDatabase.enabled }}
+            # Where a free deployment's database is created. The operator reads
+            # the cluster's `-superuser` Secret in this namespace and connects
+            # to `<cluster>-rw.<namespace>.svc:5432`. Absent when the chart
+            # declares no shared cluster, so the operator can tell "none here"
+            # from a misconfigured one.
+            - name: AUTHARIE_SHARED_DATABASE_CLUSTER
+              value: {{ include "autharie-dataplane.fullname" . }}-shared-db
+            - name: AUTHARIE_SHARED_DATABASE_NAMESPACE
+              value: {{ .Release.Namespace }}
+            {{- end }}
             {{- if .Values.herald.otlp.enabled }}
             # The same toggle that opens Herald's own OTLP receiver (see
             # herald.yaml and herald-service.yaml) also tells every FerrisKey

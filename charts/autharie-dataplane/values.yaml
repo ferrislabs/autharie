@@ -172,6 +172,45 @@ operator:
     limits:
       memory: 256Mi
 
+# The CloudNativePG cluster every free deployment's database lives on (ADR
+# 0006). A free deployment is a FerrisKey of its own, but a cluster of its own
+# per tenant is what makes a free offer unaffordable, so they share this one:
+# one database and one role each, created by the operator as superuser.
+#
+# CloudNativePG is a cluster prerequisite, like the Gateway controller: this
+# chart declares the Cluster, it does not install the operator. Set `enabled:
+# false` on a data plane that hosts no free deployment, or where the CRD is
+# absent, and the Cluster and the operator's coordinates for it go away.
+#
+# One instance on purpose: it is a point of failure for every free tenant of
+# this data plane, accepted for the free offer. The daily dumps are the
+# recovery, not replicas.
+sharedDatabase:
+  enabled: true
+  instances: 1
+  storage:
+    size: 10Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+  postgresql:
+    # What bounds how many free deployments one data plane carries. The
+    # operator sets no pool size on a FerrisKey API, so each free deployment
+    # holds the pool FerrisKey defaults to, assumed to be 20 connections
+    # (check it again when the FerrisKey image moves).
+    #   300 max_connections
+    #   - 3  superuser_reserved_connections (PostgreSQL default)
+    #   - 10 kept for CloudNativePG itself, the operator's role/database SQL,
+    #        and the migration and dump Jobs, which connect beside the API
+    #   = 287 usable, / 20 per FerrisKey = 14 free deployments.
+    # Raise max_connections together with the memory limit above: every
+    # connection costs a backend process, roughly 5-10 MiB.
+    maxConnections: 300
+
 # The message bus between Herald and Genesis: a single-node Apache Iggy.
 # Messages are written to disk before a publish returns, so a broker restart
 # loses nothing that was acknowledged -- provided `persistence` is on.
