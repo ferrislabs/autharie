@@ -10,6 +10,7 @@ import {
   formatMinor,
   isPaid,
   paidActionBlock,
+  tierChangeBlock,
   type BillingAccess,
   type TierFit,
 } from '@/domain/billing/billing'
@@ -30,7 +31,13 @@ function priceLabel(monthlyPrice: number): string {
   return isPaid({ monthly_price: monthlyPrice }) ? `${formatMinor(monthlyPrice)} per month` : 'Free'
 }
 
-function changeBlock(tier: Schemas.TierResponse, access: BillingAccess): string | null {
+function changeBlock(
+  tier: Schemas.TierResponse,
+  currentOffer: Schemas.Offer,
+  access: BillingAccess,
+): string | null {
+  const move = tierChangeBlock(currentOffer, tier)
+  if (move) return move
   if (!access.canManage) return NEEDS_BILLING_RIGHT
   return isPaid(tier) ? paidActionBlock(access) : null
 }
@@ -77,6 +84,7 @@ function TierRow({
 
 function TierChange({
   current,
+  currentOffer,
   tiers,
   fit,
   access,
@@ -85,6 +93,7 @@ function TierChange({
   onChange,
 }: {
   current: string
+  currentOffer: Schemas.Offer
   tiers?: ReadonlyArray<Schemas.TierResponse>
   fit: TierFit
   access: BillingAccess
@@ -118,12 +127,17 @@ function TierChange({
           <TierRow
             key={tier.code}
             tier={tier}
-            block={changeBlock(tier, access)}
+            block={changeBlock(tier, currentOffer, access)}
             changing={changing}
             onChange={onChange}
           />
         ))}
       </ul>
+      {access.canManage && (
+        <p className='mt-2 text-xs text-muted-foreground'>
+          Switching to a tier of another size resizes the deployment. Its database restarts once.
+        </p>
+      )}
       {error && (
         <p role='alert' className='mt-2 text-sm text-destructive'>
           {error}
@@ -166,6 +180,7 @@ export function SubscriptionCard({
           </div>
           <TierChange
             current={subscription.tier}
+            currentOffer={subscription.offer}
             tiers={tiers}
             fit={fit}
             access={access}

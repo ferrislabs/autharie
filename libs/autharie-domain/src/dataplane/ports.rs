@@ -10,11 +10,11 @@ use crate::{
         herald_identity::{HeraldBinding, MintedHeraldIdentity, RegisteredDataPlane},
         value_objects::{
             CreateDataplaneCommand, DataPlaneAllocation, DataPlaneId, DataPlaneMode,
-            DeploymentResources, ListDataPlaneDeploymentsCommand, PlacementRequest, Region,
-            ServiceIntent,
+            DeploymentResources, ListDataPlaneDeploymentsCommand, PlacementRequest, PlaneLoad,
+            Region, ServiceIntent,
         },
     },
-    deployments::{Deployment, commands::ReportDeploymentOutcomeCommand},
+    deployments::{Deployment, DeploymentId, commands::ReportDeploymentOutcomeCommand},
     organisation::OrganisationId,
     version::Version,
 };
@@ -263,6 +263,12 @@ pub trait DataPlaneRepository: Send + Sync {
     fn list_all(&self) -> impl Future<Output = Result<Vec<DataPlane>, CoreError>> + Send;
     fn current_load(&self, id: &DataPlaneId)
     -> impl Future<Output = Result<u32, CoreError>> + Send;
+
+    fn load_excluding(
+        &self,
+        id: &DataPlaneId,
+        excluding: &DeploymentId,
+    ) -> impl Future<Output = Result<Option<PlaneLoad>, CoreError>> + Send;
     fn save(&self, dataplane: &DataPlane) -> impl Future<Output = Result<(), CoreError>> + Send;
 
     /// Deletes the row, and with it the deployments already deleted and the

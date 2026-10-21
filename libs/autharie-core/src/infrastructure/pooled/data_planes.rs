@@ -6,9 +6,10 @@ use autharie_domain::{
         ports::{DataPlaneRepository, HeraldBindingStore, Removal},
         value_objects::DataPlaneStatus,
         value_objects::{
-            DataPlaneId, DataPlaneMode, DeploymentResources, PlacementRequest, Region,
+            DataPlaneId, DataPlaneMode, DeploymentResources, PlacementRequest, PlaneLoad, Region,
         },
     },
+    deployments::DeploymentId,
     organisation::OrganisationId,
     version::Version,
 };
@@ -101,6 +102,18 @@ impl DataPlaneRepository for PooledDataPlanes {
 
     async fn current_load(&self, id: &DataPlaneId) -> Result<u32, CoreError> {
         in_tx!(&self.pool, PostgresDataPlaneRepository, current_load(id))
+    }
+
+    async fn load_excluding(
+        &self,
+        id: &DataPlaneId,
+        excluding: &DeploymentId,
+    ) -> Result<Option<PlaneLoad>, CoreError> {
+        in_tx!(
+            &self.pool,
+            PostgresDataPlaneRepository,
+            load_excluding(id, excluding)
+        )
     }
 
     async fn save(&self, dataplane: &DataPlane) -> Result<(), CoreError> {

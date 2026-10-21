@@ -1,0 +1,59 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT dp.capacity_cpu_millis,\n                   dp.capacity_memory_mib,\n                   dp.capacity_storage_gib,\n                   dp.capacity_max_deployments,\n                   COALESCE(SUM(d.cpu_millis), 0)::BIGINT AS \"used_cpu_millis!\",\n                   COALESCE(SUM(d.memory_mib), 0)::BIGINT AS \"used_memory_mib!\",\n                   COALESCE(SUM(d.storage_gib), 0)::BIGINT AS \"used_storage_gib!\"\n            FROM data_planes dp\n            LEFT JOIN deployments d\n              ON d.dataplane_id = dp.id\n             AND d.deleted_at IS NULL\n             AND d.id <> $2\n            WHERE dp.id = $1\n            GROUP BY dp.id\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "capacity_cpu_millis",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "capacity_memory_mib",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 2,
+        "name": "capacity_storage_gib",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 3,
+        "name": "capacity_max_deployments",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 4,
+        "name": "used_cpu_millis!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "used_memory_mib!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 6,
+        "name": "used_storage_gib!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "74d3f624f9c57e4dabb7597290b49868f4653c1cd8632c5874cdbc58a8c87019"
+}

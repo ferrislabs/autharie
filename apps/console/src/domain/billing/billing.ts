@@ -9,6 +9,10 @@ export const NEEDS_BILLING_RIGHT = 'Changing a paid subscription needs the Manag
 export const NEEDS_BILLING_DETAILS = 'Add the billing details first: name, e-mail and address.'
 export const NEEDS_PAYMENT_METHOD = 'Add a valid payment method first.'
 
+export const DATABASE_MOVE_UNAVAILABLE =
+  'Moving between the free tier and a paid tier is not available yet. Create a deployment on the tier you want and move your data to it.'
+export const BYOC_MOVE_UNAVAILABLE = 'Moving to or from BYOC is not available yet.'
+
 export type BillingAccess = {
   canManage: boolean
   account: Schemas.BillingAccountResponse | null | undefined
@@ -32,6 +36,16 @@ export function paidActionBlock(access: BillingAccess): string | null {
   if (access.account === undefined) return null
   if (access.account === null) return NEEDS_BILLING_DETAILS
   if (!access.account.complete) return NEEDS_PAYMENT_METHOD
+  return null
+}
+
+export function tierChangeBlock(
+  currentOffer: Schemas.Offer | undefined,
+  tier: { offer: Schemas.Offer },
+): string | null {
+  if (currentOffer === undefined) return null
+  if ((currentOffer === 'free') !== (tier.offer === 'free')) return DATABASE_MOVE_UNAVAILABLE
+  if ((currentOffer === 'private') !== (tier.offer === 'private')) return BYOC_MOVE_UNAVAILABLE
   return null
 }
 

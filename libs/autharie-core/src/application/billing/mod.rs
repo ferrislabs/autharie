@@ -28,9 +28,12 @@ use tracing::error;
 
 use crate::{AutharieService, infrastructure::role::permissions_in, policy::AuthariePolicy};
 
+mod announce;
 mod power;
+mod resize;
 
 use power::DeploymentSwitch;
+use resize::TierResize;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct BillingRun {
@@ -112,7 +115,16 @@ impl SubscriptionService for AutharieService {
             })?)
     }
 
-    #[transactional(deployment, organisation, tier, subscription, billing_account)]
+    #[transactional(
+        deployment,
+        organisation,
+        tier,
+        subscription,
+        billing_account,
+        data_plane,
+        backup_schedule,
+        action
+    )]
     async fn change_subscription(
         &self,
         identity: Identity,
@@ -137,20 +149,36 @@ impl SubscriptionService for AutharieService {
                 id: organisation_id.0,
             })?;
 
-        SubscriptionLifecycle::new(
+        let now = chrono::Utc::now();
+        let lifecycle = SubscriptionLifecycle::new(
             tier_repository,
             subscription_repository,
             billing_account_repository,
             AuthariePolicy::new(permissions_in(&tx)),
+        );
+
+        let before = lifecycle.terms_of(deployment.id).await?;
+        let subscription = lifecycle
+            .change(&identity, &organisation, &deployment, &tier, now)
+            .await?;
+
+        if before.is_some_and(|terms| terms.tier == subscription.terms().tier) {
+            return Ok(subscription);
+        }
+
+        TierResize::new(
+            data_plane_repository,
+            deployment_repository,
+            backup_schedule_repository,
+            action_repository,
+            self.archive_config(),
+            self.deployment_domain(),
+            now,
         )
-        .change(
-            &identity,
-            &organisation,
-            &deployment,
-            &tier,
-            chrono::Utc::now(),
-        )
-        .await
+        .follow(deployment, subscription.terms().offer)
+        .await?;
+
+        Ok(subscription)
     }
 }
 

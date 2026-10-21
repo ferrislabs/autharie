@@ -1,11 +1,6 @@
 use autharie_domain::{
     ArchiveConfig, CoreError,
-    action::{
-        ActionPayload, ActionSource, ActionTarget, ActionType, ActionVersion, TargetKind,
-        commands::RecordActionCommand,
-        ports::{ActionRepository, ActionService},
-        service::ActionServiceImpl,
-    },
+    action::ports::ActionRepository,
     backups::ports::BackupScheduleRepository,
     billing::ports::{DeploymentPower, SubscriptionRepository},
     deployments::{Deployment, DeploymentId, ports::DeploymentRepository},
@@ -14,7 +9,7 @@ use autharie_domain::{
 use chrono::{DateTime, Utc};
 use tracing::info;
 
-use crate::application::deployment::{archive_section, deployment_hostname, deployment_payload};
+use super::announce::Announcer;
 
 pub(crate) struct DeploymentSwitch<'a, S, D, B, A>
 where
@@ -22,10 +17,7 @@ where
 {
     subscriptions: S,
     deployments: D,
-    schedules: B,
-    actions: ActionServiceImpl<A>,
-    archive: &'a ArchiveConfig,
-    domain: Option<&'a str>,
+    announcer: Announcer<'a, B, A>,
     now: DateTime<Utc>,
 }
 
@@ -48,10 +40,7 @@ where
         Self {
             subscriptions,
             deployments,
-            schedules,
-            actions: ActionServiceImpl::new(actions),
-            archive,
-            domain,
+            announcer: Announcer::new(schedules, actions, archive, domain),
             now,
         }
     }
@@ -70,56 +59,12 @@ where
             return Ok(false);
         }
 
-        self.announce(&deployment, action).await?;
+        self.announcer.announce(&deployment, action).await?;
         self.deployments.update(deployment).await?;
 
         info!(deployment = %deployment_id, action, "billing switched a deployment");
 
         Ok(true)
-    }
-
-    async fn announce(&self, deployment: &Deployment, action: &str) -> Result<(), CoreError> {
-        // Genesis applies the whole desired state: a payload without the
-        // hostname resets it, one without the archive drops the backups.
-        let hostname = deployment_hostname(self.domain, deployment);
-        let archive = self.archive_of(deployment).await?;
-
-        self.actions
-            .record_action(RecordActionCommand::new(
-                deployment.id,
-                deployment.dataplane_id,
-                ActionType(action.to_string()),
-                ActionTarget {
-                    kind: TargetKind::Deployment,
-                    id: deployment.id.0,
-                },
-                ActionPayload {
-                    data: deployment_payload(deployment, archive, hostname),
-                },
-                ActionVersion(1),
-                ActionSource::System,
-            ))
-            .await?;
-
-        Ok(())
-    }
-
-    async fn archive_of(
-        &self,
-        deployment: &Deployment,
-    ) -> Result<Option<serde_json::Value>, CoreError> {
-        let Some(destination) = self
-            .archive
-            .destination_for(deployment.organisation_id, deployment.id)
-        else {
-            return Ok(None);
-        };
-
-        Ok(self
-            .schedules
-            .get(&deployment.id)
-            .await?
-            .map(|schedule| archive_section(&destination, &self.archive.encryption, &schedule)))
     }
 }
 

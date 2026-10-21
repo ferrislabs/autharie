@@ -11,9 +11,10 @@ use autharie_domain::{
         inventory::{ClusterInventory, ProvisionedResource},
         ports::{DataPlaneRepository, Removal},
         value_objects::{
-            DataPlaneId, DataPlaneMode, DeploymentResources, PlacementRequest, Region,
+            DataPlaneId, DataPlaneMode, DeploymentResources, PlacementRequest, PlaneLoad, Region,
         },
     },
+    deployments::DeploymentId,
     organisation::OrganisationId,
     version::Version,
 };
@@ -182,6 +183,14 @@ impl DataPlaneRepository for FakeRepository {
 
     async fn current_load(&self, _id: &DataPlaneId) -> Result<u32, CoreError> {
         Ok(0)
+    }
+
+    async fn load_excluding(
+        &self,
+        _id: &DataPlaneId,
+        _excluding: &DeploymentId,
+    ) -> Result<Option<PlaneLoad>, CoreError> {
+        Ok(None)
     }
 
     async fn save(&self, _dataplane: &DataPlane) -> Result<(), CoreError> {

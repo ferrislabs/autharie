@@ -4,7 +4,7 @@ use autharie_api::{
     args::Args,
     handlers::deployments::{
         create_deployment::create_deployment_handler, delete_deployment::delete_deployment_handler,
-        iam_settings::set_iam_settings_handler,
+        iam_settings::set_iam_settings_handler, subscription::put_subscription_handler,
     },
     state::AppState,
 };
@@ -25,11 +25,13 @@ use axum_extra::routing::RouterExt;
 use chrono::{DateTime, Utc};
 use futures::FutureExt;
 use serde_json::{Value, json};
-use sqlx::{PgPool, postgres::PgPoolOptions};
+use sqlx::{PgPool, Postgres, pool::PoolConnection, postgres::PgPoolOptions};
 use tower::ServiceExt;
 use uuid::Uuid;
 
 const GATEWAY: &str = "203.0.113.7";
+const DOMAIN: &str = "tenants.autharie.test";
+const LOCK: i64 = 232_232;
 
 async fn pool() -> Option<PgPool> {
     let url = std::env::var("DATABASE_URL")
@@ -94,6 +96,7 @@ type SubscriptionRow = (
 
 struct Installation {
     pool: PgPool,
+    tag: String,
     operator: Uuid,
     owner: Uuid,
     free_organisation: Uuid,
@@ -106,6 +109,7 @@ impl Installation {
     async fn seed(pool: PgPool) -> Self {
         let installation = Self {
             pool,
+            tag: Uuid::new_v4().simple().to_string()[..12].to_string(),
             operator: Uuid::new_v4(),
             owner: Uuid::new_v4(),
             free_organisation: Uuid::new_v4(),
@@ -146,10 +150,15 @@ impl Installation {
     }
 
     fn service(&self) -> AutharieService {
-        AutharieService::new(self.pool.clone())
+        AutharieService::new(self.pool.clone()).with_domain(Some(DOMAIN.to_string()))
     }
 
     async fn serve_region(&self) {
+        self.serve_region_of(Capacity::new(64_000, 131_072, 2_000).expect("a capacity"))
+            .await;
+    }
+
+    async fn serve_region_of(&self, capacity: Capacity) {
         let service = self.service();
         service
             .ensure_first_operator(&self.operator.to_string())
@@ -161,7 +170,7 @@ impl Installation {
                 CreateDataplaneCommand {
                     region: Region::new(self.region.clone()),
                     allocation: DataPlaneAllocation::Shared,
-                    capacity: Capacity::new(64_000, 131_072, 2_000).expect("a capacity"),
+                    capacity,
                 },
             )
             .await
@@ -187,6 +196,7 @@ impl Installation {
             .typed_post(create_deployment_handler)
             .typed_delete(delete_deployment_handler)
             .typed_put(set_iam_settings_handler)
+            .typed_put(put_subscription_handler)
             .layer(Extension(user(self.owner)))
             .with_state(AppState {
                 args: Arc::new(args),
@@ -271,6 +281,82 @@ impl Installation {
         .expect("the actions")
     }
 
+    async fn account(&self, organisation: Uuid) {
+        sqlx::query(
+            "INSERT INTO billing_accounts \
+             (organisation_id, name, email, address_line1, postal_code, city, country, \
+              payment_method) \
+             VALUES ($1, 'Billing', 'billing@acme.test', '1 rue de la Paix', '75002', \
+                     'Paris', 'FR', 'valid')",
+        )
+        .bind(organisation)
+        .execute(&self.pool)
+        .await
+        .expect("a billing account");
+    }
+
+    async fn tier(&self, offer: &str, price: i64) -> String {
+        let code = format!("lc-{}-{offer}-{price}", self.tag);
+        sqlx::query(
+            "INSERT INTO billing_tiers \
+             (code, name, monthly_price_minor, offer, features, engines, hostings, selectable) \
+             VALUES ($1, $1, $2, $3, '{mfa}', '{ferriskey}', '{shared}', true)",
+        )
+        .bind(&code)
+        .bind(price)
+        .bind(offer)
+        .execute(&self.pool)
+        .await
+        .expect("a tier");
+
+        code
+    }
+
+    async fn change(
+        &self,
+        organisation: Uuid,
+        deployment: Uuid,
+        tier: &str,
+    ) -> (StatusCode, Value) {
+        call(
+            &self.app(),
+            Method::PUT,
+            &format!("{}/subscription", self.deployment(organisation, deployment)),
+            Some(json!({ "tier": tier })),
+        )
+        .await
+    }
+
+    async fn size_of(&self, deployment: Uuid) -> (i32, i32, i32, Option<String>) {
+        sqlx::query_as(
+            "SELECT cpu_millis, memory_mib, storage_gib, offer FROM deployments WHERE id = $1",
+        )
+        .bind(deployment)
+        .fetch_one(&self.pool)
+        .await
+        .expect("the deployment")
+    }
+
+    async fn name_of(&self, deployment: Uuid) -> String {
+        sqlx::query_scalar("SELECT name FROM deployments WHERE id = $1")
+            .bind(deployment)
+            .fetch_one(&self.pool)
+            .await
+            .expect("the deployment")
+    }
+
+    async fn updates_of(&self, deployment: Uuid) -> Vec<Value> {
+        sqlx::query_scalar(
+            "SELECT payload FROM actions \
+             WHERE deployment_id = $1 AND action_type = 'deployment.update' \
+             ORDER BY created_at",
+        )
+        .bind(deployment)
+        .fetch_all(&self.pool)
+        .await
+        .expect("the actions")
+    }
+
     async fn forget(&self) {
         for organisation in [self.free_organisation, self.paid_organisation] {
             for statement in [
@@ -280,6 +366,7 @@ impl Installation {
                 "DELETE FROM backup_schedules WHERE deployment_id IN \
                  (SELECT id FROM deployments WHERE organisation_id = $1)",
                 "DELETE FROM deployments WHERE organisation_id = $1",
+                "DELETE FROM billing_accounts WHERE organisation_id = $1",
                 "DELETE FROM organisations WHERE id = $1",
             ] {
                 sqlx::query(statement)
@@ -300,6 +387,11 @@ impl Installation {
                 .await
                 .expect("cleanup");
         }
+        sqlx::query("DELETE FROM billing_tiers WHERE code LIKE 'lc-' || $1 || '-%'")
+            .bind(&self.tag)
+            .execute(&self.pool)
+            .await
+            .expect("cleanup");
         sqlx::query("DELETE FROM releases WHERE kind = 'ferriskey' AND version = $1")
             .bind(&self.release)
             .execute(&self.pool)
@@ -355,12 +447,23 @@ where
     let Some(pool) = pool().await else {
         return;
     };
+    let mut lock: PoolConnection<Postgres> = pool.acquire().await.expect("a connection");
+    sqlx::query("SELECT pg_advisory_lock($1)")
+        .bind(LOCK)
+        .execute(&mut *lock)
+        .await
+        .expect("the billing lock");
     let installation = Installation::seed(pool).await;
 
     let outcome = std::panic::AssertUnwindSafe(body(&installation))
         .catch_unwind()
         .await;
     installation.forget().await;
+    sqlx::query("SELECT pg_advisory_unlock($1)")
+        .bind(LOCK)
+        .execute(&mut *lock)
+        .await
+        .expect("the billing lock is released");
 
     if let Err(panic) = outcome {
         std::panic::resume_unwind(panic);
@@ -624,6 +727,409 @@ async fn a_deployment_without_a_subscription_cannot_be_branded() {
         assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
         assert!(refused.to_string().contains("no subscription"), "{refused}");
         assert_eq!(installation.iam_requests_of(deployment).await, 0);
+    })
+    .await;
+}
+
+fn standard_size() -> (i32, i32, i32, Option<String>) {
+    (500, 1024, 1, Some("standard".to_string()))
+}
+
+async fn nothing_moved(installation: &Installation, deployment: Uuid, organisation: Uuid) {
+    let subscriptions = installation.subscriptions_of(deployment).await;
+    assert_eq!(subscriptions.len(), 1, "{subscriptions:?}");
+    assert_eq!(subscriptions[0].0, organisation);
+    assert!(
+        subscriptions[0].1.starts_with("legacy-"),
+        "{subscriptions:?}"
+    );
+    assert_eq!(subscriptions[0].6, None, "it is still open");
+    assert!(installation.updates_of(deployment).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_bigger_tier_resizes_the_deployment_and_tells_its_data_plane() {
+    scenario(async |installation| {
+        installation.serve_region().await;
+        let organisation = installation.paid_organisation;
+        installation.account(organisation).await;
+        let deployment = installation.create(organisation, "grow", "standard").await;
+        let name = installation.name_of(deployment).await;
+        let scale = installation.tier("scale", 9_900).await;
+
+        let (status, moved) = installation.change(organisation, deployment, &scale).await;
+
+        assert_eq!(status, StatusCode::OK, "{moved}");
+        assert_eq!(moved["tier"], json!(scale));
+        assert_eq!(
+            installation.size_of(deployment).await,
+            (2000, 4096, 20, Some("scale".to_string()))
+        );
+        let subscriptions = installation.subscriptions_of(deployment).await;
+        assert_eq!(subscriptions.len(), 2, "{subscriptions:?}");
+        assert_eq!(subscriptions[1].1, scale);
+        assert_eq!(subscriptions[1].6, None);
+        let updates = installation.updates_of(deployment).await;
+        assert_eq!(updates.len(), 1, "{updates:?}");
+        let payload = &updates[0];
+        assert_eq!(payload["deployment_id"], json!(deployment));
+        assert_eq!(payload["cpu_millis"], json!(2000));
+        assert_eq!(payload["memory_mib"], json!(4096));
+        assert_eq!(payload["storage_gib"], json!(20));
+        assert_eq!(payload["hostname"], json!(format!("{name}.{DOMAIN}")));
+        assert_eq!(payload["database"], json!("managed"));
+        assert_eq!(payload["stopped"], json!(false));
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_smaller_tier_shrinks_cpu_and_memory_and_keeps_the_storage() {
+    scenario(async |installation| {
+        installation.serve_region().await;
+        let organisation = installation.paid_organisation;
+        installation.account(organisation).await;
+        let deployment = installation
+            .create(organisation, "shrink", "standard")
+            .await;
+        let scale = installation.tier("scale", 9_900).await;
+        let standard = installation.tier("standard", 4_900).await;
+
+        let (status, grown) = installation.change(organisation, deployment, &scale).await;
+        assert_eq!(status, StatusCode::OK, "{grown}");
+        let (status, shrunk) = installation
+            .change(organisation, deployment, &standard)
+            .await;
+        assert_eq!(status, StatusCode::OK, "{shrunk}");
+
+        assert_eq!(
+            installation.size_of(deployment).await,
+            (500, 1024, 20, Some("standard".to_string()))
+        );
+        let updates = installation.updates_of(deployment).await;
+        assert_eq!(updates.len(), 2, "{updates:?}");
+        assert_eq!(updates[1]["cpu_millis"], json!(500));
+        assert_eq!(updates[1]["memory_mib"], json!(1024));
+        assert_eq!(updates[1]["storage_gib"], json!(20));
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_tier_the_data_plane_has_no_room_for_is_refused_and_nothing_changes() {
+    scenario(async |installation| {
+        installation
+            .serve_region_of(Capacity::new(1_000, 2_048, 25).expect("a capacity"))
+            .await;
+        let organisation = installation.paid_organisation;
+        installation.account(organisation).await;
+        let deployment = installation.create(organisation, "full", "standard").await;
+        let scale = installation.tier("scale", 9_900).await;
+
+        let (status, refused) = installation.change(organisation, deployment, &scale).await;
+
+        assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+        assert!(refused.to_string().contains("no room"), "{refused}");
+        assert_eq!(installation.size_of(deployment).await, standard_size());
+        nothing_moved(installation, deployment, organisation).await;
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_deployment_growing_into_the_whole_plane_is_given_the_room_it_already_holds() {
+    scenario(async |installation| {
+        installation
+            .serve_region_of(Capacity::new(2_000, 4_096, 25).expect("a capacity"))
+            .await;
+        let organisation = installation.paid_organisation;
+        installation.account(organisation).await;
+        let deployment = installation.create(organisation, "whole", "standard").await;
+        let scale = installation.tier("scale", 9_900).await;
+
+        let (status, moved) = installation.change(organisation, deployment, &scale).await;
+
+        assert_eq!(status, StatusCode::OK, "{moved}");
+        assert_eq!(
+            installation.size_of(deployment).await,
+            (2000, 4096, 20, Some("scale".to_string()))
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_free_deployment_cannot_move_to_a_paid_tier_yet() {
+    scenario(async |installation| {
+        installation.serve_region().await;
+        let organisation = installation.free_organisation;
+        installation.account(organisation).await;
+        let deployment = installation.create(organisation, "free", "free").await;
+        let standard = installation.tier("standard", 4_900).await;
+        let before = installation.size_of(deployment).await;
+
+        let (status, refused) = installation
+            .change(organisation, deployment, &standard)
+            .await;
+
+        assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+        assert!(
+            refused.to_string().contains("not available yet"),
+            "{refused}"
+        );
+        assert!(refused.to_string().contains("shared database"), "{refused}");
+        assert_eq!(installation.size_of(deployment).await, before);
+        assert_eq!(before.3.as_deref(), Some("free"));
+        nothing_moved(installation, deployment, organisation).await;
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_paid_deployment_cannot_move_to_the_free_tier_yet() {
+    scenario(async |installation| {
+        installation.serve_region().await;
+        let organisation = installation.paid_organisation;
+        let deployment = installation.create(organisation, "paid", "standard").await;
+        let free = installation.tier("free", 0).await;
+
+        let (status, refused) = installation.change(organisation, deployment, &free).await;
+
+        assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+        assert!(
+            refused.to_string().contains("not available yet"),
+            "{refused}"
+        );
+        assert_eq!(installation.size_of(deployment).await, standard_size());
+        nothing_moved(installation, deployment, organisation).await;
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn the_private_offer_is_refused_to_a_shared_deployment() {
+    scenario(async |installation| {
+        installation.serve_region().await;
+        let organisation = installation.paid_organisation;
+        installation.account(organisation).await;
+        let deployment = installation
+            .create(organisation, "shared", "standard")
+            .await;
+        let private = installation.tier("private", 49_900).await;
+
+        let (status, refused) = installation
+            .change(organisation, deployment, &private)
+            .await;
+
+        assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+        assert!(
+            refused.to_string().contains("not available yet"),
+            "{refused}"
+        );
+        assert!(refused.to_string().contains("dedicated"), "{refused}");
+        assert_eq!(installation.size_of(deployment).await, standard_size());
+        nothing_moved(installation, deployment, organisation).await;
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_deployment_being_upgraded_keeps_its_tier_and_its_size() {
+    scenario(async |installation| {
+        installation.serve_region().await;
+        let organisation = installation.paid_organisation;
+        installation.account(organisation).await;
+        let deployment = installation.create(organisation, "busy", "standard").await;
+        let scale = installation.tier("scale", 9_900).await;
+        sqlx::query("UPDATE deployments SET status = 'upgrading' WHERE id = $1")
+            .bind(deployment)
+            .execute(&installation.pool)
+            .await
+            .expect("an upgrade in flight");
+
+        let (status, refused) = installation.change(organisation, deployment, &scale).await;
+
+        assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+        assert!(refused.to_string().contains("upgrading"), "{refused}");
+        assert_eq!(installation.size_of(deployment).await, standard_size());
+        nothing_moved(installation, deployment, organisation).await;
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_tier_of_the_size_the_deployment_has_only_records_the_offer() {
+    scenario(async |installation| {
+        installation.serve_region().await;
+        let organisation = installation.paid_organisation;
+        installation.account(organisation).await;
+        let deployment = installation
+            .create(organisation, "legacy", "standard")
+            .await;
+        let standard = installation.tier("standard", 4_900).await;
+        sqlx::query("UPDATE deployments SET offer = NULL WHERE id = $1")
+            .bind(deployment)
+            .execute(&installation.pool)
+            .await
+            .expect("a deployment older than the catalogue");
+
+        let (status, moved) = installation
+            .change(organisation, deployment, &standard)
+            .await;
+
+        assert_eq!(status, StatusCode::OK, "{moved}");
+        assert_eq!(installation.size_of(deployment).await, standard_size());
+        assert_eq!(installation.subscriptions_of(deployment).await.len(), 2);
+        assert!(installation.updates_of(deployment).await.is_empty());
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn asking_for_the_tier_a_deployment_is_on_resizes_nothing() {
+    scenario(async |installation| {
+        installation.serve_region().await;
+        let organisation = installation.paid_organisation;
+        installation.account(organisation).await;
+        let deployment = installation.create(organisation, "same", "standard").await;
+        let scale = installation.tier("scale", 9_900).await;
+        let (status, moved) = installation.change(organisation, deployment, &scale).await;
+        assert_eq!(status, StatusCode::OK, "{moved}");
+        sqlx::query("UPDATE deployments SET cpu_millis = 100 WHERE id = $1")
+            .bind(deployment)
+            .execute(&installation.pool)
+            .await
+            .expect("a size that differs from its tier");
+
+        let (status, same) = installation.change(organisation, deployment, &scale).await;
+
+        assert_eq!(status, StatusCode::OK, "{same}");
+        assert_eq!(
+            installation.size_of(deployment).await,
+            (100, 4096, 20, Some("scale".to_string()))
+        );
+        assert_eq!(installation.subscriptions_of(deployment).await.len(), 2);
+        assert_eq!(installation.updates_of(deployment).await.len(), 1);
+    })
+    .await;
+}
+
+impl Installation {
+    async fn status_of(&self, deployment: Uuid) -> String {
+        sqlx::query_scalar("SELECT status FROM deployments WHERE id = $1")
+            .bind(deployment)
+            .fetch_one(&self.pool)
+            .await
+            .expect("the deployment")
+    }
+
+    async fn before_the_catalogue_on_a_dedicated_plane(
+        &self,
+        organisation: Uuid,
+        deployment: Uuid,
+    ) {
+        sqlx::query(
+            "UPDATE data_planes SET mode = 'dedicated', organisation_id = $2 \
+             WHERE id = (SELECT dataplane_id FROM deployments WHERE id = $1)",
+        )
+        .bind(deployment)
+        .bind(organisation)
+        .execute(&self.pool)
+        .await
+        .expect("a dedicated plane");
+        sqlx::query("UPDATE deployments SET offer = NULL WHERE id = $1")
+            .bind(deployment)
+            .execute(&self.pool)
+            .await
+            .expect("a deployment older than the catalogue");
+    }
+}
+
+#[tokio::test]
+async fn a_deployment_older_than_the_catalogue_on_a_dedicated_plane_may_take_the_private_offer() {
+    scenario(async |installation| {
+        installation.serve_region().await;
+        let organisation = installation.paid_organisation;
+        installation.account(organisation).await;
+        let deployment = installation.create(organisation, "owned", "standard").await;
+        installation
+            .before_the_catalogue_on_a_dedicated_plane(organisation, deployment)
+            .await;
+        let private = installation.tier("private", 49_900).await;
+
+        let (status, moved) = installation
+            .change(organisation, deployment, &private)
+            .await;
+
+        assert_eq!(status, StatusCode::OK, "{moved}");
+        assert_eq!(
+            installation.size_of(deployment).await,
+            (2000, 4096, 20, Some("private".to_string()))
+        );
+        let updates = installation.updates_of(deployment).await;
+        assert_eq!(updates.len(), 1, "{updates:?}");
+        assert_eq!(updates[0]["cpu_millis"], json!(2000));
+        assert_eq!(updates[0]["database"], json!("managed"));
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_deployment_older_than_the_catalogue_on_a_dedicated_plane_cannot_leave_it() {
+    scenario(async |installation| {
+        installation.serve_region().await;
+        let organisation = installation.paid_organisation;
+        installation.account(organisation).await;
+        let deployment = installation.create(organisation, "owned", "standard").await;
+        installation
+            .before_the_catalogue_on_a_dedicated_plane(organisation, deployment)
+            .await;
+        let standard = installation.tier("standard", 4_900).await;
+
+        let (status, refused) = installation
+            .change(organisation, deployment, &standard)
+            .await;
+
+        assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+        assert!(
+            refused.to_string().contains("not available yet"),
+            "{refused}"
+        );
+        assert!(refused.to_string().contains("dedicated"), "{refused}");
+        assert_eq!(installation.size_of(deployment).await, (500, 1024, 1, None));
+        nothing_moved(installation, deployment, organisation).await;
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_stopped_deployment_is_resized_and_stays_stopped() {
+    scenario(async |installation| {
+        installation.serve_region().await;
+        let organisation = installation.paid_organisation;
+        installation.account(organisation).await;
+        let deployment = installation
+            .create(organisation, "asleep", "standard")
+            .await;
+        sqlx::query("UPDATE deployments SET status = 'stopped' WHERE id = $1")
+            .bind(deployment)
+            .execute(&installation.pool)
+            .await
+            .expect("a stopped deployment");
+        let scale = installation.tier("scale", 9_900).await;
+
+        let (status, moved) = installation.change(organisation, deployment, &scale).await;
+
+        assert_eq!(status, StatusCode::OK, "{moved}");
+        assert_eq!(installation.status_of(deployment).await, "stopped");
+        assert_eq!(
+            installation.size_of(deployment).await,
+            (2000, 4096, 20, Some("scale".to_string()))
+        );
+        let updates = installation.updates_of(deployment).await;
+        assert_eq!(updates.len(), 1, "{updates:?}");
+        assert_eq!(updates[0]["stopped"], json!(true));
+        assert_eq!(updates[0]["cpu_millis"], json!(2000));
     })
     .await;
 }

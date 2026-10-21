@@ -242,7 +242,7 @@ mod tests {
             provisioner::{ProvisionRequest, ProvisionedCluster},
             value_objects::{
                 Capacity, DataPlaneAllocation, DataPlaneId, DataPlaneMode, DeploymentResources,
-                PlacementRequest, Region,
+                PlacementRequest, PlaneLoad, Region,
             },
         },
         deployments::{DeploymentKind, DeploymentName},
@@ -446,6 +446,14 @@ mod tests {
         }
 
         async fn current_load(&self, _: &DataPlaneId) -> Result<u32, CoreError> {
+            unreachable!()
+        }
+
+        async fn load_excluding(
+            &self,
+            _: &DataPlaneId,
+            _: &DeploymentId,
+        ) -> Result<Option<PlaneLoad>, CoreError> {
             unreachable!()
         }
 

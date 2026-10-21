@@ -99,7 +99,11 @@ pub async fn get_subscription_handler(
     description = "Closes the current subscription and opens one on the tier, from now. A paid \
                    tier needs a billing account with a valid payment method. Answering with the \
                    current subscription is what asking for the tier the deployment is already on \
-                   does.",
+                   does. The deployment then runs at the size of the new tier, in the same \
+                   transaction: its data plane is told, and storage never shrinks. Moving \
+                   between a shared and a managed database, between a shared and a dedicated \
+                   data plane, or resizing a deployment that does not run on a shared data \
+                   plane is not available yet. A refusal changes nothing.",
     params(SubscriptionRoute),
     request_body = ChangeSubscriptionRequest,
     responses(
@@ -107,7 +111,7 @@ pub async fn get_subscription_handler(
         (status = 401, description = "Unauthorized", body = ApiError),
         (status = 403, description = "The caller may not manage this organisation's billing", body = ApiError),
         (status = 404, description = "No such deployment, or no such tier", body = ApiError),
-        (status = 409, description = "The billing account is not complete, or the deployment has no open subscription", body = ApiError),
+        (status = 409, description = "The billing account is not complete, the deployment has no open subscription, or the deployment cannot follow the tier: it is being upgraded, its data plane has no room for the tier's size, or the move is not available yet", body = ApiError),
         (status = 422, description = "The tier cannot be selected, or does not fit the deployment", body = ApiError),
         (status = 500, description = "Internal Server Error", body = ApiError)
     ),

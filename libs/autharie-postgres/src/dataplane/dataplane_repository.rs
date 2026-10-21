@@ -12,7 +12,7 @@ use autharie_domain::{
         ports::{DataPlaneRepository, Removal},
         value_objects::{
             Capacity, DataPlaneAllocation, DataPlaneId, DataPlaneMode, DataPlaneStatus,
-            DeploymentResources, PlacementPolicy, PlacementRequest, Region,
+            DeploymentResources, PlacementPolicy, PlacementRequest, PlaneLoad, Region,
         },
     },
     deployments::DeploymentId,
@@ -436,6 +436,75 @@ impl DataPlaneRepository for PostgresDataPlaneRepository<'_> {
         })
     }
 
+    async fn load_excluding(
+        &self,
+        id: &DataPlaneId,
+        excluding: &DeploymentId,
+    ) -> Result<Option<PlaneLoad>, CoreError> {
+        {
+            let mut tx = self.tx.lock().await;
+            sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+                .bind(format!("data-plane-load:{}", id.0))
+                .execute(&mut ***tx)
+                .await
+        }
+        .map_err(|e| CoreError::DatabaseError {
+            message: format!("Failed to serialise the load of a data plane: {}", e),
+        })?;
+
+        let row = {
+            let mut tx = self.tx.lock().await;
+            sqlx::query!(
+                r#"
+            SELECT dp.capacity_cpu_millis,
+                   dp.capacity_memory_mib,
+                   dp.capacity_storage_gib,
+                   dp.capacity_max_deployments,
+                   COALESCE(SUM(d.cpu_millis), 0)::BIGINT AS "used_cpu_millis!",
+                   COALESCE(SUM(d.memory_mib), 0)::BIGINT AS "used_memory_mib!",
+                   COALESCE(SUM(d.storage_gib), 0)::BIGINT AS "used_storage_gib!"
+            FROM data_planes dp
+            LEFT JOIN deployments d
+              ON d.dataplane_id = dp.id
+             AND d.deleted_at IS NULL
+             AND d.id <> $2
+            WHERE dp.id = $1
+            GROUP BY dp.id
+            "#,
+                id.0,
+                excluding.0
+            )
+            .fetch_optional(&mut ***tx)
+            .await
+        }
+        .map_err(|e| CoreError::DatabaseError {
+            message: format!("Failed to fetch the load of a data plane: {}", e),
+        })?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let capacity = Capacity::new(
+            row.capacity_cpu_millis as u32,
+            row.capacity_memory_mib as u32,
+            row.capacity_storage_gib as u32,
+        )?;
+        let capacity = match row.capacity_max_deployments {
+            Some(max_deployments) => capacity.with_max_deployments(max_deployments as u32)?,
+            None => capacity,
+        };
+
+        Ok(Some(PlaneLoad {
+            capacity,
+            used: DeploymentResources {
+                cpu_millis: used_amount(row.used_cpu_millis)?,
+                memory_mib: used_amount(row.used_memory_mib)?,
+                storage_gib: used_amount(row.used_storage_gib)?,
+            },
+        }))
+    }
+
     async fn save(&self, dataplane: &DataPlane) -> Result<(), CoreError> {
         let (mode, deployment_id, credential_id) = allocation_to_row(&dataplane.allocation);
         let now = Utc::now();
@@ -752,6 +821,11 @@ impl DataPlaneFailures for PostgresDataPlaneRepository<'_> {
 
         Ok(affected > 0)
     }
+}
+
+fn used_amount(sum: i64) -> Result<u32, CoreError> {
+    u32::try_from(sum)
+        .map_err(|_| CoreError::InternalError(format!("Invalid data plane usage value: {}", sum)))
 }
 
 fn status_to_string(status: DataPlaneStatus) -> &'static str {

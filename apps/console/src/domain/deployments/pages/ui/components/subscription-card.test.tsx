@@ -1,15 +1,24 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { Schemas } from '@/api/api.client'
-import { NEEDS_BILLING_RIGHT, NEEDS_PAYMENT_METHOD } from '@/domain/billing/billing'
+import {
+  BYOC_MOVE_UNAVAILABLE,
+  DATABASE_MOVE_UNAVAILABLE,
+  NEEDS_BILLING_RIGHT,
+  NEEDS_PAYMENT_METHOD,
+} from '@/domain/billing/billing'
 import { SubscriptionCard, type SubscriptionCardProps } from './subscription-card'
 
 const noop = () => {}
 
-const subscription = (monthly_price: number, tier = 'standard-2026'): Schemas.SubscriptionResponse => ({
+const subscription = (
+  monthly_price: number,
+  tier = 'standard-2026',
+  offer: Schemas.Offer = 'standard',
+): Schemas.SubscriptionResponse => ({
   tier,
   monthly_price,
-  offer: 'standard',
+  offer,
   features: [],
   starts_at: '2026-03-04T12:00:00Z',
 })
@@ -17,7 +26,7 @@ const subscription = (monthly_price: number, tier = 'standard-2026'): Schemas.Su
 const tier = (
   code: string,
   monthly_price: number,
-  fit: Partial<Pick<Schemas.TierResponse, 'engines' | 'hostings'>> = {},
+  fit: Partial<Pick<Schemas.TierResponse, 'engines' | 'hostings' | 'offer'>> = {},
 ): Schemas.TierResponse => ({
   code,
   name: code.toUpperCase(),
@@ -172,6 +181,7 @@ describe('the tier change', () => {
 
   it('stays enabled for the free tier when the account is incomplete', () => {
     const html = render({
+      subscription: subscription(0, 'sandbox-2026', 'free'),
       tiers: [tier('free-2026', 0)],
       access: { canManage: true, account: account(false) },
     })
@@ -200,5 +210,80 @@ describe('the tier change', () => {
     const html = render({ error: 'The tier cannot be selected.' })
     expect(html).toContain('role="alert"')
     expect(html).toContain('The tier cannot be selected.')
+  })
+
+  it('disables a tier that would move the database, with the reason', () => {
+    const html = render({
+      subscription: subscription(0, 'free-2026', 'free'),
+      tiers: [tier('scale-2026', 34900)],
+    })
+    expect(html).toContain('disabled=""')
+    expect(html).toContain(DATABASE_MOVE_UNAVAILABLE)
+    expect(html).toContain('aria-describedby="tier-scale-2026-block"')
+  })
+
+  it('disables the free tier for a paid subscription, with the reason', () => {
+    const html = render({ tiers: [tier('free-2026', 0)] })
+    expect(html).toContain('disabled=""')
+    expect(html).toContain(DATABASE_MOVE_UNAVAILABLE)
+  })
+
+  it('disables a BYOC tier for a subscription that is not BYOC, with the reason', () => {
+    const html = render({
+      tiers: [tier('byoc-2026', 49900, { offer: 'private', hostings: ['shared'] })],
+    })
+    expect(html).toContain('disabled=""')
+    expect(html).toContain(BYOC_MOVE_UNAVAILABLE)
+    expect(html).not.toContain(DATABASE_MOVE_UNAVAILABLE)
+  })
+
+  it('disables a tier that is not BYOC for a BYOC subscription, with the reason', () => {
+    const html = render({
+      subscription: subscription(49900, 'byoc-2026', 'private'),
+      tiers: [tier('scale-2026', 34900)],
+    })
+    expect(html).toContain('disabled=""')
+    expect(html).toContain(BYOC_MOVE_UNAVAILABLE)
+  })
+
+  it('keeps a tier of another size within the same offer enabled', () => {
+    const html = render({ tiers: [tier('scale-2026', 34900, { offer: 'scale' })] })
+    expect(html).not.toContain('disabled=""')
+    expect(html).not.toContain(DATABASE_MOVE_UNAVAILABLE)
+    expect(html).not.toContain(BYOC_MOVE_UNAVAILABLE)
+  })
+
+  it('shows the move reason over the billing reason when the move can never succeed', () => {
+    const html = render({
+      subscription: subscription(0, 'free-2026', 'free'),
+      tiers: [tier('scale-2026', 34900)],
+      access: { canManage: true, account: account(false) },
+    })
+    expect(html).toContain(DATABASE_MOVE_UNAVAILABLE)
+    expect(html).not.toContain(NEEDS_PAYMENT_METHOD)
+  })
+
+  it('keeps the billing reason for a move that is allowed', () => {
+    const html = render({ access: { canManage: true, account: account(false) } })
+    expect(html).toContain(NEEDS_PAYMENT_METHOD)
+    expect(html).not.toContain(DATABASE_MOVE_UNAVAILABLE)
+    expect(html).not.toContain(BYOC_MOVE_UNAVAILABLE)
+  })
+
+  it('tells that a tier of another size resizes the deployment and restarts its database once', () => {
+    const html = render()
+    expect(html).toContain(
+      'Switching to a tier of another size resizes the deployment. Its database restarts once.',
+    )
+  })
+
+  it('does not tell it without the right to change tiers', () => {
+    const html = render({ access: { canManage: false, account: account(true) } })
+    expect(html).not.toContain('Its database restarts once.')
+  })
+
+  it('does not tell it when there is no tier to switch to', () => {
+    const html = render({ tiers: [] })
+    expect(html).not.toContain('Its database restarts once.')
   })
 })
