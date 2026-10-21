@@ -3302,6 +3302,114 @@
         ]
       }
     },
+    "/organisations/{organisation_id}/deployments/{deployment_id}/availability": {
+      "get": {
+        "tags": [
+          "deployments"
+        ],
+        "summary": "read a deployment's day-by-day availability",
+        "description": "One entry per UTC calendar day ending today, oldest first, from the deployment's recorded health checks. A day without any check has zero checks and a null uptime. Uptime is a fraction between 0 and 1 and is not rounded. Requires VIEW_INSTANCES.",
+        "operationId": "get_deployment_availability_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "description": "How many UTC calendar days to return, ending today. 1 to 90, 90 when\nomitted.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The deployment's availability history",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AvailabilityResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "days is not between 1 and 90",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not view this organisation's deployments",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/organisations/{organisation_id}/deployments/{deployment_id}/backup-schedule": {
       "get": {
         "tags": [
@@ -10208,6 +10316,45 @@
           "patch_and_minor"
         ]
       },
+      "AvailabilityHistory": {
+        "type": "object",
+        "description": "Day-by-day availability over a window ending today, oldest day first.",
+        "required": [
+          "days",
+          "probe_interval_seconds"
+        ],
+        "properties": {
+          "days": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DailyAvailability"
+            }
+          },
+          "probe_interval_seconds": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "uptime": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Over every check in the window, not the mean of the daily figures, so a\nday with few checks does not weigh as much as a full one. `None` when\nthe window holds no check."
+          }
+        }
+      },
+      "AvailabilityResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AvailabilityHistory"
+          }
+        }
+      },
       "Backup": {
         "type": "object",
         "description": "An archive that exists.\n\nEvery field is present because the archive finished. `size_bytes` is a\n[`NonZeroU64`] for the same reason there is no status: an archive of zero\nbytes is not a small archive, it is a backup that did not happen, and the\ntype refuses to describe one.",
@@ -11188,6 +11335,43 @@
           }
         }
       },
+      "DailyAvailability": {
+        "type": "object",
+        "description": "One UTC calendar day of a deployment's availability.",
+        "required": [
+          "day",
+          "checks",
+          "failed",
+          "down_seconds"
+        ],
+        "properties": {
+          "checks": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "day": {
+            "type": "string",
+            "format": "date"
+          },
+          "down_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Failed checks times the probe interval."
+          },
+          "failed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "uptime": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "`(checks - failed) / checks` as a fraction, at full precision. `None`\nwhen no check ran that day, which is not the same as a day it was down."
+          }
+        }
+      },
       "DataPlane": {
         "type": "object",
         "required": [
@@ -11738,6 +11922,25 @@
             "$ref": "#/components/schemas/DeploymentUptime"
           }
         }
+      },
+      "DeploymentView": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Deployment"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "hostname": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The public hostname, from the same function DNS and the reachability\nprobe use. `null` when this installation has no DNS zone configured."
+              }
+            }
+          }
+        ]
       },
       "Distribution": {
         "oneOf": [
@@ -12312,7 +12515,7 @@
         ],
         "properties": {
           "data": {
-            "$ref": "#/components/schemas/Deployment"
+            "$ref": "#/components/schemas/DeploymentView"
           },
           "provisioning": {
             "oneOf": [
@@ -12922,7 +13125,7 @@
           "data": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/Deployment"
+              "$ref": "#/components/schemas/DeploymentView"
             }
           }
         }
