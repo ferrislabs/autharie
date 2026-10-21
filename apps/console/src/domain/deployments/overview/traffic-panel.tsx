@@ -1,5 +1,5 @@
 import { useId, useMemo } from 'react'
-import { Area, AreaChart, CartesianGrid, Tooltip, XAxis, YAxis } from 'recharts'
+import { Area, AreaChart, CartesianGrid, Tooltip, XAxis, YAxis, type DotItemDotProps } from 'recharts'
 import { ArrowDownRight, ArrowUpRight, Minus } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -213,6 +213,30 @@ export function TrafficPanel({ series, metric, range, onMetricChange, onRangeCha
               fill={`url(#${gradientId})`}
               connectNulls={false}
               isAnimationActive={false}
+              // A value between two empty buckets draws no line, so on a new
+              // instance the chart would look empty beside a non-zero total.
+              // Those lone values get a dot of their own.
+              dot={(props: DotItemDotProps) => {
+                const { cx, cy, index } = props
+                const key = `dot-${index}`
+                const points = selected.points
+                const lone =
+                  points[index]?.value != null &&
+                  points[index - 1]?.value == null &&
+                  points[index + 1]?.value == null
+                if (!lone || cx == null || cy == null) return <g key={key} />
+                return (
+                  <circle
+                    key={key}
+                    cx={cx}
+                    cy={cy}
+                    r={4}
+                    fill='var(--color-primary)'
+                    stroke='var(--color-card)'
+                    strokeWidth={2}
+                  />
+                )
+              }}
               activeDot={{ r: 4, strokeWidth: 2, stroke: 'var(--color-card)', fill: 'var(--color-primary)' }}
             />
           </AreaChart>
