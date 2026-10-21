@@ -110,6 +110,16 @@ services:
       OVH_APPLICATION_SECRET: ${OVH_APPLICATION_SECRET:-}
       OVH_CONSUMER_KEY: ${OVH_CONSUMER_KEY:-}
       OVH_ZONE: ${OVH_ZONE:-}
+      # Off unless asked for: with it off, the billing page cannot open a card
+      # session and answers that billing is not enabled. Turning it on makes the
+      # other four mandatory, and the control plane refuses to start without
+      # them rather than invoicing half-configured.
+      BILLING_ENABLED: ${BILLING_ENABLED:-false}
+      BILLING_FIRST_PERIOD: ${BILLING_FIRST_PERIOD:-}
+      BILLING_RETURN_URL: ${BILLING_RETURN_URL:-}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_API_BASE: ${STRIPE_API_BASE:-https://api.stripe.com}
       # The oldest version a data plane may report and still be sent an
       # upgrade: the control plane refuses one for a Herald older than this,
       # which could not read the action. Set to what the local chart reports
