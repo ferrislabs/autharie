@@ -1,5 +1,6 @@
 use std::future::Future;
 
+use autharie_auth::Identity;
 use chrono::{DateTime, Utc};
 
 use crate::{
@@ -181,6 +182,43 @@ pub trait DeploymentPower: Send + Sync {
         &self,
         deployment_ids: &[DeploymentId],
     ) -> impl Future<Output = Result<(), CoreError>> + Send;
+}
+
+pub trait BillingPolicy: Send + Sync {
+    fn can_view_billing(
+        &self,
+        identity: Identity,
+        organisation_id: OrganisationId,
+    ) -> impl Future<Output = Result<(), CoreError>> + Send;
+
+    fn can_manage_billing(
+        &self,
+        identity: Identity,
+        organisation_id: OrganisationId,
+    ) -> impl Future<Output = Result<(), CoreError>> + Send;
+}
+
+pub trait SubscriptionService: Send + Sync {
+    fn list_tiers(
+        &self,
+        identity: Identity,
+        organisation_id: OrganisationId,
+    ) -> impl Future<Output = Result<Vec<Tier>, CoreError>> + Send;
+
+    fn subscription(
+        &self,
+        identity: Identity,
+        organisation_id: OrganisationId,
+        deployment_id: DeploymentId,
+    ) -> impl Future<Output = Result<Subscription, CoreError>> + Send;
+
+    fn change_subscription(
+        &self,
+        identity: Identity,
+        organisation_id: OrganisationId,
+        deployment_id: DeploymentId,
+        tier: TierCode,
+    ) -> impl Future<Output = Result<Subscription, CoreError>> + Send;
 }
 
 #[cfg(test)]

@@ -1,5 +1,6 @@
 use crate::{
     CoreError,
+    billing::{Tier, TierCode},
     dataplane::value_objects::{DataPlaneId, DeploymentResources, Region},
     deployments::{environment::Environment, topology::Topology},
     offers::{DatabasePlacement, Offer},
@@ -42,6 +43,8 @@ pub struct CreateDeploymentCommand {
     /// Present when this deployment exists to hold somebody's data back.
     pub recovery: Option<Recovery>,
 
+    pub tier: Option<TierCode>,
+
     /// Private so the only way to ask for the customer's cloud is
     /// [`CreateDeploymentCommand::with_distribution`], which checks the kind.
     distribution: Distribution,
@@ -49,6 +52,8 @@ pub struct CreateDeploymentCommand {
     topology: Topology,
 
     sizing: Sizing,
+
+    offer_from_tier: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,10 +101,39 @@ impl CreateDeploymentCommand {
             region,
             offer,
             recovery: None,
+            tier: None,
             distribution: Distribution::Shared,
             topology: Topology::SINGLE,
             sizing: Sizing::Offer,
+            offer_from_tier: false,
         })
+    }
+
+    pub fn requesting_tier(mut self, tier: Option<TierCode>) -> Self {
+        self.tier = tier;
+        self
+    }
+
+    pub fn subscribed_to(mut self, tier: &Tier) -> Result<Self, CoreError> {
+        if tier.offer.database() == DatabasePlacement::Shared {
+            if self.kind != DeploymentKind::Ferriskey {
+                return Err(DistributionError::SharedDatabaseOfferIsFerriskeyOnly {
+                    kind: self.kind,
+                }
+                .into());
+            }
+            if self.distribution != Distribution::Shared {
+                return Err(DistributionError::SharedDatabaseOfferPlacedElsewhere.into());
+            }
+        }
+
+        self.offer = tier.offer;
+        self.offer_from_tier = true;
+        Ok(self)
+    }
+
+    pub fn offer_from_tier(&self) -> bool {
+        self.offer_from_tier
     }
 
     /// Where it is hosted, refused when this kind cannot be hosted there.
@@ -178,6 +212,8 @@ impl UpdateDeploymentCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::billing::{Hosting, Money};
+    use std::collections::BTreeSet;
     use uuid::Uuid;
 
     #[test]
@@ -401,6 +437,94 @@ mod tests {
         assert_eq!(
             a_command(DeploymentKind::Keycloak).distribution(),
             &Distribution::Shared
+        );
+    }
+
+    fn a_tier(offer: Offer) -> Tier {
+        Tier {
+            code: TierCode::parse("pro-2026").expect("a tier code"),
+            name: "Pro".to_string(),
+            monthly_price: Money::from_minor(4900),
+            offer,
+            features: BTreeSet::new(),
+            engines: vec![DeploymentKind::Ferriskey, DeploymentKind::Keycloak],
+            hostings: vec![Hosting::Shared],
+            selectable: true,
+        }
+    }
+
+    #[test]
+    fn a_command_requests_no_tier_and_takes_its_offer_from_the_caller_by_default() {
+        let command = a_command(DeploymentKind::Keycloak);
+
+        assert_eq!(command.tier, None);
+        assert!(!command.offer_from_tier());
+    }
+
+    #[test]
+    fn requesting_a_tier_keeps_the_offer_the_caller_gave() {
+        let code = TierCode::parse("pro-2026").expect("a tier code");
+
+        let command = a_command(DeploymentKind::Keycloak).requesting_tier(Some(code.clone()));
+
+        assert_eq!(command.tier, Some(code));
+        assert_eq!(command.offer, Offer::Standard);
+        assert!(!command.offer_from_tier());
+    }
+
+    #[test]
+    fn subscribing_to_a_tier_deploys_the_offer_of_the_tier() {
+        let command = a_command(DeploymentKind::Keycloak)
+            .subscribed_to(&a_tier(Offer::Scale))
+            .expect("a managed offer suits keycloak");
+
+        assert_eq!(command.offer, Offer::Scale);
+        assert!(command.offer_from_tier());
+    }
+
+    #[test]
+    fn a_ferriskey_command_can_subscribe_to_a_shared_database_tier() {
+        let command = a_command(DeploymentKind::Ferriskey)
+            .subscribed_to(&a_tier(Offer::Free))
+            .expect("ferriskey takes the free offer");
+
+        assert_eq!(command.offer, Offer::Free);
+        assert!(command.offer_from_tier());
+    }
+
+    #[test]
+    fn a_keycloak_command_cannot_subscribe_to_a_shared_database_tier() {
+        let refused = a_command(DeploymentKind::Keycloak)
+            .subscribed_to(&a_tier(Offer::Free))
+            .expect_err("keycloak cannot take the free offer");
+
+        assert!(
+            matches!(
+                refused,
+                CoreError::Distribution(
+                    DistributionError::SharedDatabaseOfferIsFerriskeyOnly { .. }
+                )
+            ),
+            "{refused}"
+        );
+    }
+
+    #[test]
+    fn a_command_placed_elsewhere_cannot_subscribe_to_a_shared_database_tier() {
+        let command = a_command(DeploymentKind::Ferriskey)
+            .with_distribution(crate::deployments::distribution::tests::customer_cloud())
+            .expect("allowed");
+
+        let refused = command
+            .subscribed_to(&a_tier(Offer::Free))
+            .expect_err("the free offer stays on the shared distribution");
+
+        assert!(
+            matches!(
+                refused,
+                CoreError::Distribution(DistributionError::SharedDatabaseOfferPlacedElsewhere)
+            ),
+            "{refused}"
         );
     }
 

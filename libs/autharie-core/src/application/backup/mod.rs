@@ -20,6 +20,7 @@ use autharie_domain::{
         schedule::refuse_if_one_is_already_coming,
         service::BackupServiceImpl,
     },
+    billing::lifecycle::{Restorer, SubscriptionLifecycle},
     dataplane::ports::DataPlaneRepository,
     deployments::{
         Deployment, DeploymentId,
@@ -29,6 +30,7 @@ use autharie_domain::{
         service::DeploymentServiceImpl,
     },
     organisation::OrganisationId,
+    platform::{PlatformRight, ports::PlatformPolicy},
     user::ports::UserRepository,
 };
 use autharie_macros::transactional;
@@ -356,7 +358,10 @@ impl BackupService for AutharieService {
         user,
         data_plane,
         action,
-        organisation
+        organisation,
+        tier,
+        subscription,
+        billing_account
     )]
     async fn restore_backup(
         &self,
@@ -399,6 +404,29 @@ impl BackupService for AutharieService {
 
         let planned = plan_restore(&archive, &source, source_mode, bucket.as_str())?;
 
+        let restorer = if PlatformRightsPolicy::new(
+            autharie_postgres::platform::PostgresOperatorRepository::new(&tx),
+        )
+        .require(identity.clone(), PlatformRight::ActOnTenant)
+        .await
+        .is_ok()
+        {
+            Restorer::Staff
+        } else {
+            Restorer::Member(identity.clone())
+        };
+
+        let lifecycle = SubscriptionLifecycle::new(
+            tier_repository,
+            subscription_repository,
+            billing_account_repository,
+            AuthariePolicy::new(permissions_in(&tx)),
+        );
+
+        let terms = lifecycle
+            .restore_terms(&restorer, source.id, command.organisation_id, planned.offer)
+            .await?;
+
         let recovery = DeploymentServiceImpl::new(
             deployment_repository,
             user_repository,
@@ -435,6 +463,10 @@ impl BackupService for AutharieService {
             }),
         )
         .await?;
+
+        lifecycle
+            .open(&recovery, terms, recovery.created_at)
+            .await?;
 
         // The recovery archives on the platform's default terms from the
         // moment it exists, for the reason a created deployment does: the

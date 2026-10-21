@@ -18,6 +18,7 @@ mod action;
 mod audit;
 mod auth;
 mod backup;
+mod billing;
 mod catalog;
 pub mod cloud_credentials;
 pub mod customer_clusters;

@@ -1,5 +1,6 @@
 pub mod account;
 pub mod events;
+pub mod lifecycle;
 pub mod money;
 pub mod period;
 pub mod ports;
@@ -56,6 +57,8 @@ pub enum BillingError {
     #[error("'{value}' is not a valid provider reference")]
     InvalidProviderReference { value: String },
 
+    #[error("a tier is required: pick one of the catalogue")]
+    TierRequired,
     #[error("tier '{code}' does not exist")]
     TierNotFound { code: String },
 
