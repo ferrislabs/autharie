@@ -40,6 +40,10 @@ fn bounded(raw: &str, field: &'static str, max_chars: usize) -> Result<String, B
         return Err(invalid(field, "is too long"));
     }
 
+    if value.chars().any(char::is_control) {
+        return Err(invalid(field, "must not contain control characters"));
+    }
+
     Ok(value.to_string())
 }
 
@@ -86,6 +90,10 @@ impl BillingEmail {
 
         if value.chars().any(char::is_whitespace) {
             return Err(invalid("email", "must not contain whitespace"));
+        }
+
+        if value.chars().any(char::is_control) {
+            return Err(invalid("email", "must not contain control characters"));
         }
 
         let mut parts = value.split('@');
@@ -400,6 +408,94 @@ mod tests {
                 "{raw:?}"
             );
         }
+    }
+
+    #[test]
+    fn an_email_refuses_a_control_character() {
+        for raw in [
+            "a\u{0}@acme.test",
+            "a@acme\u{7f}.test",
+            "a\u{1b}[0m@acme.test",
+        ] {
+            assert!(
+                matches!(
+                    BillingEmail::parse(raw),
+                    Err(BillingError::InvalidBillingDetails { field: "email", .. })
+                ),
+                "{raw:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_name_refuses_a_control_character() {
+        for raw in ["Ac\nme", "Ac\tme", "Ac\u{0}me", "Ac\u{7f}me", "Ac\u{85}me"] {
+            assert!(
+                matches!(
+                    BillingName::parse(raw),
+                    Err(BillingError::InvalidBillingDetails { field: "name", .. })
+                ),
+                "{raw:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_address_field_refuses_a_control_character() {
+        let input = BillingAddressInput {
+            line1: "1 rue de la Paix",
+            line2: Some("Bat. B"),
+            postal_code: "75002",
+            city: "Paris",
+            country: "FR",
+        };
+        let hostile = "x\ny";
+
+        let cases = [
+            (
+                BillingAddressInput {
+                    line1: hostile,
+                    ..input
+                },
+                "line1",
+            ),
+            (
+                BillingAddressInput {
+                    line2: Some(hostile),
+                    ..input
+                },
+                "line2",
+            ),
+            (
+                BillingAddressInput {
+                    postal_code: hostile,
+                    ..input
+                },
+                "postal_code",
+            ),
+            (
+                BillingAddressInput {
+                    city: hostile,
+                    ..input
+                },
+                "city",
+            ),
+        ];
+
+        for (input, expected) in cases {
+            assert!(
+                matches!(
+                    BillingAddress::parse(input),
+                    Err(BillingError::InvalidBillingDetails { field, .. }) if field == expected
+                ),
+                "{expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_control_character_around_a_value_is_trimmed_not_refused() {
+        assert_eq!(BillingName::parse("\tAcme\n").unwrap().as_str(), "Acme");
     }
 
     #[test]

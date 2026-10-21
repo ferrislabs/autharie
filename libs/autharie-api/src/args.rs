@@ -344,6 +344,7 @@ pub struct BillingArgs {
     #[arg(
         long = "stripe-secret-key",
         env = "STRIPE_SECRET_KEY",
+        hide_env_values = true,
         name = "STRIPE_SECRET_KEY",
         long_help = "The Stripe secret key this control plane calls the Stripe API with"
     )]
@@ -352,6 +353,7 @@ pub struct BillingArgs {
     #[arg(
         long = "stripe-webhook-secret",
         env = "STRIPE_WEBHOOK_SECRET",
+        hide_env_values = true,
         name = "STRIPE_WEBHOOK_SECRET",
         long_help = "The signing secret of the Stripe webhook endpoint, which proves an event is Stripe's"
     )]

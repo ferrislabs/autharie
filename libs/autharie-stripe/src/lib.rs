@@ -15,10 +15,11 @@ use autharie_domain::{
     organisation::OrganisationId,
 };
 use chrono::{DateTime, Utc};
+use reqwest::Method;
 use secrecy::{ExposeSecret, SecretString};
 use uuid::Uuid;
 
-use client::{Client, Key, malformed};
+use client::{Client, https_url, malformed};
 use form::Form;
 use wire::{Created, Session};
 
@@ -136,15 +137,11 @@ impl PaymentProvider for StripePaymentProvider {
 
         let created: Created = self
             .client
-            .post(
-                CUSTOMERS,
-                &[],
-                &form,
-                Key::Fixed(format!("customer:{organisation}")),
-            )
+            .post(CUSTOMERS, &[], &form, &format!("customer:{organisation}"))
             .await?;
 
-        Ok(ProviderCustomerId::parse(&created.id).map_err(|_| malformed(CUSTOMERS))?)
+        Ok(ProviderCustomerId::parse(&created.id)
+            .map_err(|_| malformed(&Method::POST, CUSTOMERS))?)
     }
 
     async fn update_customer(
@@ -159,7 +156,7 @@ impl PaymentProvider for StripePaymentProvider {
                 CUSTOMER,
                 &[customer.as_str()],
                 &form,
-                Key::BodyDigest(format!("customer:{}:update", customer.as_str())),
+                &format!("customer:{}:update:{}", customer.as_str(), Uuid::new_v4()),
             )
             .await?;
 
@@ -184,11 +181,11 @@ impl PaymentProvider for StripePaymentProvider {
                 CHECKOUT_SESSIONS,
                 &[],
                 &form,
-                Key::Fixed(format!("checkout:{}:{}", customer.as_str(), Uuid::new_v4())),
+                &format!("checkout:{}:{}", customer.as_str(), Uuid::new_v4()),
             )
             .await?;
 
-        Ok(session.url.ok_or_else(|| malformed(CHECKOUT_SESSIONS))?)
+        Ok(https_url(&Method::POST, CHECKOUT_SESSIONS, session.url)?)
     }
 
     async fn set_default_payment_method(
@@ -206,11 +203,11 @@ impl PaymentProvider for StripePaymentProvider {
                 CUSTOMER,
                 &[customer.as_str()],
                 &form,
-                Key::Fixed(format!(
+                &format!(
                     "customer:{}:default-payment-method:{}",
                     customer.as_str(),
                     payment_method.as_str()
-                )),
+                ),
             )
             .await?;
 

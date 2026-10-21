@@ -3,8 +3,9 @@ use chrono::{DateTime, Utc};
 use crate::{
     CoreError,
     billing::{
-        BillingSuspension, BillingSuspensionId, PaymentMethodStatus, ProviderCustomerId,
-        ProviderInvoiceId, ProviderPaymentMethodId, Statement, StatementStatus, Subscription,
+        BillingError, BillingSuspension, BillingSuspensionId, PaymentMethodStatus,
+        ProviderCustomerId, ProviderInvoiceId, ProviderPaymentMethodId, Statement, StatementId,
+        StatementStatus, Subscription,
         ports::{
             BillingAccountRepository, BillingSuspensionRepository, DeploymentPower,
             PaymentProvider, StatementRepository, SubscriptionRepository,
@@ -35,9 +36,10 @@ where
     pub async fn invoice_paid(
         &self,
         invoice: &ProviderInvoiceId,
+        statement: Option<StatementId>,
         now: DateTime<Utc>,
     ) -> Result<(), CoreError> {
-        let Some(mut statement) = self.statements.find_by_invoice(invoice).await? else {
+        let Some(mut statement) = self.statement_of(invoice, statement).await? else {
             return Ok(());
         };
         let organisation_id = statement.organisation_id();
@@ -52,9 +54,10 @@ where
     pub async fn payment_failed(
         &self,
         invoice: &ProviderInvoiceId,
+        statement: Option<StatementId>,
         now: DateTime<Utc>,
     ) -> Result<(), CoreError> {
-        let Some(mut statement) = self.statements.find_by_invoice(invoice).await? else {
+        let Some(mut statement) = self.statement_of(invoice, statement).await? else {
             return Ok(());
         };
         let organisation_id = statement.organisation_id();
@@ -73,9 +76,10 @@ where
     pub async fn uncollectible(
         &self,
         invoice: &ProviderInvoiceId,
+        statement: Option<StatementId>,
         now: DateTime<Utc>,
     ) -> Result<(), CoreError> {
-        let Some(mut statement) = self.statements.find_by_invoice(invoice).await? else {
+        let Some(mut statement) = self.statement_of(invoice, statement).await? else {
             return Ok(());
         };
 
@@ -115,6 +119,29 @@ where
                 lifted_at: None,
             })
             .await
+    }
+
+    async fn statement_of(
+        &self,
+        invoice: &ProviderInvoiceId,
+        named: Option<StatementId>,
+    ) -> Result<Option<Statement>, CoreError> {
+        if let Some(statement) = self.statements.find_by_invoice(invoice).await? {
+            return Ok(Some(statement));
+        }
+
+        let Some(named) = named else {
+            return Ok(None);
+        };
+
+        if self.statements.find(&named).await?.is_none() {
+            return Ok(None);
+        }
+
+        Err(BillingError::InvoiceNotRecordedYet {
+            invoice: invoice.as_str().to_string(),
+        }
+        .into())
     }
 
     async fn advance(
@@ -466,6 +493,17 @@ mod tests {
                 Box::pin(async move { Ok(found) })
             });
             let world = self.world.clone();
+            mock.expect_find().returning(move |id| {
+                let found = world.with(|world| {
+                    world
+                        .statements
+                        .iter()
+                        .find(|statement| statement.id() == *id)
+                        .cloned()
+                });
+                Box::pin(async move { Ok(found) })
+            });
+            let world = self.world.clone();
             mock.expect_list_for().returning(move |organisation_id| {
                 let listed = world.with(|world| {
                     world
@@ -657,12 +695,12 @@ mod tests {
         organisation
     }
 
-    fn statement(
+    fn parts(
         organisation_id: OrganisationId,
-        invoice: &str,
+        invoice: Option<ProviderInvoice>,
         status: StatementStatus,
-    ) -> Statement {
-        Statement::from(StatementParts {
+    ) -> StatementParts {
+        StatementParts {
             id: StatementId::new(),
             organisation_id,
             period: period(),
@@ -677,13 +715,29 @@ mod tests {
                 amount: Money::from_minor(4900),
             }],
             status,
-            invoice: Some(ProviderInvoice {
+            invoice,
+            created_at: at(1),
+            updated_at: at(1),
+        }
+    }
+
+    fn statement(
+        organisation_id: OrganisationId,
+        invoice: &str,
+        status: StatementStatus,
+    ) -> Statement {
+        Statement::from(parts(
+            organisation_id,
+            Some(ProviderInvoice {
                 id: invoice_id(invoice),
                 hosted_url: format!("https://pay.test/{invoice}"),
             }),
-            created_at: at(1),
-            updated_at: at(1),
-        })
+            status,
+        ))
+    }
+
+    fn unrecorded(organisation_id: OrganisationId) -> Statement {
+        Statement::from(parts(organisation_id, None, StatementStatus::Draft))
     }
 
     fn details() -> BillingDetails {
@@ -784,7 +838,7 @@ mod tests {
 
         fixture
             .collection()
-            .invoice_paid(&invoice_id("in_1"), at(21))
+            .invoice_paid(&invoice_id("in_1"), None, at(21))
             .await
             .expect("collected");
 
@@ -806,7 +860,7 @@ mod tests {
 
         fixture
             .collection()
-            .invoice_paid(&invoice_id("in_1"), at(21))
+            .invoice_paid(&invoice_id("in_1"), None, at(21))
             .await
             .expect("collected");
 
@@ -826,7 +880,7 @@ mod tests {
 
         fixture
             .collection()
-            .invoice_paid(&invoice_id("in_1"), at(21))
+            .invoice_paid(&invoice_id("in_1"), None, at(21))
             .await
             .expect("collected");
 
@@ -853,7 +907,7 @@ mod tests {
 
         fixture
             .collection()
-            .invoice_paid(&invoice_id("in_1"), at(21))
+            .invoice_paid(&invoice_id("in_1"), None, at(21))
             .await
             .expect("collected");
 
@@ -890,7 +944,7 @@ mod tests {
 
         fixture
             .collection()
-            .invoice_paid(&invoice_id("in_1"), at(21))
+            .invoice_paid(&invoice_id("in_1"), None, at(21))
             .await
             .expect("collected");
 
@@ -926,7 +980,7 @@ mod tests {
 
         fixture
             .collection()
-            .invoice_paid(&invoice_id("in_1"), at(21))
+            .invoice_paid(&invoice_id("in_1"), None, at(21))
             .await
             .expect("collected");
 
@@ -959,7 +1013,7 @@ mod tests {
 
         fixture
             .collection()
-            .invoice_paid(&invoice_id("in_1"), at(21))
+            .invoice_paid(&invoice_id("in_1"), None, at(21))
             .await
             .expect("collected");
 
@@ -992,7 +1046,7 @@ mod tests {
 
         fixture
             .collection()
-            .invoice_paid(&invoice_id("in_1"), at(21))
+            .invoice_paid(&invoice_id("in_1"), None, at(21))
             .await
             .expect("collected");
 
@@ -1024,7 +1078,7 @@ mod tests {
 
         fixture
             .collection()
-            .invoice_paid(&invoice_id("in_1"), at(21))
+            .invoice_paid(&invoice_id("in_1"), None, at(21))
             .await
             .expect("collected");
 
@@ -1059,7 +1113,7 @@ mod tests {
 
         fixture
             .collection()
-            .invoice_paid(&invoice_id("in_1"), at(21))
+            .invoice_paid(&invoice_id("in_1"), None, at(21))
             .await
             .expect("collected");
 
@@ -1079,7 +1133,7 @@ mod tests {
 
         fixture
             .collection()
-            .payment_failed(&invoice_id("in_1"), at(21))
+            .payment_failed(&invoice_id("in_1"), None, at(21))
             .await
             .expect("collected");
 
@@ -1106,7 +1160,7 @@ mod tests {
 
         fixture
             .collection()
-            .payment_failed(&invoice_id("in_1"), at(21))
+            .payment_failed(&invoice_id("in_1"), None, at(21))
             .await
             .expect("collected");
 
@@ -1129,7 +1183,7 @@ mod tests {
 
         fixture
             .collection()
-            .uncollectible(&invoice_id("in_1"), at(21))
+            .uncollectible(&invoice_id("in_1"), None, at(21))
             .await
             .expect("collected");
 
@@ -1173,7 +1227,7 @@ mod tests {
 
         fixture
             .collection()
-            .uncollectible(&invoice_id("in_1"), at(21))
+            .uncollectible(&invoice_id("in_1"), None, at(21))
             .await
             .expect("collected");
 
@@ -1206,7 +1260,7 @@ mod tests {
 
         fixture
             .collection()
-            .uncollectible(&invoice_id("in_1"), at(21))
+            .uncollectible(&invoice_id("in_1"), None, at(21))
             .await
             .expect("collected");
 
@@ -1231,7 +1285,7 @@ mod tests {
 
         fixture
             .collection()
-            .uncollectible(&invoice_id("in_1"), at(21))
+            .uncollectible(&invoice_id("in_1"), None, at(21))
             .await
             .expect("collected");
 
@@ -1271,7 +1325,7 @@ mod tests {
 
         fixture
             .collection()
-            .uncollectible(&invoice_id("in_1"), at(21))
+            .uncollectible(&invoice_id("in_1"), None, at(21))
             .await
             .expect("collected");
 
@@ -1301,7 +1355,7 @@ mod tests {
 
         fixture
             .collection()
-            .uncollectible(&invoice_id("in_1"), at(21))
+            .uncollectible(&invoice_id("in_1"), None, at(21))
             .await
             .expect("collected");
 
@@ -1320,7 +1374,7 @@ mod tests {
 
         fixture
             .collection()
-            .uncollectible(&invoice_id("in_1"), at(21))
+            .uncollectible(&invoice_id("in_1"), None, at(21))
             .await
             .expect("collected");
 
@@ -1339,19 +1393,98 @@ mod tests {
         let unknown = invoice_id("in_unknown");
 
         collection
-            .invoice_paid(&unknown, at(21))
+            .invoice_paid(&unknown, None, at(21))
             .await
             .expect("not an error");
         collection
-            .payment_failed(&unknown, at(21))
+            .payment_failed(&unknown, None, at(21))
             .await
             .expect("not an error");
         collection
-            .uncollectible(&unknown, at(21))
+            .uncollectible(&unknown, None, at(21))
             .await
             .expect("not an error");
 
         assert!(fixture.written().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_event_naming_a_statement_the_platform_does_not_know_is_a_foreign_invoice() {
+        let organisation = organisation();
+        let fixture = Fixture::new()
+            .with_organisation(organisation.clone())
+            .with_statement(statement(organisation.id, "in_1", StatementStatus::Sent))
+            .with_account(account(organisation.id, PaymentMethodStatus::Valid))
+            .stopping(&[deployment(1)]);
+        let collection = fixture.collection();
+        let unknown = invoice_id("in_unknown");
+        let elsewhere = Some(StatementId::new());
+
+        collection
+            .invoice_paid(&unknown, elsewhere, at(21))
+            .await
+            .expect("not an error");
+        collection
+            .payment_failed(&unknown, elsewhere, at(21))
+            .await
+            .expect("not an error");
+        collection
+            .uncollectible(&unknown, elsewhere, at(21))
+            .await
+            .expect("not an error");
+
+        assert!(fixture.written().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_event_for_an_invoice_not_recorded_yet_asks_to_be_retried() {
+        let organisation = organisation();
+        let draft = unrecorded(organisation.id);
+        let fixture = Fixture::new()
+            .with_organisation(organisation.clone())
+            .with_statement(draft.clone())
+            .with_account(account(organisation.id, PaymentMethodStatus::Failing))
+            .stopping(&[deployment(1)]);
+        let collection = fixture.collection();
+        let early = invoice_id("in_early");
+        let named = Some(draft.id());
+
+        let outcomes = [
+            collection.invoice_paid(&early, named, at(21)).await,
+            collection.payment_failed(&early, named, at(21)).await,
+            collection.uncollectible(&early, named, at(21)).await,
+        ];
+
+        for outcome in outcomes {
+            assert!(
+                matches!(
+                    &outcome,
+                    Err(CoreError::Billing(BillingError::InvoiceNotRecordedYet { invoice }))
+                        if invoice == "in_early"
+                ),
+                "{outcome:?}"
+            );
+        }
+        assert!(fixture.written().is_empty());
+        assert_eq!(fixture.statement(draft.id()), draft);
+    }
+
+    #[tokio::test]
+    async fn the_named_statement_is_not_asked_for_when_the_invoice_is_known() {
+        let organisation = organisation();
+        let sent = statement(organisation.id, "in_1", StatementStatus::Sent);
+        let fixture = Fixture::new().with_statement(sent.clone());
+
+        fixture
+            .collection()
+            .invoice_paid(&invoice_id("in_1"), Some(StatementId::new()), at(21))
+            .await
+            .expect("collected");
+
+        assert_eq!(
+            fixture.written(),
+            vec![Written::Statement(sent.id(), StatementStatus::Paid)]
+        );
     }
 
     #[tokio::test]
@@ -1370,11 +1503,11 @@ mod tests {
         let collection = fixture.collection();
 
         collection
-            .uncollectible(&invoice_id("in_1"), at(21))
+            .uncollectible(&invoice_id("in_1"), None, at(21))
             .await
             .expect("suspended");
         collection
-            .invoice_paid(&invoice_id("in_1"), at(23))
+            .invoice_paid(&invoice_id("in_1"), None, at(23))
             .await
             .expect("restored");
 

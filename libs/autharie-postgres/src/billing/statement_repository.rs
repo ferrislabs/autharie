@@ -266,6 +266,7 @@ impl StatementRepository for PostgresStatementRepository<'_> {
                        hosted_invoice_url, created_at, updated_at
                 FROM billing_statements
                 WHERE id = $1
+                FOR UPDATE
                 "#,
                 id.0
             )
@@ -318,6 +319,7 @@ impl StatementRepository for PostgresStatementRepository<'_> {
                        hosted_invoice_url, created_at, updated_at
                 FROM billing_statements
                 WHERE provider_invoice_id = $1
+                FOR UPDATE
                 "#,
                 invoice.as_str()
             )

@@ -1,13 +1,12 @@
-use std::time::Duration;
+use std::{net::IpAddr, time::Duration};
 
 use autharie_domain::billing::BillingError;
 use reqwest::{
-    Body, Response, Url,
+    Method, Request, Response, Url,
     header::{HeaderName, HeaderValue},
 };
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, de::DeserializeOwned};
-use sha2::{Digest, Sha256};
 use tracing::debug;
 
 use crate::{STRIPE_API_VERSION, form::Form};
@@ -16,33 +15,32 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const STRIPE_VERSION: HeaderName = HeaderName::from_static("stripe-version");
 const IDEMPOTENCY_KEY: HeaderName = HeaderName::from_static("idempotency-key");
-const DIGEST_BYTES: usize = 16;
 const TOKEN_MAX_LEN: usize = 64;
 
-pub(crate) fn failure(template: &str, cause: &str) -> BillingError {
+pub(crate) fn failure(method: &Method, template: &str, cause: &str) -> BillingError {
     BillingError::Provider {
-        reason: format!("POST {template}: {cause}"),
+        reason: format!("{method} {template}: {cause}"),
     }
 }
 
-pub(crate) fn malformed(template: &str) -> BillingError {
-    failure(template, "the answer lacks what was asked for")
+pub(crate) fn malformed(method: &Method, template: &str) -> BillingError {
+    failure(method, template, "the answer lacks what was asked for")
 }
 
-pub(crate) enum Key {
-    Fixed(String),
-    BodyDigest(String),
-}
+pub(crate) fn https_url(
+    method: &Method,
+    template: &str,
+    url: Option<String>,
+) -> Result<String, BillingError> {
+    let url = url.ok_or_else(|| malformed(method, template))?;
 
-impl Key {
-    fn resolve(self, body: &[u8]) -> String {
-        match self {
-            Self::Fixed(key) => key,
-            Self::BodyDigest(prefix) => {
-                let digest = Sha256::digest(body);
-                format!("{prefix}:{}", hex::encode(&digest[..DIGEST_BYTES]))
-            }
-        }
+    match Url::parse(&url) {
+        Ok(parsed) if parsed.scheme() == "https" && parsed.has_host() => Ok(url),
+        _ => Err(failure(
+            method,
+            template,
+            "the answer carries a URL that is not an https one",
+        )),
     }
 }
 
@@ -56,6 +54,27 @@ struct ErrorDetail {
     #[serde(rename = "type")]
     kind: Option<String>,
     code: Option<String>,
+}
+
+fn is_loopback(base: &Url) -> bool {
+    let Some(host) = base.host_str() else {
+        return false;
+    };
+
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .parse::<IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
+}
+
+fn is_trustworthy(base: &Url) -> bool {
+    match base.scheme() {
+        "https" => true,
+        "http" => is_loopback(base),
+        _ => false,
+    }
 }
 
 fn token(value: &str) -> Option<&str> {
@@ -84,6 +103,10 @@ impl Client {
 
         if base.cannot_be_a_base() {
             return Err(unusable());
+        }
+
+        if !is_trustworthy(&base) {
+            return Err(BillingError::NotConfigured);
         }
 
         let http = reqwest::Client::builder()
@@ -136,46 +159,82 @@ impl Client {
         template: &'static str,
         args: &[&str],
         form: &Form<'_>,
-        key: Key,
+        key: &str,
     ) -> Result<T, BillingError> {
         debug!(method = "POST", path = template, "stripe request");
 
         let url = self
             .url(template, args)
-            .ok_or_else(|| failure(template, "the path is not valid"))?;
+            .ok_or_else(|| failure(&Method::POST, template, "the path is not valid"))?;
+        let idempotency = HeaderValue::from_str(key).map_err(|_| {
+            failure(
+                &Method::POST,
+                template,
+                "the idempotency key is not a valid header",
+            )
+        })?;
 
-        let mut request = self
+        let request = self
             .http
             .post(url)
             .bearer_auth(self.secret_key.expose_secret())
             .header(STRIPE_VERSION, STRIPE_API_VERSION)
+            .header(IDEMPOTENCY_KEY, idempotency)
             .form(form.pairs())
             .build()
-            .map_err(|_| failure(template, "the request could not be built"))?;
+            .map_err(|_| failure(&Method::POST, template, "the request could not be built"))?;
 
-        let body = request.body().and_then(Body::as_bytes).unwrap_or_default();
-        let idempotency = HeaderValue::from_str(&key.resolve(body))
-            .map_err(|_| failure(template, "the idempotency key is not a valid header"))?;
-        request.headers_mut().insert(IDEMPOTENCY_KEY, idempotency);
+        self.run(&Method::POST, template, request).await
+    }
 
+    pub(crate) async fn get<T: DeserializeOwned>(
+        &self,
+        template: &'static str,
+        args: &[&str],
+        query: &[(&str, &str)],
+    ) -> Result<T, BillingError> {
+        debug!(method = "GET", path = template, "stripe request");
+
+        let url = self
+            .url(template, args)
+            .ok_or_else(|| failure(&Method::GET, template, "the path is not valid"))?;
+
+        let request = self
+            .http
+            .get(url)
+            .bearer_auth(self.secret_key.expose_secret())
+            .header(STRIPE_VERSION, STRIPE_API_VERSION)
+            .query(query)
+            .build()
+            .map_err(|_| failure(&Method::GET, template, "the request could not be built"))?;
+
+        self.run(&Method::GET, template, request).await
+    }
+
+    async fn run<T: DeserializeOwned>(
+        &self,
+        method: &Method,
+        template: &str,
+        request: Request,
+    ) -> Result<T, BillingError> {
         let response = self
             .http
             .execute(request)
             .await
-            .map_err(|error| transport(template, &error))?;
+            .map_err(|error| transport(method, template, &error))?;
 
         if !response.status().is_success() {
-            return Err(refusal(template, response).await);
+            return Err(refusal(method, template, response).await);
         }
 
         response
             .json()
             .await
-            .map_err(|_| failure(template, "the answer could not be read"))
+            .map_err(|_| failure(method, template, "the answer could not be read"))
     }
 }
 
-fn transport(template: &str, error: &reqwest::Error) -> BillingError {
+fn transport(method: &Method, template: &str, error: &reqwest::Error) -> BillingError {
     let cause = if error.is_timeout() {
         "the request timed out"
     } else if error.is_connect() {
@@ -184,10 +243,10 @@ fn transport(template: &str, error: &reqwest::Error) -> BillingError {
         "the request failed"
     };
 
-    failure(template, cause)
+    failure(method, template, cause)
 }
 
-async fn refusal(template: &str, response: Response) -> BillingError {
+async fn refusal(method: &Method, template: &str, response: Response) -> BillingError {
     let status = response.status().as_u16();
     let detail = response
         .bytes()
@@ -196,7 +255,7 @@ async fn refusal(template: &str, response: Response) -> BillingError {
         .and_then(|bytes| serde_json::from_slice::<ErrorEnvelope>(&bytes).ok())
         .and_then(|envelope| envelope.error);
 
-    let mut reason = format!("POST {template} answered {status}");
+    let mut reason = format!("{method} {template} answered {status}");
 
     if let Some(kind) = detail
         .as_ref()
@@ -311,19 +370,72 @@ mod tests {
     }
 
     #[test]
-    fn a_body_digest_key_is_the_prefix_and_32_hex_characters() {
-        let key = Key::BodyDigest("customer:cus_1:update".to_string()).resolve(b"name=Acme");
+    fn a_base_that_is_not_https_is_refused_unless_it_is_a_loopback_address() {
+        for base in [
+            "http://api.stripe.com",
+            "http://127.0.0.1.evil.test",
+            "http://localhost.evil.test",
+            "http://0.0.0.0",
+            "http://[::ffff:7f00:1]",
+            "ftp://127.0.0.1",
+        ] {
+            let error = Client::new(SecretString::from("sk_test_x"), base)
+                .err()
+                .unwrap();
 
-        let digest = key.strip_prefix("customer:cus_1:update:").unwrap();
-        assert_eq!(digest.len(), 32);
-        assert!(digest.bytes().all(|byte| byte.is_ascii_hexdigit()));
+            assert_eq!(error, BillingError::NotConfigured, "{base}");
+        }
+
+        for base in [
+            "https://api.stripe.com",
+            "http://127.0.0.1:8080",
+            "http://127.1",
+            "http://localhost",
+            "http://LocalHost:9",
+            "http://[::1]:8080",
+        ] {
+            assert!(
+                Client::new(SecretString::from("sk_test_x"), base).is_ok(),
+                "{base}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_an_https_url_with_a_host_is_let_through() {
+        let template = "/v1/checkout/sessions";
+
         assert_eq!(
-            key,
-            Key::BodyDigest("customer:cus_1:update".to_string()).resolve(b"name=Acme")
+            https_url(
+                &Method::POST,
+                template,
+                Some("https://checkout.stripe.test/c/1".to_string())
+            ),
+            Ok("https://checkout.stripe.test/c/1".to_string())
         );
-        assert_ne!(
-            key,
-            Key::BodyDigest("customer:cus_1:update".to_string()).resolve(b"name=Other")
-        );
+
+        for hostile in [
+            "http://checkout.stripe.test/c/1",
+            "javascript:alert(1)",
+            "data:text/html,hi",
+            "https://",
+            "//checkout.stripe.test",
+            "not a url",
+            "",
+        ] {
+            let Err(BillingError::Provider { reason }) =
+                https_url(&Method::POST, template, Some(hostile.to_string()))
+            else {
+                panic!("{hostile:?} was let through");
+            };
+
+            assert!(reason.contains(template), "{reason}");
+            assert!(hostile.is_empty() || !reason.contains(hostile), "{reason}");
+        }
+
+        assert!(matches!(
+            https_url(&Method::GET, template, None),
+            Err(BillingError::Provider { reason }) if reason.starts_with("GET ")
+        ));
     }
 }

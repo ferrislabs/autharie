@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n                SELECT id, organisation_id, period, status, provider_invoice_id,\n                       hosted_invoice_url, created_at, updated_at\n                FROM billing_statements\n                WHERE id = $1\n                ",
+  "query": "\n                SELECT id, organisation_id, period, status, provider_invoice_id,\n                       hosted_invoice_url, created_at, updated_at\n                FROM billing_statements\n                WHERE id = $1\n                FOR UPDATE\n                ",
   "describe": {
     "columns": [
       {
@@ -60,5 +60,5 @@
       false
     ]
   },
-  "hash": "2d4753e31aa94ac82e72474de0f30c06b2aef268c06fe633e2a64ef26d359c0a"
+  "hash": "139765efe89c9aff56ea8690b09cacbe44390ae3b4f77892bc3185b4285e39f4"
 }

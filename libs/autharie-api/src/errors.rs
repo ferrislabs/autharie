@@ -409,7 +409,9 @@ impl From<CoreError> for ApiError {
                     reason: "the payment provider did not answer as expected".to_string(),
                 }
             }
-            CoreError::Billing(BillingError::NotConfigured) => ApiError::ServiceUnavailable {
+            CoreError::Billing(
+                BillingError::NotConfigured | BillingError::InvoiceNotRecordedYet { .. },
+            ) => ApiError::ServiceUnavailable {
                 reason: value.to_string(),
             },
             // Everything else stays deliberately opaque to the caller: a
@@ -1046,12 +1048,33 @@ mod tests {
                 StatusCode::BAD_GATEWAY,
             ),
             (BillingError::NotConfigured, StatusCode::SERVICE_UNAVAILABLE),
+            (
+                BillingError::InvoiceNotRecordedYet {
+                    invoice: "in_early".to_string(),
+                },
+                StatusCode::SERVICE_UNAVAILABLE,
+            ),
         ];
 
         for (error, status) in cases {
             let message = error.to_string();
             assert_eq!(billing(error).into_response().status(), status, "{message}");
         }
+    }
+
+    #[test]
+    fn an_invoice_not_recorded_yet_asks_the_provider_to_deliver_again() {
+        let early = billing(BillingError::InvoiceNotRecordedYet {
+            invoice: "in_early".to_string(),
+        });
+
+        let ApiError::ServiceUnavailable { reason } = &early else {
+            panic!("expected a service unavailable, got {early:?}");
+        };
+        assert_eq!(
+            reason,
+            "invoice in_early is not recorded yet, the event will be retried"
+        );
     }
 
     #[test]

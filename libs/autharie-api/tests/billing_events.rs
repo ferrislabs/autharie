@@ -14,6 +14,7 @@ use axum::{
     http::{Method, Request, StatusCode},
 };
 use chrono::Utc;
+use clap::CommandFactory;
 use futures::FutureExt;
 use hmac::{Hmac, Mac};
 use httpmock::{Mock, prelude::*};
@@ -27,6 +28,7 @@ const LOCK: i64 = 232_232;
 const SECRET_KEY: &str = "sk_test_billing_events_0123456789";
 const WEBHOOK_SECRET: &str = "whsec_billing_events_0123456789";
 const ROUTE: &str = "/billing/provider-events";
+const HELP_CHILD: &str = "AUTHARIE_RENDER_THE_HELP_AND_STOP";
 
 fn signed_with(secret: &str, payload: &[u8]) -> String {
     let timestamp = Utc::now().timestamp();
@@ -189,6 +191,41 @@ impl Installation {
             kind,
             json!({"id": self.invoice, "customer": self.customer}),
         )
+    }
+
+    async fn draft_statement(&self) -> Uuid {
+        let id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO billing_statements (id, organisation_id, period, status, total_minor) \
+             VALUES ($1, $2, '2031-04', 'draft', 4900)",
+        )
+        .bind(id)
+        .bind(self.organisation)
+        .execute(&self.pool)
+        .await
+        .expect("a draft statement");
+
+        id
+    }
+
+    async fn record_invoice(&self, statement: Uuid, invoice: &str) {
+        sqlx::query(
+            "UPDATE billing_statements SET status = 'sent', provider_invoice_id = $2, \
+             hosted_invoice_url = 'https://invoice.stripe.test/i/late' WHERE id = $1",
+        )
+        .bind(statement)
+        .bind(invoice)
+        .execute(&self.pool)
+        .await
+        .expect("an invoice recorded");
+    }
+
+    async fn status_of(&self, statement: Uuid) -> String {
+        sqlx::query_scalar("SELECT status FROM billing_statements WHERE id = $1")
+            .bind(statement)
+            .fetch_one(&self.pool)
+            .await
+            .expect("the statement")
     }
 
     async fn statement_status(&self) -> String {
@@ -467,6 +504,92 @@ async fn a_failed_payment_is_recorded_and_flags_the_method() {
 }
 
 #[tokio::test]
+async fn an_event_ahead_of_the_job_recording_its_invoice_is_retried_not_lost() {
+    scenario("active", "failing", async |installation| {
+        let app = installation.app(Some(runtime(nowhere())));
+        let draft = installation.draft_statement().await;
+        let invoice = format!("in_{}_late", installation.tag);
+        let payload = event(
+            &installation.event_id("early"),
+            "invoice.paid",
+            json!({
+                "id": invoice,
+                "customer": installation.customer,
+                "metadata": {"statement_id": draft.to_string()}
+            }),
+        );
+
+        let (status, body) = deliver_signed(&app, &payload).await;
+
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        assert!(body.contains("not recorded yet"), "{body}");
+        assert_eq!(installation.events_recorded().await, 0);
+        assert_eq!(installation.status_of(draft).await, "draft");
+        assert_eq!(installation.payment_method().await, "failing");
+
+        installation.record_invoice(draft, &invoice).await;
+        let (status, body) = deliver_signed(&app, &payload).await;
+
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(installation.events_recorded().await, 1);
+        assert_eq!(installation.status_of(draft).await, "paid");
+        assert_eq!(installation.payment_method().await, "valid");
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn an_invoice_of_nobody_here_is_acknowledged_and_remembered() {
+    scenario("active", "failing", async |installation| {
+        let app = installation.app(Some(runtime(nowhere())));
+        let draft = installation.draft_statement().await;
+        let tag = &installation.tag;
+
+        for (name, object) in [
+            ("bare", json!({"id": format!("in_{tag}_a")})),
+            (
+                "unknown",
+                json!({
+                    "id": format!("in_{tag}_b"),
+                    "metadata": {"statement_id": Uuid::new_v4().to_string()}
+                }),
+            ),
+        ] {
+            let payload = event(&installation.event_id(name), "invoice.paid", object);
+
+            let (status, body) = deliver_signed(&app, &payload).await;
+
+            assert_eq!(status, StatusCode::OK, "{name} {body}");
+        }
+
+        assert_eq!(installation.events_recorded().await, 2);
+        assert_eq!(installation.status_of(draft).await, "draft");
+        assert_eq!(installation.statement_status().await, "sent");
+        assert_eq!(installation.payment_method().await, "failing");
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_signed_invoice_event_without_an_invoice_is_acknowledged_and_remembered() {
+    scenario("active", "failing", async |installation| {
+        let app = installation.app(Some(runtime(nowhere())));
+        let payload = event(
+            &installation.event_id("anonymous"),
+            "invoice.paid",
+            json!({"object": "invoice"}),
+        );
+
+        let (status, body) = deliver_signed(&app, &payload).await;
+
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(installation.events_recorded().await, 1);
+        assert_eq!(installation.statement_status().await, "sent");
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn an_event_nobody_cares_about_is_acknowledged_and_remembered() {
     scenario("active", "valid", async |installation| {
         let app = installation.app(Some(runtime(nowhere())));
@@ -601,4 +724,32 @@ fn the_stripe_keys_appear_in_no_debug_output() {
         assert!(!output.contains(SECRET_KEY), "{output}");
         assert!(!output.contains(WEBHOOK_SECRET), "{output}");
     }
+}
+
+#[test]
+fn the_stripe_secrets_never_appear_in_the_help_even_when_the_environment_holds_them() {
+    if std::env::var_os(HELP_CHILD).is_some() {
+        println!("{}", Args::command().render_long_help());
+        return;
+    }
+
+    let output = std::process::Command::new(std::env::current_exe().expect("this test binary"))
+        .args([
+            "the_stripe_secrets_never_appear_in_the_help_even_when_the_environment_holds_them",
+            "--exact",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env(HELP_CHILD, "1")
+        .env("STRIPE_SECRET_KEY", SECRET_KEY)
+        .env("STRIPE_WEBHOOK_SECRET", WEBHOOK_SECRET)
+        .output()
+        .expect("the test binary runs");
+    let help = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success(), "{help}");
+    assert!(help.contains("--stripe-secret-key"), "{help}");
+    assert!(help.contains("--stripe-webhook-secret"), "{help}");
+    assert!(!help.contains(SECRET_KEY), "{help}");
+    assert!(!help.contains(WEBHOOK_SECRET), "{help}");
 }

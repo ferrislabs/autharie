@@ -114,6 +114,7 @@ impl BillingAccountRepository for PostgresBillingAccountRepository<'_> {
                        city, country, vat_number, siren, provider_customer_id, payment_method
                 FROM billing_accounts
                 WHERE organisation_id = $1
+                FOR UPDATE
                 "#,
                 organisation_id.0
             )
@@ -138,6 +139,7 @@ impl BillingAccountRepository for PostgresBillingAccountRepository<'_> {
                        city, country, vat_number, siren, provider_customer_id, payment_method
                 FROM billing_accounts
                 WHERE provider_customer_id = $1
+                FOR UPDATE
                 "#,
                 customer.as_str()
             )

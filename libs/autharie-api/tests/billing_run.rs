@@ -5,7 +5,7 @@ use autharie_stripe::{StripeConfig, StripePaymentProvider};
 use chrono::{DateTime, TimeZone, Utc};
 use futures::FutureExt;
 use httpmock::{Mock, prelude::*};
-use serde_json::json;
+use serde_json::{Value, json};
 use sqlx::{PgPool, Postgres, pool::PoolConnection, postgres::PgPoolOptions};
 use uuid::Uuid;
 
@@ -262,14 +262,27 @@ impl Installation {
 }
 
 struct Stripe<'a> {
+    search: Mock<'a>,
     invoices: Mock<'a>,
     items: Mock<'a>,
     finalize: Mock<'a>,
 }
 
 impl<'a> Stripe<'a> {
+    fn searching(server: &'a MockServer, found: Value) -> Mock<'a> {
+        server.mock(|when, then| {
+            when.method(GET).path("/v1/invoices/search");
+            then.status(200).json_body(json!({
+                "object": "search_result",
+                "data": found,
+                "has_more": false
+            }));
+        })
+    }
+
     fn accepting(server: &'a MockServer, customer: &str, invoice: &str) -> Self {
         Self {
+            search: Self::searching(server, json!([])),
             invoices: server.mock(|when, then| {
                 when.method(POST)
                     .path("/v1/invoices")
@@ -300,6 +313,10 @@ impl<'a> Stripe<'a> {
             then.status(500)
                 .json_body(json!({"error": {"type": "api_error"}}));
         })
+    }
+
+    fn lookups(&self) -> usize {
+        self.search.hits()
     }
 
     fn calls(&self) -> (usize, usize, usize) {
@@ -376,6 +393,7 @@ async fn after_month_end_an_organisation_gets_one_invoice_with_a_line_per_segmen
             )]
         );
         assert_eq!(stripe.calls(), (1, 2, 1));
+        assert_eq!(stripe.lookups(), 1);
     })
     .await;
 }
@@ -404,6 +422,7 @@ async fn running_again_sends_nothing() {
 
         assert_eq!((again.closed, again.sent, again.failed), (0, 0, 0));
         assert_eq!(stripe.calls(), (1, 2, 1));
+        assert_eq!(stripe.lookups(), 1);
         assert_eq!(
             installation
                 .statements_of(installation.organisation)
@@ -411,6 +430,47 @@ async fn running_again_sends_nothing() {
                 .len(),
             1
         );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn an_invoice_stripe_already_holds_for_the_statement_is_adopted_not_created_again() {
+    scenario(async |installation| {
+        let customer = customer_id();
+        let invoice = invoice_id();
+        installation.upgrade_in_march().await;
+        installation
+            .account(installation.organisation, Some(&customer), "valid")
+            .await;
+        let server = MockServer::start();
+        let lookup = Stripe::searching(
+            &server,
+            json!([{"id": invoice, "status": "open", "hosted_invoice_url": HOSTED_URL}]),
+        );
+        let anything = server.mock(|when, then| {
+            when.method(POST);
+            then.status(200).json_body(json!({"id": "in_other"}));
+        });
+
+        let run = installation
+            .service()
+            .run_billing(&provider(&server), march(), month_end())
+            .await
+            .expect("a run");
+
+        assert_eq!((run.closed, run.sent, run.failed), (1, 1, 0));
+        assert_eq!(
+            installation.statements_of(installation.organisation).await,
+            vec![(
+                "sent".to_string(),
+                Some(invoice),
+                Some(HOSTED_URL.to_string()),
+                2
+            )]
+        );
+        lookup.assert_hits(1);
+        anything.assert_hits(0);
     })
     .await;
 }

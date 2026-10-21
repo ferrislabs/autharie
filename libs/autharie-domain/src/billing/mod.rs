@@ -94,6 +94,9 @@ pub enum BillingError {
     #[error("the signature of the provider event is invalid")]
     InvalidEventSignature,
 
+    #[error("invoice {invoice} is not recorded yet, the event will be retried")]
+    InvoiceNotRecordedYet { invoice: String },
+
     #[error("payment provider failure: {reason}")]
     Provider { reason: String },
 

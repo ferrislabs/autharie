@@ -235,14 +235,14 @@ impl AutharieService {
                 adopt_payment_method(&collection.accounts, provider, &customer, &payment_method)
                     .await
             }
-            ProviderEventKind::InvoicePaid { invoice } => {
-                collection.invoice_paid(&invoice, now).await
+            ProviderEventKind::InvoicePaid { invoice, statement } => {
+                collection.invoice_paid(&invoice, statement, now).await
             }
-            ProviderEventKind::PaymentFailed { invoice } => {
-                collection.payment_failed(&invoice, now).await
+            ProviderEventKind::PaymentFailed { invoice, statement } => {
+                collection.payment_failed(&invoice, statement, now).await
             }
-            ProviderEventKind::InvoiceUncollectible { invoice } => {
-                collection.uncollectible(&invoice, now).await
+            ProviderEventKind::InvoiceUncollectible { invoice, statement } => {
+                collection.uncollectible(&invoice, statement, now).await
             }
             ProviderEventKind::Ignored => Ok(()),
         }
@@ -288,7 +288,7 @@ impl AutharieService {
         now: DateTime<Utc>,
     ) -> Result<Statement, CoreError> {
         StatementSending::new(billing_account_repository, statement_repository, provider)
-            .send(statement, now)
+            .send_current(statement, now)
             .await
     }
 }

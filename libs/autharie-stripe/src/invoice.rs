@@ -1,15 +1,17 @@
 use autharie_domain::billing::{
     BillingError, ProviderCustomerId, ProviderInvoice, ProviderInvoiceId, Statement, StatementLine,
 };
+use reqwest::Method;
 
 use crate::{
     CURRENCY,
-    client::{Client, Key, malformed},
+    client::{Client, failure, https_url, malformed},
     form::Form,
-    wire::{Created, Finalized},
+    wire::{Created, Finalized, Found, InvoiceStatus, Search},
 };
 
 const INVOICES: &str = "/v1/invoices";
+const INVOICE_SEARCH: &str = "/v1/invoices/search";
 const INVOICE_ITEMS: &str = "/v1/invoiceitems";
 const FINALIZE: &str = "/v1/invoices/{invoice}/finalize";
 
@@ -18,7 +20,7 @@ async fn add_item(
     customer: &ProviderCustomerId,
     invoice: &ProviderInvoiceId,
     line: &StatementLine,
-    key: String,
+    key: &str,
 ) -> Result<(), BillingError> {
     let amount = line.amount.minor().to_string();
     let description = format!(
@@ -45,17 +47,26 @@ async fn add_item(
         .field("metadata[subscription_id]", &subscription);
 
     client
-        .post::<Created>(INVOICE_ITEMS, &[], &form, Key::Fixed(key))
+        .post::<Created>(INVOICE_ITEMS, &[], &form, key)
         .await
         .map(drop)
 }
 
-pub(crate) async fn issue(
+async fn find(client: &Client, statement_id: &str) -> Result<Option<Found>, BillingError> {
+    let query = format!("metadata['statement_id']:'{statement_id}'");
+    let found: Search = client
+        .get(INVOICE_SEARCH, &[], &[("query", query.as_str())])
+        .await?;
+
+    Ok(found.data.into_iter().next())
+}
+
+async fn create(
     client: &Client,
     customer: &ProviderCustomerId,
     statement: &Statement,
-) -> Result<ProviderInvoice, BillingError> {
-    let statement_id = statement.id().to_string();
+    statement_id: &str,
+) -> Result<ProviderInvoiceId, BillingError> {
     let period = statement.period().to_string();
     let description = format!("Autharie {period}");
 
@@ -65,23 +76,27 @@ pub(crate) async fn issue(
         .field("currency", CURRENCY)
         .field("auto_advance", "true")
         .field("pending_invoice_items_behavior", "exclude")
-        .field("metadata[statement_id]", &statement_id)
+        .field("metadata[statement_id]", statement_id)
         .field("metadata[period]", &period)
         .field("description", &description);
 
     let created: Created = client
-        .post(
-            INVOICES,
-            &[],
-            &form,
-            Key::Fixed(format!("statement:{statement_id}")),
-        )
+        .post(INVOICES, &[], &form, &format!("statement:{statement_id}"))
         .await?;
-    let invoice = ProviderInvoiceId::parse(&created.id).map_err(|_| malformed(INVOICES))?;
 
+    ProviderInvoiceId::parse(&created.id).map_err(|_| malformed(&Method::POST, INVOICES))
+}
+
+async fn complete(
+    client: &Client,
+    customer: &ProviderCustomerId,
+    statement: &Statement,
+    statement_id: &str,
+    invoice: ProviderInvoiceId,
+) -> Result<ProviderInvoice, BillingError> {
     for (index, line) in statement.lines().iter().enumerate() {
         let key = format!("statement:{statement_id}:line:{index}");
-        add_item(client, customer, &invoice, line, key).await?;
+        add_item(client, customer, &invoice, line, &key).await?;
     }
 
     let form = Form::new().field("auto_advance", "true");
@@ -90,15 +105,49 @@ pub(crate) async fn issue(
             FINALIZE,
             &[invoice.as_str()],
             &form,
-            Key::Fixed(format!("statement:{statement_id}:finalize")),
+            &format!("statement:{statement_id}:finalize"),
         )
         .await?;
-    let hosted_url = finalized
-        .hosted_invoice_url
-        .ok_or_else(|| malformed(FINALIZE))?;
+    let hosted_url = https_url(&Method::POST, FINALIZE, finalized.hosted_invoice_url)?;
 
     Ok(ProviderInvoice {
         id: invoice,
         hosted_url,
     })
+}
+
+pub(crate) async fn issue(
+    client: &Client,
+    customer: &ProviderCustomerId,
+    statement: &Statement,
+) -> Result<ProviderInvoice, BillingError> {
+    let statement_id = statement.id().to_string();
+
+    let Some(found) = find(client, &statement_id).await? else {
+        let invoice = create(client, customer, statement, &statement_id).await?;
+
+        return complete(client, customer, statement, &statement_id, invoice).await;
+    };
+
+    let invoice =
+        ProviderInvoiceId::parse(&found.id).map_err(|_| malformed(&Method::GET, INVOICE_SEARCH))?;
+
+    match found.status {
+        Some(InvoiceStatus::Draft) => {
+            complete(client, customer, statement, &statement_id, invoice).await
+        }
+        Some(InvoiceStatus::Open | InvoiceStatus::Paid | InvoiceStatus::Uncollectible) => {
+            let hosted_url = https_url(&Method::GET, INVOICE_SEARCH, found.hosted_invoice_url)?;
+
+            Ok(ProviderInvoice {
+                id: invoice,
+                hosted_url,
+            })
+        }
+        Some(InvoiceStatus::Other) | None => Err(failure(
+            &Method::GET,
+            INVOICE_SEARCH,
+            "the invoice of the statement is in a state that cannot be sent",
+        )),
+    }
 }
