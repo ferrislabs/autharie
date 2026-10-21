@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { belongsToNoOrganisation, isUnder } from './paths'
+import { belongsToNoOrganisation, isUnder, movedSettingsPath } from './paths'
 
 const DEPLOYMENT = '/organisations/org-1/deployments/dep-1'
 
@@ -81,5 +81,13 @@ describe('an invitation link', () => {
   it('does not swallow anything else beginning the same way', () => {
     expect(belongsToNoOrganisation('/invitations')).toBe(false)
     expect(belongsToNoOrganisation('/invitations/accepted-elsewhere')).toBe(false)
+  })
+})
+
+describe('movedSettingsPath', () => {
+  it('names the tab each settings page became', () => {
+    expect(movedSettingsPath('org-1', 'dep-1', 'network-access')).toBe(`${DEPLOYMENT}/security`)
+    expect(movedSettingsPath('org-1', 'dep-1', 'branding')).toBe(`${DEPLOYMENT}/customization`)
+    expect(movedSettingsPath('org-1', 'dep-1', 'backups')).toBe(`${DEPLOYMENT}/backups`)
   })
 })

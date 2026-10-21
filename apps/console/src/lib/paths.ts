@@ -13,6 +13,20 @@ export function organisationPathFor(organisationId: string, path = ''): string {
   return `/organisations/${organisationId}${path}`
 }
 
+const MOVED_SETTINGS: Record<string, string> = {
+  'network-access': 'security',
+  branding: 'customization',
+  backups: 'backups',
+}
+
+export function movedSettingsPath(
+  organisationId: string,
+  deploymentId: string,
+  page: keyof typeof MOVED_SETTINGS,
+): string {
+  return organisationPathFor(organisationId, `/deployments/${deploymentId}/${MOVED_SETTINGS[page]}`)
+}
+
 /**
  * Whether one path sits at or under another.
  *
