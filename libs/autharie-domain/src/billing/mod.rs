@@ -1,5 +1,6 @@
 pub mod account;
 pub mod accounts;
+pub mod card;
 pub mod closing;
 pub mod collection;
 pub mod events;
@@ -18,6 +19,7 @@ pub use account::{
     BillingAccount, BillingAddress, BillingAddressInput, BillingDetails, BillingEmail, BillingName,
     CountryCode, PaymentMethodStatus, ProviderCustomerId, Siren, VatNumber, require_complete,
 };
+pub use card::{CardSummary, CardSummaryInput};
 pub use events::{ProviderEvent, ProviderEventId, ProviderEventKind, ProviderPaymentMethodId};
 pub use money::Money;
 pub use period::BillingPeriod;

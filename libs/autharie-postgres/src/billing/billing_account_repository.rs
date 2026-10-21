@@ -2,8 +2,8 @@ use autharie_domain::{
     CoreError,
     billing::{
         BillingAccount, BillingAddress, BillingAddressInput, BillingDetails, BillingEmail,
-        BillingName, PaymentMethodStatus, ProviderCustomerId, Siren, VatNumber,
-        ports::BillingAccountRepository,
+        BillingName, CardSummary, CardSummaryInput, PaymentMethodStatus, ProviderCustomerId, Siren,
+        VatNumber, ports::BillingAccountRepository,
     },
     organisation::OrganisationId,
 };
@@ -39,6 +39,10 @@ struct AccountRow {
     siren: Option<String>,
     provider_customer_id: Option<String>,
     payment_method: String,
+    card_brand: Option<String>,
+    card_last4: Option<String>,
+    card_exp_month: Option<i16>,
+    card_exp_year: Option<i16>,
 }
 
 impl TryFrom<AccountRow> for BillingAccount {
@@ -88,6 +92,31 @@ impl TryFrom<AccountRow> for BillingAccount {
             })
             .transpose()?;
 
+        let card = match (
+            row.card_brand.as_deref(),
+            row.card_last4.as_deref(),
+            row.card_exp_month,
+            row.card_exp_year,
+        ) {
+            (Some(brand), Some(last4), Some(exp_month), Some(exp_year)) => Some(
+                CardSummary::parse(CardSummaryInput {
+                    brand,
+                    last4,
+                    exp_month: u32::try_from(exp_month).unwrap_or(u32::MAX),
+                    exp_year: u32::try_from(exp_year).unwrap_or(u32::MAX),
+                })
+                .map_err(|reason| invalid("billing_accounts.card_last4", last4, reason))?,
+            ),
+            (None, None, None, None) => None,
+            _ => {
+                return Err(invalid(
+                    "billing_accounts.card_brand",
+                    row.card_brand.as_deref().unwrap_or_default(),
+                    "the card is only partly stored",
+                ));
+            }
+        };
+
         Ok(BillingAccount {
             organisation_id: OrganisationId(row.organisation_id),
             details,
@@ -96,6 +125,7 @@ impl TryFrom<AccountRow> for BillingAccount {
                 "billing_accounts.payment_method",
                 &row.payment_method,
             )?,
+            card,
         })
     }
 }
@@ -111,7 +141,8 @@ impl BillingAccountRepository for PostgresBillingAccountRepository<'_> {
                 AccountRow,
                 r#"
                 SELECT organisation_id, name, email, address_line1, address_line2, postal_code,
-                       city, country, vat_number, siren, provider_customer_id, payment_method
+                       city, country, vat_number, siren, provider_customer_id, payment_method,
+                       card_brand, card_last4, card_exp_month, card_exp_year
                 FROM billing_accounts
                 WHERE organisation_id = $1
                 FOR UPDATE
@@ -136,7 +167,8 @@ impl BillingAccountRepository for PostgresBillingAccountRepository<'_> {
                 AccountRow,
                 r#"
                 SELECT organisation_id, name, email, address_line1, address_line2, postal_code,
-                       city, country, vat_number, siren, provider_customer_id, payment_method
+                       city, country, vat_number, siren, provider_customer_id, payment_method,
+                       card_brand, card_last4, card_exp_month, card_exp_year
                 FROM billing_accounts
                 WHERE provider_customer_id = $1
                 FOR UPDATE
@@ -154,14 +186,16 @@ impl BillingAccountRepository for PostgresBillingAccountRepository<'_> {
     async fn save(&self, account: &BillingAccount) -> Result<(), CoreError> {
         let details = &account.details;
         let payment_method = account.payment_method.to_string();
+        let card = account.card.as_ref();
 
         let mut tx = self.tx.lock().await;
         sqlx::query!(
             r#"
             INSERT INTO billing_accounts
                 (organisation_id, name, email, address_line1, address_line2, postal_code, city,
-                 country, vat_number, siren, provider_customer_id, payment_method)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                 country, vat_number, siren, provider_customer_id, payment_method,
+                 card_brand, card_last4, card_exp_month, card_exp_year)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
             ON CONFLICT (organisation_id) DO UPDATE
                 SET name = EXCLUDED.name,
                     email = EXCLUDED.email,
@@ -174,6 +208,10 @@ impl BillingAccountRepository for PostgresBillingAccountRepository<'_> {
                     siren = EXCLUDED.siren,
                     provider_customer_id = EXCLUDED.provider_customer_id,
                     payment_method = EXCLUDED.payment_method,
+                    card_brand = EXCLUDED.card_brand,
+                    card_last4 = EXCLUDED.card_last4,
+                    card_exp_month = EXCLUDED.card_exp_month,
+                    card_exp_year = EXCLUDED.card_exp_year,
                     updated_at = now()
             "#,
             account.organisation_id.0,
@@ -187,7 +225,11 @@ impl BillingAccountRepository for PostgresBillingAccountRepository<'_> {
             details.vat_number.as_ref().map(VatNumber::as_str),
             details.siren.as_ref().map(Siren::as_str),
             account.customer.as_ref().map(ProviderCustomerId::as_str),
-            payment_method
+            payment_method,
+            card.map(CardSummary::brand),
+            card.map(CardSummary::last4),
+            card.map(|card| i16::from(card.exp_month())),
+            card.map(|card| i16::try_from(card.exp_year()).unwrap_or(i16::MAX))
         )
         .execute(&mut ***tx)
         .await

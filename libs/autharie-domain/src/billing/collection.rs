@@ -322,8 +322,10 @@ pub async fn adopt_payment_method<A: BillingAccountRepository, P: PaymentProvide
     provider
         .set_default_payment_method(customer, payment_method)
         .await?;
+    let card = provider.payment_method_card(payment_method).await?;
 
     account.payment_method = PaymentMethodStatus::Valid;
+    account.card = card;
     accounts.save(&account).await
 }
 
@@ -344,6 +346,7 @@ mod tests {
             BillingError, BillingName, BillingPeriod, Money, ProviderInvoice, StatementId,
             StatementLine, StatementParts, SubscriptionId, SubscriptionParts, SubscriptionTerms,
             TierCode,
+            card::{CardSummary, CardSummaryInput},
             ports::{
                 MockBillingAccountRepository, MockBillingSuspensionRepository, MockPaymentProvider,
                 MockStatementRepository, MockSubscriptionRepository,
@@ -1750,6 +1753,15 @@ mod tests {
                 noted.lock().expect("not poisoned").push("set default");
                 Box::pin(async { Ok(()) })
             });
+        let noted = Arc::clone(&calls);
+        provider
+            .expect_payment_method_card()
+            .times(1)
+            .withf(|payment_method| payment_method.as_str() == "pm_1")
+            .returning(move |_| {
+                noted.lock().expect("not poisoned").push("read card");
+                Box::pin(async { Ok(None) })
+            });
 
         adopt_payment_method(
             &accounts,
@@ -1762,8 +1774,131 @@ mod tests {
 
         assert_eq!(
             *calls.lock().expect("not poisoned"),
-            vec!["set default", "save valid"]
+            vec!["set default", "read card", "save valid"]
         );
+    }
+
+    fn visa() -> CardSummary {
+        CardSummary::parse(CardSummaryInput {
+            brand: "visa",
+            last4: "4242",
+            exp_month: 4,
+            exp_year: 2027,
+        })
+        .unwrap()
+    }
+
+    fn capturing_accounts(
+        held: BillingAccount,
+        saved: &Arc<Mutex<Vec<BillingAccount>>>,
+    ) -> MockBillingAccountRepository {
+        let mut mock = MockBillingAccountRepository::new();
+        mock.expect_find_by_customer().returning(move |_| {
+            let held = held.clone();
+            Box::pin(async move { Ok(Some(held)) })
+        });
+        let saved = Arc::clone(saved);
+        mock.expect_save().returning(move |account| {
+            saved.lock().expect("not poisoned").push(account.clone());
+            Box::pin(async { Ok(()) })
+        });
+        mock
+    }
+
+    fn provider_describing(card: Option<CardSummary>) -> MockPaymentProvider {
+        let mut provider = MockPaymentProvider::new();
+        provider
+            .expect_set_default_payment_method()
+            .returning(|_, _| Box::pin(async { Ok(()) }));
+        provider.expect_payment_method_card().returning(move |_| {
+            let card = card.clone();
+            Box::pin(async move { Ok(card) })
+        });
+        provider
+    }
+
+    #[tokio::test]
+    async fn adopting_a_payment_method_keeps_the_card_the_provider_describes() {
+        let saved = Arc::new(Mutex::new(Vec::new()));
+        let accounts = capturing_accounts(
+            account(OrganisationId::new(), PaymentMethodStatus::Missing),
+            &saved,
+        );
+
+        adopt_payment_method(
+            &accounts,
+            &provider_describing(Some(visa())),
+            &ProviderCustomerId::parse("cus_123").unwrap(),
+            &ProviderPaymentMethodId::parse("pm_1").unwrap(),
+        )
+        .await
+        .expect("adopted");
+
+        let saved = saved.lock().expect("not poisoned");
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].payment_method, PaymentMethodStatus::Valid);
+        assert_eq!(saved[0].card, Some(visa()));
+    }
+
+    #[tokio::test]
+    async fn a_payment_method_that_is_not_a_card_replaces_the_card_with_nothing() {
+        let saved = Arc::new(Mutex::new(Vec::new()));
+        let accounts = capturing_accounts(
+            BillingAccount {
+                card: Some(visa()),
+                ..account(OrganisationId::new(), PaymentMethodStatus::Valid)
+            },
+            &saved,
+        );
+
+        adopt_payment_method(
+            &accounts,
+            &provider_describing(None),
+            &ProviderCustomerId::parse("cus_123").unwrap(),
+            &ProviderPaymentMethodId::parse("pm_2").unwrap(),
+        )
+        .await
+        .expect("adopted");
+
+        let saved = saved.lock().expect("not poisoned");
+        assert_eq!(saved[0].payment_method, PaymentMethodStatus::Valid);
+        assert_eq!(saved[0].card, None);
+    }
+
+    #[tokio::test]
+    async fn a_provider_unable_to_describe_the_card_saves_nothing() {
+        let saved = Arc::new(Mutex::new(Vec::new()));
+        let accounts = capturing_accounts(
+            account(OrganisationId::new(), PaymentMethodStatus::Missing),
+            &saved,
+        );
+        let mut provider = MockPaymentProvider::new();
+        provider
+            .expect_set_default_payment_method()
+            .returning(|_, _| Box::pin(async { Ok(()) }));
+        provider.expect_payment_method_card().returning(|_| {
+            Box::pin(async {
+                Err(BillingError::Provider {
+                    reason: "unreachable".to_string(),
+                }
+                .into())
+            })
+        });
+
+        let failed = adopt_payment_method(
+            &accounts,
+            &provider,
+            &ProviderCustomerId::parse("cus_123").unwrap(),
+            &ProviderPaymentMethodId::parse("pm_1").unwrap(),
+        )
+        .await
+        .expect_err("the provider failed");
+
+        assert!(matches!(
+            failed,
+            CoreError::Billing(BillingError::Provider { .. })
+        ));
+        assert!(saved.lock().expect("not poisoned").is_empty());
     }
 
     #[tokio::test]

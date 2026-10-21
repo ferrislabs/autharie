@@ -8,6 +8,7 @@ import {
   NEEDS_BILLING_RIGHT,
   NEEDS_PAYMENT_METHOD,
   accountOf,
+  describeCard,
   fittingTiers,
   formatMinor,
   hostingOf,
@@ -181,5 +182,33 @@ describe('amounts and periods', () => {
   it('treats a zero price as free', () => {
     expect(isPaid({ monthly_price: 0 })).toBe(false)
     expect(isPaid({ monthly_price: 1 })).toBe(true)
+  })
+})
+
+describe('a card as the customer recognises it', () => {
+  const card = (brand: string, exp_month = 4, exp_year = 2027): Schemas.CardResponse => ({
+    brand,
+    last4: '4242',
+    exp_month,
+    exp_year,
+  })
+
+  it('names the brand, the last four digits and the expiry', () => {
+    expect(describeCard(card('visa'))).toBe('Visa •••• 4242 · exp. 04/27')
+  })
+
+  it('writes the brands the way their owners do', () => {
+    expect(describeCard(card('mastercard'))).toContain('Mastercard ••••')
+    expect(describeCard(card('amex'))).toContain('American Express ••••')
+    expect(describeCard(card('cartes_bancaires'))).toContain('Cartes Bancaires ••••')
+  })
+
+  it('still says something for a brand it does not know', () => {
+    expect(describeCard(card('some_new_network'))).toContain('Some new network ••••')
+    expect(describeCard(card('unknown'))).toContain('Card ••••')
+  })
+
+  it('pads the month and keeps two digits of the year', () => {
+    expect(describeCard(card('visa', 12, 2031))).toContain('exp. 12/31')
   })
 })

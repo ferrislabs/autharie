@@ -370,6 +370,118 @@ async fn the_default_payment_method_is_set_under_a_key_naming_both_ids() {
     mock.assert();
 }
 
+fn payment_method_pm_9(server: &MockServer, status: u16, body: Value) -> httpmock::Mock<'_> {
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/v1/payment_methods/pm_9")
+            .header("Authorization", format!("Bearer {SECRET_KEY}"))
+            .header("Stripe-Version", STRIPE_API_VERSION);
+        then.status(status).json_body(body);
+    })
+}
+
+#[tokio::test]
+async fn the_card_of_a_payment_method_is_what_the_provider_describes_of_it() {
+    let server = MockServer::start();
+    let mock = payment_method_pm_9(
+        &server,
+        200,
+        json!({
+            "id": "pm_9",
+            "object": "payment_method",
+            "type": "card",
+            "card": {
+                "brand": "visa",
+                "last4": "4242",
+                "exp_month": 4,
+                "exp_year": 2027,
+                "funding": "credit",
+                "country": "US"
+            }
+        }),
+    );
+
+    let card = provider(&server)
+        .payment_method_card(&ProviderPaymentMethodId::parse("pm_9").unwrap())
+        .await
+        .unwrap()
+        .expect("a card");
+
+    mock.assert();
+    assert_eq!(card.brand(), "visa");
+    assert_eq!(card.last4(), "4242");
+    assert_eq!(card.exp_month(), 4);
+    assert_eq!(card.exp_year(), 2027);
+}
+
+#[tokio::test]
+async fn a_payment_method_that_is_not_a_card_has_no_card() {
+    let server = MockServer::start();
+    payment_method_pm_9(
+        &server,
+        200,
+        json!({
+            "id": "pm_9",
+            "object": "payment_method",
+            "type": "sepa_debit",
+            "sepa_debit": {"last4": "3000", "country": "FR"}
+        }),
+    );
+
+    let card = provider(&server)
+        .payment_method_card(&ProviderPaymentMethodId::parse("pm_9").unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(card, None);
+}
+
+#[tokio::test]
+async fn a_card_the_provider_describes_with_a_bad_last4_is_a_failure_not_a_card() {
+    let server = MockServer::start();
+    payment_method_pm_9(
+        &server,
+        200,
+        json!({
+            "id": "pm_9",
+            "type": "card",
+            "card": {"brand": "visa", "last4": "42", "exp_month": 4, "exp_year": 2027}
+        }),
+    );
+
+    let error = provider(&server)
+        .payment_method_card(&ProviderPaymentMethodId::parse("pm_9").unwrap())
+        .await
+        .unwrap_err();
+
+    let reason = reason(error);
+    assert!(
+        reason.contains("/v1/payment_methods/{payment_method}"),
+        "{reason}"
+    );
+}
+
+#[tokio::test]
+async fn a_payment_method_the_provider_does_not_know_is_a_failure() {
+    let server = MockServer::start();
+    payment_method_pm_9(
+        &server,
+        404,
+        json!({"error": {"type": "invalid_request_error", "code": "resource_missing"}}),
+    );
+
+    let error = provider(&server)
+        .payment_method_card(&ProviderPaymentMethodId::parse("pm_9").unwrap())
+        .await
+        .unwrap_err();
+
+    let reason = reason(error);
+    assert!(
+        reason.contains("/v1/payment_methods/{payment_method}"),
+        "{reason}"
+    );
+}
+
 #[tokio::test]
 async fn an_invoice_is_built_item_by_item_then_finalized_under_stable_keys() {
     let server = MockServer::start();

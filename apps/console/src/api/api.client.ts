@@ -163,9 +163,11 @@ export namespace Schemas {
     siren?: (string | null) | undefined
     vat_number?: (string | null) | undefined
   }
+  export type CardResponse = { brand: string; exp_month: number; exp_year: number; last4: string }
   export type PaymentMethodStatus = 'missing' | 'valid' | 'failing'
   export type BillingAccountResponse = {
     address: BillingAddressBody
+    card?: (null | CardResponse) | undefined
     complete: boolean
     email: string
     name: string

@@ -9,8 +9,9 @@ use std::fmt;
 use autharie_domain::{
     CoreError,
     billing::{
-        BillingDetails, BillingError, ProviderCustomerId, ProviderEvent, ProviderInvoice,
-        ProviderPaymentMethodId, Siren, Statement, VatNumber, ports::PaymentProvider,
+        BillingDetails, BillingError, CardSummary, CardSummaryInput, ProviderCustomerId,
+        ProviderEvent, ProviderInvoice, ProviderPaymentMethodId, Siren, Statement, VatNumber,
+        ports::PaymentProvider,
     },
     organisation::OrganisationId,
 };
@@ -21,7 +22,7 @@ use uuid::Uuid;
 
 use client::{Client, https_url, malformed};
 use form::Form;
-use wire::{Created, Session};
+use wire::{Created, PaymentMethod, Session};
 
 pub const STRIPE_API_VERSION: &str = "2024-06-20";
 pub const DEFAULT_API_BASE: &str = "https://api.stripe.com";
@@ -30,6 +31,7 @@ const CURRENCY: &str = "eur";
 const CUSTOMERS: &str = "/v1/customers";
 const CUSTOMER: &str = "/v1/customers/{customer}";
 const CHECKOUT_SESSIONS: &str = "/v1/checkout/sessions";
+const PAYMENT_METHOD: &str = "/v1/payment_methods/{payment_method}";
 
 pub struct StripeConfig {
     pub secret_key: SecretString,
@@ -212,6 +214,30 @@ impl PaymentProvider for StripePaymentProvider {
             .await?;
 
         Ok(())
+    }
+
+    async fn payment_method_card(
+        &self,
+        payment_method: &ProviderPaymentMethodId,
+    ) -> Result<Option<CardSummary>, CoreError> {
+        let found: PaymentMethod = self
+            .client
+            .get(PAYMENT_METHOD, &[payment_method.as_str()], &[])
+            .await?;
+
+        found
+            .card
+            .map(|card| {
+                CardSummary::parse(CardSummaryInput {
+                    brand: &card.brand,
+                    last4: &card.last4,
+                    exp_month: card.exp_month,
+                    exp_year: card.exp_year,
+                })
+                .map_err(|_| malformed(&Method::GET, PAYMENT_METHOD))
+            })
+            .transpose()
+            .map_err(CoreError::from)
     }
 
     async fn issue_invoice(

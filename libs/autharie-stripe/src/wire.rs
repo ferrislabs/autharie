@@ -11,6 +11,19 @@ pub(crate) struct Session {
 }
 
 #[derive(Deserialize)]
+pub(crate) struct PaymentMethod {
+    pub(crate) card: Option<Card>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct Card {
+    pub(crate) brand: String,
+    pub(crate) last4: String,
+    pub(crate) exp_month: u32,
+    pub(crate) exp_year: u32,
+}
+
+#[derive(Deserialize)]
 pub(crate) struct Finalized {
     pub(crate) hosted_invoice_url: Option<String>,
 }

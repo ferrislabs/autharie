@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO billing_accounts\n                (organisation_id, name, email, address_line1, address_line2, postal_code, city,\n                 country, vat_number, siren, provider_customer_id, payment_method,\n                 card_brand, card_last4, card_exp_month, card_exp_year)\n            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)\n            ON CONFLICT (organisation_id) DO UPDATE\n                SET name = EXCLUDED.name,\n                    email = EXCLUDED.email,\n                    address_line1 = EXCLUDED.address_line1,\n                    address_line2 = EXCLUDED.address_line2,\n                    postal_code = EXCLUDED.postal_code,\n                    city = EXCLUDED.city,\n                    country = EXCLUDED.country,\n                    vat_number = EXCLUDED.vat_number,\n                    siren = EXCLUDED.siren,\n                    provider_customer_id = EXCLUDED.provider_customer_id,\n                    payment_method = EXCLUDED.payment_method,\n                    card_brand = EXCLUDED.card_brand,\n                    card_last4 = EXCLUDED.card_last4,\n                    card_exp_month = EXCLUDED.card_exp_month,\n                    card_exp_year = EXCLUDED.card_exp_year,\n                    updated_at = now()\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Int2",
+        "Int2"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c37b1899781b4233e2ef9d8b65741b1de6986d6b381bf56f02ca9db26ddf7fe2"
+}

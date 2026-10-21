@@ -7,9 +7,9 @@ use crate::{
     CoreError,
     billing::{
         BillingAccount, BillingDetails, BillingError, BillingPeriod, BillingSuspension,
-        BillingSuspensionId, ProviderCustomerId, ProviderEvent, ProviderEventId, ProviderInvoice,
-        ProviderInvoiceId, ProviderPaymentMethodId, Statement, StatementId, Subscription, Tier,
-        TierCode,
+        BillingSuspensionId, CardSummary, ProviderCustomerId, ProviderEvent, ProviderEventId,
+        ProviderInvoice, ProviderInvoiceId, ProviderPaymentMethodId, Statement, StatementId,
+        Subscription, Tier, TierCode,
     },
     deployments::DeploymentId,
     organisation::OrganisationId,
@@ -166,6 +166,11 @@ pub trait PaymentProvider: Send + Sync {
         payment_method: &ProviderPaymentMethodId,
     ) -> impl Future<Output = Result<(), CoreError>> + Send;
 
+    fn payment_method_card(
+        &self,
+        payment_method: &ProviderPaymentMethodId,
+    ) -> impl Future<Output = Result<Option<CardSummary>, CoreError>> + Send;
+
     fn issue_invoice(
         &self,
         customer: &ProviderCustomerId,
@@ -224,6 +229,13 @@ impl<T: PaymentProvider> PaymentProvider for &T {
         payment_method: &ProviderPaymentMethodId,
     ) -> impl Future<Output = Result<(), CoreError>> + Send {
         (**self).set_default_payment_method(customer, payment_method)
+    }
+
+    fn payment_method_card(
+        &self,
+        payment_method: &ProviderPaymentMethodId,
+    ) -> impl Future<Output = Result<Option<CardSummary>, CoreError>> + Send {
+        (**self).payment_method_card(payment_method)
     }
 
     fn issue_invoice(

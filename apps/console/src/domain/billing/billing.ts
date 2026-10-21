@@ -23,6 +23,31 @@ export type TierFit = {
   hosting: Schemas.Hosting
 }
 
+const CARD_BRANDS: ReadonlyMap<string, string> = new Map([
+  ['visa', 'Visa'],
+  ['mastercard', 'Mastercard'],
+  ['amex', 'American Express'],
+  ['diners', 'Diners Club'],
+  ['discover', 'Discover'],
+  ['jcb', 'JCB'],
+  ['unionpay', 'UnionPay'],
+  ['cartes_bancaires', 'Cartes Bancaires'],
+  ['unknown', 'Card'],
+])
+
+function brandLabel(brand: string): string {
+  const known = CARD_BRANDS.get(brand)
+  if (known) return known
+  const words = brand.replace(/_/g, ' ')
+  return words.charAt(0).toUpperCase() + words.slice(1)
+}
+
+export function describeCard(card: Schemas.CardResponse): string {
+  const month = String(card.exp_month).padStart(2, '0')
+  const year = String(card.exp_year % 100).padStart(2, '0')
+  return `${brandLabel(card.brand)} •••• ${card.last4} · exp. ${month}/${year}`
+}
+
 export function formatMinor(minor: number): string {
   return EUR.format(minor / 100)
 }

@@ -10396,6 +10396,16 @@
           "address": {
             "$ref": "#/components/schemas/BillingAddressBody"
           },
+          "card": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CardResponse"
+              }
+            ]
+          },
           "complete": {
             "type": "boolean"
           },
@@ -10704,6 +10714,37 @@
             "type": "integer",
             "format": "int32",
             "minimum": 0
+          }
+        }
+      },
+      "CardResponse": {
+        "type": "object",
+        "required": [
+          "brand",
+          "last4",
+          "exp_month",
+          "exp_year"
+        ],
+        "properties": {
+          "brand": {
+            "type": "string",
+            "example": "visa"
+          },
+          "exp_month": {
+            "type": "integer",
+            "format": "int32",
+            "example": 4,
+            "minimum": 0
+          },
+          "exp_year": {
+            "type": "integer",
+            "format": "int32",
+            "example": 2027,
+            "minimum": 0
+          },
+          "last4": {
+            "type": "string",
+            "example": "4242"
           }
         }
       },
