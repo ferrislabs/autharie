@@ -26,6 +26,12 @@ fn health_path_for_kind(kind: &autharie_core::deployments::DeploymentKind) -> &'
     }
 }
 
+/// Where to connect instead of where a deployment's hostname resolves.
+///
+/// On the local stack a deployment's hostname resolves to 127.0.0.1 inside
+/// the control plane's container -- the container itself -- while the gateway
+/// that serves it listens on the host. Connecting through the host while
+/// keeping the hostname for TLS and Host measures what production measures.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProbeVia {
     host: String,
@@ -105,6 +111,8 @@ fn build_client(
         builder = builder.add_root_certificate(ca.clone());
     }
 
+    // reqwest ignores the port of an override address, which is why the
+    // `via` port goes into the URL instead.
     for (hostname, addrs) in overrides {
         builder = builder.resolve_to_addrs(hostname, addrs);
     }
@@ -148,6 +156,9 @@ pub async fn run_deployment_reachability_probe(state: AppState, settings: ProbeS
             Some(via) => match tokio::net::lookup_host((via.host(), via.port())).await {
                 Ok(addrs) => addrs.collect(),
                 Err(err) => {
+                    // Skipped rather than recorded: the address the probe was
+                    // told to use is missing, which says nothing about whether
+                    // any deployment is up.
                     warn!(via = via.host(), %err, "cannot resolve the reachability probe address");
                     continue;
                 }
