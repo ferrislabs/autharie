@@ -37,6 +37,10 @@ pub struct IdentityInstanceSpec {
     #[schemars(range(min = 1, max = 5))]
     pub replicas: i32,
 
+    /// Scaled to nothing, with the database hibernated and its volumes kept.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stopped: bool,
+
     pub database: DatabaseConfig,
 
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -451,6 +455,7 @@ mod tests {
             version: "25.0.0".to_string(),
             hostname: "auth.acme.com".to_string(),
             replicas: 1,
+            stopped: false,
             database: DatabaseConfig {
                 mode: DatabaseMode::ManagedCluster,
                 shared: None,
@@ -679,6 +684,7 @@ mod tests {
                 version: "25.0.0".to_string(),
                 hostname: "auth.acme.com".to_string(),
                 replicas: 1,
+                stopped: false,
                 database: DatabaseConfig {
                     mode: DatabaseMode::ManagedCluster,
                     shared: None,
@@ -732,6 +738,7 @@ mod tests {
                 version: "1.0.0".to_string(),
                 hostname: "auth.example.com".to_string(),
                 replicas: 1,
+                stopped: false,
                 database: DatabaseConfig {
                     mode: DatabaseMode::ManagedCluster,
                     shared: None,

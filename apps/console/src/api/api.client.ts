@@ -302,6 +302,7 @@ export namespace Schemas {
     | 'maintenance'
     | 'upgrade_required'
     | 'upgrading'
+    | 'stopped'
     | 'deleting'
     | 'deleted'
   export type Topology = { database_instances: number; replicas: number }

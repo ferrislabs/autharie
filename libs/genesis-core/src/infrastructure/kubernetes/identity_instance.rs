@@ -495,6 +495,7 @@ fn to_identity_instance(desired: &DesiredIdentityInstance) -> IdentityInstance {
         version: desired.version.clone(),
         hostname: desired.hostname.clone(),
         replicas: desired.replicas,
+        stopped: false,
         database: DatabaseConfig {
             mode: match desired.placement {
                 DatabasePlacement::Managed => DatabaseMode::ManagedCluster,

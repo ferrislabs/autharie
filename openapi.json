@@ -11655,6 +11655,7 @@
           "maintenance",
           "upgrade_required",
           "upgrading",
+          "stopped",
           "deleting",
           "deleted"
         ]

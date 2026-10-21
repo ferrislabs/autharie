@@ -1099,6 +1099,7 @@ mod tests {
                 // Service instead of the public endpoint is that this must not matter.
                 hostname: "auth.acme.test".to_string(),
                 replicas: 1,
+                stopped: false,
                 database: DatabaseConfig {
                     mode: DatabaseMode::ManagedCluster,
                     shared: None,

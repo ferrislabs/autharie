@@ -109,6 +109,8 @@ pub enum DeploymentStatus {
     Maintenance,
     UpgradeRequired,
     Upgrading,
+    /// Powered down with its data kept, until it is started again.
+    Stopped,
     /// Tear-down has been asked for and has not been confirmed.
     Deleting,
     /// The data plane reported that the resources are gone.
@@ -131,6 +133,7 @@ impl fmt::Display for DeploymentStatus {
             Self::Maintenance => write!(f, "maintenance"),
             Self::UpgradeRequired => write!(f, "upgrade_required"),
             Self::Upgrading => write!(f, "upgrading"),
+            Self::Stopped => write!(f, "stopped"),
             Self::Deleting => write!(f, "deleting"),
             Self::Deleted => write!(f, "deleted"),
         }
@@ -150,6 +153,7 @@ impl TryFrom<&str> for DeploymentStatus {
             "maintenance" => Ok(Self::Maintenance),
             "upgrade_required" => Ok(Self::UpgradeRequired),
             "upgrading" => Ok(Self::Upgrading),
+            "stopped" => Ok(Self::Stopped),
             "deleting" => Ok(Self::Deleting),
             "deleted" => Ok(Self::Deleted),
             _ => Err(CoreError::InternalError(format!(

@@ -295,6 +295,7 @@ mod tests {
                 version: "26.0.0".to_string(),
                 hostname: "auth.acme.com".to_string(),
                 replicas: 1,
+                stopped: false,
                 database: DatabaseConfig {
                     mode: DatabaseMode::ManagedCluster,
                     shared: None,
