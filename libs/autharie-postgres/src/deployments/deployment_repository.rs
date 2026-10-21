@@ -595,7 +595,10 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                 credential_id = $24,
                 cluster_profile = $25,
                 replicas = $26,
-                database_instances = $27
+                database_instances = $27,
+                cpu_millis = $28,
+                memory_mib = $29,
+                storage_gib = $30
             WHERE id = $1
             "#,
                 deployment.id.0,
@@ -634,6 +637,9 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                 distribution.cluster_profile,
                 i16::from(deployment.topology.replicas()),
                 i16::from(deployment.topology.database_instances()),
+                deployment.resources.cpu_millis as i32,
+                deployment.resources.memory_mib as i32,
+                deployment.resources.storage_gib as i32,
             )
             .execute(&mut ***tx)
             .await
