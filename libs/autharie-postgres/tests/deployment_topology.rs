@@ -239,6 +239,28 @@ async fn update_keeps_and_changes_the_topology() {
 }
 
 #[tokio::test]
+async fn update_writes_the_resources() {
+    scratch(async |tx| {
+        let world = seed_world(&tx).await?;
+        let deployments = PostgresDeploymentRepository::new(&tx);
+        let mut stored = deployment(&world, Topology::SINGLE);
+        deployments.insert(stored.clone()).await?;
+
+        stored.resources = DeploymentResources {
+            cpu_millis: 2000,
+            memory_mib: 4096,
+            storage_gib: 20,
+        };
+        deployments.update(stored.clone()).await?;
+
+        let read = deployments.get_by_id(stored.id).await?.expect("stored");
+        assert_eq!(read.resources, stored.resources);
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn the_database_refuses_replicas_out_of_range() {
     scratch(async |tx| {
         let world = seed_world(&tx).await?;
