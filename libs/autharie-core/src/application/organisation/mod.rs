@@ -85,33 +85,6 @@ impl autharie_domain::offers::ports::OfferService for AutharieService {
     }
 }
 
-impl autharie_domain::organisation::features::FeatureService for AutharieService {
-    #[transactional(organisation)]
-    async fn list_features(
-        &self,
-        identity: Identity,
-        organisation_id: OrganisationId,
-    ) -> Result<autharie_domain::organisation::features::PlanFeatures, CoreError> {
-        autharie_domain::deployments::ports::DeploymentPolicy::can_view_deployments(
-            &AuthariePolicy::new(permissions_in(&tx)),
-            identity,
-            organisation_id,
-        )
-        .await?;
-
-        let organisation = organisation_repository
-            .find_by_id(&organisation_id)
-            .await?
-            .ok_or(CoreError::OrganisationNotFound {
-                id: organisation_id.0,
-            })?;
-
-        Ok(autharie_domain::organisation::features::features_for(
-            organisation.plan,
-        ))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

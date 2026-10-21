@@ -167,8 +167,12 @@ export function requestLabel(status: Schemas.ActionStatus): StatusLabel {
 export const REQUEST_NOTE =
   'This is the state of the request, not proof that the instance applied it.'
 
-export function describeUnavailable(opensWith: Schemas.Plan | null | undefined): string {
-  return opensWith
-    ? `Branding is not included in your organisation's plan. It is available from the ${opensWith} plan.`
-    : 'Branding is not included in your organisation\'s plan.'
+export function describeUnavailable(tier: string | null | undefined): string {
+  return tier
+    ? `Branding is not included in the ${tier} tier of this deployment.`
+    : 'Branding is not included in the tier of this deployment.'
+}
+
+export function isBrandingOpen(features: ReadonlyArray<Schemas.DeploymentFeature> | undefined): boolean {
+  return features?.some((entry) => entry.feature === 'branding' && entry.open) ?? false
 }

@@ -1,6 +1,16 @@
 import { useParams } from '@tanstack/react-router'
 import { useGetDeployment, useGetDeploymentActions } from '@/api/deployment.api'
 import { useGetDeploymentUptime } from '@/api/deployment-uptime.api'
+import {
+  useGetBillingAccount,
+  useGetSubscription,
+  useGetTiers,
+  usePutSubscription,
+} from '@/api/billing.api'
+import { accountOf } from '@/domain/billing/billing'
+import { useResolvedOrganisationId } from '@/domain/organisations/hooks/use-resolved-organisation-id'
+import { useMyPermissions } from '@/domain/organisations/hooks/use-my-permissions'
+import { CAN } from '@/domain/organisations/permissions'
 import { useHoldsPlatformRight } from '@/domain/organisations/hooks/use-is-operator'
 import { ClusterPanelFeature } from '@/domain/cloud-providers/pages/feature/cluster-panel-feature'
 import {
@@ -14,6 +24,7 @@ import { PageDeploymentDetail } from '../ui/page-deployment-detail'
 export default function PageDeploymentDetailFeature() {
   const { deploymentId } = useParams({ strict: false }) as { deploymentId?: string }
 
+  const organisationId = useResolvedOrganisationId() ?? null
   const deployment = useGetDeployment(deploymentId ?? null)
   const actions = useGetDeploymentActions(deploymentId ?? null)
 
@@ -47,12 +58,38 @@ export default function PageDeploymentDetailFeature() {
   const resizable =
     subject && profile && credentialId && isResizable(subject, deployment.data?.provisioning)
 
+  const { can } = useMyPermissions()
+  const canManage = can(CAN.manageBilling)
+  const canViewBilling = can(CAN.viewBilling)
+  const subscription = useGetSubscription(organisationId, deploymentId ?? null)
+  const tiers = useGetTiers(organisationId)
+  const account = useGetBillingAccount(organisationId, canViewBilling)
+  const change = usePutSubscription()
+
+  const changeTier = (tier: string) => {
+    if (!organisationId || !deploymentId || change.isPending) return
+
+    change.mutate({
+      path: { organisation_id: organisationId, deployment_id: deploymentId },
+      body: { tier },
+    })
+  }
 
   return (
     <PageDeploymentDetail
       deployment={deployment.data?.data}
       actions={filteredActions}
       availability={availability}
+      subscription={{
+        subscription: subscription.data,
+        isLoading: subscription.isLoading,
+        isError: subscription.isError,
+        tiers: tiers.data?.data,
+        access: { canManage, account: accountOf(canViewBilling, account) },
+        changing: change.isPending ? (change.variables?.body.tier ?? null) : null,
+        error: change.error?.message,
+        onChange: changeTier,
+      }}
       provisioning={deployment.data?.provisioning}
       clusterPanel={
         resizable ? (

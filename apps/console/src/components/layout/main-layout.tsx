@@ -1,5 +1,5 @@
 import { Outlet } from '@tanstack/react-router'
-import { Boxes, Cloud, LayoutGrid, ShieldCheck, Users } from 'lucide-react'
+import { Boxes, Cloud, CreditCard, LayoutGrid, ShieldCheck, Users } from 'lucide-react'
 import { useMyPermissions } from '@/domain/organisations/hooks/use-my-permissions'
 import { CAN } from '@/domain/organisations/permissions'
 import { useOrganisationPath } from '@/domain/organisations/hooks/use-organisation-path'
@@ -34,6 +34,9 @@ export function AppLayout() {
       : []),
     ...(can(CAN.viewRoles)
       ? [{ label: 'Roles', to: organisationPath('/roles'), icon: ShieldCheck }]
+      : []),
+    ...(can(CAN.viewBilling)
+      ? [{ label: 'Billing', to: organisationPath('/billing'), icon: CreditCard }]
       : []),
   ]
 
