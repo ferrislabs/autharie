@@ -29,7 +29,10 @@ use crate::{
         ports::{BackupPolicy, BackupRepository, BackupScheduleRepository, BackupSignalUpdate},
     },
     catalog::ReleaseId,
-    deployments::{Deployment, DeploymentId, cutover::CutoverCommand, ports::DeploymentRepository},
+    deployments::{
+        Deployment, DeploymentId, DeploymentStatus, cutover::CutoverCommand,
+        ports::DeploymentRepository,
+    },
     generate_uuid_v7,
     organisation::OrganisationId,
     platform::{PlatformRight, ports::PlatformPolicy},
@@ -142,6 +145,13 @@ where
         let deployment = self
             .deployment_in(command.organisation_id, command.deployment_id)
             .await?;
+
+        if deployment.status == DeploymentStatus::Stopped {
+            return Err(CoreError::DeploymentStopped {
+                deployment: deployment.id.0,
+                operation: "backed up".to_string(),
+            });
+        }
 
         Ok(deployment)
     }
@@ -901,11 +911,37 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn a_stopped_deployment_is_not_archived() {
+        let refused = asking_about(
+            Deployment {
+                status: DeploymentStatus::Stopped,
+                ..a_deployment()
+            },
+            Permissive,
+            Granting::nothing(),
+        )
+        .await
+        .expect_err("a stopped deployment was archived");
+
+        assert!(
+            matches!(refused, CoreError::DeploymentStopped { .. }),
+            "got {refused}"
+        );
+    }
+
     async fn asking<P: BackupPolicy>(
         policy: P,
         platform: Granting,
     ) -> Result<Deployment, CoreError> {
-        let deployment = a_deployment();
+        asking_about(a_deployment(), policy, platform).await
+    }
+
+    async fn asking_about<P: BackupPolicy>(
+        deployment: Deployment,
+        policy: P,
+        platform: Granting,
+    ) -> Result<Deployment, CoreError> {
         let organisation_id = deployment.organisation_id;
         let deployment_id = deployment.id;
 

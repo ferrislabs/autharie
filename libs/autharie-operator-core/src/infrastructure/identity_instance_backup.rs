@@ -33,7 +33,7 @@ use crate::{
     infrastructure::archive::{
         ScheduledArchive, build_cnpg_backup, build_cnpg_scheduled_backup, build_manifest,
         cnpg_backup_api_resource, cnpg_cluster_api_resource, cnpg_scheduled_backup_api_resource,
-        split_destination, to_utc_cron,
+        schedule_runs, split_destination, to_utc_cron,
     },
 };
 
@@ -343,6 +343,15 @@ async fn reconcile_schedule(
     });
     let utc_schedule = to_utc_cron(&schedule.spec.schedule, zone, chrono::Utc::now());
 
+    let instances: Api<IdentityInstance> = Api::namespaced(context.client.clone(), &namespace);
+    let archived = instances
+        .get_opt(&instance)
+        .await
+        .map_err(|error| OperatorError::Kube {
+            message: error.to_string(),
+        })?;
+    let enabled = schedule_runs(schedule.spec.enabled, archived.as_ref());
+
     let desired = build_cnpg_scheduled_backup(
         &ScheduledArchive {
             name: &name,
@@ -350,7 +359,7 @@ async fn reconcile_schedule(
             cluster: &cluster_name(&instance),
             schedule: &utc_schedule,
             method: schedule.spec.method,
-            enabled: schedule.spec.enabled,
+            enabled,
         },
         &labels(&instance),
         owner,
@@ -390,7 +399,7 @@ async fn reconcile_schedule(
         local = %schedule.spec.schedule,
         zone = %zone,
         utc = %utc_schedule,
-        enabled = schedule.spec.enabled,
+        enabled,
         "the archive schedule is applied"
     );
 

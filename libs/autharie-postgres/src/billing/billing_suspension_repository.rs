@@ -94,6 +94,7 @@ impl BillingSuspensionRepository for PostgresBillingSuspensionRepository<'_> {
                        suspended_organisation, suspended_at, lifted_at
                 FROM billing_suspensions
                 WHERE organisation_id = $1 AND lifted_at IS NULL
+                FOR UPDATE
                 "#,
                 organisation_id.0
             )
@@ -103,6 +104,60 @@ impl BillingSuspensionRepository for PostgresBillingSuspensionRepository<'_> {
         .map_err(failed("find the active billing suspension"))?;
 
         Ok(row.map(BillingSuspension::from))
+    }
+
+    async fn list_active(&self) -> Result<Vec<BillingSuspension>, CoreError> {
+        let rows = {
+            let mut tx = self.tx.lock().await;
+            sqlx::query_as!(
+                SuspensionRow,
+                r#"
+                SELECT id, organisation_id, statement_id, stopped_deployments,
+                       suspended_organisation, suspended_at, lifted_at
+                FROM billing_suspensions
+                WHERE lifted_at IS NULL
+                ORDER BY suspended_at, id
+                "#
+            )
+            .fetch_all(&mut ***tx)
+            .await
+        }
+        .map_err(failed("list the active billing suspensions"))?;
+
+        Ok(rows.into_iter().map(BillingSuspension::from).collect())
+    }
+
+    async fn add_stopped(
+        &self,
+        id: &BillingSuspensionId,
+        deployments: &[DeploymentId],
+    ) -> Result<(), CoreError> {
+        let added: Vec<Uuid> = deployments.iter().map(|id| id.0).collect();
+
+        let mut tx = self.tx.lock().await;
+        sqlx::query!(
+            r#"
+            UPDATE billing_suspensions
+            SET stopped_deployments = stopped_deployments || ARRAY(
+                SELECT fresh.id
+                FROM (
+                    SELECT DISTINCT ON (added.id) added.id, added.position
+                    FROM unnest($2::uuid[]) WITH ORDINALITY AS added(id, position)
+                    WHERE added.id <> ALL (stopped_deployments)
+                    ORDER BY added.id, added.position
+                ) AS fresh
+                ORDER BY fresh.position
+            )
+            WHERE id = $1 AND lifted_at IS NULL
+            "#,
+            id.0,
+            &added
+        )
+        .execute(&mut ***tx)
+        .await
+        .map_err(failed("record the deployments billing stopped"))?;
+
+        Ok(())
     }
 
     async fn lift(&self, id: &BillingSuspensionId, at: DateTime<Utc>) -> Result<(), CoreError> {

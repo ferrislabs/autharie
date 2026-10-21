@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n                SELECT id, organisation_id, statement_id, stopped_deployments,\n                       suspended_organisation, suspended_at, lifted_at\n                FROM billing_suspensions\n                WHERE organisation_id = $1 AND lifted_at IS NULL\n                ",
+  "query": "\n                SELECT id, organisation_id, statement_id, stopped_deployments,\n                       suspended_organisation, suspended_at, lifted_at\n                FROM billing_suspensions\n                WHERE lifted_at IS NULL\n                ORDER BY suspended_at, id\n                ",
   "describe": {
     "columns": [
       {
@@ -40,9 +40,7 @@
       }
     ],
     "parameters": {
-      "Left": [
-        "Uuid"
-      ]
+      "Left": []
     },
     "nullable": [
       false,
@@ -54,5 +52,5 @@
       true
     ]
   },
-  "hash": "f52bb29b91f5cf1bde018b75426642879435b24447d0b2733a1c0513d5d61bac"
+  "hash": "8fb8b19d79875ea2877bd31aef5c8eab3768f4a00635f4e66df1431e79261820"
 }

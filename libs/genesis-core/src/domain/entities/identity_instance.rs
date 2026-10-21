@@ -117,6 +117,8 @@ pub struct DesiredIdentityInstance {
 
     pub placement: DatabasePlacement,
 
+    pub stopped: bool,
+
     /// Where this instance archives. `None` is an installation that archives
     /// nowhere, and it leaves an existing schedule alone: the control plane
     /// saying nothing is not the same as it saying stop.
@@ -203,6 +205,7 @@ impl DesiredIdentityInstance {
             ),
             replicas,
             placement: payload.database,
+            stopped: payload.stopped,
             // Kept for a shared database too. There it is not a base backup
             // destination: the operator reads it as where the daily dump goes,
             // and creates no CloudNativePG backup object from it.
@@ -248,7 +251,29 @@ mod tests {
             replicas: None,
             database_instances: None,
             database: DatabasePlacement::Managed,
+            stopped: false,
         }
+    }
+
+    #[test]
+    fn a_running_payload_gives_a_running_instance() {
+        assert!(
+            !DesiredIdentityInstance::from_payload(&payload())
+                .unwrap()
+                .stopped
+        );
+    }
+
+    #[test]
+    fn a_stopped_payload_gives_a_stopped_instance() {
+        let mut stopped = payload();
+        stopped.stopped = true;
+
+        assert!(
+            DesiredIdentityInstance::from_payload(&stopped)
+                .unwrap()
+                .stopped
+        );
     }
 
     #[test]

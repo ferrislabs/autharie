@@ -177,6 +177,12 @@ pub struct ScheduledArchive<'a> {
     pub enabled: bool,
 }
 
+/// A hibernated cluster has no primary to archive, so a stopped instance's schedule is
+/// suspended and comes back as declared.
+pub fn schedule_runs(declared: bool, instance: Option<&IdentityInstance>) -> bool {
+    declared && !instance.is_some_and(|instance| instance.spec.stopped)
+}
+
 /// A recurring archive of a cluster.
 ///
 /// A schedule that is off is written as `suspend: true` rather than deleted.
@@ -295,6 +301,7 @@ mod tests {
                 version: "26.0.0".to_string(),
                 hostname: "auth.acme.com".to_string(),
                 replicas: 1,
+                stopped: false,
                 database: DatabaseConfig {
                     mode: DatabaseMode::ManagedCluster,
                     shared: None,
@@ -397,6 +404,55 @@ mod tests {
         // The cron survives being turned off, so turning it back on does not
         // mean writing it out again from memory.
         assert_eq!(suspended["spec"]["schedule"], "0 30 2 * * *");
+    }
+
+    fn scheduled(enabled: bool) -> Value {
+        build_cnpg_scheduled_backup(
+            &ScheduledArchive {
+                name: "deployment-1",
+                namespace: "tenant-a",
+                cluster: "deployment-1-db",
+                schedule: "0 30 2 * * *",
+                method: ArchiveMethod::BarmanObjectStore,
+                enabled,
+            },
+            &BTreeMap::new(),
+            None,
+        )
+    }
+
+    #[test]
+    fn the_schedule_of_a_stopped_instance_is_suspended() {
+        let mut stopped = instance(Some(config()));
+        stopped.spec.stopped = true;
+
+        let schedule = scheduled(schedule_runs(true, Some(&stopped)));
+
+        assert_eq!(schedule["spec"]["suspend"], true);
+        assert_eq!(schedule["spec"]["schedule"], "0 30 2 * * *");
+    }
+
+    #[test]
+    fn the_schedule_of_a_started_instance_runs_again() {
+        let started = instance(Some(config()));
+
+        assert_eq!(
+            scheduled(schedule_runs(true, Some(&started)))["spec"]["suspend"],
+            false
+        );
+    }
+
+    #[test]
+    fn a_schedule_declared_off_stays_off_whatever_the_instance_does() {
+        let started = instance(Some(config()));
+
+        assert!(!schedule_runs(false, Some(&started)));
+        assert!(!schedule_runs(false, None));
+    }
+
+    #[test]
+    fn a_schedule_without_its_instance_follows_what_was_declared() {
+        assert!(schedule_runs(true, None));
     }
 
     #[test]

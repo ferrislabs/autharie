@@ -12,6 +12,7 @@ const STATUS: Record<DeploymentStatus, { label: string; tone: Tone }> = {
   maintenance: { label: 'Maintenance', tone: 'warning' },
   upgrade_required: { label: 'Upgrade required', tone: 'warning' },
   upgrading: { label: 'Upgrading', tone: 'progress' },
+  stopped: { label: 'Stopped', tone: 'neutral' },
 }
 
 export function DeploymentStatusBadge({ status }: { status: DeploymentStatus }) {

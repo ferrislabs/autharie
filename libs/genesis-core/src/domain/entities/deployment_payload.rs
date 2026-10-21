@@ -69,6 +69,12 @@ pub struct DeploymentPayloadV1 {
     /// which is what every deployment had before the control plane sent it.
     #[serde(default)]
     pub database: DatabasePlacement,
+
+    /// Whether the deployment is stopped, on every `deployment.*` action so an
+    /// update does not wake a stopped deployment. Absent is running, which is
+    /// what a control plane that cannot stop one means.
+    #[serde(default)]
+    pub stopped: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
@@ -308,6 +314,30 @@ mod tests {
         let result = DeploymentPayloadV1::from_value(&minimal_with(Some(json!("pooled"))));
 
         assert!(matches!(result, Err(GenesisError::InvalidPayload { .. })));
+    }
+
+    fn minimal_stopped(stopped: Option<bool>) -> Value {
+        let mut raw = minimal_with(None);
+        if let Some(stopped) = stopped {
+            raw["stopped"] = json!(stopped);
+        }
+        raw
+    }
+
+    #[test]
+    fn an_absent_stopped_is_false() {
+        let payload = DeploymentPayloadV1::from_value(&minimal_stopped(None)).unwrap();
+
+        assert!(!payload.stopped);
+    }
+
+    #[test]
+    fn stopped_is_read_under_its_wire_name() {
+        let stopped = DeploymentPayloadV1::from_value(&minimal_stopped(Some(true))).unwrap();
+        let running = DeploymentPayloadV1::from_value(&minimal_stopped(Some(false))).unwrap();
+
+        assert!(stopped.stopped);
+        assert!(!running.stopped);
     }
 
     #[test]

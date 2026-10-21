@@ -156,6 +156,9 @@ impl KubeIdentityInstanceRepository {
             "DatabaseProvisioning" => "Database cluster provisioning is in progress.",
             "Deploying" => "Database is ready. Deploying identity provider and ingress resources.",
             "Running" => "Identity provider is healthy and ready.",
+            "Stopped" => {
+                "Instance is stopped: workloads are scaled to zero and the database is hibernated."
+            }
             _ => "IdentityInstance status updated.",
         };
 
@@ -545,6 +548,69 @@ impl KeycloakProviderHandler {
         Ok(replicas_ready(&deployment, desired_replicas(instance)))
     }
 
+    async fn may_hibernate(
+        &self,
+        instance: &IdentityInstance,
+        namespace: &str,
+    ) -> Result<bool, OperatorError> {
+        let name = instance
+            .metadata
+            .name
+            .clone()
+            .ok_or(OperatorError::MissingName)?;
+        let deployments = existing_deployments(&self.client, namespace, &[name]).await?;
+        Ok(hibernation_due(
+            instance,
+            &deployments,
+            &[],
+            chrono::Utc::now(),
+        ))
+    }
+
+    async fn apply_keycloak_workload(
+        &self,
+        instance: &IdentityInstance,
+        namespace: &str,
+        admin_secret_name: &str,
+        owner_reference: Option<OwnerReference>,
+    ) -> Result<(), OperatorError> {
+        let name = instance
+            .metadata
+            .name
+            .clone()
+            .ok_or(OperatorError::MissingName)?;
+        let labels = keycloak_labels(instance);
+        let deployment = build_keycloak_deployment(
+            instance,
+            &name,
+            namespace,
+            &labels,
+            admin_secret_name,
+            owner_reference.clone(),
+        )?;
+        let service =
+            build_keycloak_service(instance, &name, namespace, &labels, owner_reference.clone())?;
+
+        let deployments: Api<Deployment> = Api::namespaced(self.client.clone(), namespace);
+        let services: Api<Service> = Api::namespaced(self.client.clone(), namespace);
+
+        let params = kube::api::PatchParams::apply("autharie-operator").force();
+        deployments
+            .patch(&name, &params, &kube::api::Patch::Apply(&deployment))
+            .await
+            .map_err(|error| OperatorError::Kube {
+                message: error.to_string(),
+            })?;
+        services
+            .patch(&name, &params, &kube::api::Patch::Apply(&service))
+            .await
+            .map_err(|error| OperatorError::Kube {
+                message: error.to_string(),
+            })?;
+        self.ensure_keycloak_route(instance, namespace, owner_reference)
+            .await
+    }
+
     async fn ensure_keycloak_route(
         &self,
         instance: &IdentityInstance,
@@ -580,96 +646,6 @@ impl KeycloakProviderHandler {
         instance: &IdentityInstance,
     ) -> Result<bool, OperatorError> {
         route_ready_or_unexposed(self.client.clone(), instance).await
-    }
-
-    async fn ensure_managed_db_cluster(
-        &self,
-        instance: &IdentityInstance,
-        namespace: &str,
-        owner_reference: Option<OwnerReference>,
-    ) -> Result<(), OperatorError> {
-        let cluster_name = cnpg_cluster_name(instance);
-        let gvk = GroupVersionKind::gvk("postgresql.cnpg.io", "v1", "Cluster");
-        let ar = ApiResource::from_gvk(&gvk);
-        let clusters: Api<DynamicObject> =
-            Api::namespaced_with(self.client.clone(), namespace, &ar);
-
-        let mut spec = cnpg_base_spec(&instance.spec.database.managed_cluster);
-
-        // Absent when the instance archives nowhere, and left off the spec
-        // entirely rather than written as an empty object: an empty
-        // barmanObjectStore is a destination of "", which CloudNativePG
-        // accepts and then fails on at archive time, hours later.
-        //
-        // The credentials go in first. A cluster referring to a secret that is
-        // not there yet does come up, and then fails every archive until
-        // somebody notices, which is a worse failure than not coming up.
-        if let Some(backup) = cluster_backup_section(instance.spec.backup.as_ref()) {
-            ensure_archive_credentials(&self.client, instance, namespace).await?;
-            spec.insert("backup".to_string(), backup);
-        }
-
-        // A recovery reads somebody else's prefix to come up.
-        //
-        // Written on every apply, not only on the one that creates the
-        // cluster. This is a server-side apply with force: a field left out is
-        // a field *removed*, so skipping it on later reconciles took
-        // `bootstrap` off the object and CloudNativePG defaulted it back to
-        // `initdb` -- a recovery that came up empty, which is the failure this
-        // whole path exists to prevent. Re-asserting it costs nothing:
-        // CloudNativePG reads `bootstrap` once, when the cluster is created.
-        if let Some(restore) = instance.spec.restore.as_ref() {
-            let backup = instance.spec.backup.as_ref().ok_or_else(|| {
-                // A recovery needs credentials for the store it reads, and
-                // the ones it archives with are the same. An instance
-                // restoring into an installation that archives nowhere has
-                // nothing to read with.
-                OperatorError::Kube {
-                    message: "a recovery needs an archive configuration to read with".to_string(),
-                }
-            })?;
-
-            ensure_archive_credentials(&self.client, instance, namespace).await?;
-
-            let (bootstrap, external) = cluster_recovery_section(
-                restore,
-                &backup.credentials_secret,
-                backup.endpoint_url.as_deref(),
-            );
-
-            info!(
-                source = %restore.server_name,
-                from = %restore.destination_path,
-                "bootstrapping from an archive"
-            );
-
-            spec.insert("bootstrap".to_string(), bootstrap);
-            spec.insert("externalClusters".to_string(), external);
-        }
-
-        let cluster_manifest = json!({
-            "apiVersion": "postgresql.cnpg.io/v1",
-            "kind": "Cluster",
-            "metadata": {
-                "name": cluster_name,
-                "namespace": namespace,
-                "ownerReferences": owner_reference.map(|owner| vec![owner]),
-            },
-            "spec": spec
-        });
-
-        clusters
-            .patch(
-                &cluster_name,
-                &kube::api::PatchParams::apply("autharie-operator").force(),
-                &kube::api::Patch::Apply(&cluster_manifest),
-            )
-            .await
-            .map_err(|error| OperatorError::Kube {
-                message: error.to_string(),
-            })?;
-
-        Ok(())
     }
 
     async fn cnpg_cluster_ready(&self, instance: &IdentityInstance) -> Result<bool, OperatorError> {
@@ -743,8 +719,32 @@ impl IdentityProviderHandler for KeycloakProviderHandler {
 
             let admin_secret_name = keycloak_admin_secret_name(&name);
             let owner_reference = instance.controller_owner_ref(&());
-            self.ensure_managed_db_cluster(instance, &namespace, owner_reference.clone())
+            if instance.spec.stopped {
+                self.apply_keycloak_workload(
+                    instance,
+                    &namespace,
+                    &admin_secret_name,
+                    owner_reference.clone(),
+                )
                 .await?;
+                let hibernate = self.may_hibernate(instance, &namespace).await?;
+                return apply_managed_db_cluster(
+                    &self.client,
+                    instance,
+                    &namespace,
+                    owner_reference,
+                    hibernate,
+                )
+                .await;
+            }
+            apply_managed_db_cluster(
+                &self.client,
+                instance,
+                &namespace,
+                owner_reference.clone(),
+                false,
+            )
+            .await?;
             let db_cluster_ready = self.cnpg_cluster_ready(instance).await?;
             if !db_cluster_ready {
                 info!(
@@ -777,41 +777,7 @@ impl IdentityProviderHandler for KeycloakProviderHandler {
                 owner_reference.clone(),
             )
             .await?;
-
-            let labels = keycloak_labels(instance);
-            let deployment = build_keycloak_deployment(
-                instance,
-                &name,
-                &namespace,
-                &labels,
-                &admin_secret_name,
-                owner_reference.clone(),
-            )?;
-            let service = build_keycloak_service(
-                instance,
-                &name,
-                &namespace,
-                &labels,
-                owner_reference.clone(),
-            )?;
-
-            let deployments: Api<Deployment> = Api::namespaced(self.client.clone(), &namespace);
-            let services: Api<Service> = Api::namespaced(self.client.clone(), &namespace);
-
-            let params = kube::api::PatchParams::apply("autharie-operator").force();
-            deployments
-                .patch(&name, &params, &kube::api::Patch::Apply(&deployment))
-                .await
-                .map_err(|error| OperatorError::Kube {
-                    message: error.to_string(),
-                })?;
-            services
-                .patch(&name, &params, &kube::api::Patch::Apply(&service))
-                .await
-                .map_err(|error| OperatorError::Kube {
-                    message: error.to_string(),
-                })?;
-            self.ensure_keycloak_route(instance, &namespace, owner_reference)
+            self.apply_keycloak_workload(instance, &namespace, &admin_secret_name, owner_reference)
                 .await?;
 
             info!(
@@ -1058,96 +1024,6 @@ impl FerriskeyProviderHandler {
             .is_some_and(|data| data.contains_key("database-url")))
     }
 
-    async fn ensure_managed_db_cluster(
-        &self,
-        instance: &IdentityInstance,
-        namespace: &str,
-        owner_reference: Option<OwnerReference>,
-    ) -> Result<(), OperatorError> {
-        let cluster_name = cnpg_cluster_name(instance);
-        let gvk = GroupVersionKind::gvk("postgresql.cnpg.io", "v1", "Cluster");
-        let ar = ApiResource::from_gvk(&gvk);
-        let clusters: Api<DynamicObject> =
-            Api::namespaced_with(self.client.clone(), namespace, &ar);
-
-        let mut spec = cnpg_base_spec(&instance.spec.database.managed_cluster);
-
-        // Absent when the instance archives nowhere, and left off the spec
-        // entirely rather than written as an empty object: an empty
-        // barmanObjectStore is a destination of "", which CloudNativePG
-        // accepts and then fails on at archive time, hours later.
-        //
-        // The credentials go in first. A cluster referring to a secret that is
-        // not there yet does come up, and then fails every archive until
-        // somebody notices, which is a worse failure than not coming up.
-        if let Some(backup) = cluster_backup_section(instance.spec.backup.as_ref()) {
-            ensure_archive_credentials(&self.client, instance, namespace).await?;
-            spec.insert("backup".to_string(), backup);
-        }
-
-        // A recovery reads somebody else's prefix to come up.
-        //
-        // Written on every apply, not only on the one that creates the
-        // cluster. This is a server-side apply with force: a field left out is
-        // a field *removed*, so skipping it on later reconciles took
-        // `bootstrap` off the object and CloudNativePG defaulted it back to
-        // `initdb` -- a recovery that came up empty, which is the failure this
-        // whole path exists to prevent. Re-asserting it costs nothing:
-        // CloudNativePG reads `bootstrap` once, when the cluster is created.
-        if let Some(restore) = instance.spec.restore.as_ref() {
-            let backup = instance.spec.backup.as_ref().ok_or_else(|| {
-                // A recovery needs credentials for the store it reads, and
-                // the ones it archives with are the same. An instance
-                // restoring into an installation that archives nowhere has
-                // nothing to read with.
-                OperatorError::Kube {
-                    message: "a recovery needs an archive configuration to read with".to_string(),
-                }
-            })?;
-
-            ensure_archive_credentials(&self.client, instance, namespace).await?;
-
-            let (bootstrap, external) = cluster_recovery_section(
-                restore,
-                &backup.credentials_secret,
-                backup.endpoint_url.as_deref(),
-            );
-
-            info!(
-                source = %restore.server_name,
-                from = %restore.destination_path,
-                "bootstrapping from an archive"
-            );
-
-            spec.insert("bootstrap".to_string(), bootstrap);
-            spec.insert("externalClusters".to_string(), external);
-        }
-
-        let cluster_manifest = json!({
-            "apiVersion": "postgresql.cnpg.io/v1",
-            "kind": "Cluster",
-            "metadata": {
-                "name": cluster_name,
-                "namespace": namespace,
-                "ownerReferences": owner_reference.map(|owner| vec![owner]),
-            },
-            "spec": spec
-        });
-
-        clusters
-            .patch(
-                &cluster_name,
-                &kube::api::PatchParams::apply("autharie-operator").force(),
-                &kube::api::Patch::Apply(&cluster_manifest),
-            )
-            .await
-            .map_err(|error| OperatorError::Kube {
-                message: error.to_string(),
-            })?;
-
-        Ok(())
-    }
-
     async fn cnpg_cluster_ready(&self, instance: &IdentityInstance) -> Result<bool, OperatorError> {
         let namespace =
             instance
@@ -1330,6 +1206,47 @@ impl FerriskeyProviderHandler {
         Ok(())
     }
 
+    /// A Job that ended Failed is never retried by Kubernetes, and one that failed because the
+    /// database was taken from under it would leave the instance waiting for ever. Only on the
+    /// restart: a migration that fails on a running instance stays visibly Failed.
+    async fn clear_failed_migration(
+        &self,
+        instance: &IdentityInstance,
+        namespace: &str,
+    ) -> Result<(), OperatorError> {
+        if !restarting(instance) {
+            return Ok(());
+        }
+        let jobs: Api<Job> = Api::namespaced(self.client.clone(), namespace);
+        let name = ferriskey_migration_job_name(instance);
+        let existing = jobs
+            .get_opt(&name)
+            .await
+            .map_err(|error| OperatorError::Kube {
+                message: error.to_string(),
+            })?;
+        if !existing.as_ref().is_some_and(migration_failed) {
+            return Ok(());
+        }
+
+        info!(job = %name, "deleting a failed migration so the restart runs it again");
+        match jobs
+            .delete(
+                &name,
+                &kube::api::DeleteParams {
+                    propagation_policy: Some(kube::api::PropagationPolicy::Background),
+                    ..Default::default()
+                },
+            )
+            .await
+        {
+            Err(error) if !is_not_found(&error) => Err(OperatorError::Kube {
+                message: error.to_string(),
+            }),
+            _ => Ok(()),
+        }
+    }
+
     async fn ensure_ferriskey_migration_job(
         &self,
         instance: &IdentityInstance,
@@ -1413,68 +1330,28 @@ impl FerriskeyProviderHandler {
         namespace: &str,
         owner_reference: Option<OwnerReference>,
     ) -> Result<(), OperatorError> {
+        let shared = self.shared_cluster_of(instance)?;
+        let runtime = build_ferriskey_runtime(
+            instance,
+            namespace,
+            owner_reference,
+            self.otlp_endpoint.as_deref(),
+            self.public_https_port,
+            shared.as_ref(),
+        )?;
+        let FerriskeyRuntime {
+            api: api_deployment,
+            api_service,
+            webapp: web_deployment,
+            webapp_service: web_service,
+        } = runtime;
         let name = instance
             .metadata
             .name
             .clone()
             .ok_or(OperatorError::MissingName)?;
-        let db_secret_name = ferriskey_db_credentials_secret_name(&name);
-        let admin_secret_name = ferriskey_api_admin_secret_name(&name);
         let api_name = ferriskey_api_name(&name);
         let web_name = ferriskey_webapp_name(&name);
-        let api_labels = ferriskey_labels(instance, "api");
-        let web_labels = ferriskey_labels(instance, "webapp");
-        let api_image = ferriskey_api_image(instance);
-        let web_image = ferriskey_webapp_image(instance);
-        let shared = self.shared_cluster_of(instance)?;
-        let db_host = match shared.as_ref() {
-            Some(cluster) => cluster.host(),
-            None => ferriskey_database_host(instance, namespace),
-        };
-        let webapp_url = ferriskey_webapp_url(instance, self.public_https_port);
-        let api_base_url = ferriskey_api_base_url(instance, self.public_https_port);
-        let allowed_origins = ferriskey_allowed_origins(&webapp_url);
-
-        let mut api_deployment = build_ferriskey_api_deployment(
-            &api_name,
-            namespace,
-            &api_labels,
-            &api_image,
-            &db_secret_name,
-            &admin_secret_name,
-            &db_host,
-            &webapp_url,
-            &allowed_origins,
-            self.otlp_endpoint.as_deref(),
-            desired_replicas(instance),
-            owner_reference.clone(),
-        )?;
-        if is_pooled_cell(instance) {
-            derive_webapp_url_from_request(&mut api_deployment, &instance.spec.hostname);
-        }
-        if shared.is_some() {
-            let database = SharedDatabaseName::for_instance_name(&name)?;
-            use_database_name(&mut api_deployment, database.as_str());
-        }
-        let api_service = build_ferriskey_service(
-            &api_name,
-            namespace,
-            &api_labels,
-            FERRISKEY_API_PORT,
-            FERRISKEY_API_PORT,
-            owner_reference.clone(),
-        )?;
-        let web_deployment = build_ferriskey_webapp_deployment(
-            &web_name,
-            namespace,
-            &web_labels,
-            &web_image,
-            &api_base_url,
-            desired_replicas(instance),
-            owner_reference.clone(),
-        )?;
-        let web_service =
-            build_ferriskey_service(&web_name, namespace, &web_labels, 80, 80, owner_reference)?;
 
         let deployments: Api<Deployment> = Api::namespaced(self.client.clone(), namespace);
         let services: Api<Service> = Api::namespaced(self.client.clone(), namespace);
@@ -1632,6 +1509,75 @@ impl FerriskeyProviderHandler {
         Ok(())
     }
 
+    /// Workloads first; the database follows once none is left and no migration
+    /// runs. Migrations, the credentials copy and shared-database provisioning
+    /// wait for the start.
+    async fn ensure_stopped(
+        &self,
+        instance: &IdentityInstance,
+        namespace: &str,
+        owner_reference: Option<OwnerReference>,
+    ) -> Result<(), OperatorError> {
+        self.ensure_ferriskey_runtime_resources(instance, namespace, owner_reference.clone())
+            .await?;
+        self.ensure_ferriskey_route(instance, namespace, owner_reference.clone())
+            .await?;
+        if self.shared_cluster_of(instance)?.is_some() {
+            return self
+                .ensure_shared_dumps(instance, namespace, owner_reference)
+                .await;
+        }
+        let hibernate = self.may_hibernate(instance, namespace).await?;
+        apply_managed_db_cluster(
+            &self.client,
+            instance,
+            namespace,
+            owner_reference,
+            hibernate,
+        )
+        .await
+    }
+
+    async fn migration_jobs(
+        &self,
+        instance: &IdentityInstance,
+        namespace: &str,
+    ) -> Result<Vec<Job>, OperatorError> {
+        let jobs: Api<Job> = Api::namespaced(self.client.clone(), namespace);
+        let listed = jobs
+            .list(&kube::api::ListParams::default().labels(&ferriskey_migration_selector(instance)))
+            .await
+            .map_err(|error| OperatorError::Kube {
+                message: error.to_string(),
+            })?;
+        Ok(listed.items)
+    }
+
+    async fn may_hibernate(
+        &self,
+        instance: &IdentityInstance,
+        namespace: &str,
+    ) -> Result<bool, OperatorError> {
+        let name = instance
+            .metadata
+            .name
+            .clone()
+            .ok_or(OperatorError::MissingName)?;
+        let deployments = existing_deployments(
+            &self.client,
+            namespace,
+            &[ferriskey_api_name(&name), ferriskey_webapp_name(&name)],
+        )
+        .await?;
+        let jobs = self.migration_jobs(instance, namespace).await?;
+        Ok(hibernation_due(
+            instance,
+            &deployments,
+            &jobs,
+            chrono::Utc::now(),
+        ))
+    }
+
     async fn ensure_ferriskey_route(
         &self,
         instance: &IdentityInstance,
@@ -1696,6 +1642,13 @@ impl FerriskeyProviderHandler {
             deployment_ready(&deployments, &api_name, desired_replicas(instance)).await?;
         let web_ready =
             deployment_ready(&deployments, &web_name, desired_replicas(instance)).await?;
+        if instance.spec.stopped {
+            let jobs = self.migration_jobs(instance, &namespace).await?;
+            let now = chrono::Utc::now();
+            return Ok(api_ready
+                && web_ready
+                && !jobs.iter().any(|job| migration_holds_hibernation(job, now)));
+        }
         let migration_done = self.ferriskey_migration_completed(instance).await?;
 
         Ok(api_ready && web_ready && migration_done)
@@ -1720,6 +1673,12 @@ impl IdentityProviderHandler for FerriskeyProviderHandler {
                 .clone()
                 .ok_or_else(|| OperatorError::MissingNamespace { name: name.clone() })?;
             let owner_reference = instance.controller_owner_ref(&());
+            if instance.spec.stopped {
+                return self
+                    .ensure_stopped(instance, &namespace, owner_reference)
+                    .await;
+            }
+            self.clear_failed_migration(instance, &namespace).await?;
             if let Some(cluster) = self.shared_cluster_of(instance)? {
                 self.ensure_shared_database(
                     instance,
@@ -1729,8 +1688,14 @@ impl IdentityProviderHandler for FerriskeyProviderHandler {
                 )
                 .await?;
             } else {
-                self.ensure_managed_db_cluster(instance, &namespace, owner_reference.clone())
-                    .await?;
+                apply_managed_db_cluster(
+                    &self.client,
+                    instance,
+                    &namespace,
+                    owner_reference.clone(),
+                    false,
+                )
+                .await?;
                 let db_cluster_ready = self.cnpg_cluster_ready(instance).await?;
                 if !db_cluster_ready {
                     info!(
@@ -1819,11 +1784,7 @@ impl IdentityProviderHandler for FerriskeyProviderHandler {
             // Every version's job, not only the one this instance currently
             // runs: there is one per version now, and tearing down must not
             // leave the ones an upgrade left behind.
-            let migration_jobs = ferriskey_labels(instance, "migrations")
-                .iter()
-                .map(|(key, value)| format!("{key}={value}"))
-                .collect::<Vec<_>>()
-                .join(",");
+            let migration_jobs = ferriskey_migration_selector(instance);
             let db_secret_name = ferriskey_db_credentials_secret_name(&name);
             let gvk = GroupVersionKind::gvk("postgresql.cnpg.io", "v1", "Cluster");
             let ar = ApiResource::from_gvk(&gvk);
@@ -2210,6 +2171,14 @@ fn ferriskey_webapp_name(instance_name: &str) -> String {
     format!("{instance_name}-webapp")
 }
 
+fn ferriskey_migration_selector(instance: &IdentityInstance) -> String {
+    ferriskey_labels(instance, "migrations")
+        .iter()
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 /// One migration job per version, not one per instance.
 ///
 /// The name used to be `{instance}-migrate`, and the reconciler skips a job it
@@ -2592,6 +2561,213 @@ fn cnpg_base_spec(managed_cluster: &ManagedClusterConfig) -> serde_json::Map<Str
     spec
 }
 
+const CNPG_HIBERNATION_ANNOTATION: &str = "cnpg.io/hibernation";
+
+fn cnpg_cluster_spec(
+    instance: &IdentityInstance,
+) -> Result<serde_json::Map<String, Value>, OperatorError> {
+    let mut spec = cnpg_base_spec(&instance.spec.database.managed_cluster);
+
+    // Absent when the instance archives nowhere, and left off the spec
+    // entirely rather than written as an empty object: an empty
+    // barmanObjectStore is a destination of "", which CloudNativePG
+    // accepts and then fails on at archive time, hours later.
+    if let Some(backup) = cluster_backup_section(instance.spec.backup.as_ref()) {
+        spec.insert("backup".to_string(), backup);
+    }
+
+    // A recovery reads somebody else's prefix to come up.
+    //
+    // Written on every apply, not only on the one that creates the
+    // cluster. This is a server-side apply with force: a field left out is
+    // a field *removed*, so skipping it on later reconciles took
+    // `bootstrap` off the object and CloudNativePG defaulted it back to
+    // `initdb` -- a recovery that came up empty, which is the failure this
+    // whole path exists to prevent. Re-asserting it costs nothing:
+    // CloudNativePG reads `bootstrap` once, when the cluster is created.
+    if let Some(restore) = instance.spec.restore.as_ref() {
+        let backup = instance.spec.backup.as_ref().ok_or_else(|| {
+            // A recovery needs credentials for the store it reads, and
+            // the ones it archives with are the same. An instance
+            // restoring into an installation that archives nowhere has
+            // nothing to read with.
+            OperatorError::Kube {
+                message: "a recovery needs an archive configuration to read with".to_string(),
+            }
+        })?;
+
+        let (bootstrap, external) = cluster_recovery_section(
+            restore,
+            &backup.credentials_secret,
+            backup.endpoint_url.as_deref(),
+        );
+
+        spec.insert("bootstrap".to_string(), bootstrap);
+        spec.insert("externalClusters".to_string(), external);
+    }
+
+    Ok(spec)
+}
+
+/// "off" rather than absent, so resuming is a value the operator sets and not
+/// the removal of one.
+fn cnpg_cluster_manifest(
+    instance: &IdentityInstance,
+    namespace: &str,
+    owner_reference: Option<OwnerReference>,
+    hibernate: bool,
+) -> Result<Value, OperatorError> {
+    let hibernation = if hibernate { "on" } else { "off" };
+    Ok(json!({
+        "apiVersion": "postgresql.cnpg.io/v1",
+        "kind": "Cluster",
+        "metadata": {
+            "name": cnpg_cluster_name(instance),
+            "namespace": namespace,
+            "ownerReferences": owner_reference.map(|owner| vec![owner]),
+            "annotations": { CNPG_HIBERNATION_ANNOTATION: hibernation },
+        },
+        "spec": cnpg_cluster_spec(instance)?
+    }))
+}
+
+async fn apply_managed_db_cluster(
+    client: &Client,
+    instance: &IdentityInstance,
+    namespace: &str,
+    owner_reference: Option<OwnerReference>,
+    hibernate: bool,
+) -> Result<(), OperatorError> {
+    // The credentials go in first. A cluster referring to a secret that is
+    // not there yet does come up, and then fails every archive until
+    // somebody notices, which is a worse failure than not coming up.
+    ensure_archive_credentials(client, instance, namespace).await?;
+
+    let manifest = cnpg_cluster_manifest(instance, namespace, owner_reference, hibernate)?;
+
+    if let Some(restore) = instance.spec.restore.as_ref() {
+        info!(
+            source = %restore.server_name,
+            from = %restore.destination_path,
+            "bootstrapping from an archive"
+        );
+    }
+
+    let clusters: Api<DynamicObject> = Api::namespaced_with(
+        client.clone(),
+        namespace,
+        &ApiResource::from_gvk(&GroupVersionKind::gvk(
+            "postgresql.cnpg.io",
+            "v1",
+            "Cluster",
+        )),
+    );
+    clusters
+        .patch(
+            &cnpg_cluster_name(instance),
+            &kube::api::PatchParams::apply("autharie-operator").force(),
+            &kube::api::Patch::Apply(&manifest),
+        )
+        .await
+        .map_err(|error| OperatorError::Kube {
+            message: error.to_string(),
+        })?;
+
+    Ok(())
+}
+
+/// How long a stopped instance waits for a migration that has not ended before it hibernates
+/// anyway: a Job stuck Pending would otherwise keep the database running for ever.
+const MIGRATION_WAIT: Duration = Duration::from_secs(30 * 60);
+
+/// Whether the cluster may be put to sleep: the instance is stopped, its Deployments have no
+/// pod left, as far as their status reports terminating ones, and no migration is still using
+/// the database.
+///
+/// Scaling to zero is asynchronous and a migration Job is not scaled at all, so
+/// hibernating on the stop alone takes the database from under both.
+fn hibernation_due(
+    instance: &IdentityInstance,
+    deployments: &[Deployment],
+    jobs: &[Job],
+    now: chrono::DateTime<chrono::Utc>,
+) -> bool {
+    instance.spec.stopped
+        && deployments
+            .iter()
+            .all(|deployment| replicas_ready(deployment, 0))
+        && !jobs.iter().any(|job| migration_holds_hibernation(job, now))
+}
+
+fn migration_holds_hibernation(job: &Job, now: chrono::DateTime<chrono::Utc>) -> bool {
+    let overdue = job
+        .metadata
+        .creation_timestamp
+        .as_ref()
+        .is_some_and(|created| {
+            (now - created.0)
+                .to_std()
+                .is_ok_and(|age| age > MIGRATION_WAIT)
+        });
+    migration_running(job) && !overdue
+}
+
+fn job_has_condition(job: &Job, kind: &str) -> bool {
+    job.status
+        .as_ref()
+        .and_then(|status| status.conditions.as_ref())
+        .is_some_and(|conditions| {
+            conditions
+                .iter()
+                .any(|condition| condition.type_ == kind && condition.status == "True")
+        })
+}
+
+fn migration_failed(job: &Job) -> bool {
+    job_has_condition(job, "Failed")
+}
+
+/// A Job that has not been given a status yet is running: counting only
+/// `status.active` would let a migration created a moment ago look finished.
+fn migration_running(job: &Job) -> bool {
+    let succeeded = job
+        .status
+        .as_ref()
+        .and_then(|status| status.succeeded)
+        .unwrap_or(0);
+    succeeded == 0 && !job_has_condition(job, "Complete") && !migration_failed(job)
+}
+
+/// The status still says Stopped on the pass that follows the start, because the status is
+/// patched only after the resources are ensured. A pass that cannot reach the migration step
+/// yet, the database being asleep, still gets here first.
+fn restarting(instance: &IdentityInstance) -> bool {
+    !instance.spec.stopped
+        && instance
+            .status
+            .as_ref()
+            .is_some_and(|status| status.phase == Some(Phase::Stopped))
+}
+
+async fn existing_deployments(
+    client: &Client,
+    namespace: &str,
+    names: &[String],
+) -> Result<Vec<Deployment>, OperatorError> {
+    let api: Api<Deployment> = Api::namespaced(client.clone(), namespace);
+    let mut found = Vec::new();
+    for name in names {
+        let deployment = api
+            .get_opt(name)
+            .await
+            .map_err(|error| OperatorError::Kube {
+                message: error.to_string(),
+            })?;
+        found.extend(deployment);
+    }
+    Ok(found)
+}
+
 async fn deployment_ready(
     api: &Api<Deployment>,
     name: &str,
@@ -2612,7 +2788,12 @@ async fn deployment_ready(
 
 /// Keycloak is not configured as a cluster, so more than one replica of it
 /// would not share sessions: only a FerrisKey instance runs the number asked.
+///
+/// A stopped instance runs none, whichever provider it is.
 pub(crate) fn desired_replicas(instance: &IdentityInstance) -> i32 {
+    if instance.spec.stopped {
+        return 0;
+    }
     match instance.spec.provider {
         IdentityProvider::Keycloak => 1,
         IdentityProvider::Ferriskey => instance.spec.replicas,
@@ -2658,6 +2839,13 @@ fn replicas_ready(deployment: &Deployment, desired_replicas: i32) -> bool {
         .as_ref()
         .and_then(|status| status.available_replicas)
         .unwrap_or(0);
+
+    if desired_replicas == 0 {
+        let remaining = deployment.status.as_ref().map_or(0, |status| {
+            status.replicas.unwrap_or(0) + status.terminating_replicas.unwrap_or(0)
+        });
+        return observed_generation >= generation && remaining == 0;
+    }
 
     observed_generation >= generation
         && ready_replicas >= desired_replicas
@@ -2996,6 +3184,91 @@ fn ferriskey_api_env_vars(
             ..Default::default()
         },
     ]
+}
+
+struct FerriskeyRuntime {
+    api: Deployment,
+    api_service: Service,
+    webapp: Deployment,
+    webapp_service: Service,
+}
+
+fn build_ferriskey_runtime(
+    instance: &IdentityInstance,
+    namespace: &str,
+    owner_reference: Option<OwnerReference>,
+    otlp_endpoint: Option<&str>,
+    public_https_port: Option<u16>,
+    shared: Option<&SharedCluster>,
+) -> Result<FerriskeyRuntime, OperatorError> {
+    let name = instance
+        .metadata
+        .name
+        .clone()
+        .ok_or(OperatorError::MissingName)?;
+    let db_secret_name = ferriskey_db_credentials_secret_name(&name);
+    let admin_secret_name = ferriskey_api_admin_secret_name(&name);
+    let api_name = ferriskey_api_name(&name);
+    let web_name = ferriskey_webapp_name(&name);
+    let api_labels = ferriskey_labels(instance, "api");
+    let web_labels = ferriskey_labels(instance, "webapp");
+    let api_image = ferriskey_api_image(instance);
+    let web_image = ferriskey_webapp_image(instance);
+    let db_host = match shared {
+        Some(cluster) => cluster.host(),
+        None => ferriskey_database_host(instance, namespace),
+    };
+    let webapp_url = ferriskey_webapp_url(instance, public_https_port);
+    let api_base_url = ferriskey_api_base_url(instance, public_https_port);
+    let allowed_origins = ferriskey_allowed_origins(&webapp_url);
+
+    let mut api = build_ferriskey_api_deployment(
+        &api_name,
+        namespace,
+        &api_labels,
+        &api_image,
+        &db_secret_name,
+        &admin_secret_name,
+        &db_host,
+        &webapp_url,
+        &allowed_origins,
+        otlp_endpoint,
+        desired_replicas(instance),
+        owner_reference.clone(),
+    )?;
+    if is_pooled_cell(instance) {
+        derive_webapp_url_from_request(&mut api, &instance.spec.hostname);
+    }
+    if shared.is_some() {
+        let database = SharedDatabaseName::for_instance_name(&name)?;
+        use_database_name(&mut api, database.as_str());
+    }
+    let api_service = build_ferriskey_service(
+        &api_name,
+        namespace,
+        &api_labels,
+        FERRISKEY_API_PORT,
+        FERRISKEY_API_PORT,
+        owner_reference.clone(),
+    )?;
+    let webapp = build_ferriskey_webapp_deployment(
+        &web_name,
+        namespace,
+        &web_labels,
+        &web_image,
+        &api_base_url,
+        desired_replicas(instance),
+        owner_reference.clone(),
+    )?;
+    let webapp_service =
+        build_ferriskey_service(&web_name, namespace, &web_labels, 80, 80, owner_reference)?;
+
+    Ok(FerriskeyRuntime {
+        api,
+        api_service,
+        webapp,
+        webapp_service,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3535,6 +3808,7 @@ mod tests {
                 version: "25.0.0".to_string(),
                 hostname: "auth.acme.test".to_string(),
                 replicas: 1,
+                stopped: false,
                 database: DatabaseConfig {
                     mode: DatabaseMode::ManagedCluster,
                     shared: None,
@@ -3940,6 +4214,332 @@ mod tests {
         .unwrap();
 
         assert_eq!(deployment.spec.unwrap().replicas, Some(1));
+    }
+
+    fn stopped(provider: IdentityProvider) -> IdentityInstance {
+        let mut instance = instance();
+        instance.spec.provider = provider;
+        instance.spec.replicas = 3;
+        instance.spec.stopped = true;
+        instance
+    }
+
+    #[test]
+    fn a_stopped_instance_runs_no_replica_whichever_the_provider() {
+        for provider in [IdentityProvider::Keycloak, IdentityProvider::Ferriskey] {
+            let mut instance = stopped(provider);
+            assert_eq!(desired_replicas(&instance), 0);
+
+            instance.spec.stopped = false;
+            assert!(desired_replicas(&instance) >= 1);
+        }
+    }
+
+    #[test]
+    fn a_stopped_keycloak_deployment_runs_no_replica() {
+        let instance = stopped(IdentityProvider::Keycloak);
+
+        let deployment = build_keycloak_deployment(
+            &instance,
+            "instance-1",
+            "default",
+            &BTreeMap::new(),
+            "instance-1-admin",
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(deployment.spec.unwrap().replicas, Some(0));
+    }
+
+    #[test]
+    fn a_stopped_ferriskey_instance_builds_its_workloads_without_replicas() {
+        let runtime = build_ferriskey_runtime(
+            &stopped(IdentityProvider::Ferriskey),
+            "default",
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(runtime.api.spec.as_ref().unwrap().replicas, Some(0));
+        assert_eq!(runtime.webapp.spec.as_ref().unwrap().replicas, Some(0));
+        assert!(affinity_of(&runtime.api).is_none());
+        assert!(affinity_of(&runtime.webapp).is_none());
+    }
+
+    #[test]
+    fn a_started_ferriskey_instance_builds_the_replicas_of_its_spec() {
+        let mut instance = stopped(IdentityProvider::Ferriskey);
+        instance.spec.stopped = false;
+
+        let runtime =
+            build_ferriskey_runtime(&instance, "default", None, None, None, None).unwrap();
+
+        assert_eq!(runtime.api.spec.as_ref().unwrap().replicas, Some(3));
+        assert_eq!(runtime.webapp.spec.as_ref().unwrap().replicas, Some(3));
+    }
+
+    fn hibernation_of(manifest: &Value) -> Option<&str> {
+        manifest["metadata"]["annotations"]["cnpg.io/hibernation"].as_str()
+    }
+
+    fn recovering(mut instance: IdentityInstance) -> IdentityInstance {
+        use autharie_crds::v1alpha::identity_instance::{BackupConfig, RestoreConfig};
+
+        instance.spec.backup = Some(BackupConfig {
+            destination_path: "s3://autharie-backups/org-1/instance-1".to_string(),
+            endpoint_url: None,
+            credentials_secret: "autharie-object-store".to_string(),
+            encryption: None,
+        });
+        instance.spec.restore = Some(RestoreConfig {
+            destination_path: "s3://autharie-backups/org-1/source".to_string(),
+            server_name: "source-db".to_string(),
+            backup_id: None,
+        });
+        instance
+    }
+
+    #[test]
+    fn a_cluster_waits_for_the_pods_to_go_before_it_hibernates() {
+        let instance = stopped(IdentityProvider::Ferriskey);
+
+        let manifest = cnpg_cluster_manifest(&instance, "default", None, false).unwrap();
+        assert_eq!(hibernation_of(&manifest), Some("off"));
+
+        let manifest = cnpg_cluster_manifest(&instance, "default", None, true).unwrap();
+        assert_eq!(hibernation_of(&manifest), Some("on"));
+    }
+
+    #[test]
+    fn a_started_instance_says_off_rather_than_nothing() {
+        let manifest = cnpg_cluster_manifest(&instance(), "default", None, false).unwrap();
+
+        assert_eq!(hibernation_of(&manifest), Some("off"));
+    }
+
+    #[test]
+    fn hibernating_a_cluster_changes_its_annotation_and_nothing_else() {
+        let started = recovering(instance());
+        let mut halted = recovering(instance());
+        halted.spec.stopped = true;
+
+        let running = cnpg_cluster_manifest(&started, "default", None, false).unwrap();
+        let hibernated = cnpg_cluster_manifest(&halted, "default", None, true).unwrap();
+
+        assert_eq!(hibernation_of(&running), Some("off"));
+        assert_eq!(hibernation_of(&hibernated), Some("on"));
+        assert_eq!(running["spec"], hibernated["spec"]);
+        assert_eq!(hibernated["spec"]["storage"]["size"], "10Gi");
+        assert_eq!(hibernated["spec"]["instances"], 1);
+        assert!(hibernated["spec"]["backup"].is_object());
+        assert!(hibernated["spec"]["bootstrap"]["recovery"].is_object());
+        assert_eq!(running["metadata"]["name"], hibernated["metadata"]["name"]);
+    }
+
+    #[test]
+    fn a_recovery_without_an_archive_is_refused_before_anything_is_applied() {
+        let mut instance = recovering(instance());
+        instance.spec.backup = None;
+
+        assert!(cnpg_cluster_manifest(&instance, "default", None, false).is_err());
+    }
+
+    fn with_pods(mut deployment: Deployment, pods: i32) -> Deployment {
+        deployment.metadata.generation = Some(2);
+        deployment.status = Some(k8s_openapi::api::apps::v1::DeploymentStatus {
+            observed_generation: Some(2),
+            replicas: Some(pods),
+            ready_replicas: Some(pods),
+            available_replicas: Some(pods),
+            ..Default::default()
+        });
+        deployment
+    }
+
+    fn job_with(conditions: &[&str], succeeded: Option<i32>) -> Job {
+        use k8s_openapi::api::batch::v1::{JobCondition, JobStatus};
+
+        Job {
+            status: Some(JobStatus {
+                succeeded,
+                conditions: Some(
+                    conditions
+                        .iter()
+                        .map(|kind| JobCondition {
+                            type_: (*kind).to_string(),
+                            status: "True".to_string(),
+                            ..Default::default()
+                        })
+                        .collect(),
+                ),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    fn drained() -> Vec<Deployment> {
+        vec![
+            with_pods(api_deployment_with(0), 0),
+            with_pods(api_deployment_with(0), 0),
+        ]
+    }
+
+    #[test]
+    fn hibernation_is_withheld_while_pods_remain() {
+        let instance = stopped(IdentityProvider::Ferriskey);
+        let deployments = vec![
+            with_pods(api_deployment_with(0), 0),
+            with_pods(api_deployment_with(0), 2),
+        ];
+
+        assert!(!hibernation_due(&instance, &deployments, &[], now()));
+    }
+
+    #[test]
+    fn hibernation_is_withheld_until_the_scale_down_has_been_seen() {
+        let instance = stopped(IdentityProvider::Ferriskey);
+        let mut unseen = with_pods(api_deployment_with(0), 0);
+        unseen.metadata.generation = Some(3);
+
+        assert!(!hibernation_due(&instance, &[unseen], &[], now()));
+    }
+
+    #[test]
+    fn hibernation_is_withheld_while_a_migration_runs() {
+        let instance = stopped(IdentityProvider::Ferriskey);
+        let just_created = Job::default();
+        let running = job_with(&[], None);
+
+        assert!(!hibernation_due(
+            &instance,
+            &drained(),
+            &[just_created],
+            now()
+        ));
+        assert!(!hibernation_due(&instance, &drained(), &[running], now()));
+    }
+
+    #[test]
+    fn hibernation_comes_once_the_pods_and_the_migrations_are_gone() {
+        let instance = stopped(IdentityProvider::Ferriskey);
+        let jobs = [
+            job_with(&["Complete"], Some(1)),
+            job_with(&["Failed"], None),
+        ];
+
+        assert!(hibernation_due(&instance, &drained(), &jobs, now()));
+        assert!(hibernation_due(&instance, &[], &[], now()));
+    }
+
+    fn now() -> chrono::DateTime<chrono::Utc> {
+        chrono::Utc::now()
+    }
+
+    fn created(mut job: Job, minutes_ago: i64) -> Job {
+        use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
+
+        job.metadata.creation_timestamp =
+            Some(Time(now() - chrono::Duration::minutes(minutes_ago)));
+        job
+    }
+
+    #[test]
+    fn a_migration_that_never_ends_stops_holding_hibernation_back_after_the_wait() {
+        let instance = stopped(IdentityProvider::Ferriskey);
+        let stuck = created(job_with(&[], None), 31);
+        let recent = created(job_with(&[], None), 1);
+
+        assert!(hibernation_due(&instance, &drained(), &[stuck], now()));
+        assert!(!hibernation_due(&instance, &drained(), &[recent], now()));
+    }
+
+    #[test]
+    fn a_stuck_migration_does_not_keep_a_stopped_instance_waiting_to_be_ready() {
+        let stuck = created(Job::default(), 31);
+        let recent = created(Job::default(), 1);
+
+        assert!(!migration_holds_hibernation(&stuck, now()));
+        assert!(migration_holds_hibernation(&recent, now()));
+        assert!(migration_running(&stuck));
+    }
+
+    #[test]
+    fn terminating_pods_are_pods_that_remain() {
+        let mut leaving = with_pods(api_deployment_with(0), 0);
+        leaving.status.as_mut().unwrap().terminating_replicas = Some(1);
+        let mut gone = with_pods(api_deployment_with(0), 0);
+        gone.status.as_mut().unwrap().terminating_replicas = Some(0);
+
+        assert!(!replicas_ready(&leaving, 0));
+        assert!(replicas_ready(&gone, 0));
+        assert!(replicas_ready(&with_pods(api_deployment_with(0), 0), 0));
+    }
+
+    #[test]
+    fn a_running_instance_never_hibernates() {
+        let mut instance = stopped(IdentityProvider::Ferriskey);
+        instance.spec.stopped = false;
+
+        assert!(!hibernation_due(&instance, &drained(), &[], now()));
+    }
+
+    #[test]
+    fn a_workload_scaled_to_nothing_is_ready_once_its_pods_are_gone() {
+        assert!(!replicas_ready(&with_pods(api_deployment_with(0), 1), 0));
+        assert!(replicas_ready(&with_pods(api_deployment_with(0), 0), 0));
+    }
+
+    fn with_phase(mut instance: IdentityInstance, phase: Option<Phase>) -> IdentityInstance {
+        instance.status = Some(
+            autharie_crds::v1alpha::identity_instance::IdentityInstanceStatus {
+                phase,
+                ..Default::default()
+            },
+        );
+        instance
+    }
+
+    #[test]
+    fn a_failed_migration_is_cleared_on_the_pass_that_restarts_the_instance() {
+        let restarted = with_phase(instance(), Some(Phase::Stopped));
+
+        assert!(restarting(&restarted));
+        assert!(migration_failed(&job_with(&["Failed"], None)));
+    }
+
+    #[test]
+    fn a_failed_migration_of_an_instance_never_stopped_is_left_failed() {
+        assert!(migration_failed(&job_with(&["Failed"], None)));
+        for phase in [
+            None,
+            Some(Phase::DatabaseProvisioning),
+            Some(Phase::Deploying),
+            Some(Phase::Running),
+            Some(Phase::Upgrading),
+            Some(Phase::Failed),
+        ] {
+            assert!(!restarting(&with_phase(instance(), phase)));
+        }
+        assert!(!restarting(&instance()));
+    }
+
+    #[test]
+    fn an_instance_still_stopped_is_not_restarting() {
+        let still_stopped = with_phase(stopped(IdentityProvider::Ferriskey), Some(Phase::Stopped));
+
+        assert!(!restarting(&still_stopped));
+    }
+
+    #[test]
+    fn only_a_migration_that_ended_failed_is_failed() {
+        assert!(!migration_failed(&job_with(&["Complete"], Some(1))));
+        assert!(!migration_failed(&job_with(&[], None)));
+        assert!(!migration_failed(&Job::default()));
     }
 
     #[test]

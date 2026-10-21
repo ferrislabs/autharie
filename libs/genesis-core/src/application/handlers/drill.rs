@@ -112,6 +112,7 @@ impl DrillEventHandler {
             ),
             replicas: 1,
             placement: DatabasePlacement::Managed,
+            stopped: false,
             archive: None,
             restore: Some(DesiredRestore {
                 destination_path: payload.source.destination_path.clone(),

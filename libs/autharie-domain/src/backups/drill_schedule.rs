@@ -7,7 +7,7 @@
 
 use chrono::{DateTime, Duration, Utc};
 
-use crate::deployments::Deployment;
+use crate::deployments::{Deployment, DeploymentStatus};
 
 /// How long a deployment goes between drills once one has succeeded.
 ///
@@ -19,6 +19,9 @@ pub const DRILL_INTERVAL: Duration = Duration::weeks(1);
 /// Why a deployment was passed over.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DrillSkipped {
+    /// Powered down on purpose; a drill would spend capacity the deployment
+    /// is not using.
+    Stopped,
     /// No window, so no unattended action -- the same rule an upgrade is
     /// held to, for the same reason: the platform does not spend a
     /// deployment's own capacity without a window it was given for exactly
@@ -37,6 +40,10 @@ pub enum DrillSkipped {
 /// depends on another's, so there is no batch decision to make -- only this
 /// one, asked once per deployment that archives.
 pub fn consider(at: DateTime<Utc>, deployment: &Deployment) -> Result<(), DrillSkipped> {
+    if deployment.status == DeploymentStatus::Stopped {
+        return Err(DrillSkipped::Stopped);
+    }
+
     let window = deployment
         .maintenance_window
         .as_ref()
@@ -121,6 +128,15 @@ mod tests {
         let at = Utc.with_ymd_and_hms(2026, 1, 5, 0, 30, 0).unwrap();
 
         assert_eq!(consider(at, &deployment(None)), Err(DrillSkipped::NoWindow));
+    }
+
+    #[test]
+    fn a_stopped_deployment_is_never_drilled() {
+        let at = Utc.with_ymd_and_hms(2026, 1, 5, 0, 30, 0).unwrap();
+        let mut deployment = deployment(Some(window_open_monday_midnight()));
+        deployment.status = DeploymentStatus::Stopped;
+
+        assert_eq!(consider(at, &deployment), Err(DrillSkipped::Stopped));
     }
 
     #[test]

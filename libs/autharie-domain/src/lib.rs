@@ -229,6 +229,9 @@ pub enum CoreError {
         operation: String,
     },
 
+    #[error("deployment {deployment} is stopped and cannot be {operation}")]
+    DeploymentStopped { deployment: Uuid, operation: String },
+
     /// Upgrading a deployment that is not settled would put two operations on
     /// one instance, and the second would win by accident.
     #[error("deployment {deployment} is {status} and cannot be upgraded")]

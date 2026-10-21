@@ -85,12 +85,17 @@ impl<R, D, T> IdentityInstanceServiceImpl<R, D, T> {
     ) -> IdentityInstanceStatus {
         let mut status = instance.status.clone().unwrap_or_default();
 
-        status.ready = database_ready && provider_ready && edge_ready && !upgrade_in_progress;
+        let stopped = instance.spec.stopped;
+
+        status.ready =
+            !stopped && database_ready && provider_ready && edge_ready && !upgrade_in_progress;
         status.error = None;
         status
             .conditions
             .retain(|c| c.condition_type != READY_CONDITION);
-        status.phase = Some(if !database_ready {
+        status.phase = Some(if stopped {
+            Phase::Stopped
+        } else if !database_ready {
             Phase::DatabaseProvisioning
         } else if upgrade_in_progress {
             Phase::Upgrading
@@ -156,6 +161,17 @@ where
                 .await?;
             return Ok(ReconcileOutcome::requeue_after(Duration::from_secs(
                 DEPLOYING_REQUEUE_SECONDS,
+            )));
+        }
+
+        if instance.spec.stopped {
+            let seconds = if provider_ready {
+                STEADY_STATE_REQUEUE_SECONDS
+            } else {
+                DEPLOYING_REQUEUE_SECONDS
+            };
+            return Ok(ReconcileOutcome::requeue_after(Duration::from_secs(
+                seconds,
             )));
         }
 
@@ -275,6 +291,7 @@ mod tests {
                 version: "25.0.0".to_string(),
                 hostname: "auth.acme.test".to_string(),
                 replicas: 1,
+                stopped: false,
                 database: DatabaseConfig {
                     mode: DatabaseMode::ManagedCluster,
                     shared: None,
@@ -469,6 +486,190 @@ mod tests {
         assert_eq!(desired.ready, status.ready);
         assert_eq!(desired.endpoint, status.endpoint);
         assert_eq!(desired.admin_url, status.admin_url);
+    }
+
+    fn stopped_status() -> IdentityInstanceStatus {
+        IdentityInstanceStatus {
+            phase: Some(Phase::Stopped),
+            ready: false,
+            endpoint: Some("https://auth.acme.test".to_string()),
+            admin_url: Some("https://auth.acme.test/admin".to_string()),
+            ..Default::default()
+        }
+    }
+
+    fn service_without_collaborators() -> IdentityInstanceServiceImpl<
+        MockIdentityInstanceRepository,
+        MockIdentityInstanceDeployer,
+        MockInstanceThemePort,
+    > {
+        IdentityInstanceServiceImpl::new(
+            Arc::new(MockIdentityInstanceRepository::new()),
+            Arc::new(MockIdentityInstanceDeployer::new()),
+            Arc::new(MockInstanceThemePort::new()),
+        )
+    }
+
+    #[test]
+    fn a_stopped_instance_is_stopped_and_not_ready_whatever_is_running() {
+        let mut instance = instance_with_status(Some(running_status(None)));
+        instance.spec.stopped = true;
+        let service = service_without_collaborators();
+
+        for upgrade_in_progress in [false, true] {
+            let desired =
+                service.build_desired_status(&instance, true, true, true, upgrade_in_progress);
+
+            assert_eq!(desired.phase, Some(Phase::Stopped));
+            assert!(!desired.ready);
+        }
+        assert_eq!(
+            service
+                .build_desired_status(&instance, false, false, false, false)
+                .phase,
+            Some(Phase::Stopped)
+        );
+    }
+
+    #[test]
+    fn a_started_instance_leaves_stopped_for_the_usual_phases() {
+        let instance = instance_with_status(Some(stopped_status()));
+        let service = service_without_collaborators();
+
+        let desired = service.build_desired_status(&instance, true, true, true, false);
+        assert_eq!(desired.phase, Some(Phase::Running));
+        assert!(desired.ready);
+
+        let desired = service.build_desired_status(&instance, false, false, false, false);
+        assert_eq!(desired.phase, Some(Phase::DatabaseProvisioning));
+        assert!(!desired.ready);
+    }
+
+    #[tokio::test]
+    async fn stopping_an_instance_reports_it_stopped() {
+        let mut instance = instance_with_status(Some(running_status(None)));
+        instance.spec.stopped = true;
+        let mut repository = MockIdentityInstanceRepository::new();
+        repository
+            .expect_patch_status()
+            .times(1)
+            .withf(|_, status| status.phase == Some(Phase::Stopped) && !status.ready)
+            .returning(|instance, _| {
+                let instance = instance.clone();
+                Box::pin(async move { Ok(instance) })
+            });
+
+        let service = IdentityInstanceServiceImpl::new(
+            Arc::new(repository),
+            Arc::new(ready_deployer()),
+            Arc::new(MockInstanceThemePort::new()),
+        );
+        let outcome = service.reconcile(instance).await.unwrap();
+
+        assert_eq!(
+            outcome.requeue_after,
+            Some(Duration::from_secs(DEPLOYING_REQUEUE_SECONDS))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_stopped_instance_is_not_branded() {
+        let mut instance = ferriskey_with(Some(radius(6)), None);
+        instance.spec.stopped = true;
+        instance.status = Some(stopped_status());
+        let mut theme = MockInstanceThemePort::new();
+        theme.expect_put_theme().times(0);
+        let mut repository = MockIdentityInstanceRepository::new();
+        repository.expect_patch_status().times(0);
+
+        let service = IdentityInstanceServiceImpl::new(
+            Arc::new(repository),
+            Arc::new(ready_deployer()),
+            Arc::new(theme),
+        );
+        let outcome = service.reconcile(instance).await.unwrap();
+
+        assert_eq!(
+            outcome.requeue_after,
+            Some(Duration::from_secs(STEADY_STATE_REQUEUE_SECONDS))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_hibernated_database_does_not_keep_a_stopped_instance_on_the_fast_requeue() {
+        let mut instance = instance_with_status(Some(stopped_status()));
+        instance.spec.stopped = true;
+        let mut deployer = MockIdentityInstanceDeployer::new();
+        deployer
+            .expect_ensure_provider_resources()
+            .times(1)
+            .returning(|_| Box::pin(async { Ok(()) }));
+        deployer
+            .expect_database_ready()
+            .returning(|_| Box::pin(async { Ok(false) }));
+        deployer
+            .expect_provider_ready()
+            .returning(|_| Box::pin(async { Ok(true) }));
+        deployer
+            .expect_edge_ready()
+            .returning(|_| Box::pin(async { Ok(true) }));
+        deployer
+            .expect_upgrade_in_progress()
+            .returning(|_| Box::pin(async { Ok(false) }));
+        let mut repository = MockIdentityInstanceRepository::new();
+        repository.expect_patch_status().times(0);
+
+        let service = IdentityInstanceServiceImpl::new(
+            Arc::new(repository),
+            Arc::new(deployer),
+            Arc::new(MockInstanceThemePort::new()),
+        );
+        let outcome = service.reconcile(instance).await.unwrap();
+
+        assert_eq!(
+            outcome.requeue_after,
+            Some(Duration::from_secs(STEADY_STATE_REQUEUE_SECONDS))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_stopped_instance_still_going_down_is_looked_at_again_soon() {
+        let mut instance = ferriskey_with(Some(radius(6)), None);
+        instance.spec.stopped = true;
+        instance.status = Some(stopped_status());
+        let mut deployer = MockIdentityInstanceDeployer::new();
+        deployer
+            .expect_ensure_provider_resources()
+            .times(1)
+            .returning(|_| Box::pin(async { Ok(()) }));
+        deployer
+            .expect_database_ready()
+            .returning(|_| Box::pin(async { Ok(true) }));
+        deployer
+            .expect_provider_ready()
+            .returning(|_| Box::pin(async { Ok(false) }));
+        deployer
+            .expect_edge_ready()
+            .returning(|_| Box::pin(async { Ok(true) }));
+        deployer
+            .expect_upgrade_in_progress()
+            .returning(|_| Box::pin(async { Ok(false) }));
+        let mut theme = MockInstanceThemePort::new();
+        theme.expect_put_theme().times(0);
+        let mut repository = MockIdentityInstanceRepository::new();
+        repository.expect_patch_status().times(0);
+
+        let service = IdentityInstanceServiceImpl::new(
+            Arc::new(repository),
+            Arc::new(deployer),
+            Arc::new(theme),
+        );
+        let outcome = service.reconcile(instance).await.unwrap();
+
+        assert_eq!(
+            outcome.requeue_after,
+            Some(Duration::from_secs(DEPLOYING_REQUEUE_SECONDS))
+        );
     }
 
     fn ready_deployer() -> MockIdentityInstanceDeployer {

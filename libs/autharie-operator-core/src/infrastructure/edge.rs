@@ -263,6 +263,7 @@ mod tests {
                 version: "0.5.0".to_string(),
                 hostname: hostname.to_string(),
                 replicas: 1,
+                stopped: false,
                 database: DatabaseConfig {
                     mode: DatabaseMode::ManagedCluster,
                     shared: None,

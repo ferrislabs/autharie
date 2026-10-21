@@ -317,6 +317,9 @@ spec:
                 - destinationPath
                 - serverName
                 type: object
+              stopped:
+                description: Scaled to nothing, with the database hibernated and its volumes kept.
+                type: boolean
               version:
                 type: string
             required:
@@ -408,6 +411,7 @@ spec:
                 - Updating
                 - Upgrading
                 - Maintenance
+                - Stopped
                 - Failed
                 - Deleting
                 - Terminated

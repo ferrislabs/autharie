@@ -495,6 +495,7 @@ fn to_identity_instance(desired: &DesiredIdentityInstance) -> IdentityInstance {
         version: desired.version.clone(),
         hostname: desired.hostname.clone(),
         replicas: desired.replicas,
+        stopped: desired.stopped,
         database: DatabaseConfig {
             mode: match desired.placement {
                 DatabasePlacement::Managed => DatabaseMode::ManagedCluster,
@@ -578,8 +579,28 @@ mod tests {
             database: DesiredDatabase::from_reserved(500, 1024, 1, 1),
             replicas: 1,
             placement: DatabasePlacement::Managed,
+            stopped: false,
             archive: None,
         }
+    }
+
+    #[test]
+    fn a_stopped_instance_is_applied_stopped() {
+        let stopped = DesiredIdentityInstance {
+            stopped: true,
+            ..desired(IdentityInstanceProvider::Ferriskey)
+        };
+
+        assert!(to_identity_instance(&stopped).spec.stopped);
+    }
+
+    #[test]
+    fn a_running_instance_is_applied_running() {
+        assert!(
+            !to_identity_instance(&desired(IdentityInstanceProvider::Ferriskey))
+                .spec
+                .stopped
+        );
     }
 
     /// The two paths are the source's, and they have to reach the CRD whole.

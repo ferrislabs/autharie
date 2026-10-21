@@ -109,6 +109,8 @@ pub enum DeploymentStatus {
     Maintenance,
     UpgradeRequired,
     Upgrading,
+    /// Powered down with its data kept, until it is started again.
+    Stopped,
     /// Tear-down has been asked for and has not been confirmed.
     Deleting,
     /// The data plane reported that the resources are gone.
@@ -131,6 +133,7 @@ impl fmt::Display for DeploymentStatus {
             Self::Maintenance => write!(f, "maintenance"),
             Self::UpgradeRequired => write!(f, "upgrade_required"),
             Self::Upgrading => write!(f, "upgrading"),
+            Self::Stopped => write!(f, "stopped"),
             Self::Deleting => write!(f, "deleting"),
             Self::Deleted => write!(f, "deleted"),
         }
@@ -150,6 +153,7 @@ impl TryFrom<&str> for DeploymentStatus {
             "maintenance" => Ok(Self::Maintenance),
             "upgrade_required" => Ok(Self::UpgradeRequired),
             "upgrading" => Ok(Self::Upgrading),
+            "stopped" => Ok(Self::Stopped),
             "deleting" => Ok(Self::Deleting),
             "deleted" => Ok(Self::Deleted),
             _ => Err(CoreError::InternalError(format!(
@@ -381,7 +385,7 @@ impl Deployment {
     fn is_still_arriving(&self) -> bool {
         !matches!(
             self.status,
-            DeploymentStatus::Deleting | DeploymentStatus::Deleted
+            DeploymentStatus::Stopped | DeploymentStatus::Deleting | DeploymentStatus::Deleted
         )
     }
 
@@ -418,6 +422,44 @@ impl Deployment {
         }
 
         self.status = DeploymentStatus::Failed;
+        self.updated_at = at;
+        true
+    }
+
+    /// Powers it down, data kept.
+    ///
+    /// Returns whether anything changed. A deployment that has not started, or
+    /// is on its way out, has nothing to stop.
+    ///
+    /// Not while `Upgrading`: `version` is still the old one then, and the
+    /// stop payload would apply it over the upgrade's target.
+    pub fn stop(&mut self, at: DateTime<Utc>) -> bool {
+        if !matches!(
+            self.status,
+            DeploymentStatus::InProgress
+                | DeploymentStatus::Successful
+                | DeploymentStatus::Failed
+                | DeploymentStatus::Maintenance
+                | DeploymentStatus::UpgradeRequired
+        ) {
+            return false;
+        }
+
+        self.status = DeploymentStatus::Stopped;
+        self.updated_at = at;
+        true
+    }
+
+    /// Powers a stopped deployment back up.
+    ///
+    /// It comes back as `InProgress`, not `Successful`: only the data plane
+    /// can say it is serving again.
+    pub fn start(&mut self, at: DateTime<Utc>) -> bool {
+        if self.status != DeploymentStatus::Stopped {
+            return false;
+        }
+
+        self.status = DeploymentStatus::InProgress;
         self.updated_at = at;
         true
     }
@@ -657,6 +699,104 @@ pub(crate) mod tests {
 
         assert!(!deployment.fail_hand_off(Utc::now()));
         assert_eq!(deployment.status, DeploymentStatus::Deleting);
+    }
+
+    #[test]
+    fn a_deployment_that_is_up_or_on_its_way_can_be_stopped() {
+        for status in [
+            DeploymentStatus::InProgress,
+            DeploymentStatus::Successful,
+            DeploymentStatus::Failed,
+            DeploymentStatus::Maintenance,
+            DeploymentStatus::UpgradeRequired,
+        ] {
+            let mut subject = deployment(status.clone());
+            let at = subject.updated_at + chrono::Duration::seconds(5);
+
+            assert!(subject.stop(at), "{status:?}");
+            assert_eq!(subject.status, DeploymentStatus::Stopped, "{status:?}");
+            assert_eq!(subject.updated_at, at, "{status:?}");
+        }
+    }
+
+    #[test]
+    fn stopping_leaves_alone_what_has_not_started_is_upgrading_or_is_going_away() {
+        for status in [
+            DeploymentStatus::Pending,
+            DeploymentStatus::Scheduling,
+            DeploymentStatus::Upgrading,
+            DeploymentStatus::Stopped,
+            DeploymentStatus::Deleting,
+            DeploymentStatus::Deleted,
+        ] {
+            let mut subject = deployment(status.clone());
+            let before = subject.updated_at;
+
+            assert!(
+                !subject.stop(before + chrono::Duration::seconds(5)),
+                "{status:?}"
+            );
+            assert_eq!(subject.status, status);
+            assert_eq!(subject.updated_at, before);
+        }
+    }
+
+    #[test]
+    fn a_stopped_deployment_comes_back_as_in_progress() {
+        let mut subject = deployment(DeploymentStatus::Stopped);
+        let at = subject.updated_at + chrono::Duration::seconds(5);
+
+        assert!(subject.start(at));
+        assert_eq!(subject.status, DeploymentStatus::InProgress);
+        assert_eq!(subject.updated_at, at);
+    }
+
+    #[test]
+    fn starting_moves_nothing_that_is_not_stopped() {
+        for status in [
+            DeploymentStatus::Pending,
+            DeploymentStatus::Scheduling,
+            DeploymentStatus::InProgress,
+            DeploymentStatus::Successful,
+            DeploymentStatus::Failed,
+            DeploymentStatus::Maintenance,
+            DeploymentStatus::UpgradeRequired,
+            DeploymentStatus::Upgrading,
+            DeploymentStatus::Deleting,
+            DeploymentStatus::Deleted,
+        ] {
+            let mut subject = deployment(status.clone());
+            let before = subject.updated_at;
+
+            assert!(
+                !subject.start(before + chrono::Duration::seconds(5)),
+                "{status:?}"
+            );
+            assert_eq!(subject.status, status);
+            assert_eq!(subject.updated_at, before);
+        }
+    }
+
+    #[test]
+    fn stopping_and_starting_twice_changes_nothing_the_second_time() {
+        let mut subject = deployment(DeploymentStatus::Successful);
+
+        assert!(subject.stop(Utc::now()));
+        assert!(!subject.stop(Utc::now()));
+        assert!(subject.start(Utc::now()));
+        assert!(!subject.start(Utc::now()));
+        assert_eq!(subject.status, DeploymentStatus::InProgress);
+    }
+
+    #[test]
+    fn an_outcome_about_coming_up_leaves_a_stopped_deployment_alone() {
+        let mut subject = deployment(DeploymentStatus::Stopped);
+
+        assert!(!subject.confirm_running(Utc::now(), Some(Version::new(27, 0, 0))));
+        assert!(!subject.confirm_failed(Utc::now()));
+        assert!(!subject.hand_off_to_data_plane(Utc::now()));
+        assert!(!subject.fail_hand_off(Utc::now()));
+        assert_eq!(subject.status, DeploymentStatus::Stopped);
     }
 
     #[test]

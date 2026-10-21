@@ -102,11 +102,7 @@ where
         }
 
         let suspended_organisation = self.suspend_organisation(&organisation_id).await?;
-        let stopped = self.power.stop_billable(&organisation_id).await?;
-
-        for deployment_id in &stopped {
-            self.close_open_subscription(deployment_id, now).await?;
-        }
+        let stopped = self.stop_billable(&organisation_id, now).await?;
 
         self.suspensions
             .insert(&BillingSuspension {
@@ -119,6 +115,44 @@ where
                 lifted_at: None,
             })
             .await
+    }
+
+    /// Stops what billing could not stop when it suspended the organisation
+    /// (a deployment still coming up, or upgrading), now that it can.
+    ///
+    /// Recorded on the suspension, so payment starts these too.
+    pub async fn keep_suspended(
+        &self,
+        organisation_id: &OrganisationId,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<DeploymentId>, CoreError> {
+        let Some(suspension) = self.suspensions.find_active(organisation_id).await? else {
+            return Ok(Vec::new());
+        };
+
+        let stopped = self.stop_billable(organisation_id, now).await?;
+
+        if !stopped.is_empty() {
+            self.suspensions
+                .add_stopped(&suspension.id, &stopped)
+                .await?;
+        }
+
+        Ok(stopped)
+    }
+
+    async fn stop_billable(
+        &self,
+        organisation_id: &OrganisationId,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<DeploymentId>, CoreError> {
+        let stopped = self.power.stop_billable(organisation_id).await?;
+
+        for deployment_id in &stopped {
+            self.close_open_subscription(deployment_id, now).await?;
+        }
+
+        Ok(stopped)
     }
 
     async fn statement_of(
@@ -340,6 +374,7 @@ mod tests {
             at: DateTime<Utc>,
             lifted: Option<DateTime<Utc>>,
         },
+        Extended(BillingSuspensionId, Vec<DeploymentId>),
         Lifted(BillingSuspensionId, DateTime<Utc>),
     }
 
@@ -578,6 +613,22 @@ mod tests {
                         at: suspension.suspended_at,
                         lifted: suspension.lifted_at,
                     });
+                });
+                Box::pin(async { Ok(()) })
+            });
+            let world = self.world.clone();
+            mock.expect_add_stopped().returning(move |id, deployments| {
+                world.with(|world| {
+                    if let Some(stored) = world
+                        .suspensions
+                        .iter_mut()
+                        .find(|suspension| suspension.id == *id)
+                    {
+                        stored.stopped.extend_from_slice(deployments);
+                    }
+                    world
+                        .written
+                        .push(Written::Extended(*id, deployments.to_vec()));
                 });
                 Box::pin(async { Ok(()) })
             });
@@ -923,6 +974,126 @@ mod tests {
                 Written::Organisation(OrganisationStatus::Active),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn a_deployment_that_could_not_be_stopped_at_first_is_stopped_closed_and_recorded() {
+        let organisation = organisation();
+        let uncollectible = statement(organisation.id, "in_1", StatementStatus::Uncollectible);
+        let held = suspension(organisation.id, uncollectible.id(), &[deployment(1)], true);
+        let fixture = Fixture::new()
+            .with_organisation(organisation.clone())
+            .with_statement(uncollectible)
+            .with_suspension(held.clone())
+            .with_subscription(closed_subscription(organisation.id, deployment(1), 4900))
+            .with_subscription(open_subscription(organisation.id, deployment(2), 9900))
+            .stopping(&[deployment(2)]);
+
+        let stopped = fixture
+            .collection()
+            .keep_suspended(&organisation.id, at(25))
+            .await
+            .expect("kept");
+
+        assert_eq!(stopped, vec![deployment(2)]);
+        assert_eq!(
+            fixture.written(),
+            vec![
+                Written::Stopped(organisation.id),
+                Written::Closed(deployment(2), Some(at(25))),
+                Written::Extended(held.id, vec![deployment(2)]),
+            ]
+        );
+        assert_eq!(
+            fixture
+                .world
+                .with(|world| world.suspensions[0].stopped.clone()),
+            vec![deployment(1), deployment(2)]
+        );
+    }
+
+    #[tokio::test]
+    async fn keeping_a_suspension_with_nothing_left_to_stop_writes_nothing() {
+        let organisation = organisation();
+        let uncollectible = statement(organisation.id, "in_1", StatementStatus::Uncollectible);
+        let fixture = Fixture::new()
+            .with_organisation(organisation.clone())
+            .with_statement(uncollectible.clone())
+            .with_suspension(suspension(
+                organisation.id,
+                uncollectible.id(),
+                &[deployment(1)],
+                true,
+            ))
+            .stopping(&[]);
+
+        let stopped = fixture
+            .collection()
+            .keep_suspended(&organisation.id, at(25))
+            .await
+            .expect("kept");
+
+        assert!(stopped.is_empty());
+        assert_eq!(fixture.written(), vec![Written::Stopped(organisation.id)]);
+    }
+
+    #[tokio::test]
+    async fn an_organisation_with_no_active_suspension_is_not_touched() {
+        let organisation = organisation();
+        let uncollectible = statement(organisation.id, "in_1", StatementStatus::Paid);
+        let lifted = BillingSuspension {
+            lifted_at: Some(at(22)),
+            ..suspension(organisation.id, uncollectible.id(), &[deployment(1)], true)
+        };
+        let fixture = Fixture::new()
+            .with_organisation(organisation.clone())
+            .with_statement(uncollectible)
+            .with_suspension(lifted)
+            .with_subscription(open_subscription(organisation.id, deployment(2), 9900))
+            .stopping(&[deployment(2)]);
+
+        let stopped = fixture
+            .collection()
+            .keep_suspended(&organisation.id, at(25))
+            .await
+            .expect("kept");
+
+        assert!(stopped.is_empty());
+        assert!(fixture.written().is_empty());
+    }
+
+    #[tokio::test]
+    async fn paying_starts_the_deployments_stopped_later_as_well() {
+        let organisation = suspended_organisation();
+        let uncollectible = statement(organisation.id, "in_1", StatementStatus::Uncollectible);
+        let held = suspension(organisation.id, uncollectible.id(), &[deployment(1)], true);
+        let fixture = Fixture::new()
+            .with_organisation(organisation.clone())
+            .with_statement(uncollectible.clone())
+            .with_suspension(held.clone())
+            .with_account(account(organisation.id, PaymentMethodStatus::Failing))
+            .with_subscription(closed_subscription(organisation.id, deployment(1), 4900))
+            .with_subscription(open_subscription(organisation.id, deployment(2), 9900))
+            .stopping(&[deployment(2)])
+            .restarting(&[deployment(1), deployment(2)]);
+        let collection = fixture.collection();
+        collection
+            .keep_suspended(&organisation.id, at(25))
+            .await
+            .expect("kept");
+
+        collection
+            .invoice_paid(&invoice_id("in_1"), None, at(26))
+            .await
+            .expect("collected");
+
+        let written = fixture.written();
+        assert!(
+            written.contains(&Written::Started(vec![deployment(1), deployment(2)])),
+            "{written:?}"
+        );
+        assert!(written.contains(&Written::Opened(deployment(2), terms(9900), at(26))));
+        assert!(written.contains(&Written::Lifted(held.id, at(26))));
     }
 
     #[tokio::test]
