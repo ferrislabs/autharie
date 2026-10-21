@@ -13142,9 +13142,13 @@
       "ListStatementsResponse": {
         "type": "object",
         "required": [
-          "data"
+          "data",
+          "current_period"
         ],
         "properties": {
+          "current_period": {
+            "$ref": "#/components/schemas/BillingPeriod"
+          },
           "data": {
             "type": "array",
             "items": {

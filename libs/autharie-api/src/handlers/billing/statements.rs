@@ -85,6 +85,7 @@ pub struct StatementResponse {
 #[derive(Debug, Serialize, ToSchema, PartialEq)]
 pub struct ListStatementsResponse {
     pub data: Vec<StatementSummary>,
+    pub current_period: BillingPeriod,
 }
 
 fn hosted_invoice_url(statement: &Statement) -> Option<String> {
@@ -174,6 +175,7 @@ pub async fn list_statements_handler(
 
     Ok(Response::OK(ListStatementsResponse {
         data: statements.iter().map(StatementSummary::from).collect(),
+        current_period: BillingPeriod::containing(Utc::now()),
     }))
 }
 

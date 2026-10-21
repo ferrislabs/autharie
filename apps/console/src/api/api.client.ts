@@ -658,7 +658,10 @@ export namespace Schemas {
     status: StatementStatus
     total: number
   }
-  export type ListStatementsResponse = { data: Array<StatementSummary> }
+  export type ListStatementsResponse = {
+    current_period: BillingPeriod
+    data: Array<StatementSummary>
+  }
   export type TierResponse = {
     code: TierCode
     currency: string

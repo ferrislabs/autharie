@@ -815,7 +815,12 @@ async fn the_current_month_is_an_estimate_of_what_has_been_used_so_far() {
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{listed}");
-        assert_eq!(json_of(&listed), json!({"data": []}));
+        let listed = json_of(&listed);
+        assert_eq!(listed["data"], json!([]));
+        assert_eq!(
+            listed["current_period"],
+            json!(BillingPeriod::containing(Utc::now()).to_string())
+        );
     })
     .await;
 }
