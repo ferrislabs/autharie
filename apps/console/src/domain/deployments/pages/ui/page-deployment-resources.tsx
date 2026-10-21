@@ -2,14 +2,17 @@ import type { Schemas } from '@/api/api.client'
 import { SectionPage } from '@/components/layout/page'
 import { Card } from '@/components/layout/page'
 import { Skeleton } from '@/components/ui/skeleton'
+import { hostingOf } from '@/domain/billing/billing'
+import { SubscriptionCard, type SubscriptionCardProps } from './components/subscription-card'
 import { formatCpu, formatMemory, formatStorage } from '../../types/resources'
 
 interface Props {
   deployment?: Schemas.Deployment
   isLoading: boolean
+  subscription: Omit<SubscriptionCardProps, 'fit'>
 }
 
-export function PageDeploymentResources({ deployment, isLoading }: Props) {
+export function PageDeploymentResources({ deployment, isLoading, subscription }: Props) {
   if (isLoading || !deployment) {
     return <Skeleton className='h-40 w-full' />
   }
@@ -21,6 +24,11 @@ export function PageDeploymentResources({ deployment, isLoading }: Props) {
       title='Resources'
       description='What this instance was given when it was created.'
     >
+      <SubscriptionCard
+        {...subscription}
+        fit={{ engine: deployment.kind, hosting: hostingOf(deployment.distribution) }}
+      />
+
       <div className='grid gap-4 sm:grid-cols-3'>
         <Card className='p-4'>
           <p className='text-sm text-muted-foreground'>CPU</p>
