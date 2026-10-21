@@ -1,7 +1,8 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import type { Schemas } from '@/api/api.client'
-import { NEEDS_PAYMENT_METHOD } from '@/domain/billing/billing'
+import { NEEDS_PAYMENT_METHOD, type BillingAccess } from '@/domain/billing/billing'
+import type { OfferAvailability } from '../../offers'
 import PageCreateDeployment, { CreateActions } from './page-create-deployment'
 
 vi.mock('@tanstack/react-router', () => ({ useNavigate: () => () => {} }))
@@ -26,16 +27,33 @@ function tier(overrides: Partial<Schemas.TierResponse> = {}): Schemas.TierRespon
   }
 }
 
-function page(tiers: Schemas.TierResponse[]) {
+function entry(offer: Schemas.Offer, open: boolean): OfferAvailability {
+  return {
+    offer,
+    open,
+    resources: { cpu_millis: 500, memory_mib: 1024, storage_gib: 1 },
+    shares_a_cluster: true,
+  }
+}
+
+function page(
+  tiers: Schemas.TierResponse[],
+  over: {
+    offers?: OfferAvailability[]
+    billing?: BillingAccess
+    tiersLoading?: boolean
+  } = {},
+) {
   return renderToStaticMarkup(
     <PageCreateDeployment
       onSubmit={noop}
-      offers={[]}
+      offers={over.offers ?? []}
       offersLoading={false}
       releases={[]}
       releasesLoading={false}
       tiers={tiers}
-      billing={{ canManage: true, account: null }}
+      tiersLoading={over.tiersLoading ?? false}
+      billing={over.billing ?? { canManage: true, account: null }}
     />,
   )
 }
@@ -65,6 +83,62 @@ describe('the page with tiers on offer', () => {
   it('does not block a tier that costs nothing', () => {
     const html = page([tier({ monthly_price: 0, first_invoice: null })])
     expect(html).not.toContain('Add the billing details first')
+  })
+
+  it('leaves a paid tier to the server when the account is unknown', () => {
+    const html = page([tier()], { billing: { canManage: true, account: undefined } })
+    expect(html).not.toContain('Add the billing details first')
+  })
+})
+
+describe('the tiers that fit', () => {
+  it('leave out a tier for another engine or another hosting', () => {
+    const html = page([
+      tier({ code: 'keycloak', name: 'Keycloak only', engines: ['keycloak'] }),
+      tier({ code: 'cloud', name: 'Cloud only', hostings: ['customer_cloud'] }),
+      tier({ code: 'fits', name: 'Fits' }),
+    ])
+    expect(html).toContain('Fits')
+    expect(html).not.toContain('Keycloak only')
+    expect(html).not.toContain('Cloud only')
+  })
+
+  it('show no tier picker and keep the grid when no tier fits', () => {
+    const html = page([tier({ hostings: ['customer_cloud'] })])
+    expect(html).not.toContain('aria-label="Tier"')
+    expect(html).toContain('Expected volume')
+    expect(html).toContain('Indicative price. Billing for deployments is being set up.')
+  })
+})
+
+describe('the plan and the volume', () => {
+  it('are asked for when no tier is on offer', () => {
+    const html = page([])
+    expect(html).toContain('Expected volume')
+    expect(html).toContain('Starter')
+  })
+
+  it('are hidden once a tier is selected, since the tier brings its offer', () => {
+    const html = page([tier()])
+    expect(html).not.toContain('Expected volume')
+    expect(html).not.toContain('Starter')
+    expect(html).not.toContain('Business')
+  })
+
+  it('and the free offer card are hidden for a tier when the plan only opens the free offer', () => {
+    const offers = [entry('free', true)]
+    expect(page([], { offers })).toContain('A FerrisKey of your own')
+    expect(page([tier({ monthly_price: 0, first_invoice: null })], { offers })).not.toContain(
+      'A FerrisKey of your own',
+    )
+  })
+
+  it('do not warn about the offer they derive when a tier is selected', () => {
+    const offers = [entry('standard', false), entry('scale', true)]
+    expect(page([], { offers })).toContain('fits this choice, but it is not available on your plan')
+    expect(page([tier()], { offers })).not.toContain(
+      'fits this choice, but it is not available on your plan',
+    )
   })
 })
 

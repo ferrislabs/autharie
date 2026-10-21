@@ -7,6 +7,7 @@ import {
   useGetTiers,
   usePutSubscription,
 } from '@/api/billing.api'
+import { accountOf } from '@/domain/billing/billing'
 import { useResolvedOrganisationId } from '@/domain/organisations/hooks/use-resolved-organisation-id'
 import { useMyPermissions } from '@/domain/organisations/hooks/use-my-permissions'
 import { CAN } from '@/domain/organisations/permissions'
@@ -59,9 +60,10 @@ export default function PageDeploymentDetailFeature() {
 
   const { can } = useMyPermissions()
   const canManage = can(CAN.manageBilling)
+  const canViewBilling = can(CAN.viewBilling)
   const subscription = useGetSubscription(organisationId, deploymentId ?? null)
   const tiers = useGetTiers(organisationId)
-  const account = useGetBillingAccount(organisationId, can(CAN.viewBilling))
+  const account = useGetBillingAccount(organisationId, canViewBilling)
   const change = usePutSubscription()
 
   const changeTier = (tier: string) => {
@@ -83,7 +85,7 @@ export default function PageDeploymentDetailFeature() {
         isLoading: subscription.isLoading,
         isError: subscription.isError,
         tiers: tiers.data?.data,
-        access: { canManage, account: account.data ?? null },
+        access: { canManage, account: accountOf(canViewBilling, account) },
         changing: change.isPending ? (change.variables?.body.tier ?? null) : null,
         error: change.error?.message,
         onChange: changeTier,

@@ -33,6 +33,7 @@ export const useGetBillingAccount = (organisationId: string | null, enabled = tr
     }).queryOptions,
     enabled: enabled && !!organisationId && !!accessToken,
     retry: false,
+    refetchOnWindowFocus: false,
   })
 }
 
@@ -66,14 +67,18 @@ export const useGetStatements = (organisationId: string | null, enabled = true) 
   })
 }
 
-export const useGetStatement = (organisationId: string | null, period: string, enabled = true) => {
+export const useGetStatement = (
+  organisationId: string | null,
+  period: string | null,
+  enabled = true,
+) => {
   const accessToken = useAuthStore(selectAccessToken)
 
   return useQuery({
     ...window.api.get('/organisations/{organisation_id}/billing/statements/{period}', {
-      path: { organisation_id: organisationId ?? 'current', period },
+      path: { organisation_id: organisationId ?? 'current', period: period ?? 'current' },
     }).queryOptions,
-    enabled: enabled && !!organisationId && !!accessToken,
+    enabled: enabled && !!organisationId && !!period && !!accessToken,
   })
 }
 

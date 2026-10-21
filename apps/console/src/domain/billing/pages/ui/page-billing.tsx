@@ -17,6 +17,7 @@ interface Props {
   names: ReadonlyMap<string, string>
   canManage: boolean
   isLoading: boolean
+  estimateLoading: boolean
   isSaving: boolean
   isOpening: boolean
   saveRefusal?: string
@@ -33,6 +34,22 @@ function Failure({ message }: { message: string }) {
   )
 }
 
+function Estimate({
+  loading,
+  failure,
+  estimate,
+  names,
+}: {
+  loading: boolean
+  failure?: string
+  estimate?: Schemas.StatementResponse
+  names: ReadonlyMap<string, string>
+}) {
+  if (loading) return <Skeleton className='h-24 w-full' />
+  if (failure) return <Failure message={failure} />
+  return <MonthToDate estimate={estimate} names={names} />
+}
+
 export function PageBilling({
   account,
   accountFailure,
@@ -43,6 +60,7 @@ export function PageBilling({
   names,
   canManage,
   isLoading,
+  estimateLoading,
   isSaving,
   isOpening,
   saveRefusal,
@@ -105,11 +123,12 @@ export function PageBilling({
         </Section>
 
         <Section title='This month so far'>
-          {estimateFailure ? (
-            <Failure message={estimateFailure} />
-          ) : (
-            <MonthToDate estimate={estimate} names={names} />
-          )}
+          <Estimate
+            loading={estimateLoading}
+            failure={estimateFailure}
+            estimate={estimate}
+            names={names}
+          />
         </Section>
 
         <Section title='Statements'>

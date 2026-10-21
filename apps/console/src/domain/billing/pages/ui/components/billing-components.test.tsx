@@ -190,10 +190,21 @@ describe('the month to date', () => {
     )
     expect(html).toContain('Alpha')
     expect(html).toContain(formatMinor(1550))
-    expect(html).toContain('dep-b')
+    expect(html).toContain('Unknown deployment (dep-b)')
     expect(html).toContain(formatMinor(2500))
     expect(html).toContain(formatMinor(4050))
     expect(html).not.toContain(formatMinor(1000))
+  })
+
+  it('does not show the raw id of a deployment missing from the list', () => {
+    const html = renderToStaticMarkup(
+      <MonthToDate
+        estimate={{ ...estimate, lines: [line('0b6e3a1c-9d4f-4c7a-8e21-5f3d2a9b7c10', 500)] }}
+        names={new Map()}
+      />,
+    )
+    expect(html).toContain('Unknown deployment (0b6e3a1c)')
+    expect(html).not.toContain('0b6e3a1c-9d4f')
   })
 
   it('says it is an estimate up to now', () => {

@@ -6,10 +6,12 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
 import {
   NEEDS_BILLING_RIGHT,
+  fittingTiers,
   formatMinor,
   isPaid,
   paidActionBlock,
   type BillingAccess,
+  type TierFit,
 } from '@/domain/billing/billing'
 
 export interface SubscriptionCardProps {
@@ -17,6 +19,7 @@ export interface SubscriptionCardProps {
   isLoading: boolean
   isError: boolean
   tiers?: ReadonlyArray<Schemas.TierResponse>
+  fit: TierFit
   access: BillingAccess
   changing: string | null
   error?: string
@@ -75,6 +78,7 @@ function TierRow({
 function TierChange({
   current,
   tiers,
+  fit,
   access,
   changing,
   error,
@@ -82,6 +86,7 @@ function TierChange({
 }: {
   current: string
   tiers?: ReadonlyArray<Schemas.TierResponse>
+  fit: TierFit
   access: BillingAccess
   changing: string | null
   error?: string
@@ -89,13 +94,19 @@ function TierChange({
 }) {
   if (!tiers) return null
 
-  const others = tiers.filter((tier) => tier.code !== current)
-
-  if (others.length === 0) {
+  if (tiers.length === 0) {
     return (
       <p className='mt-4 border-t pt-4 text-sm text-muted-foreground'>
         The tier catalogue is not open yet.
       </p>
+    )
+  }
+
+  const others = fittingTiers(tiers, fit).filter((tier) => tier.code !== current)
+
+  if (others.length === 0) {
+    return (
+      <p className='mt-4 border-t pt-4 text-sm text-muted-foreground'>No other tier available.</p>
     )
   }
 
@@ -127,6 +138,7 @@ export function SubscriptionCard({
   isLoading,
   isError,
   tiers,
+  fit,
   access,
   changing,
   error,
@@ -155,6 +167,7 @@ export function SubscriptionCard({
           <TierChange
             current={subscription.tier}
             tiers={tiers}
+            fit={fit}
             access={access}
             changing={changing}
             error={error}

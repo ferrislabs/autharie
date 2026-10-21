@@ -3,6 +3,7 @@ import PageCreateDeployment from '../ui/page-create-deployment'
 import { useOrganisationPath } from '@/domain/organisations/hooks/use-organisation-path'
 import { useCreateDeployment } from '@/api/deployment.api'
 import { useGetBillingAccount, useGetTiers } from '@/api/billing.api'
+import { accountOf } from '@/domain/billing/billing'
 import { useGetOffers } from '@/api/offer.api'
 import { useGetPublishedReleases } from '@/api/release.api'
 import { useResolvedOrganisationId } from '@/domain/organisations/hooks/use-resolved-organisation-id'
@@ -49,9 +50,10 @@ export default function PageCreateDeploymentFeature() {
       releases={ferriskey.data?.data ?? []}
       releasesLoading={ferriskey.isLoading}
       tiers={tiers.data?.data ?? []}
+      tiersLoading={tiers.isLoading}
       billing={{
         canManage: can(CAN.manageBilling),
-        account: canViewBilling ? (account.data ?? null) : null,
+        account: accountOf(canViewBilling, account),
       }}
     />
   )

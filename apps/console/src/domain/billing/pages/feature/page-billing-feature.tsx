@@ -7,11 +7,11 @@ import {
   usePutBillingAccount,
 } from '@/api/billing.api'
 import { RequiresPermission } from '@/components/layout/requires-permission'
-import { currentPeriod } from '@/domain/billing/billing'
 import { useMyPermissions } from '@/domain/organisations/hooks/use-my-permissions'
 import { useResolvedOrganisationId } from '@/domain/organisations/hooks/use-resolved-organisation-id'
 import { CAN } from '@/domain/organisations/permissions'
 import { PageBilling } from '../ui/page-billing'
+import { estimateFailure, isFirstLoad } from './billing-load'
 import { accountRefusal, loadFailure, paymentMethodRefusal } from './billing-refusals'
 
 export default function PageBillingFeature() {
@@ -21,7 +21,8 @@ export default function PageBillingFeature() {
 
   const account = useGetBillingAccount(organisationId, canView)
   const statements = useGetStatements(organisationId, canView)
-  const estimate = useGetStatement(organisationId, currentPeriod(new Date()), canView)
+  const period = statements.data?.current_period ?? null
+  const estimate = useGetStatement(organisationId, period, canView)
   const deployments = useGetDeployments()
 
   const save = usePutBillingAccount()
@@ -40,12 +41,11 @@ export default function PageBillingFeature() {
         statements={statements.data?.data ?? []}
         statementsFailure={loadFailure(statements.error)}
         estimate={estimate.data}
-        estimateFailure={loadFailure(estimate.error)}
+        estimateFailure={estimateFailure(period === null ? statements.error : null, estimate.error)}
         names={names}
         canManage={can(CAN.manageBilling)}
-        isLoading={
-          account.isLoading || statements.isLoading || estimate.isLoading || deployments.isLoading
-        }
+        isLoading={isFirstLoad([account, statements, deployments])}
+        estimateLoading={estimate.isLoading || (period === null && statements.isFetching)}
         isSaving={save.isPending}
         isOpening={session.isPending}
         saveRefusal={accountRefusal(save.error)}

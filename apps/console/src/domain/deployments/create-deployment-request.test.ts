@@ -6,7 +6,14 @@ import {
   NEEDS_PAYMENT_METHOD,
 } from '@/domain/billing/billing'
 import type { CreateDeploymentForm } from './create-deployment-request'
-import { createBlock, toCreateDeploymentRequest } from './create-deployment-request'
+import {
+  apiHostingOf,
+  canSubmit,
+  createBlock,
+  submission,
+  toCreateDeploymentRequest,
+  type SubmissionInput,
+} from './create-deployment-request'
 
 function tier(overrides: Partial<Schemas.TierResponse> = {}): Schemas.TierResponse {
   return {
@@ -121,5 +128,85 @@ describe('what blocks the creation', () => {
     expect(createBlock(tier(), { canManage: true, account: account(false) })).toBe(
       NEEDS_PAYMENT_METHOD,
     )
+  })
+
+  it('leaves a paid tier to the server when the account is unknown', () => {
+    expect(createBlock(tier(), { canManage: true, account: undefined })).toBeNull()
+  })
+
+  it('still needs the right for a paid tier when the account is unknown', () => {
+    expect(createBlock(tier(), { canManage: false, account: undefined })).toBe(NEEDS_BILLING_RIGHT)
+  })
+})
+
+describe('the hosting of the grid', () => {
+  it('maps to the hosting the platform derives from the distribution', () => {
+    expect(apiHostingOf('managed')).toBe('shared')
+    expect(apiHostingOf('byoc')).toBe('customer_cloud')
+  })
+})
+
+function input(overrides: Partial<SubmissionInput> = {}): SubmissionInput {
+  return {
+    name: 'acme api',
+    version: '0.5.0',
+    environment: 'production',
+    tier: undefined,
+    gridOffer: 'standard',
+    loading: false,
+    submitting: false,
+    block: null,
+    ...overrides,
+  }
+}
+
+describe('what the page submits', () => {
+  it('sends the offer of the tier with the tier, whatever the grid derives', () => {
+    const sent = submission(input({ tier: tier({ code: 'scale-2026', offer: 'scale' }), gridOffer: 'sandbox' }))
+    expect(sent).not.toBeNull()
+    expect(toCreateDeploymentRequest(sent!)).toEqual({
+      name: 'acme api',
+      kind: 'ferriskey',
+      version: '0.5.0',
+      environment: 'production',
+      offer: 'scale',
+      tier: 'scale-2026',
+    })
+  })
+
+  it('does not need the grid to derive an offer when a tier is selected', () => {
+    const sent = submission(input({ tier: tier({ offer: 'standard' }), gridOffer: undefined }))
+    expect(sent?.offer).toBe('standard')
+    expect(canSubmit(input({ tier: tier(), gridOffer: undefined }))).toBe(true)
+  })
+
+  it('sends the offer of the grid and no tier when none is selected', () => {
+    const sent = submission(input({ gridOffer: 'sandbox' }))
+    expect(sent).toEqual({
+      name: 'acme api',
+      version: '0.5.0',
+      environment: 'production',
+      offer: 'sandbox',
+    })
+  })
+
+  it('needs an offer from the grid when no tier is selected', () => {
+    expect(canSubmit(input({ gridOffer: undefined }))).toBe(false)
+    expect(submission(input({ gridOffer: undefined }))).toBeNull()
+  })
+
+  it('submits nothing while the tiers are loading', () => {
+    expect(canSubmit(input({ loading: true }))).toBe(false)
+    expect(submission(input({ loading: true }))).toBeNull()
+  })
+
+  it('submits nothing when the billing blocks the creation', () => {
+    expect(submission(input({ tier: tier(), block: NEEDS_PAYMENT_METHOD }))).toBeNull()
+  })
+
+  it('submits nothing without a name, without a version or while submitting', () => {
+    expect(submission(input({ name: '  ' }))).toBeNull()
+    expect(submission(input({ version: '' }))).toBeNull()
+    expect(submission(input({ submitting: true }))).toBeNull()
   })
 })

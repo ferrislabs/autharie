@@ -14,7 +14,11 @@ const subscription = (monthly_price: number, tier = 'standard-2026'): Schemas.Su
   starts_at: '2026-03-04T12:00:00Z',
 })
 
-const tier = (code: string, monthly_price: number): Schemas.TierResponse => ({
+const tier = (
+  code: string,
+  monthly_price: number,
+  fit: Partial<Pick<Schemas.TierResponse, 'engines' | 'hostings'>> = {},
+): Schemas.TierResponse => ({
   code,
   name: code.toUpperCase(),
   currency: 'EUR',
@@ -23,6 +27,7 @@ const tier = (code: string, monthly_price: number): Schemas.TierResponse => ({
   hostings: ['shared'],
   monthly_price,
   offer: monthly_price > 0 ? 'standard' : 'free',
+  ...fit,
 })
 
 const account = (complete: boolean): Schemas.BillingAccountResponse => ({
@@ -38,6 +43,7 @@ const props = (over: Partial<SubscriptionCardProps> = {}): SubscriptionCardProps
   isLoading: false,
   isError: false,
   tiers: [tier('scale-2026', 34900)],
+  fit: { engine: 'ferriskey', hosting: 'shared' },
   access: { canManage: true, account: account(true) },
   changing: null,
   onChange: noop,
@@ -87,11 +93,50 @@ describe('the tier change', () => {
     expect(html).not.toContain('STANDARD-2026')
   })
 
-  it('is not shown when no tier is selectable, and says the catalogue is not open yet', () => {
+  it('is not shown when the catalogue is empty, and says it is not open yet', () => {
     const html = render({ tiers: [] })
     expect(html).not.toContain('Change tier')
     expect(html).not.toContain('<button')
     expect(html).toContain('The tier catalogue is not open yet.')
+    expect(html).not.toContain('No other tier available.')
+  })
+
+  it('is not shown when the catalogue only holds the current tier, and says no other is available', () => {
+    const html = render({ tiers: [tier('standard-2026', 9900)] })
+    expect(html).not.toContain('Change tier')
+    expect(html).not.toContain('<button')
+    expect(html).toContain('No other tier available.')
+    expect(html).not.toContain('The tier catalogue is not open yet.')
+  })
+
+  it('offers only the tiers that fit the engine and the hosting of the deployment', () => {
+    const html = render({
+      tiers: [
+        tier('scale-2026', 34900),
+        tier('keycloak-2026', 19900, { engines: ['keycloak'] }),
+        tier('cloud-2026', 49900, { hostings: ['customer_cloud'] }),
+        tier('wide-2026', 59900, { engines: ['ferriskey', 'keycloak'], hostings: ['shared', 'self_hosted'] }),
+      ],
+    })
+    expect(html).toContain('SCALE-2026')
+    expect(html).toContain('WIDE-2026')
+    expect(html).not.toContain('KEYCLOAK-2026')
+    expect(html).not.toContain('CLOUD-2026')
+  })
+
+  it('follows the hosting of the deployment', () => {
+    const html = render({
+      fit: { engine: 'ferriskey', hosting: 'customer_cloud' },
+      tiers: [tier('scale-2026', 34900), tier('cloud-2026', 49900, { hostings: ['customer_cloud'] })],
+    })
+    expect(html).toContain('CLOUD-2026')
+    expect(html).not.toContain('SCALE-2026')
+  })
+
+  it('says no other is available when nothing fits, although the catalogue is not empty', () => {
+    const html = render({ tiers: [tier('keycloak-2026', 19900, { engines: ['keycloak'] })] })
+    expect(html).toContain('No other tier available.')
+    expect(html).not.toContain('The tier catalogue is not open yet.')
   })
 
   it('is not shown while the tiers are unknown', () => {
@@ -111,6 +156,12 @@ describe('the tier change', () => {
     const html = render({ access: { canManage: true, account: account(false) } })
     expect(html).toContain('disabled=""')
     expect(html).toContain(NEEDS_PAYMENT_METHOD)
+  })
+
+  it('leaves a paid tier to the server when the account is unknown', () => {
+    const html = render({ access: { canManage: true, account: undefined } })
+    expect(html).not.toContain('disabled=""')
+    expect(html).not.toContain('Add the billing details first')
   })
 
   it('is disabled with the reason for a paid tier when there is no account', () => {

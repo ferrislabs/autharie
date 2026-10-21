@@ -5,6 +5,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { formatDistanceToNow } from 'date-fns'
 import { ProvisioningNoticeBanner } from '@/domain/cloud-providers/pages/ui/provisioning-notice'
 import { describeDistribution } from '@/domain/cloud-providers/distribution'
+import { hostingOf } from '@/domain/billing/billing'
 import { provisioningNotice } from '@/domain/cloud-providers/provisioning'
 import { KIND_LABELS } from '../../types/deployment'
 import type { AvailabilityView } from '../../availability'
@@ -16,7 +17,7 @@ interface Props {
   deployment?: Schemas.Deployment
   actions: Schemas.Action[]
   availability: AvailabilityView
-  subscription: SubscriptionCardProps
+  subscription: Omit<SubscriptionCardProps, 'fit'>
   provisioning?: Schemas.Provisioning | null
   clusterPanel?: React.ReactNode
   isLoading: boolean
@@ -84,7 +85,10 @@ export function PageDeploymentDetail({
 
         <AvailabilityCard view={availability} />
 
-        <SubscriptionCard {...subscription} />
+        <SubscriptionCard
+          {...subscription}
+          fit={{ engine: deployment.kind, hosting: hostingOf(deployment.distribution) }}
+        />
 
         {clusterPanel}
 

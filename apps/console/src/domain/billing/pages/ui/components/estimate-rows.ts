@@ -6,6 +6,10 @@ export type EstimateRow = {
   amount: number
 }
 
+function nameOf(id: string, names: ReadonlyMap<string, string>): string {
+  return names.get(id) ?? `Unknown deployment (${id.slice(0, 8)})`
+}
+
 export function estimateRows(
   lines: ReadonlyArray<Schemas.StatementLineResponse>,
   names: ReadonlyMap<string, string>,
@@ -16,6 +20,6 @@ export function estimateRows(
   }
 
   return [...amounts]
-    .map(([id, amount]) => ({ id, name: names.get(id) ?? id, amount }))
+    .map(([id, amount]) => ({ id, name: nameOf(id, names), amount }))
     .sort((a, b) => a.name.localeCompare(b.name))
 }

@@ -1,4 +1,5 @@
 import type { Schemas } from '@/api/api.client'
+import { ApiRequestError } from '@/api/api.fetch'
 
 const EUR = new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'EUR' })
 
@@ -10,7 +11,12 @@ export const NEEDS_PAYMENT_METHOD = 'Add a valid payment method first.'
 
 export type BillingAccess = {
   canManage: boolean
-  account: Schemas.BillingAccountResponse | null
+  account: Schemas.BillingAccountResponse | null | undefined
+}
+
+export type TierFit = {
+  engine: Schemas.DeploymentKind
+  hosting: Schemas.Hosting
 }
 
 export function formatMinor(minor: number): string {
@@ -23,7 +29,8 @@ export function isPaid(tier: { monthly_price: number }): boolean {
 
 export function paidActionBlock(access: BillingAccess): string | null {
   if (!access.canManage) return NEEDS_BILLING_RIGHT
-  if (!access.account) return NEEDS_BILLING_DETAILS
+  if (access.account === undefined) return null
+  if (access.account === null) return NEEDS_BILLING_DETAILS
   if (!access.account.complete) return NEEDS_PAYMENT_METHOD
   return null
 }
@@ -36,7 +43,27 @@ export function payNowUrl(statement: {
   return statement.hosted_invoice_url ?? null
 }
 
-export function currentPeriod(now: Date): string {
-  const month = String(now.getUTCMonth() + 1).padStart(2, '0')
-  return `${now.getUTCFullYear()}-${month}`
+export function accountOf(
+  canView: boolean,
+  query: { data?: Schemas.BillingAccountResponse; error: Error | null },
+): Schemas.BillingAccountResponse | null | undefined {
+  if (!canView) return undefined
+  if (query.data) return query.data
+  if (query.error instanceof ApiRequestError && query.error.status === 404) return null
+  return undefined
+}
+
+export function fittingTiers(
+  tiers: ReadonlyArray<Schemas.TierResponse>,
+  fit: TierFit,
+): Schemas.TierResponse[] {
+  return tiers.filter(
+    (tier) => tier.engines.includes(fit.engine) && tier.hostings.includes(fit.hosting),
+  )
+}
+
+export function hostingOf(distribution: Schemas.Distribution): Schemas.Hosting {
+  if (distribution === 'shared') return 'shared'
+  if (distribution === 'self_hosted') return 'self_hosted'
+  return 'customer_cloud'
 }

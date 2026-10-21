@@ -2,6 +2,7 @@ import type { Schemas } from '@/api/api.client'
 import { isPaid, paidActionBlock, type BillingAccess } from '@/domain/billing/billing'
 import { type Environment } from './types/deployment'
 import type { Offer } from './offers'
+import type { Hosting } from './pricing/model'
 
 export interface CreateDeploymentForm {
   name: string
@@ -35,4 +36,46 @@ export function createBlock(
   access: BillingAccess,
 ): string | null {
   return tier && isPaid(tier) ? paidActionBlock(access) : null
+}
+
+export function apiHostingOf(hosting: Hosting): Schemas.Hosting {
+  return hosting === 'byoc' ? 'customer_cloud' : 'shared'
+}
+
+export interface SubmissionInput {
+  name: string
+  version: string
+  environment: Environment
+  tier: Schemas.TierResponse | undefined
+  gridOffer: Offer | undefined
+  loading: boolean
+  submitting: boolean
+  block: string | null
+}
+
+function offerOf({ tier, gridOffer }: SubmissionInput): Offer | undefined {
+  return tier ? tier.offer : gridOffer
+}
+
+export function canSubmit(input: SubmissionInput): boolean {
+  return (
+    offerOf(input) !== undefined &&
+    input.name.trim() !== '' &&
+    input.version !== '' &&
+    !input.submitting &&
+    !input.loading
+  )
+}
+
+export function submission(input: SubmissionInput): CreateDeploymentForm | null {
+  const offer = offerOf(input)
+  if (offer === undefined || !canSubmit(input) || input.block !== null) return null
+
+  return {
+    name: input.name,
+    version: input.version,
+    environment: input.environment,
+    offer,
+    ...(input.tier ? { tier: input.tier.code } : {}),
+  }
 }

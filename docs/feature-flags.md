@@ -47,7 +47,7 @@ Member endpoint:
 | --- | --- | --- |
 | `GET /organisations/{organisation_id}/feature-flags` | Members who can view the organisation's deployments | `{ "enabled": ["customer_cloud"] }`: the effective keys only. |
 
-The member endpoint is `feature-flags` rather than `features` because `GET /organisations/{organisation_id}/features` already lists the IAM features a plan opens.
+The member endpoint is `feature-flags` rather than `features` because `GET /organisations/{organisation_id}/deployments/{deployment_id}/features` already lists the features a deployment's subscription opens.
 
 ## `customer_cloud`
 

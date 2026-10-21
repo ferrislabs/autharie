@@ -1,7 +1,7 @@
 import type { Schemas } from '@/api/api.client'
 import { Button } from '@/components/ui/button'
 import { newestInstallable } from '@/domain/releases/catalogue'
-import type { BillingAccess } from '@/domain/billing/billing'
+import { fittingTiers, type BillingAccess } from '@/domain/billing/billing'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -15,7 +15,14 @@ import { Page, PageTitle, Section } from '@/components/layout/page'
 import { useOrganisationPath } from '@/domain/organisations/hooks/use-organisation-path'
 import { useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
-import { createBlock } from '../../create-deployment-request'
+import {
+  apiHostingOf,
+  canSubmit as readyToSubmit,
+  createBlock,
+  submission,
+  type CreateDeploymentForm,
+  type SubmissionInput,
+} from '../../create-deployment-request'
 import { type Environment } from '../../types/deployment'
 import { OFFER_COPY, openOffers, type Offer, type OfferAvailability } from '../../offers'
 import { FREE_OFFER, FREE_OFFER_COPY, isFreeOnly } from '../../free-offer'
@@ -31,13 +38,7 @@ import { VolumePicker } from './components/volume-picker'
 const PLANS: PlanId[] = ['starter', 'business', 'scale']
 
 interface Props {
-  onSubmit: (data: {
-    name: string
-    version: string
-    environment: Environment
-    offer: Offer
-    tier?: string
-  }) => void
+  onSubmit: (data: CreateDeploymentForm) => void
   isSubmitting?: boolean
   /** What the platform said when the last attempt failed. */
   refusal?: string
@@ -46,6 +47,7 @@ interface Props {
   releases: Schemas.Release[]
   releasesLoading: boolean
   tiers: Schemas.TierResponse[]
+  tiersLoading: boolean
   billing: BillingAccess
 }
 
@@ -88,6 +90,7 @@ export default function PageCreateDeployment({
   releases,
   releasesLoading,
   tiers,
+  tiersLoading,
   billing,
 }: Props) {
   const navigate = useNavigate()
@@ -130,10 +133,24 @@ export default function PageCreateDeployment({
     setMovedToBusiness(change.movedToBusiness)
   }
 
-  const tier = tiers.find((candidate) => candidate.code === pickedTier) ?? tiers[0]
+  const fitting = fittingTiers(tiers, {
+    engine: selection.engine,
+    hosting: apiHostingOf(selection.hosting),
+  })
+  const tier = fitting.find((candidate) => candidate.code === pickedTier) ?? fitting[0]
   const block = createBlock(tier, billing)
 
-  const canSubmit = !!chosen && name.trim() !== '' && version !== '' && !isSubmitting
+  const draft: SubmissionInput = {
+    name,
+    version,
+    environment,
+    tier,
+    gridOffer: chosen,
+    loading: tiersLoading,
+    submitting: isSubmitting,
+    block,
+  }
+  const canSubmit = readyToSubmit(draft)
 
   return (
     <Page className='max-w-3xl'>
@@ -143,15 +160,8 @@ export default function PageCreateDeployment({
         className='mt-8 space-y-8'
         onSubmit={(e) => {
           e.preventDefault()
-          if (chosen && block === null) {
-            onSubmit({
-              name,
-              version,
-              environment,
-              offer: chosen,
-              tier: tier?.code,
-            })
-          }
+          const form = submission(draft)
+          if (form) onSubmit(form)
         }}
       >
         <Section title='Details'>
@@ -186,35 +196,36 @@ export default function PageCreateDeployment({
           </div>
         </Section>
 
-        {freeOnly ? (
-          <Section title='Offer'>
-            <FreeOfferSection />
-          </Section>
-        ) : (
-          <>
-            <Section title='Plan'>
-              <PlanPicker
-                selection={selection}
-                onSelect={(next) => commit({ plan: next })}
-                movedNotice={movedToBusiness ? STARTER_MOVED_NOTICE : undefined}
-                closedPlans={closedPlans}
-              />
+        {!tier &&
+          (freeOnly ? (
+            <Section title='Offer'>
+              <FreeOfferSection />
             </Section>
+          ) : (
+            <>
+              <Section title='Plan'>
+                <PlanPicker
+                  selection={selection}
+                  onSelect={(next) => commit({ plan: next })}
+                  movedNotice={movedToBusiness ? STARTER_MOVED_NOTICE : undefined}
+                  closedPlans={closedPlans}
+                />
+              </Section>
 
-            <Section title='Expected volume'>
-              <VolumePicker
-                hosting='managed'
-                engine='ferriskey'
-                volume={volume}
-                onChange={(next) => commit({ volume: next })}
-              />
-            </Section>
-          </>
-        )}
+              <Section title='Expected volume'>
+                <VolumePicker
+                  hosting='managed'
+                  engine='ferriskey'
+                  volume={volume}
+                  onChange={(next) => commit({ volume: next })}
+                />
+              </Section>
+            </>
+          ))}
 
         {tier && (
           <Section title='Tier'>
-            <TierPicker tiers={tiers} selected={tier.code} onSelect={setPickedTier} />
+            <TierPicker tiers={fitting} selected={tier.code} onSelect={setPickedTier} />
           </Section>
         )}
 
@@ -225,13 +236,13 @@ export default function PageCreateDeployment({
           </p>
         )}
 
-        {!offersLoading && open.length === 0 && (
+        {!tier && !offersLoading && open.length === 0 && (
           <p className='rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive'>
             This organisation's plan opens no offer, so there is nothing to deploy on.
           </p>
         )}
 
-        {derivedClosed && (
+        {!tier && derivedClosed && (
           <p className='rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200'>
             {OFFER_COPY[derived].label} fits this choice, but it is not available on your plan.
             Choose another plan or volume.
