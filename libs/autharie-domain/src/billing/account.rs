@@ -3,7 +3,10 @@ use std::{fmt, str::FromStr};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::{billing::BillingError, organisation::OrganisationId};
+use crate::{
+    billing::{BillingError, card::CardSummary},
+    organisation::OrganisationId,
+};
 
 const PROVIDER_REFERENCE_MAX_LEN: usize = 255;
 const NAME_MAX_LEN: usize = 200;
@@ -284,6 +287,7 @@ pub struct BillingAccount {
     pub details: BillingDetails,
     pub customer: Option<ProviderCustomerId>,
     pub payment_method: PaymentMethodStatus,
+    pub card: Option<CardSummary>,
 }
 
 impl BillingAccount {
@@ -293,6 +297,7 @@ impl BillingAccount {
             details,
             customer: None,
             payment_method: PaymentMethodStatus::Missing,
+            card: None,
         }
     }
 

@@ -46,6 +46,18 @@ pub struct BillingAccountRequest {
 }
 
 #[derive(Debug, Serialize, ToSchema, PartialEq)]
+pub struct CardResponse {
+    #[schema(example = "visa")]
+    pub brand: String,
+    #[schema(example = "4242")]
+    pub last4: String,
+    #[schema(example = 4)]
+    pub exp_month: u8,
+    #[schema(example = 2027)]
+    pub exp_year: u16,
+}
+
+#[derive(Debug, Serialize, ToSchema, PartialEq)]
 pub struct BillingAccountResponse {
     pub name: String,
     pub email: String,
@@ -53,6 +65,7 @@ pub struct BillingAccountResponse {
     pub vat_number: Option<String>,
     pub siren: Option<String>,
     pub payment_method: PaymentMethodStatus,
+    pub card: Option<CardResponse>,
     pub complete: bool,
 }
 
@@ -79,6 +92,12 @@ impl From<&BillingAccount> for BillingAccountResponse {
                 .as_ref()
                 .map(|siren| siren.as_str().to_string()),
             payment_method: account.payment_method,
+            card: account.card.as_ref().map(|card| CardResponse {
+                brand: card.brand().to_string(),
+                last4: card.last4().to_string(),
+                exp_month: card.exp_month(),
+                exp_year: card.exp_year(),
+            }),
             complete: account.is_complete(),
         }
     }
@@ -184,7 +203,7 @@ pub async fn put_billing_account_handler(
 
 #[cfg(test)]
 mod tests {
-    use autharie_core::billing::ProviderCustomerId;
+    use autharie_core::billing::{CardSummary, CardSummaryInput, ProviderCustomerId};
     use serde_json::json;
 
     use super::*;
@@ -295,5 +314,45 @@ mod tests {
         assert!(!answer.contains("cus_secret"), "{answer}");
         assert!(answer.contains("\"complete\":true"), "{answer}");
         assert!(answer.contains("\"payment_method\":\"valid\""), "{answer}");
+    }
+
+    #[test]
+    fn the_answer_names_the_card_on_file_and_nothing_else_about_it() {
+        let details = BillingDetails::try_from(&request()).expect("valid details");
+        let account = BillingAccount {
+            customer: Some(ProviderCustomerId::parse("cus_secret").expect("a customer")),
+            payment_method: PaymentMethodStatus::Valid,
+            card: Some(
+                CardSummary::parse(CardSummaryInput {
+                    brand: "visa",
+                    last4: "4242",
+                    exp_month: 4,
+                    exp_year: 2027,
+                })
+                .expect("a card"),
+            ),
+            ..BillingAccount::new(OrganisationId::new(), details)
+        };
+
+        let answer = serde_json::to_string(&BillingAccountResponse::from(&account))
+            .expect("a serializable answer");
+
+        assert!(
+            answer.contains(
+                "\"card\":{\"brand\":\"visa\",\"last4\":\"4242\",\"exp_month\":4,\"exp_year\":2027}"
+            ),
+            "{answer}"
+        );
+    }
+
+    #[test]
+    fn the_answer_has_a_null_card_when_none_is_on_file() {
+        let details = BillingDetails::try_from(&request()).expect("valid details");
+        let account = BillingAccount::new(OrganisationId::new(), details);
+
+        let answer = serde_json::to_string(&BillingAccountResponse::from(&account))
+            .expect("a serializable answer");
+
+        assert!(answer.contains("\"card\":null"), "{answer}");
     }
 }

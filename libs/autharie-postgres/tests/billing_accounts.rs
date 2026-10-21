@@ -2,8 +2,8 @@ use autharie_domain::{
     CoreError,
     billing::{
         BillingAccount, BillingAddress, BillingAddressInput, BillingDetails, BillingEmail,
-        BillingName, PaymentMethodStatus, ProviderCustomerId, Siren, VatNumber,
-        ports::BillingAccountRepository,
+        BillingName, CardSummary, CardSummaryInput, PaymentMethodStatus, ProviderCustomerId, Siren,
+        VatNumber, ports::BillingAccountRepository,
     },
     organisation::OrganisationId,
 };
@@ -78,6 +78,16 @@ fn minimal_details() -> BillingDetails {
 
 fn customer(raw: &str) -> ProviderCustomerId {
     ProviderCustomerId::parse(raw).unwrap()
+}
+
+fn visa() -> CardSummary {
+    CardSummary::parse(CardSummaryInput {
+        brand: "visa",
+        last4: "4242",
+        exp_month: 4,
+        exp_year: 2027,
+    })
+    .unwrap()
 }
 
 #[tokio::test]
@@ -251,4 +261,85 @@ async fn a_stored_value_the_domain_refuses_is_a_database_error_naming_the_column
         }
         other => panic!("expected a database error, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn a_card_is_saved_and_read_back() {
+    let _pool = pool_or_skip!();
+
+    let (by_organisation, by_customer, account) = scratch(async |tx| {
+        let accounts = PostgresBillingAccountRepository::new(&tx);
+        let account = BillingAccount {
+            customer: Some(customer("cus_card")),
+            payment_method: PaymentMethodStatus::Valid,
+            card: Some(visa()),
+            ..BillingAccount::new(OrganisationId(Uuid::new_v4()), complete_details())
+        };
+        accounts.save(&account).await?;
+
+        Ok((
+            accounts.find(&account.organisation_id).await?,
+            accounts.find_by_customer(&customer("cus_card")).await?,
+            account,
+        ))
+    })
+    .await
+    .expect("the database is set");
+
+    assert_eq!(by_organisation.as_ref(), Some(&account));
+    assert_eq!(by_customer.and_then(|found| found.card), Some(visa()));
+}
+
+#[tokio::test]
+async fn saving_again_without_a_card_clears_the_card() {
+    let _pool = pool_or_skip!();
+
+    let found = scratch(async |tx| {
+        let accounts = PostgresBillingAccountRepository::new(&tx);
+        let organisation = OrganisationId(Uuid::new_v4());
+
+        accounts
+            .save(&BillingAccount {
+                card: Some(visa()),
+                ..BillingAccount::new(organisation, complete_details())
+            })
+            .await?;
+        accounts
+            .save(&BillingAccount::new(organisation, complete_details()))
+            .await?;
+
+        accounts.find(&organisation).await
+    })
+    .await
+    .expect("the database is set");
+
+    assert_eq!(found.map(|account| account.card), Some(None));
+}
+
+#[tokio::test]
+async fn a_card_the_database_holds_halfway_is_refused_by_the_database() {
+    let _pool = pool_or_skip!();
+
+    let outcome = scratch(async |tx| {
+        let mut guard = tx.lock().await;
+
+        Ok(sqlx::query(
+            "INSERT INTO billing_accounts \
+             (organisation_id, name, email, address_line1, postal_code, city, country, card_brand) \
+             VALUES ($1, 'Acme', 'billing@acme.test', '1 rue', '75002', 'Paris', 'FR', 'visa')",
+        )
+        .bind(Uuid::new_v4())
+        .execute(&mut ***guard)
+        .await)
+    })
+    .await
+    .expect("the database is set");
+
+    let error = outcome
+        .expect_err("a brand alone is not a card")
+        .to_string();
+    assert!(
+        error.contains("billing_accounts_card_all_or_nothing"),
+        "{error}"
+    );
 }
