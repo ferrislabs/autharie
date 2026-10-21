@@ -5,6 +5,7 @@ use reqwest::Client;
 
 use crate::domain::entities::usage::{CounterSample, UsageMetric, UsageTarget};
 use crate::domain::error::HeraldError;
+use crate::domain::operational::is_operational_path;
 use crate::domain::ports::UsageSource;
 use crate::infrastructure::usage::prometheus::{label, sum_where};
 
@@ -92,7 +93,12 @@ impl UsageSource for FerriskeyUsageSource {
                 message: format!("could not read the body of {url}: {err}"),
             })?;
 
-        let Some(requests) = sum_where(&exposition, REQUESTS, |_| true) else {
+        let Some(requests) = sum_where(&exposition, REQUESTS, |labels| {
+            // Probes and Herald's own scrape are not the customer's traffic.
+            // A series with no endpoint label cannot be told apart, so it
+            // counts.
+            !label(labels, "endpoint").is_some_and(|endpoint| is_operational_path(&endpoint))
+        }) else {
             // The instance answered, but with no counter Herald knows how to
             // read. That is a fact about the build, not about this minute.
             return Ok(None);
@@ -154,7 +160,7 @@ axum_http_requests_total{endpoint="/api/health",method="GET",status="200"} 400
             .expect("a reading")
             .expect("counters");
 
-        assert_eq!(sample.totals.get(&UsageMetric::Requests), Some(&415));
+        assert_eq!(sample.totals.get(&UsageMetric::Requests), Some(&15));
         assert_eq!(sample.totals.get(&UsageMetric::TokenEvents), Some(&12));
     }
 
@@ -182,13 +188,40 @@ axum_http_requests_total{endpoint="/api/health",method="GET",status="200"} 400
     }
 
     #[tokio::test]
+    async fn probes_and_scrapes_are_not_requests_but_unlabelled_series_are() {
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET).path("/api/metrics");
+                then.status(200).body(
+                    r#"
+axum_http_requests_total{endpoint="/api/health/ready",method="GET",status="200"} 50
+axum_http_requests_total{endpoint="/api/health/live",method="GET",status="200"} 60
+axum_http_requests_total{endpoint="/api/metrics",method="GET",status="200"} 70
+axum_http_requests_total{endpoint="/api/realms/{realm_name}",method="GET",status="200"} 5
+axum_http_requests_total{method="GET",status="200"} 2
+"#,
+                );
+            })
+            .await;
+
+        let sample = source(&server)
+            .sample(&target())
+            .await
+            .expect("a reading")
+            .expect("counters");
+
+        assert_eq!(sample.totals.get(&UsageMetric::Requests), Some(&7));
+    }
+
+    #[tokio::test]
     async fn an_instance_with_no_token_traffic_yet_reports_no_token_bucket() {
         let server = MockServer::start_async().await;
         server
             .mock_async(|when, then| {
                 when.method(GET).path("/api/metrics");
                 then.status(200).body(
-                    r#"axum_http_requests_total{endpoint="/api/health",method="GET",status="200"} 4"#,
+                    r#"axum_http_requests_total{endpoint="/api/realms/{realm_name}",method="GET",status="200"} 4"#,
                 );
             })
             .await;

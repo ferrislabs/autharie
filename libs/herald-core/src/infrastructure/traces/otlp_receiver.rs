@@ -270,4 +270,23 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
+
+    #[tokio::test]
+    async fn an_export_of_only_health_checks_is_acknowledged_without_shipping() {
+        let mut resolver = MockDeploymentResolver::new();
+        resolver.expect_resolve().returning(|_| {
+            Box::pin(async { Some((OrganisationId::new("org-1"), DeploymentId::new("dep-1"))) })
+        });
+        let mut sink = MockTraceIndexSink::new();
+        sink.expect_ship().times(0);
+
+        let (addr, _handle) = start_server(resolver, sink).await;
+
+        let mut request = sample_request();
+        request.resource_spans[0].scope_spans[0].spans[0].name =
+            "GET /api/health/ready".to_string();
+        let response = send_export(addr, request.encode_to_vec()).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
 }
