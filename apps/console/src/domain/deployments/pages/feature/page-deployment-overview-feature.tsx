@@ -15,7 +15,7 @@ import {
 } from '@/domain/cloud-providers/resize'
 import { useResolvedOrganisationId } from '@/domain/organisations/hooks/use-resolved-organisation-id'
 import type { MetricKey } from '@/domain/usage/series'
-import { toActivity, hostnameFromActions } from '../../overview/activity'
+import { toActivity } from '../../overview/activity'
 import { toAvailabilityDays, unobservedDays } from '../../overview/availability'
 import {
   adminUrlOf,
@@ -111,7 +111,7 @@ export default function PageDeploymentOverviewFeature() {
   const subject = deployment.data?.data
   if (deployment.isLoading || !subject) return <PageDeploymentOverviewSkeleton />
 
-  const hostname = hostnameFromActions(actions.data?.data ?? [])
+  const hostname = subject.hostname ?? undefined
   const endpoint = endpointOf(hostname)
   const notice = provisioningNotice(subject, deployment.data?.provisioning)
 

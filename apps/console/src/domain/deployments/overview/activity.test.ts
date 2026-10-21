@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Schemas } from '@/api/api.client'
-import { hostnameFromActions, outcomeOf, toActivity } from './activity'
+import { outcomeOf, toActivity } from './activity'
 
 function action(overrides: Partial<Schemas.Action> & { id: string }): Schemas.Action {
   return {
@@ -76,22 +76,3 @@ describe('toActivity', () => {
   })
 })
 
-describe('hostnameFromActions', () => {
-  it('takes the hostname from the newest action that carries one', () => {
-    const older = action({
-      id: 'a',
-      payload: { data: { hostname: 'old.example.com' } },
-    })
-    const newer = action({
-      id: 'b',
-      metadata: { constraints: {}, created_at: '2026-10-22T11:00:00Z', source: 'System' },
-      payload: { data: { hostname: 'new.example.com' } },
-    })
-
-    expect(hostnameFromActions([older, newer])).toBe('new.example.com')
-  })
-
-  it('is undefined when no action carries one', () => {
-    expect(hostnameFromActions([action({ id: 'a' })])).toBeUndefined()
-  })
-})

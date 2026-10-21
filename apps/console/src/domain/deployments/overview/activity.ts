@@ -44,10 +44,3 @@ export function toActivity(actions: Schemas.Action[]): ActivityEntry[] {
     }))
 }
 
-export function hostnameFromActions(actions: Schemas.Action[]): string | undefined {
-  for (const action of newestFirst(actions)) {
-    const hostname = field(action, 'hostname')
-    if (hostname) return hostname
-  }
-  return undefined
-}

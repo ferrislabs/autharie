@@ -7,7 +7,7 @@ const SHOWN_DAYS = 90
 export function toAvailabilityDays(days: AvailabilityDayResponse[]): AvailabilityDay[] {
   return days.map((entry) => ({
     day: Date.parse(`${entry.day}T00:00:00Z`),
-    uptime: entry.uptime,
+    uptime: entry.uptime ?? null,
     downMinutes: Math.round(entry.down_seconds / 60),
   }))
 }
