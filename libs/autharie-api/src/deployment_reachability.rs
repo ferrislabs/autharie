@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use autharie_core::deployments::ports::DeploymentService;
-use autharie_core::deployments::reachability_history::ReachabilityCheck;
+use autharie_core::deployments::reachability_history::{PROBE_INTERVAL_SECONDS, ReachabilityCheck};
 use autharie_core::signals::{Signal, SignalId, SignalKind, SignalSubject};
 use chrono::Utc;
 use reqwest::Client;
@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::state::AppState;
 
-const EVERY: Duration = Duration::from_secs(60);
+const EVERY: Duration = Duration::from_secs(PROBE_INTERVAL_SECONDS as u64);
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 
 fn health_path_for_kind(kind: &autharie_core::deployments::DeploymentKind) -> &'static str {
@@ -130,6 +130,11 @@ mod tests {
             health_path_for_kind(&DeploymentKind::Keycloak),
             "/health/ready"
         );
+    }
+
+    #[test]
+    fn probe_runs_every_interval_the_history_counts_in() {
+        assert_eq!(EVERY.as_secs(), 60);
     }
 
     #[test]

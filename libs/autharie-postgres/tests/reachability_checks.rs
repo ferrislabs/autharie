@@ -13,7 +13,7 @@ use autharie_domain::{
     deployments::{
         Deployment, DeploymentId, DeploymentKind, DeploymentName, DeploymentStatus,
         ports::DeploymentRepository,
-        reachability_history::{ReachabilityCheck, ReachabilityCheckRepository},
+        reachability_history::{DailyCheckCount, ReachabilityCheck, ReachabilityCheckRepository},
     },
     organisation::OrganisationId,
     user::UserId,
@@ -180,6 +180,61 @@ async fn checks_since_are_bounded_ordered_and_scoped_to_the_deployment() {
             ]
         );
         assert!(repository.get_checks_since(mine, at(31)).await?.is_empty());
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn daily_counts_group_by_utc_day_and_leave_out_empty_days() {
+    let Some(pool) = pool().await else {
+        return;
+    };
+
+    scratch(&pool, async |tx| {
+        let dataplane = data_plane(&tx).await;
+        let mine = a_deployment(&tx, dataplane.id).await.id;
+        let other = a_deployment(&tx, dataplane.id).await.id;
+        let repository = PostgresReachabilityChecksRepository::new(&tx);
+
+        let first = chrono::NaiveDate::from_ymd_opt(2026, 3, 10).unwrap();
+        let at = |day: u32, hour: u32, minute: u32| {
+            chrono::NaiveDate::from_ymd_opt(2026, 3, day)
+                .unwrap()
+                .and_hms_opt(hour, minute, 0)
+                .unwrap()
+                .and_utc()
+        };
+
+        let inserted = [
+            check(mine, at(9, 23, 59), false),
+            check(mine, at(10, 0, 0), true),
+            check(mine, at(10, 23, 59), false),
+            check(mine, at(10, 12, 0), false),
+            check(mine, at(12, 0, 0), true),
+            check(other, at(10, 5, 0), false),
+        ];
+        for check in inserted {
+            repository.record_check(check).await?;
+        }
+
+        let counts = repository.daily_check_counts(mine, first).await?;
+
+        assert_eq!(
+            counts,
+            vec![
+                DailyCheckCount {
+                    day: first,
+                    checks: 3,
+                    failed: 2,
+                },
+                DailyCheckCount {
+                    day: first + Duration::days(2),
+                    checks: 1,
+                    failed: 0,
+                },
+            ]
+        );
         Ok(())
     })
     .await;

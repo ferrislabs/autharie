@@ -1,11 +1,12 @@
 use std::future::Future;
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::{CoreError, deployments::DeploymentId};
 
+pub mod history_service;
 pub mod service;
 
 /// A single deployment reachability check result.
@@ -149,6 +150,91 @@ pub fn availability(
     }
 }
 
+/// How often the probe checks a deployment. The probe loop and the daily
+/// availability history both read this, so the downtime a day reports is
+/// counted in the same unit the checks were taken in.
+pub const PROBE_INTERVAL_SECONDS: i64 = 60;
+
+/// Longest history the console may ask for.
+pub const MAX_HISTORY_DAYS: u32 = 90;
+
+/// The checks recorded on one UTC calendar day, as counted by the database.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DailyCheckCount {
+    pub day: NaiveDate,
+    pub checks: i64,
+    pub failed: i64,
+}
+
+/// One UTC calendar day of a deployment's availability.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct DailyAvailability {
+    pub day: NaiveDate,
+    pub checks: i64,
+    pub failed: i64,
+    /// `(checks - failed) / checks` as a fraction, at full precision. `None`
+    /// when no check ran that day, which is not the same as a day it was down.
+    pub uptime: Option<f64>,
+    /// Failed checks times the probe interval.
+    pub down_seconds: i64,
+}
+
+/// Day-by-day availability over a window ending today, oldest day first.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct AvailabilityHistory {
+    pub days: Vec<DailyAvailability>,
+    /// Over every check in the window, not the mean of the daily figures, so a
+    /// day with few checks does not weigh as much as a full one. `None` when
+    /// the window holds no check.
+    pub uptime: Option<f64>,
+    pub probe_interval_seconds: i64,
+}
+
+fn uptime_of(checks: i64, failed: i64) -> Option<f64> {
+    (checks > 0).then(|| (checks - failed) as f64 / checks as f64)
+}
+
+/// Builds `days` UTC calendar days ending on `today`, filling in the days the
+/// database had no row for. Counts outside the window are ignored. Nothing is
+/// rounded here; that is for whoever displays the figure.
+pub fn availability_history(
+    counts: &[DailyCheckCount],
+    today: NaiveDate,
+    days: u32,
+) -> AvailabilityHistory {
+    let mut total_checks = 0_i64;
+    let mut total_failed = 0_i64;
+
+    let days = (0..days)
+        .rev()
+        .map(|back| {
+            let day = today - Duration::days(i64::from(back));
+            let (checks, failed) = counts
+                .iter()
+                .filter(|count| count.day == day)
+                .fold((0, 0), |(checks, failed), count| {
+                    (checks + count.checks, failed + count.failed)
+                });
+            total_checks += checks;
+            total_failed += failed;
+
+            DailyAvailability {
+                day,
+                checks,
+                failed,
+                uptime: uptime_of(checks, failed),
+                down_seconds: failed * PROBE_INTERVAL_SECONDS,
+            }
+        })
+        .collect();
+
+    AvailabilityHistory {
+        days,
+        uptime: uptime_of(total_checks, total_failed),
+        probe_interval_seconds: PROBE_INTERVAL_SECONDS,
+    }
+}
+
 #[cfg_attr(test, mockall::automock)]
 pub trait ReachabilityCheckRepository: Send + Sync {
     fn record_check(
@@ -162,6 +248,14 @@ pub trait ReachabilityCheckRepository: Send + Sync {
         since: DateTime<Utc>,
     ) -> impl Future<Output = Result<Vec<ReachabilityCheck>, CoreError>> + Send;
 
+    /// Checks counted per UTC calendar day from the start of `since` onwards,
+    /// oldest first. A day without a check has no row.
+    fn daily_check_counts(
+        &self,
+        deployment_id: DeploymentId,
+        since: NaiveDate,
+    ) -> impl Future<Output = Result<Vec<DailyCheckCount>, CoreError>> + Send;
+
     fn purge_old_checks(
         &self,
         retention: chrono::Duration,
@@ -171,6 +265,72 @@ pub trait ReachabilityCheckRepository: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn day(offset: i64) -> NaiveDate {
+        NaiveDate::from_ymd_opt(2026, 10, 22).unwrap() + Duration::days(offset)
+    }
+
+    fn count(offset: i64, checks: i64, failed: i64) -> DailyCheckCount {
+        DailyCheckCount {
+            day: day(offset),
+            checks,
+            failed,
+        }
+    }
+
+    #[test]
+    fn an_empty_window_has_every_day_and_no_uptime() {
+        let history = availability_history(&[], day(0), 3);
+        assert_eq!(history.days.len(), 3);
+        assert_eq!(history.days[0].day, day(-2));
+        assert_eq!(history.days[2].day, day(0));
+        assert!(
+            history.days.iter().all(|d| d.checks == 0
+                && d.failed == 0
+                && d.uptime.is_none()
+                && d.down_seconds == 0)
+        );
+        assert_eq!(history.uptime, None);
+        assert_eq!(history.probe_interval_seconds, 60);
+    }
+
+    #[test]
+    fn a_day_without_checks_sits_between_days_with_checks() {
+        let history = availability_history(&[count(-2, 1440, 0), count(0, 100, 50)], day(0), 3);
+        assert_eq!(history.days[0].uptime, Some(1.0));
+        assert_eq!(history.days[1].checks, 0);
+        assert_eq!(history.days[1].uptime, None);
+        assert_eq!(history.days[2].uptime, Some(0.5));
+        assert_eq!(history.days[2].down_seconds, 3000);
+    }
+
+    #[test]
+    fn overall_uptime_weighs_every_check_equally() {
+        let history = availability_history(&[count(-1, 1000, 0), count(0, 10, 10)], day(0), 2);
+        assert_eq!(history.uptime, Some(1000.0 / 1010.0));
+    }
+
+    #[test]
+    fn counts_outside_the_window_are_ignored() {
+        let history = availability_history(&[count(-3, 10, 10), count(1, 10, 10)], day(0), 3);
+        assert_eq!(history.uptime, None);
+        assert_eq!(history.days.first().unwrap().day, day(-2));
+        assert_eq!(history.days.last().unwrap().day, day(0));
+    }
+
+    #[test]
+    fn the_figures_are_not_rounded() {
+        let history = availability_history(&[count(0, 1440, 3)], day(0), 1);
+        assert_eq!(history.days[0].uptime, Some(1437.0 / 1440.0));
+        assert_eq!(history.days[0].down_seconds, 180);
+    }
+
+    #[test]
+    fn a_single_day_window_is_today() {
+        let history = availability_history(&[count(0, 2, 1)], day(0), 1);
+        assert_eq!(history.days.len(), 1);
+        assert_eq!(history.days[0].day, day(0));
+    }
 
     fn at(seconds: i64) -> DateTime<Utc> {
         DateTime::from_timestamp(1_700_000_000 + seconds, 0).unwrap()

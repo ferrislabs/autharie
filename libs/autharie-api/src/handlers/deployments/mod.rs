@@ -4,6 +4,9 @@ use utoipa::OpenApi;
 
 use crate::{
     handlers::deployments::{
+        availability::{
+            __path_get_deployment_availability_handler, get_deployment_availability_handler,
+        },
         backups::{
             __path_ask_for_backup_handler, __path_get_backup_schedule_handler,
             __path_list_backups_handler, __path_restore_backup_handler,
@@ -40,10 +43,12 @@ use crate::{
     state::AppState,
 };
 
+pub mod availability;
 pub mod backups;
 pub mod create_deployment;
 pub mod cutover;
 pub mod delete_deployment;
+pub mod deployment_view;
 pub mod features;
 pub mod get_deployment;
 pub mod iam_settings;
@@ -71,6 +76,7 @@ pub mod upgrade_settings;
         set_upgrade_settings_handler,
         get_network_access_handler,
         set_network_access_handler,
+        get_deployment_availability_handler,
         get_iam_settings_handler,
         set_iam_settings_handler,
         list_backups_handler,
@@ -99,6 +105,7 @@ pub fn deployment_routes(app_state: AppState) -> Router<AppState> {
         .typed_get(read_logs_handler)
         .typed_put(set_upgrade_settings_handler)
         .typed_get(get_network_access_handler)
+        .typed_get(get_deployment_availability_handler)
         .typed_put(set_network_access_handler)
         .typed_get(get_iam_settings_handler)
         .typed_put(set_iam_settings_handler)
