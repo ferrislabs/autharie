@@ -2,14 +2,16 @@ use autharie_auth::Identity;
 use autharie_domain::{
     CoreError,
     billing::{
-        BillingError, BillingPeriod, ProviderEvent, ProviderEventKind, Statement, StatementStatus,
-        Subscription, Tier, TierCode,
+        BillingAccount, BillingDetails, BillingError, BillingPeriod, ProviderEvent,
+        ProviderEventKind, Statement, StatementLine, StatementStatus, Subscription,
+        SubscriptionTerms, Tier, TierCode,
+        accounts::{keep_details, open_payment_method_session},
         closing::PeriodClose,
         collection::{Collection, adopt_payment_method},
         lifecycle::SubscriptionLifecycle,
         ports::{
-            BillingPolicy, PaymentProvider, ProviderEventLog, StatementRepository,
-            SubscriptionRepository, SubscriptionService, TierRepository,
+            BillingAccountRepository, BillingPolicy, PaymentProvider, ProviderEventLog,
+            StatementRepository, SubscriptionRepository, SubscriptionService, TierRepository,
         },
         sending::StatementSending,
     },
@@ -34,6 +36,15 @@ pub struct BillingRun {
     pub closed: usize,
     pub sent: usize,
     pub failed: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StatementView {
+    Estimate {
+        period: BillingPeriod,
+        lines: Vec<StatementLine>,
+    },
+    Stored(Statement),
 }
 
 async fn live_deployment<D: DeploymentRepository>(
@@ -142,6 +153,140 @@ impl SubscriptionService for AutharieService {
 }
 
 impl AutharieService {
+    #[transactional(billing_account)]
+    pub async fn billing_account(
+        &self,
+        identity: Identity,
+        organisation_id: OrganisationId,
+    ) -> Result<BillingAccount, CoreError> {
+        BillingPolicy::can_view_billing(
+            &AuthariePolicy::new(permissions_in(&tx)),
+            identity,
+            organisation_id,
+        )
+        .await?;
+
+        Ok(billing_account_repository
+            .find(&organisation_id)
+            .await?
+            .ok_or(BillingError::NoBillingAccount)?)
+    }
+
+    #[transactional(billing_account)]
+    pub async fn save_billing_account<P: PaymentProvider>(
+        &self,
+        identity: Identity,
+        organisation_id: OrganisationId,
+        details: BillingDetails,
+        provider: Option<&P>,
+    ) -> Result<BillingAccount, CoreError> {
+        BillingPolicy::can_manage_billing(
+            &AuthariePolicy::new(permissions_in(&tx)),
+            identity,
+            organisation_id,
+        )
+        .await?;
+
+        keep_details(
+            &billing_account_repository,
+            provider,
+            organisation_id,
+            details,
+        )
+        .await
+    }
+
+    #[transactional(billing_account)]
+    pub async fn payment_method_session<P: PaymentProvider>(
+        &self,
+        identity: Identity,
+        organisation_id: OrganisationId,
+        provider: &P,
+        return_url: &str,
+    ) -> Result<String, CoreError> {
+        BillingPolicy::can_manage_billing(
+            &AuthariePolicy::new(permissions_in(&tx)),
+            identity,
+            organisation_id,
+        )
+        .await?;
+
+        open_payment_method_session(
+            &billing_account_repository,
+            provider,
+            organisation_id,
+            return_url,
+        )
+        .await
+    }
+
+    #[transactional(statement)]
+    pub async fn statements(
+        &self,
+        identity: Identity,
+        organisation_id: OrganisationId,
+    ) -> Result<Vec<Statement>, CoreError> {
+        BillingPolicy::can_view_billing(
+            &AuthariePolicy::new(permissions_in(&tx)),
+            identity,
+            organisation_id,
+        )
+        .await?;
+
+        statement_repository.list_for(&organisation_id).await
+    }
+
+    #[transactional(subscription, billing_account, statement)]
+    pub async fn statement(
+        &self,
+        identity: Identity,
+        organisation_id: OrganisationId,
+        period: BillingPeriod,
+        first_period: BillingPeriod,
+        now: DateTime<Utc>,
+    ) -> Result<StatementView, CoreError> {
+        BillingPolicy::can_view_billing(
+            &AuthariePolicy::new(permissions_in(&tx)),
+            identity,
+            organisation_id,
+        )
+        .await?;
+
+        if period == BillingPeriod::containing(now) {
+            let lines = PeriodClose::new(
+                subscription_repository,
+                billing_account_repository,
+                statement_repository,
+            )
+            .estimate(organisation_id, first_period, now)
+            .await?;
+
+            Ok(StatementView::Estimate { period, lines })
+        } else {
+            Ok(StatementView::Stored(
+                statement_repository
+                    .find_by_period(&organisation_id, period)
+                    .await?
+                    .ok_or_else(|| BillingError::StatementNotFound {
+                        period: period.to_string(),
+                    })?,
+            ))
+        }
+    }
+
+    pub async fn deployment_features(
+        &self,
+        identity: Identity,
+        organisation_id: OrganisationId,
+        deployment_id: DeploymentId,
+    ) -> Result<SubscriptionTerms, CoreError> {
+        let subscription =
+            SubscriptionService::subscription(self, identity, organisation_id, deployment_id)
+                .await?;
+
+        Ok(subscription.terms().clone())
+    }
+
     pub async fn run_billing<P: PaymentProvider>(
         &self,
         provider: &P,

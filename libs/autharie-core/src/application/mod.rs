@@ -46,7 +46,7 @@ mod user;
 // Re-exported by name rather than as a module:  is already a
 // domain module, and two of them under the crate root is a glob collision
 // that resolves to whichever the compiler saw first.
-pub use billing::BillingRun;
+pub use billing::{BillingRun, StatementView};
 pub use platform::FirstOperator;
 
 #[derive(Clone)]

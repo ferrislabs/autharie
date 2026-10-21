@@ -1,6 +1,7 @@
 use autharie_auth::Identity;
 use autharie_core::{
     CoreError,
+    billing::TierCode,
     cloud_credentials::{CloudProviderService, ProfileSpec},
     dataplane::{credential::CloudCredentialId, value_objects::Region},
     deployments::{
@@ -56,6 +57,10 @@ pub struct CreateDeploymentRequest {
     pub offer: String,
 
     #[serde(default)]
+    #[schema(example = "standard-2026")]
+    pub tier: Option<String>,
+
+    #[serde(default)]
     pub distribution: Option<DistributionRequest>,
 }
 
@@ -94,6 +99,7 @@ struct ParsedCreateDeploymentRequest {
     environment: Environment,
     region: Region,
     offer: Offer,
+    tier: Option<TierCode>,
     distribution: RequestedDistribution,
 }
 
@@ -118,6 +124,13 @@ impl ParsedCreateDeploymentRequest {
             .offer
             .parse::<Offer>()
             .map_err(|e| refused(e.to_string()))?;
+
+        let tier = request
+            .tier
+            .as_deref()
+            .map(TierCode::parse)
+            .transpose()
+            .map_err(|e| ApiError::from(CoreError::from(e)))?;
 
         // Refused rather than ignored. A caller that named a region and was
         // silently given another would find out from where their data is.
@@ -168,6 +181,7 @@ impl ParsedCreateDeploymentRequest {
             environment,
             region,
             offer,
+            tier,
             distribution,
         })
     }
@@ -249,6 +263,7 @@ pub async fn create_deployment_handler(
         parsed.region,
         parsed.offer,
     )?
+    .requesting_tier(parsed.tier)
     .with_distribution(distribution)
     .map_err(CoreError::from)?;
 
@@ -415,6 +430,52 @@ mod tests {
         assert!(matches!(refused, ApiError::BadRequest { .. }));
     }
 
+    #[tokio::test]
+    async fn a_request_without_a_tier_asks_for_none() {
+        assert_eq!(parse(a_request()).expect("a valid request").tier, None);
+    }
+
+    #[tokio::test]
+    async fn a_request_names_the_tier_it_wants() {
+        let parsed = parse(CreateDeploymentRequest {
+            tier: Some("standard-2026".to_string()),
+            ..a_request()
+        })
+        .expect("a valid request");
+
+        assert_eq!(
+            parsed.tier,
+            Some(TierCode::parse("standard-2026").expect("a code"))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_tier_that_is_not_a_tier_code_is_unprocessable() {
+        for tier in ["Not Valid", "", "-a", "a_b"] {
+            let Err(refused) = parse(CreateDeploymentRequest {
+                tier: Some(tier.to_string()),
+                ..a_request()
+            }) else {
+                panic!("{tier:?} was taken for a tier");
+            };
+
+            assert!(
+                matches!(refused, ApiError::Unprocessable { .. }),
+                "{tier:?}: {refused:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_tier_is_optional_on_the_wire() {
+        let request: CreateDeploymentRequest = serde_json::from_str(
+            r#"{"name":"d","kind":"ferriskey","version":"1.0.0","environment":"production","offer":"free"}"#,
+        )
+        .expect("a request without a tier");
+
+        assert_eq!(request.tier, None);
+    }
+
     fn a_request() -> CreateDeploymentRequest {
         CreateDeploymentRequest {
             name: "deployment".to_string(),
@@ -423,6 +484,7 @@ mod tests {
             environment: "production".to_string(),
             region: None,
             offer: "standard".to_string(),
+            tier: None,
             distribution: None,
         }
     }

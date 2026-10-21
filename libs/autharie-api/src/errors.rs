@@ -375,7 +375,11 @@ impl From<CoreError> for ApiError {
             CoreError::OrganisationSuspended { .. } => ApiError::Conflict {
                 reason: value.to_string(),
             },
-            CoreError::Billing(BillingError::TierNotFound { .. }) => ApiError::NotFound {
+            CoreError::Billing(
+                BillingError::TierNotFound { .. }
+                | BillingError::NoBillingAccount
+                | BillingError::StatementNotFound { .. },
+            ) => ApiError::NotFound {
                 reason: value.to_string(),
             },
             CoreError::Billing(
@@ -970,6 +974,13 @@ mod tests {
             (
                 BillingError::TierNotFound {
                     code: "pro-2026".to_string(),
+                },
+                StatusCode::NOT_FOUND,
+            ),
+            (BillingError::NoBillingAccount, StatusCode::NOT_FOUND),
+            (
+                BillingError::StatementNotFound {
+                    period: "2026-11".to_string(),
                 },
                 StatusCode::NOT_FOUND,
             ),
