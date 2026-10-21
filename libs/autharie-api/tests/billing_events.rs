@@ -6,7 +6,11 @@ use autharie_api::{
     handlers::billing::billing_routes,
     state::AppState,
 };
-use autharie_core::{AutharieService, billing::BillingPeriod};
+use autharie_core::{
+    ArchiveConfig, AutharieService, DataPlaneConfig,
+    backups::{BucketName, StoreEncryption},
+    billing::BillingPeriod,
+};
 use autharie_stripe::{StripeConfig, StripePaymentProvider};
 use axum::{
     Router,
@@ -29,6 +33,8 @@ const SECRET_KEY: &str = "sk_test_billing_events_0123456789";
 const WEBHOOK_SECRET: &str = "whsec_billing_events_0123456789";
 const ROUTE: &str = "/billing/provider-events";
 const HELP_CHILD: &str = "AUTHARIE_RENDER_THE_HELP_AND_STOP";
+const DOMAIN: &str = "tenants.billing-events.test";
+const BUCKET: &str = "billing-events-archives";
 
 fn signed_with(secret: &str, payload: &[u8]) -> String {
     let timestamp = Utc::now().timestamp();
@@ -88,6 +94,7 @@ struct Installation {
     lock: PoolConnection<Postgres>,
     owner: Uuid,
     organisation: Uuid,
+    data_plane: Uuid,
     statement: Uuid,
     tag: String,
     customer: String,
@@ -109,6 +116,7 @@ impl Installation {
             lock,
             owner: Uuid::new_v4(),
             organisation: Uuid::new_v4(),
+            data_plane: Uuid::new_v4(),
             statement: Uuid::new_v4(),
             customer: format!("cus_{tag}"),
             invoice: format!("in_{tag}"),
@@ -168,10 +176,26 @@ impl Installation {
         format!("evt_{}_{name}", self.tag)
     }
 
+    fn service(&self) -> AutharieService {
+        AutharieService::with_config(
+            self.pool.clone(),
+            DataPlaneConfig {
+                heartbeat_window: chrono::Duration::seconds(60),
+                provisioning_timeout: chrono::Duration::minutes(10),
+                deleted_retention: chrono::Duration::days(7),
+            },
+            ArchiveConfig {
+                bucket: Some(BucketName::new(BUCKET).expect("a bucket")),
+                encryption: StoreEncryption::Managed,
+            },
+        )
+        .with_domain(Some(DOMAIN.to_string()))
+    }
+
     fn state(&self, billing: Option<BillingRuntime>) -> AppState {
         AppState {
             args: Arc::new(Args::default()),
-            service: AutharieService::new(self.pool.clone()),
+            service: self.service(),
             certificate_source: None,
             quickwit_search: None,
             quickwit_traces: None,
@@ -280,11 +304,152 @@ impl Installation {
         .expect("the suspensions")
     }
 
+    fn tier(&self, paid: bool) -> String {
+        format!("ev-{}-{}", if paid { "paid" } else { "free" }, self.tag)
+    }
+
+    async fn fleet(&self) {
+        sqlx::query(
+            "INSERT INTO data_planes \
+             (id, mode, region, status, capacity_cpu_millis, capacity_memory_mib, \
+              capacity_storage_gib, created_at, updated_at) \
+             VALUES ($1, 'shared', $2, 'active', 8000, 16384, 200, now(), now())",
+        )
+        .bind(self.data_plane)
+        .bind(&self.tag)
+        .execute(&self.pool)
+        .await
+        .expect("a data plane");
+        for (paid, price, offer) in [(false, 0_i64, "free"), (true, 4900, "standard")] {
+            sqlx::query(
+                "INSERT INTO billing_tiers \
+                 (code, name, monthly_price_minor, offer, features, engines, hostings, \
+                  selectable) \
+                 VALUES ($1, $1, $2, $3, '{mfa}', '{ferriskey}', '{shared}', false)",
+            )
+            .bind(self.tier(paid))
+            .bind(price)
+            .bind(offer)
+            .execute(&self.pool)
+            .await
+            .expect("a tier");
+        }
+    }
+
+    fn name_of(&self, label: &str) -> String {
+        format!("{label}-{}", &self.tag[..8])
+    }
+
+    async fn deployment(&self, label: &str, status: &str, paid: bool) -> Uuid {
+        let id = Uuid::new_v4();
+        let name = self.name_of(label);
+        sqlx::query(
+            "INSERT INTO deployments \
+             (id, organisation_id, dataplane_id, name, kind, status, namespace, version, \
+              cpu_millis, memory_mib, storage_gib, created_by, created_at, updated_at, \
+              hostname_slug) \
+             VALUES ($1, $2, $3, $4, 'ferriskey', $5, $4, '26.0.0', \
+                     500, 1024, 1, $6, now(), now(), $4)",
+        )
+        .bind(id)
+        .bind(self.organisation)
+        .bind(self.data_plane)
+        .bind(&name)
+        .bind(status)
+        .bind(self.owner)
+        .execute(&self.pool)
+        .await
+        .expect("a deployment");
+        sqlx::query(
+            "INSERT INTO billing_subscriptions \
+             (id, organisation_id, deployment_id, tier_code, monthly_price_minor, offer, \
+              features, starts_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, '{mfa}', now() - interval '1 day')",
+        )
+        .bind(Uuid::new_v4())
+        .bind(self.organisation)
+        .bind(id)
+        .bind(self.tier(paid))
+        .bind(if paid { 4900_i64 } else { 0 })
+        .bind(if paid { "standard" } else { "free" })
+        .execute(&self.pool)
+        .await
+        .expect("a subscription");
+
+        id
+    }
+
+    async fn back_up(&self, deployment: Uuid) {
+        sqlx::query(
+            "INSERT INTO backup_schedules \
+             (deployment_id, organisation_id, cadence, zone, keep_last, keep_for_days, method) \
+             VALUES ($1, $2, '{\"every\": \"daily\", \"at\": \"02:30:00\"}', 'UTC', 7, 30, \
+                     'physical')",
+        )
+        .bind(deployment)
+        .bind(self.organisation)
+        .execute(&self.pool)
+        .await
+        .expect("a backup schedule");
+    }
+
+    async fn deployment_status(&self, deployment: Uuid) -> String {
+        sqlx::query_scalar("SELECT status FROM deployments WHERE id = $1")
+            .bind(deployment)
+            .fetch_one(&self.pool)
+            .await
+            .expect("the deployment")
+    }
+
+    async fn set_deployment_status(&self, deployment: Uuid, status: &str) {
+        sqlx::query("UPDATE deployments SET status = $2 WHERE id = $1")
+            .bind(deployment)
+            .bind(status)
+            .execute(&self.pool)
+            .await
+            .expect("a deployment");
+    }
+
+    async fn actions_of(&self, deployment: Uuid) -> Vec<(String, Value)> {
+        sqlx::query_as(
+            "SELECT action_type, payload FROM actions WHERE deployment_id = $1 \
+             ORDER BY created_at",
+        )
+        .bind(deployment)
+        .fetch_all(&self.pool)
+        .await
+        .expect("the actions")
+    }
+
+    async fn subscription_is_open(&self, deployment: Uuid) -> bool {
+        sqlx::query_scalar(
+            "SELECT count(*) > 0 FROM billing_subscriptions \
+             WHERE deployment_id = $1 AND ends_at IS NULL",
+        )
+        .bind(deployment)
+        .fetch_one(&self.pool)
+        .await
+        .expect("the subscriptions")
+    }
+
+    async fn stopped_by_billing(&self) -> Vec<Uuid> {
+        sqlx::query_scalar(
+            "SELECT unnest(stopped_deployments) FROM billing_suspensions \
+             WHERE organisation_id = $1",
+        )
+        .bind(self.organisation)
+        .fetch_all(&self.pool)
+        .await
+        .expect("the stopped deployments")
+    }
+
     async fn forget(mut self) {
         for statement in [
             "DELETE FROM billing_suspensions WHERE organisation_id = $1",
             "DELETE FROM billing_statements WHERE organisation_id = $1",
+            "DELETE FROM billing_subscriptions WHERE organisation_id = $1",
             "DELETE FROM billing_accounts WHERE organisation_id = $1",
+            "DELETE FROM deployments WHERE organisation_id = $1",
             "DELETE FROM organisations WHERE id = $1",
         ] {
             sqlx::query(statement)
@@ -293,6 +458,16 @@ impl Installation {
                 .await
                 .expect("cleanup");
         }
+        sqlx::query("DELETE FROM data_planes WHERE id = $1")
+            .bind(self.data_plane)
+            .execute(&self.pool)
+            .await
+            .expect("cleanup");
+        sqlx::query("DELETE FROM billing_tiers WHERE code LIKE $1")
+            .bind(format!("ev-%-{}", self.tag))
+            .execute(&self.pool)
+            .await
+            .expect("cleanup");
         sqlx::query("DELETE FROM billing_provider_events WHERE id LIKE $1")
             .bind(format!("evt_{}_%", self.tag))
             .execute(&self.pool)
@@ -455,6 +630,195 @@ async fn an_uncollectible_invoice_suspends_the_organisation_and_payment_lifts_it
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(installation.statement_status().await, "paid");
         assert_eq!(installation.organisation_status().await, "active");
+        assert_eq!(installation.suspensions().await, vec![(true, false)]);
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn an_uncollectible_invoice_stops_the_paid_deployments_and_payment_starts_them_again() {
+    scenario("active", "valid", async |installation| {
+        installation.fleet().await;
+        let paid = installation.deployment("paid", "successful", true).await;
+        let free = installation.deployment("free", "successful", false).await;
+        installation.back_up(paid).await;
+        let app = installation.app(Some(runtime(nowhere())));
+
+        let (status, body) = deliver_signed(
+            &app,
+            &installation.invoice_event("lost", "invoice.marked_uncollectible"),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(installation.deployment_status(paid).await, "stopped");
+        assert_eq!(installation.deployment_status(free).await, "successful");
+        assert_eq!(installation.stopped_by_billing().await, vec![paid]);
+        assert!(!installation.subscription_is_open(paid).await);
+        assert!(installation.subscription_is_open(free).await);
+        assert!(installation.actions_of(free).await.is_empty());
+        let actions = installation.actions_of(paid).await;
+        assert_eq!(actions.len(), 1, "{actions:?}");
+        let (action_type, payload) = &actions[0];
+        assert_eq!(action_type, "deployment.stop");
+        assert_eq!(payload["stopped"], json!(true));
+        assert_eq!(
+            payload["hostname"],
+            json!(format!("{}.{DOMAIN}", installation.name_of("paid")))
+        );
+        assert_eq!(payload["archive"]["encryption"], json!("AES256"));
+        assert!(
+            payload["archive"]["destination_path"]
+                .as_str()
+                .is_some_and(|path| path.starts_with(&format!("s3://{BUCKET}/"))),
+            "{payload}"
+        );
+
+        let (status, body) =
+            deliver_signed(&app, &installation.invoice_event("late", "invoice.paid")).await;
+
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(installation.deployment_status(paid).await, "in_progress");
+        assert_eq!(installation.deployment_status(free).await, "successful");
+        assert!(installation.subscription_is_open(paid).await);
+        assert!(installation.actions_of(free).await.is_empty());
+        let actions = installation.actions_of(paid).await;
+        let kinds: Vec<&str> = actions.iter().map(|(kind, _)| kind.as_str()).collect();
+        assert_eq!(
+            kinds,
+            ["deployment.stop", "deployment.start"],
+            "{actions:?}"
+        );
+        let payload = &actions[1].1;
+        assert_eq!(payload["stopped"], json!(false));
+        assert_eq!(
+            payload["hostname"],
+            json!(format!("{}.{DOMAIN}", installation.name_of("paid")))
+        );
+        assert_eq!(payload["archive"]["encryption"], json!("AES256"));
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn payment_starts_only_the_deployments_billing_stopped() {
+    scenario("active", "valid", async |installation| {
+        installation.fleet().await;
+        let billed = installation.deployment("billed", "successful", true).await;
+        let parked = installation.deployment("parked", "stopped", true).await;
+        let app = installation.app(Some(runtime(nowhere())));
+
+        deliver_signed(
+            &app,
+            &installation.invoice_event("lost", "invoice.marked_uncollectible"),
+        )
+        .await;
+
+        assert_eq!(installation.stopped_by_billing().await, vec![billed]);
+        assert_eq!(installation.deployment_status(billed).await, "stopped");
+        assert!(installation.subscription_is_open(parked).await);
+        assert!(installation.actions_of(parked).await.is_empty());
+
+        let (status, body) =
+            deliver_signed(&app, &installation.invoice_event("late", "invoice.paid")).await;
+
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(installation.deployment_status(billed).await, "in_progress");
+        assert_eq!(installation.deployment_status(parked).await, "stopped");
+        assert!(installation.actions_of(parked).await.is_empty());
+        let started: Vec<String> = installation
+            .actions_of(billed)
+            .await
+            .into_iter()
+            .map(|(kind, _)| kind)
+            .collect();
+        assert_eq!(started, ["deployment.stop", "deployment.start"]);
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_deployment_billing_could_not_stop_is_stopped_by_the_billing_run_and_started_by_payment()
+{
+    scenario("active", "valid", async |installation| {
+        installation.fleet().await;
+        let running = installation.deployment("running", "successful", true).await;
+        let upgrading = installation
+            .deployment("upgrading", "upgrading", true)
+            .await;
+        let billing = runtime(nowhere());
+        let app = installation.app(Some(runtime(nowhere())));
+
+        deliver_signed(
+            &app,
+            &installation.invoice_event("lost", "invoice.marked_uncollectible"),
+        )
+        .await;
+
+        assert_eq!(installation.deployment_status(running).await, "stopped");
+        assert_eq!(installation.deployment_status(upgrading).await, "upgrading");
+        assert!(installation.subscription_is_open(upgrading).await);
+        assert!(installation.actions_of(upgrading).await.is_empty());
+        assert_eq!(installation.stopped_by_billing().await, vec![running]);
+
+        let run = installation
+            .service()
+            .run_billing(&billing.provider, billing.first_period, Utc::now())
+            .await
+            .expect("a billing run");
+
+        assert_eq!((run.stopped, run.failed), (0, 0));
+        assert_eq!(installation.deployment_status(upgrading).await, "upgrading");
+        assert!(installation.actions_of(upgrading).await.is_empty());
+
+        installation
+            .set_deployment_status(upgrading, "successful")
+            .await;
+        let run = installation
+            .service()
+            .run_billing(&billing.provider, billing.first_period, Utc::now())
+            .await
+            .expect("a billing run");
+
+        assert_eq!((run.stopped, run.failed), (1, 0));
+        assert_eq!(installation.deployment_status(upgrading).await, "stopped");
+        assert!(!installation.subscription_is_open(upgrading).await);
+        assert_eq!(
+            installation.stopped_by_billing().await,
+            vec![running, upgrading]
+        );
+        let actions = installation.actions_of(upgrading).await;
+        let kinds: Vec<&str> = actions.iter().map(|(kind, _)| kind.as_str()).collect();
+        assert_eq!(kinds, ["deployment.stop"], "{actions:?}");
+        assert_eq!(actions[0].1["stopped"], json!(true));
+
+        let run = installation
+            .service()
+            .run_billing(&billing.provider, billing.first_period, Utc::now())
+            .await
+            .expect("a billing run");
+
+        assert_eq!((run.stopped, run.failed), (0, 0));
+        assert_eq!(installation.actions_of(upgrading).await.len(), 1);
+
+        let (status, body) =
+            deliver_signed(&app, &installation.invoice_event("late", "invoice.paid")).await;
+
+        assert_eq!(status, StatusCode::OK, "{body}");
+        for deployment in [running, upgrading] {
+            assert_eq!(
+                installation.deployment_status(deployment).await,
+                "in_progress"
+            );
+            assert!(installation.subscription_is_open(deployment).await);
+            let actions = installation.actions_of(deployment).await;
+            let kinds: Vec<&str> = actions.iter().map(|(kind, _)| kind.as_str()).collect();
+            assert_eq!(
+                kinds,
+                ["deployment.stop", "deployment.start"],
+                "{actions:?}"
+            );
+        }
         assert_eq!(installation.suspensions().await, vec![(true, false)]);
     })
     .await;

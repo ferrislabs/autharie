@@ -23,7 +23,7 @@ use crate::{
         ArchiveDestination, BackupSchedule, StoreEncryption, ports::BackupScheduleRepository,
     },
     deployments::{
-        Deployment, DeploymentId,
+        Deployment, DeploymentId, DeploymentStatus,
         commands::{CreateDeploymentCommand, UpdateDeploymentCommand},
         distribution::Distribution,
         ports::{DeploymentPolicy, DeploymentRepository, DeploymentService},
@@ -79,6 +79,7 @@ pub(crate) fn deployment_payload(
         "replicas": deployment.topology.replicas(),
         "database_instances": deployment.topology.database_instances(),
         "database": database_placement(deployment).to_string(),
+        "stopped": deployment.status == DeploymentStatus::Stopped,
     });
 
     if let Some(archive) = archive {
@@ -653,6 +654,21 @@ mod tests {
                 "missing field `{field}` -- genesis rejects the whole payload"
             );
         }
+    }
+
+    #[test]
+    fn the_action_payload_says_whether_the_deployment_is_stopped() {
+        let mut deployment = sample_deployment();
+        assert_eq!(
+            deployment_payload(&deployment, None, None)["stopped"],
+            json!(false)
+        );
+
+        deployment.status = DeploymentStatus::Stopped;
+        assert_eq!(
+            deployment_payload(&deployment, None, None)["stopped"],
+            json!(true)
+        );
     }
 
     /// The sizing travels too, so what placement reserved and what the operator

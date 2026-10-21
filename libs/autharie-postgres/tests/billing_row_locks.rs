@@ -4,14 +4,19 @@ use autharie_domain::{
     CoreError,
     billing::{
         BillingAccount, BillingAddress, BillingAddressInput, BillingDetails, BillingEmail,
-        BillingName, BillingPeriod, PaymentMethodStatus, ProviderCustomerId, ProviderInvoice,
-        ProviderInvoiceId, Statement, StatementId, StatementParts, StatementStatus,
-        ports::{BillingAccountRepository, StatementRepository},
+        BillingName, BillingPeriod, BillingSuspension, BillingSuspensionId, PaymentMethodStatus,
+        ProviderCustomerId, ProviderInvoice, ProviderInvoiceId, Statement, StatementId,
+        StatementParts, StatementStatus,
+        ports::{BillingAccountRepository, BillingSuspensionRepository, StatementRepository},
     },
+    deployments::DeploymentId,
     organisation::OrganisationId,
 };
 use autharie_persistence::with_tx;
-use autharie_postgres::billing::{PostgresBillingAccountRepository, PostgresStatementRepository};
+use autharie_postgres::billing::{
+    PostgresBillingAccountRepository, PostgresBillingSuspensionRepository,
+    PostgresStatementRepository,
+};
 use chrono::{TimeZone, Utc};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use tokio::{sync::oneshot, time::timeout};
@@ -264,4 +269,107 @@ async fn a_second_reader_of_a_statement_by_id_waits_for_the_first_to_commit() {
 #[tokio::test]
 async fn a_second_reader_of_a_statement_by_invoice_waits_for_the_first_to_commit() {
     a_second_reader_of_a_statement_waits_for_the_first_to_commit(Read::BySecondKey).await;
+}
+
+#[tokio::test]
+async fn a_second_reader_of_an_active_suspension_waits_for_the_first_to_commit() {
+    let Some(pool) = pool().await else {
+        return;
+    };
+    let at = Utc.with_ymd_and_hms(2026, 12, 1, 0, 0, 0).unwrap();
+    let organisation = OrganisationId(Uuid::new_v4());
+    let statement = Statement::from(StatementParts {
+        id: StatementId::new(),
+        organisation_id: organisation,
+        period: BillingPeriod::new(2026, 11).unwrap(),
+        lines: Vec::new(),
+        status: StatementStatus::Uncollectible,
+        invoice: None,
+        created_at: at,
+        updated_at: at,
+    });
+    let seeded = BillingSuspension {
+        id: BillingSuspensionId::new(),
+        organisation_id: organisation,
+        statement_id: statement.id(),
+        stopped: vec![DeploymentId(Uuid::new_v4())],
+        suspended_organisation: false,
+        suspended_at: at,
+        lifted_at: None,
+    };
+    let id = seeded.id;
+    with_tx(&pool, map_err, async |tx| {
+        assert!(
+            PostgresStatementRepository::new(&tx)
+                .insert(&statement)
+                .await?
+        );
+        PostgresBillingSuspensionRepository::new(&tx)
+            .insert(&seeded)
+            .await
+    })
+    .await
+    .expect("the suspension is committed");
+
+    let (locked_tx, locked_rx) = oneshot::channel::<()>();
+    let (release_tx, release_rx) = oneshot::channel::<()>();
+
+    let first = tokio::spawn({
+        let pool = pool.clone();
+        async move {
+            with_tx(&pool, map_err, async |tx| {
+                let suspensions = PostgresBillingSuspensionRepository::new(&tx);
+                suspensions
+                    .find_active(&organisation)
+                    .await?
+                    .expect("the seeded suspension");
+                locked_tx.send(()).expect("the test is listening");
+                release_rx.await.expect("the test lets go");
+
+                suspensions.lift(&id, at).await
+            })
+            .await
+        }
+    });
+    locked_rx.await.expect("the first writer holds the row");
+
+    let mut second = tokio::spawn({
+        let pool = pool.clone();
+        async move {
+            with_tx(&pool, map_err, async |tx| {
+                PostgresBillingSuspensionRepository::new(&tx)
+                    .find_active(&organisation)
+                    .await
+            })
+            .await
+        }
+    });
+
+    assert!(
+        timeout(PATIENCE, &mut second).await.is_err(),
+        "the second reader answered while the first still held the suspension"
+    );
+
+    release_tx.send(()).expect("the first writer is waiting");
+    first
+        .await
+        .expect("the first writer ran")
+        .expect("the first writer committed");
+    let read = second
+        .await
+        .expect("the second reader ran")
+        .expect("the second reader answered");
+
+    assert_eq!(read, None);
+
+    sqlx::query("DELETE FROM billing_suspensions WHERE id = $1")
+        .bind(id.0)
+        .execute(&pool)
+        .await
+        .expect("cleanup");
+    sqlx::query("DELETE FROM billing_statements WHERE id = $1")
+        .bind(statement.id().0)
+        .execute(&pool)
+        .await
+        .expect("cleanup");
 }

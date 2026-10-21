@@ -124,6 +124,15 @@ pub trait BillingSuspensionRepository: Send + Sync {
         organisation_id: &OrganisationId,
     ) -> impl Future<Output = Result<Option<BillingSuspension>, CoreError>> + Send;
 
+    fn list_active(&self)
+    -> impl Future<Output = Result<Vec<BillingSuspension>, CoreError>> + Send;
+
+    fn add_stopped(
+        &self,
+        id: &BillingSuspensionId,
+        deployments: &[DeploymentId],
+    ) -> impl Future<Output = Result<(), CoreError>> + Send;
+
     fn lift(
         &self,
         id: &BillingSuspensionId,

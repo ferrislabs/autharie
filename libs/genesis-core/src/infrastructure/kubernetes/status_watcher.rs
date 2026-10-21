@@ -277,6 +277,7 @@ mod tests {
             Phase::Deploying,
             Phase::Updating,
             Phase::Upgrading,
+            Phase::Stopped,
             Phase::Deleting,
         ] {
             assert_eq!(

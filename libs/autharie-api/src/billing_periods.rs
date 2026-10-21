@@ -26,10 +26,11 @@ pub async fn close_billing_periods(state: AppState) {
             .run_billing(&runtime.provider, runtime.first_period, Utc::now())
             .await
         {
-            Ok(run) if run.closed + run.sent + run.failed == 0 => {}
+            Ok(run) if run.closed + run.sent + run.stopped + run.failed == 0 => {}
             Ok(run) => info!(
                 closed = run.closed,
                 sent = run.sent,
+                stopped = run.stopped,
                 failed = run.failed,
                 "billing run finished"
             ),

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE billing_suspensions\n            SET stopped_deployments = stopped_deployments || ARRAY(\n                SELECT fresh.id\n                FROM (\n                    SELECT DISTINCT ON (added.id) added.id, added.position\n                    FROM unnest($2::uuid[]) WITH ORDINALITY AS added(id, position)\n                    WHERE added.id <> ALL (stopped_deployments)\n                    ORDER BY added.id, added.position\n                ) AS fresh\n                ORDER BY fresh.position\n            )\n            WHERE id = $1 AND lifted_at IS NULL\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "UuidArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c790eee530ecb56c502826532b2809b818d9e2c454e667cb77919229399506cc"
+}

@@ -16,6 +16,8 @@ use crate::domain::ports::{BoxFuture, EventHandler, IdentityInstancePort, Outcom
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DeploymentAction {
     Apply,
+    Stop,
+    Start,
     Delete,
 }
 
@@ -51,6 +53,16 @@ impl DeploymentEventHandler {
         Self::with_action("restore", DeploymentAction::Apply, identity_instances)
     }
 
+    /// `stop` and `start` force `stopped` rather than read it from the payload,
+    /// so the action does what its name says whatever flag was recorded with it.
+    pub fn stop(identity_instances: Arc<dyn IdentityInstancePort>) -> Self {
+        Self::with_action("stop", DeploymentAction::Stop, identity_instances)
+    }
+
+    pub fn start(identity_instances: Arc<dyn IdentityInstancePort>) -> Self {
+        Self::with_action("start", DeploymentAction::Start, identity_instances)
+    }
+
     /// Delete is the only handler that reports back, because it is the only
     /// one whose success is the whole story. An apply that succeeds means the
     /// `IdentityInstance` was accepted, not that the deployment is running --
@@ -79,6 +91,16 @@ impl DeploymentEventHandler {
             outcomes: None,
         }
     }
+
+    async fn apply(
+        &self,
+        payload: &DeploymentPayloadV1,
+        stopped: bool,
+    ) -> Result<(), GenesisError> {
+        let mut desired = DesiredIdentityInstance::from_payload(payload)?;
+        desired.stopped = stopped;
+        self.identity_instances.apply(&desired).await
+    }
 }
 
 impl EventHandler for DeploymentEventHandler {
@@ -98,10 +120,9 @@ impl EventHandler for DeploymentEventHandler {
             let payload = DeploymentPayloadV1::from_value(&event.payload)?;
 
             match self.action {
-                DeploymentAction::Apply => {
-                    let desired = DesiredIdentityInstance::from_payload(&payload)?;
-                    self.identity_instances.apply(&desired).await
-                }
+                DeploymentAction::Apply => self.apply(&payload, payload.stopped).await,
+                DeploymentAction::Stop => self.apply(&payload, true).await,
+                DeploymentAction::Start => self.apply(&payload, false).await,
                 DeploymentAction::Delete => {
                     let reference = IdentityInstanceRef::for_deployment(
                         payload.deployment_id,
@@ -248,6 +269,103 @@ mod tests {
             }),
             occurred_at: Utc::now(),
         }
+    }
+
+    fn with_stopped(mut event: ActionEvent, stopped: bool) -> ActionEvent {
+        event.payload["stopped"] = json!(stopped);
+        event
+    }
+
+    #[test]
+    fn stop_and_start_are_routed_by_their_own_keys() {
+        let port = Arc::new(FakeIdentityInstancePort::default());
+
+        assert_eq!(
+            DeploymentEventHandler::stop(port.clone()).routing_key(),
+            "deployment.stop"
+        );
+        assert_eq!(
+            DeploymentEventHandler::start(port).routing_key(),
+            "deployment.start"
+        );
+    }
+
+    #[tokio::test]
+    async fn stop_applies_a_stopped_instance_whatever_the_payload_says() {
+        let port = Arc::new(FakeIdentityInstancePort::default());
+        let handler = DeploymentEventHandler::stop(port.clone());
+        let event = deployment_event("deployment.stop", "keycloak", "25.0.0");
+
+        handler
+            .handle(with_stopped(event.clone(), false))
+            .await
+            .expect("handled");
+        handler.handle(event).await.expect("handled");
+
+        let calls = port.apply_calls.lock().unwrap();
+        assert_eq!(calls.len(), 2);
+        assert!(calls.iter().all(|desired| desired.stopped));
+    }
+
+    #[tokio::test]
+    async fn start_applies_a_running_instance_whatever_the_payload_says() {
+        let port = Arc::new(FakeIdentityInstancePort::default());
+        let handler = DeploymentEventHandler::start(port.clone());
+
+        handler
+            .handle(with_stopped(
+                deployment_event("deployment.start", "keycloak", "25.0.0"),
+                true,
+            ))
+            .await
+            .expect("handled");
+
+        let calls = port.apply_calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert!(!calls[0].stopped);
+    }
+
+    #[tokio::test]
+    async fn stop_and_start_target_the_instance_create_would_have_used() {
+        let port = Arc::new(FakeIdentityInstancePort::default());
+        let create = DeploymentEventHandler::create(port.clone());
+        let stop = DeploymentEventHandler::stop(port.clone());
+        let start = DeploymentEventHandler::start(port.clone());
+
+        create
+            .handle(deployment_event("deployment.create", "keycloak", "25.0.0"))
+            .await
+            .expect("handled");
+        stop.handle(deployment_event("deployment.stop", "keycloak", "25.0.0"))
+            .await
+            .expect("handled");
+
+        assert_eq!(port.state.lock().unwrap().len(), 1);
+        assert!(port.state.lock().unwrap().values().all(|d| d.stopped));
+
+        start
+            .handle(deployment_event("deployment.start", "keycloak", "25.0.0"))
+            .await
+            .expect("handled");
+
+        assert_eq!(port.state.lock().unwrap().len(), 1);
+        assert!(port.state.lock().unwrap().values().all(|d| !d.stopped));
+    }
+
+    #[tokio::test]
+    async fn an_update_leaves_a_stopped_deployment_stopped() {
+        let port = Arc::new(FakeIdentityInstancePort::default());
+        let handler = DeploymentEventHandler::update(port.clone());
+
+        handler
+            .handle(with_stopped(
+                deployment_event("deployment.update", "keycloak", "25.0.0"),
+                true,
+            ))
+            .await
+            .expect("handled");
+
+        assert!(port.apply_calls.lock().unwrap()[0].stopped);
     }
 
     /// Records what was reported, so a test can assert that a delete tells the

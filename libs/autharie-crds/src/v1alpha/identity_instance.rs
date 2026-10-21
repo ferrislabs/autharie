@@ -569,6 +569,24 @@ mod tests {
     }
 
     #[test]
+    fn stopped_defaults_to_false_when_absent_and_is_omitted_while_false() {
+        let spec: IdentityInstanceSpec = serde_json::from_value(spec_json()).unwrap();
+        assert!(!spec.stopped);
+        assert!(
+            serde_json::to_value(&spec)
+                .unwrap()
+                .get("stopped")
+                .is_none()
+        );
+
+        let mut value = spec_json();
+        value["stopped"] = json!(true);
+        let spec: IdentityInstanceSpec = serde_json::from_value(value).unwrap();
+        assert!(spec.stopped);
+        assert_eq!(serde_json::to_value(&spec).unwrap()["stopped"], json!(true));
+    }
+
+    #[test]
     fn the_schema_bounds_replicas_between_one_and_five() {
         use kube::CustomResourceExt;
 

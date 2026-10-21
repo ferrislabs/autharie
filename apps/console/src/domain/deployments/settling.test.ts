@@ -29,6 +29,7 @@ describe('isSettling', () => {
     expect(isSettling('deleted')).toBe(false)
     expect(isSettling('maintenance')).toBe(false)
     expect(isSettling('upgrade_required')).toBe(false)
+    expect(isSettling('stopped')).toBe(false)
   })
 
   it('says nothing about a deployment it has not read yet', () => {
@@ -47,6 +48,10 @@ describe('settlingRefetchInterval', () => {
     expect(settlingRefetchInterval('successful')).toBe(false)
   })
 
+  it('does not poll a stopped deployment', () => {
+    expect(settlingRefetchInterval('stopped')).toBe(false)
+  })
+
   it('asks again while the platform is still moving it', () => {
     const interval = settlingRefetchInterval('upgrading')
 
@@ -62,6 +67,7 @@ describe('anySettling', () => {
 
   it('stops once every deployment in the list is at rest', () => {
     expect(anySettling([{ status: 'successful' }, { status: 'failed' }])).toBe(false)
+    expect(anySettling([{ status: 'successful' }, { status: 'stopped' }])).toBe(false)
     expect(anySettling([])).toBe(false)
     expect(anySettling(undefined)).toBe(false)
   })

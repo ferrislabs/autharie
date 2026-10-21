@@ -2,16 +2,17 @@ use autharie_auth::Identity;
 use autharie_domain::{
     CoreError,
     billing::{
-        BillingAccount, BillingDetails, BillingError, BillingPeriod, ProviderEvent,
-        ProviderEventKind, Statement, StatementLine, StatementStatus, Subscription,
+        BillingAccount, BillingDetails, BillingError, BillingPeriod, BillingSuspension,
+        ProviderEvent, ProviderEventKind, Statement, StatementLine, StatementStatus, Subscription,
         SubscriptionTerms, Tier, TierCode,
         accounts::{keep_details, open_payment_method_session},
         closing::PeriodClose,
         collection::{Collection, adopt_payment_method},
         lifecycle::SubscriptionLifecycle,
         ports::{
-            BillingAccountRepository, BillingPolicy, PaymentProvider, ProviderEventLog,
-            StatementRepository, SubscriptionRepository, SubscriptionService, TierRepository,
+            BillingAccountRepository, BillingPolicy, BillingSuspensionRepository, PaymentProvider,
+            ProviderEventLog, StatementRepository, SubscriptionRepository, SubscriptionService,
+            TierRepository,
         },
         sending::StatementSending,
     },
@@ -29,12 +30,13 @@ use crate::{AutharieService, infrastructure::role::permissions_in, policy::Autha
 
 mod power;
 
-use power::StoppingNothing;
+use power::DeploymentSwitch;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct BillingRun {
     pub closed: usize,
     pub sent: usize,
+    pub stopped: usize,
     pub failed: usize,
 }
 
@@ -330,6 +332,22 @@ impl AutharieService {
             }
         }
 
+        for suspension in self.active_suspensions().await? {
+            let organisation_id = suspension.organisation_id;
+
+            match self.keep_suspended(organisation_id, now).await {
+                Ok(stopped) => run.stopped += stopped.len(),
+                Err(error) => {
+                    run.failed += 1;
+                    error!(
+                        organisation = %organisation_id,
+                        %error,
+                        "could not stop the deployments of a suspended organisation"
+                    );
+                }
+            }
+        }
+
         Ok(run)
     }
 
@@ -351,7 +369,10 @@ impl AutharieService {
         billing_account,
         billing_suspension,
         subscription,
-        organisation
+        organisation,
+        deployment,
+        backup_schedule,
+        action
     )]
     async fn apply_verified_event<P: PaymentProvider>(
         &self,
@@ -369,7 +390,15 @@ impl AutharieService {
             suspensions: billing_suspension_repository,
             subscriptions: subscription_repository,
             organisations: organisation_repository,
-            power: StoppingNothing,
+            power: DeploymentSwitch::new(
+                autharie_postgres::billing::PostgresSubscriptionRepository::new(&tx),
+                deployment_repository,
+                backup_schedule_repository,
+                action_repository,
+                self.archive_config(),
+                self.deployment_domain(),
+                now,
+            ),
         };
 
         match event.kind {
@@ -391,6 +420,46 @@ impl AutharieService {
             }
             ProviderEventKind::Ignored => Ok(()),
         }
+    }
+
+    #[transactional(billing_suspension)]
+    async fn active_suspensions(&self) -> Result<Vec<BillingSuspension>, CoreError> {
+        billing_suspension_repository.list_active().await
+    }
+
+    #[transactional(
+        statement,
+        billing_account,
+        billing_suspension,
+        subscription,
+        organisation,
+        deployment,
+        backup_schedule,
+        action
+    )]
+    async fn keep_suspended(
+        &self,
+        organisation_id: OrganisationId,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<DeploymentId>, CoreError> {
+        Collection {
+            statements: statement_repository,
+            accounts: billing_account_repository,
+            suspensions: billing_suspension_repository,
+            subscriptions: subscription_repository,
+            organisations: organisation_repository,
+            power: DeploymentSwitch::new(
+                autharie_postgres::billing::PostgresSubscriptionRepository::new(&tx),
+                deployment_repository,
+                backup_schedule_repository,
+                action_repository,
+                self.archive_config(),
+                self.deployment_domain(),
+                now,
+            ),
+        }
+        .keep_suspended(&organisation_id, now)
+        .await
     }
 
     #[transactional(subscription)]

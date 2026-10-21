@@ -313,6 +313,7 @@ impl From<CoreError> for ApiError {
             // on. A version that is not ahead is the caller's own mistake.
             CoreError::DeploymentNotUpgradable { .. }
             | CoreError::DeploymentBusy { .. }
+            | CoreError::DeploymentStopped { .. }
             | CoreError::ReleaseNotInstallable { .. } => ApiError::Conflict {
                 reason: value.to_string(),
             },

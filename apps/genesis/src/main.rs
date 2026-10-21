@@ -82,6 +82,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::new(DeploymentEventHandler::create(identity_instances.clone())),
         Arc::new(DeploymentEventHandler::update(identity_instances.clone())),
         Arc::new(DeploymentEventHandler::restore(identity_instances.clone())),
+        Arc::new(DeploymentEventHandler::stop(identity_instances.clone())),
+        Arc::new(DeploymentEventHandler::start(identity_instances.clone())),
         Arc::new(DeploymentEventHandler::delete(
             identity_instances.clone(),
             outcomes.clone(),

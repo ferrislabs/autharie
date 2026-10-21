@@ -119,6 +119,38 @@ enum RuntimeHealth {
     Healthy,
 }
 
+const STOPPED_REQUEUE: Duration = Duration::from_secs(30);
+
+const WAITING_FOR_START: &str = "Waiting for the instance to be started to continue the upgrade.";
+
+/// A stopped instance has no replica to be ready and none to answer a health check, so an
+/// upgrade left going would end, or roll back, for the wrong reason. It waits, with its
+/// direction and its clocks as they were.
+fn held_while_stopped(current: &IdentityInstanceUpgradeStatus) -> IdentityInstanceUpgradeStatus {
+    IdentityInstanceUpgradeStatus {
+        phase: current.phase.clone().or(Some(Phase::Pending)),
+        message: Some(WAITING_FOR_START.to_string()),
+        runtime_ready_since: None,
+        ..current.clone()
+    }
+}
+
+/// The first pass after a hold: the time spent stopped is not time the upgrade, or its
+/// rollback, was given to finish. The hold's own message is the marker, so no field is added.
+fn rebased_after_hold(
+    status: IdentityInstanceUpgradeStatus,
+    now: &Time,
+) -> IdentityInstanceUpgradeStatus {
+    if status.message.as_deref() != Some(WAITING_FOR_START) {
+        return status;
+    }
+    IdentityInstanceUpgradeStatus {
+        started_at: status.started_at.as_ref().map(|_| now.clone()),
+        rollback_started_at: status.rollback_started_at.as_ref().map(|_| now.clone()),
+        ..status
+    }
+}
+
 /// Pure by design: everything it needs is already known, so it can be exercised without a
 /// cluster or a socket. `ready_since` absent (the deployment just became ready this reconcile)
 /// is treated the same as "inside the grace window", since there has been no time to measure
@@ -240,6 +272,18 @@ async fn reconcile(
         .map_err(|error| OperatorError::Kube {
             message: error.to_string(),
         })?;
+
+    if instance.spec.stopped {
+        patch_upgrade_status_if_changed(
+            &context.client,
+            &upgrades,
+            &upgrade,
+            held_while_stopped(&current_status),
+        )
+        .await?;
+        return Ok(Action::requeue(STOPPED_REQUEUE));
+    }
+    let current_status = rebased_after_hold(current_status, &Time(Utc::now()));
 
     patch_identity_instance_status_if_changed(&instances, &instance, Phase::Upgrading, false)
         .await?;
@@ -1151,6 +1195,120 @@ mod tests {
         instance.metadata.namespace = None;
 
         assert_eq!(instance_health_probe_url(&instance), None);
+    }
+
+    fn upgrade_mid_flight() -> IdentityInstanceUpgradeStatus {
+        IdentityInstanceUpgradeStatus {
+            phase: Some(Phase::Updating),
+            current_version: Some("26.1.0".to_string()),
+            target_version: Some("26.1.0".to_string()),
+            previous_version: Some("26.0.0".to_string()),
+            started_at: Some(Time(Utc::now() - ChronoDuration::hours(5))),
+            runtime_ready_since: Some(Time(Utc::now() - ChronoDuration::hours(5))),
+            message: Some("Upgrade in progress: target version 26.1.0.".to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn an_upgrade_held_for_a_stopped_instance_keeps_its_versions_and_says_why() {
+        let held = held_while_stopped(&upgrade_mid_flight());
+
+        assert_eq!(held.phase, Some(Phase::Updating));
+        assert_eq!(held.target_version.as_deref(), Some("26.1.0"));
+        assert_eq!(held.previous_version.as_deref(), Some("26.0.0"));
+        assert_eq!(held.message.as_deref(), Some(WAITING_FOR_START));
+        assert!(held.outcome.is_none());
+    }
+
+    #[test]
+    fn an_upgrade_not_started_yet_is_held_as_pending() {
+        let held = held_while_stopped(&IdentityInstanceUpgradeStatus::default());
+
+        assert_eq!(held.phase, Some(Phase::Pending));
+    }
+
+    #[test]
+    fn holding_an_upgrade_again_writes_nothing_new() {
+        let held = held_while_stopped(&upgrade_mid_flight());
+
+        assert_eq!(held_while_stopped(&held), held);
+    }
+
+    fn rollback_in_flight() -> IdentityInstanceUpgradeStatus {
+        IdentityInstanceUpgradeStatus {
+            phase: Some(Phase::Upgrading),
+            current_version: Some("26.0.0".to_string()),
+            target_version: Some("26.1.0".to_string()),
+            previous_version: Some("26.0.0".to_string()),
+            started_at: Some(Time(Utc::now() - ChronoDuration::hours(6))),
+            rollback_started_at: Some(Time(Utc::now() - ChronoDuration::hours(5))),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_rollback_in_flight_stays_a_rollback_while_the_upgrade_is_held() {
+        let before = rollback_in_flight();
+
+        let held = held_while_stopped(&before);
+
+        assert_eq!(held.rollback_started_at, before.rollback_started_at);
+        assert_eq!(held.started_at, before.started_at);
+    }
+
+    #[test]
+    fn the_clocks_start_over_on_the_first_pass_after_the_instance_is_started() {
+        let held = held_while_stopped(&rollback_in_flight());
+        let now = Time(Utc::now());
+
+        let resumed = rebased_after_hold(held, &now);
+
+        assert_eq!(resumed.rollback_started_at, Some(now.clone()));
+        assert_eq!(resumed.started_at, Some(now));
+        assert!(!deadline_exceeded_since(
+            resumed.rollback_started_at.as_ref(),
+            UPGRADE_DEADLINE
+        ));
+        assert!(!upgrade_deadline_exceeded(&resumed, UPGRADE_DEADLINE));
+        assert_eq!(resumed.previous_version.as_deref(), Some("26.0.0"));
+    }
+
+    #[test]
+    fn a_rollback_in_flight_survives_a_stop_and_a_start_without_being_overdue() {
+        let before = rollback_in_flight();
+        assert!(deadline_exceeded_since(
+            before.rollback_started_at.as_ref(),
+            UPGRADE_DEADLINE
+        ));
+
+        let resumed = rebased_after_hold(held_while_stopped(&before), &Time(Utc::now()));
+
+        assert!(resumed.rollback_started_at.is_some());
+        assert!(!deadline_exceeded_since(
+            resumed.rollback_started_at.as_ref(),
+            UPGRADE_DEADLINE
+        ));
+    }
+
+    #[test]
+    fn a_pass_that_follows_no_hold_leaves_the_clocks_alone() {
+        let status = rollback_in_flight();
+
+        assert_eq!(
+            rebased_after_hold(status.clone(), &Time(Utc::now())),
+            status
+        );
+    }
+
+    #[test]
+    fn an_upgrade_held_before_it_started_has_no_clock_to_rebase() {
+        let held = held_while_stopped(&IdentityInstanceUpgradeStatus::default());
+
+        let resumed = rebased_after_hold(held, &Time(Utc::now()));
+
+        assert!(resumed.started_at.is_none());
+        assert!(resumed.rollback_started_at.is_none());
     }
 
     #[test]
