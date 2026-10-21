@@ -134,6 +134,18 @@ services:
       REALM_ADMIN_URL: http://ferriskey-api:3333
       REALM_ADMIN_USERNAME: ${FERRISKEY_ADMIN_USER:-admin}
       REALM_ADMIN_PASSWORD: ${FERRISKEY_ADMIN_PASSWORD:-admin}
+      # Local stack only. Deployments are served by the k3d gateway published
+      # on the host, but their name resolves to this container itself here, so
+      # the reachability probe connects to this address instead and keeps the
+      # deployment's hostname for TLS. Empty in production: real DNS.
+      REACHABILITY_PROBE_VIA: ${REACHABILITY_PROBE_VIA:-}
+      # The path inside the container, set only when AUTHARIE_LOCAL_CA is.
+      REACHABILITY_PROBE_CA_FILE: ${AUTHARIE_LOCAL_CA:+/etc/autharie/local-ca.pem}
+    volumes:
+      # /dev/null when unset keeps `up` working; nothing reads it then.
+      - ${AUTHARIE_LOCAL_CA:-/dev/null}:/etc/autharie/local-ca.pem:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       autharie-migrations:
         condition: service_completed_successfully

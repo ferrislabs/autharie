@@ -8,6 +8,8 @@ use autharie_core::{
 };
 use url::Url;
 
+use crate::deployment_reachability::{ProbeSettings, ProbeVia, load_probe_ca};
+
 /// `Args::default()` is the configuration clap produces from no arguments at
 /// all: every group below carries the same defaults its `#[arg]` attributes
 /// declare, so this is not a second set of values that can drift from them.
@@ -54,6 +56,9 @@ pub struct Args {
 
     #[command(flatten)]
     pub billing: BillingArgs,
+
+    #[command(flatten)]
+    pub reachability: ReachabilityArgs,
 }
 
 impl Args {
@@ -666,6 +671,45 @@ impl CertificateArgs {
 
         (!name.is_empty() && !namespace.is_empty())
             .then(|| (name.to_string(), namespace.to_string()))
+    }
+}
+
+#[derive(Debug, Clone, Default, clap::Args)]
+pub struct ReachabilityArgs {
+    #[arg(
+        long = "reachability-probe-via",
+        env = "REACHABILITY_PROBE_VIA",
+        default_value = ""
+    )]
+    pub probe_via: String,
+
+    #[arg(
+        long = "reachability-probe-ca-file",
+        env = "REACHABILITY_PROBE_CA_FILE",
+        default_value = ""
+    )]
+    pub probe_ca_file: String,
+}
+
+impl ReachabilityArgs {
+    pub fn probe_settings(&self) -> Result<ProbeSettings, String> {
+        let via = match self.probe_via.trim() {
+            "" => None,
+            value => Some(
+                value
+                    .parse::<ProbeVia>()
+                    .map_err(|err| format!("REACHABILITY_PROBE_VIA: {err}"))?,
+            ),
+        };
+
+        let ca = match self.probe_ca_file.trim() {
+            "" => None,
+            path => Some(
+                load_probe_ca(path).map_err(|err| format!("REACHABILITY_PROBE_CA_FILE: {err}"))?,
+            ),
+        };
+
+        Ok(ProbeSettings { via, ca })
     }
 }
 
