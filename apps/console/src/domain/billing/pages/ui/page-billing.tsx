@@ -114,6 +114,7 @@ export function PageBilling({
         <Section title='Payment method'>
           <PaymentMethodPanel
             status={account?.payment_method}
+            card={account?.card}
             hasAccount={account !== null}
             canManage={canManage}
             isOpening={isOpening}

@@ -162,6 +162,27 @@ describe('the payment method', () => {
     expect(html).toContain('Failing')
   })
 
+  it('says which card is on file', () => {
+    const html = renderToStaticMarkup(
+      <PaymentMethodPanel
+        status='valid'
+        card={{ brand: 'visa', last4: '4242', exp_month: 4, exp_year: 2027 }}
+        hasAccount
+        canManage
+        isOpening={false}
+        onAdd={noop}
+      />,
+    )
+    expect(html).toContain('Visa •••• 4242 · exp. 04/27')
+  })
+
+  it('says nothing about a card when none is known', () => {
+    const html = renderToStaticMarkup(
+      <PaymentMethodPanel status='valid' card={null} hasAccount canManage isOpening={false} onAdd={noop} />,
+    )
+    expect(html).not.toContain('••••')
+  })
+
   it('shows what the platform refused', () => {
     const html = renderToStaticMarkup(
       <PaymentMethodPanel

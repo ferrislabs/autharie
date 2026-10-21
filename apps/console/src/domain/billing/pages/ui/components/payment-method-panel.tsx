@@ -3,7 +3,7 @@ import type { Schemas } from '@/api/api.client'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { StatusBadge, type Tone } from '@/components/ui/status-badge'
-import { NEEDS_BILLING_DETAILS } from '@/domain/billing/billing'
+import { NEEDS_BILLING_DETAILS, describeCard } from '@/domain/billing/billing'
 
 export const NEEDS_MANAGE_TO_ADD = 'Adding a payment method needs the Manage billing permission.'
 
@@ -15,6 +15,7 @@ const STATUSES: Record<Schemas.PaymentMethodStatus, { label: string; tone: Tone 
 
 interface Props {
   status?: Schemas.PaymentMethodStatus
+  card?: Schemas.CardResponse | null
   hasAccount: boolean
   canManage: boolean
   isOpening: boolean
@@ -30,6 +31,7 @@ function blockedBy(canManage: boolean, hasAccount: boolean): string | null {
 
 export function PaymentMethodPanel({
   status,
+  card,
   hasAccount,
   canManage,
   isOpening,
@@ -45,6 +47,7 @@ export function PaymentMethodPanel({
         <div className='flex items-center gap-2 text-sm'>
           <span className='text-muted-foreground'>Payment method</span>
           <StatusBadge tone={current.tone}>{current.label}</StatusBadge>
+          {card && <span className='text-muted-foreground'>{describeCard(card)}</span>}
         </div>
         <Button
           size='sm'
