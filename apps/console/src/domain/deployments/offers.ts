@@ -53,12 +53,5 @@ export function openOffers(catalogue: OfferAvailability[]): OfferAvailability[] 
   return catalogue.filter((entry) => entry.open)
 }
 
-/**
- * What moving an existing deployment to another offer means.
- *
- * Said on the deployment's own screen, because the honest answer is not a
- * slider: an offer is chosen when a deployment is created, and changing it is
- * a new deployment and a cutover.
- */
 export const HOW_TO_CHANGE_OFFER =
-  'An offer is chosen when a deployment is created. Moving to another one means creating a new deployment and cutting the hostname over to it, so you can check it before anything depends on it.'
+  'The offer follows the tier: change the tier on the subscription to move between Sandbox, Standard and Scale. Moving between the free tier and a paid one, or to or from BYOC, needs a new deployment.'

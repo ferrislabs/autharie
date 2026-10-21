@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Offer, OfferAvailability } from './offers'
-import { OFFER_COPY, describeResources, openOffers } from './offers'
+import { HOW_TO_CHANGE_OFFER, OFFER_COPY, describeResources, openOffers } from './offers'
 
 function entry(overrides: Partial<OfferAvailability> = {}): OfferAvailability {
   return {
@@ -48,5 +48,15 @@ describe('the offers shown', () => {
 
     expect(openOffers(catalogue).map((item) => item.offer)).toEqual(['standard'])
     expect(openOffers([])).toEqual([])
+  })
+})
+
+describe('how to change the offer', () => {
+  it('says the offer follows the tier and names the moves that need a new deployment', () => {
+    expect(HOW_TO_CHANGE_OFFER).toContain('follows the tier')
+    expect(HOW_TO_CHANGE_OFFER).toContain('free tier')
+    expect(HOW_TO_CHANGE_OFFER).toContain('BYOC')
+    expect(HOW_TO_CHANGE_OFFER).not.toContain('chosen when a deployment is created')
+    expect(HOW_TO_CHANGE_OFFER).not.toContain('hostname')
   })
 })

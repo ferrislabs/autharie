@@ -400,7 +400,11 @@ impl From<CoreError> for ApiError {
                 | BillingError::NoOpenSubscription { .. }
                 | BillingError::SubscriptionClosed { .. }
                 | BillingError::SubscriptionEndsBeforeStart
-                | BillingError::InvalidStatementTransition { .. },
+                | BillingError::InvalidStatementTransition { .. }
+                | BillingError::DatabasePlacementChange { .. }
+                | BillingError::DataPlaneModeChange { .. }
+                | BillingError::ResizeNotAvailable { .. }
+                | BillingError::NoRoomToResize { .. },
             ) => ApiError::Conflict {
                 reason: value.to_string(),
             },
@@ -442,6 +446,11 @@ impl From<CoreError> for ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use autharie_core::{
+        billing::Hosting,
+        dataplane::value_objects::{DataPlaneMode, DeploymentResources},
+        offers::DatabasePlacement,
+    };
     use axum::response::IntoResponse;
 
     /// The regression this replaced: every placement failure came back as
@@ -1052,6 +1061,32 @@ mod tests {
                 },
                 StatusCode::CONFLICT,
             ),
+            (
+                BillingError::DatabasePlacementChange {
+                    from: DatabasePlacement::Shared,
+                    to: DatabasePlacement::Managed,
+                },
+                StatusCode::CONFLICT,
+            ),
+            (
+                BillingError::DataPlaneModeChange {
+                    from: DataPlaneMode::Shared,
+                    to: DataPlaneMode::Dedicated,
+                },
+                StatusCode::CONFLICT,
+            ),
+            (
+                BillingError::ResizeNotAvailable {
+                    hosting: Hosting::CustomerCloud,
+                },
+                StatusCode::CONFLICT,
+            ),
+            (
+                BillingError::NoRoomToResize {
+                    wanted: DeploymentResources::DEFAULT,
+                },
+                StatusCode::CONFLICT,
+            ),
             (BillingError::InvalidEventSignature, StatusCode::BAD_REQUEST),
             (
                 BillingError::Provider {
@@ -1071,6 +1106,51 @@ mod tests {
         for (error, status) in cases {
             let message = error.to_string();
             assert_eq!(billing(error).into_response().status(), status, "{message}");
+        }
+    }
+
+    #[test]
+    fn a_resize_refusal_says_what_is_not_available_yet() {
+        let cases = [
+            (
+                BillingError::DatabasePlacementChange {
+                    from: DatabasePlacement::Shared,
+                    to: DatabasePlacement::Managed,
+                },
+                "moving a deployment from a shared database to a managed one is not available yet",
+            ),
+            (
+                BillingError::DataPlaneModeChange {
+                    from: DataPlaneMode::Dedicated,
+                    to: DataPlaneMode::Shared,
+                },
+                "moving a deployment from a dedicated data plane to a shared one is not available yet",
+            ),
+            (
+                BillingError::ResizeNotAvailable {
+                    hosting: Hosting::SelfHosted,
+                },
+                "resizing a self_hosted deployment is not available yet",
+            ),
+            (
+                BillingError::NoRoomToResize {
+                    wanted: DeploymentResources {
+                        cpu_millis: 2000,
+                        memory_mib: 4096,
+                        storage_gib: 20,
+                    },
+                },
+                "the data plane has no room for the size of this tier: 2000 millicores of CPU, 4096 MiB of memory and 20 GiB of storage",
+            ),
+        ];
+
+        for (error, message) in cases {
+            let refused = billing(error);
+
+            let ApiError::Conflict { reason } = &refused else {
+                panic!("expected a conflict, got {refused:?}");
+            };
+            assert_eq!(reason, message);
         }
     }
 

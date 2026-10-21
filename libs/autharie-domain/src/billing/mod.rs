@@ -35,6 +35,11 @@ pub use tier::{Hosting, Tier, TierCode};
 use thiserror::Error;
 use uuid::Uuid;
 
+use crate::{
+    dataplane::value_objects::{DataPlaneMode, DeploymentResources},
+    offers::DatabasePlacement,
+};
+
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum BillingError {
     #[error("'{value}' is not a billing period, expected YYYY-MM")]
@@ -107,4 +112,25 @@ pub enum BillingError {
 
     #[error("billing is not configured")]
     NotConfigured,
+
+    #[error("moving a deployment from a {from} database to a {to} one is not available yet")]
+    DatabasePlacementChange {
+        from: DatabasePlacement,
+        to: DatabasePlacement,
+    },
+
+    #[error("moving a deployment from a {from} data plane to a {to} one is not available yet")]
+    DataPlaneModeChange {
+        from: DataPlaneMode,
+        to: DataPlaneMode,
+    },
+
+    #[error("resizing a {hosting} deployment is not available yet")]
+    ResizeNotAvailable { hosting: Hosting },
+
+    #[error(
+        "the data plane has no room for the size of this tier: {} millicores of CPU, {} MiB of memory and {} GiB of storage",
+        .wanted.cpu_millis, .wanted.memory_mib, .wanted.storage_gib
+    )]
+    NoRoomToResize { wanted: DeploymentResources },
 }

@@ -405,7 +405,7 @@ mod tests {
         action::{ActionBatch, ActionCursor, ActionFailureReason, ActionId, ActionScope},
         dataplane::value_objects::{
             Capacity, DataPlaneAllocation, DataPlaneMode, DeploymentResources, PlacementRequest,
-            Region,
+            PlaneLoad, Region,
         },
         deployments::DeploymentId,
         organisation::OrganisationId,
@@ -574,6 +574,14 @@ mod tests {
 
         async fn current_load(&self, _: &DataPlaneId) -> Result<u32, CoreError> {
             Ok(0)
+        }
+
+        async fn load_excluding(
+            &self,
+            _: &DataPlaneId,
+            _: &DeploymentId,
+        ) -> Result<Option<PlaneLoad>, CoreError> {
+            Ok(None)
         }
 
         async fn save(&self, _: &DataPlane) -> Result<(), CoreError> {

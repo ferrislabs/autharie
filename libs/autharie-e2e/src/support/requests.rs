@@ -9,7 +9,7 @@ use autharie_domain::dataplane::entities::DataPlane;
 use autharie_domain::dataplane::ports::{DataPlaneRepository, Removal};
 use autharie_domain::dataplane::value_objects::{
     Capacity, DataPlaneAllocation, DataPlaneId, DataPlaneMode, DeploymentResources,
-    PlacementRequest, Region,
+    PlacementRequest, PlaneLoad, Region,
 };
 use autharie_domain::deployments::DeploymentId;
 use autharie_domain::organisation::OrganisationId;
@@ -207,6 +207,14 @@ impl DataPlaneRepository for InMemoryDataPlanes {
 
     async fn current_load(&self, _: &DataPlaneId) -> Result<u32, CoreError> {
         Ok(0)
+    }
+
+    async fn load_excluding(
+        &self,
+        _: &DataPlaneId,
+        _: &DeploymentId,
+    ) -> Result<Option<PlaneLoad>, CoreError> {
+        Ok(None)
     }
 
     async fn save(&self, _: &DataPlane) -> Result<(), CoreError> {

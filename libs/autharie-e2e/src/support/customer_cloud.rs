@@ -44,7 +44,7 @@ use autharie_domain::{
         provisioner::{ClusterProvisioner, ProvisionRequest, ProvisionedCluster},
         value_objects::{
             DataPlaneAllocation, DataPlaneId, DataPlaneMode, DataPlaneStatus, DeploymentResources,
-            PlacementRequest, Region,
+            PlacementRequest, PlaneLoad, Region,
         },
     },
     deployments::{
@@ -370,6 +370,14 @@ impl DataPlaneRepository for Platform {
 
     async fn current_load(&self, _: &DataPlaneId) -> Result<u32, CoreError> {
         Ok(0)
+    }
+
+    async fn load_excluding(
+        &self,
+        _: &DataPlaneId,
+        _: &DeploymentId,
+    ) -> Result<Option<PlaneLoad>, CoreError> {
+        Ok(None)
     }
 
     async fn remove(&self, id: &DataPlaneId) -> Result<Removal, CoreError> {

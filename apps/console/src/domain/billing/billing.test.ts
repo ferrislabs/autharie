@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import type { Schemas } from '@/api/api.client'
 import { ApiRequestError } from '@/api/api.fetch'
 import {
+  BYOC_MOVE_UNAVAILABLE,
+  DATABASE_MOVE_UNAVAILABLE,
   NEEDS_BILLING_DETAILS,
   NEEDS_BILLING_RIGHT,
   NEEDS_PAYMENT_METHOD,
@@ -12,6 +14,7 @@ import {
   isPaid,
   paidActionBlock,
   payNowUrl,
+  tierChangeBlock,
 } from './billing'
 
 const account = (complete: boolean): Schemas.BillingAccountResponse => ({
@@ -124,6 +127,33 @@ describe('the hosting of a deployment', () => {
         },
       }),
     ).toBe('customer_cloud')
+  })
+})
+
+describe('tier change block', () => {
+  it('blocks a move between the free offer and a paid one, both ways', () => {
+    expect(tierChangeBlock('free', { offer: 'standard' })).toBe(DATABASE_MOVE_UNAVAILABLE)
+    expect(tierChangeBlock('free', { offer: 'scale' })).toBe(DATABASE_MOVE_UNAVAILABLE)
+    expect(tierChangeBlock('standard', { offer: 'free' })).toBe(DATABASE_MOVE_UNAVAILABLE)
+    expect(tierChangeBlock('scale', { offer: 'free' })).toBe(DATABASE_MOVE_UNAVAILABLE)
+  })
+
+  it('blocks a move to or from BYOC', () => {
+    expect(tierChangeBlock('private', { offer: 'standard' })).toBe(BYOC_MOVE_UNAVAILABLE)
+    expect(tierChangeBlock('standard', { offer: 'private' })).toBe(BYOC_MOVE_UNAVAILABLE)
+  })
+
+  it('allows a move between paid offers of the same kind', () => {
+    expect(tierChangeBlock('standard', { offer: 'scale' })).toBeNull()
+    expect(tierChangeBlock('scale', { offer: 'standard' })).toBeNull()
+    expect(tierChangeBlock('free', { offer: 'free' })).toBeNull()
+    expect(tierChangeBlock('private', { offer: 'private' })).toBeNull()
+  })
+
+  it('blocks nothing while the current offer is unknown', () => {
+    expect(tierChangeBlock(undefined, { offer: 'free' })).toBeNull()
+    expect(tierChangeBlock(undefined, { offer: 'private' })).toBeNull()
+    expect(tierChangeBlock(undefined, { offer: 'standard' })).toBeNull()
   })
 })
 

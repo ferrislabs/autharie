@@ -24,6 +24,7 @@ pub mod commands;
 pub mod distribution;
 pub mod ports;
 pub mod provisioning;
+pub mod resize;
 pub mod service;
 pub mod topology;
 

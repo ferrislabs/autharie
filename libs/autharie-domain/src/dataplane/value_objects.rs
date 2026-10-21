@@ -33,6 +33,15 @@ pub enum DataPlaneMode {
     Dedicated,
 }
 
+impl Display for DataPlaneMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Shared => write!(f, "shared"),
+            Self::Dedicated => write!(f, "dedicated"),
+        }
+    }
+}
+
 /// What a *data plane* is.
 ///
 /// Separate from [`DataPlaneMode`] on purpose. Conflating "what is wanted" with
@@ -339,11 +348,29 @@ impl DeploymentResources {
             storage_gib,
         })
     }
+
+    pub fn exceeds(self, other: Self) -> bool {
+        self.cpu_millis > other.cpu_millis
+            || self.memory_mib > other.memory_mib
+            || self.storage_gib > other.storage_gib
+    }
 }
 
 impl Default for DeploymentResources {
     fn default() -> Self {
         Self::DEFAULT
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlaneLoad {
+    pub capacity: Capacity,
+    pub used: DeploymentResources,
+}
+
+impl PlaneLoad {
+    pub fn has_room_for(&self, wanted: DeploymentResources) -> bool {
+        self.capacity.fits(self.used, wanted)
     }
 }
 
@@ -478,6 +505,53 @@ mod capacity_tests {
     #[test]
     fn placement_spreads_unless_told_otherwise() {
         assert_eq!(PlacementPolicy::default(), PlacementPolicy::Spread);
+    }
+
+    #[test]
+    fn a_size_exceeds_another_as_soon_as_one_dimension_is_larger() {
+        let base = DeploymentResources::new(500, 1_024, 10).expect("valid");
+
+        assert!(!base.exceeds(base));
+        assert!(
+            DeploymentResources::new(501, 1_024, 10)
+                .unwrap()
+                .exceeds(base)
+        );
+        assert!(
+            DeploymentResources::new(500, 1_025, 10)
+                .unwrap()
+                .exceeds(base)
+        );
+        assert!(
+            DeploymentResources::new(500, 1_024, 11)
+                .unwrap()
+                .exceeds(base)
+        );
+        assert!(
+            DeploymentResources::new(2_000, 512, 1)
+                .unwrap()
+                .exceeds(base)
+        );
+        assert!(!DeploymentResources::new(250, 512, 1).unwrap().exceeds(base));
+    }
+
+    #[test]
+    fn a_plane_has_room_for_what_its_other_deployments_leave_it() {
+        let load = PlaneLoad {
+            capacity: capacity(),
+            used: DeploymentResources::new(3_000, 6_144, 90).expect("valid"),
+        };
+
+        assert!(load.has_room_for(DeploymentResources::new(1_000, 2_048, 10).unwrap()));
+        assert!(!load.has_room_for(DeploymentResources::new(1_001, 2_048, 10).unwrap()));
+        assert!(!load.has_room_for(DeploymentResources::new(1_000, 2_049, 10).unwrap()));
+        assert!(!load.has_room_for(DeploymentResources::new(1_000, 2_048, 11).unwrap()));
+    }
+
+    #[test]
+    fn a_mode_is_named_the_way_it_is_stored() {
+        assert_eq!(DataPlaneMode::Shared.to_string(), "shared");
+        assert_eq!(DataPlaneMode::Dedicated.to_string(), "dedicated");
     }
 }
 
