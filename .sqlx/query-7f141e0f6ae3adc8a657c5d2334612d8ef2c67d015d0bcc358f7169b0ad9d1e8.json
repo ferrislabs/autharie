@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n                SELECT organisation_id, name, email, address_line1, address_line2, postal_code,\n                       city, country, vat_number, siren, provider_customer_id, payment_method\n                FROM billing_accounts\n                WHERE provider_customer_id = $1\n                ",
+  "query": "\n                SELECT organisation_id, name, email, address_line1, address_line2, postal_code,\n                       city, country, vat_number, siren, provider_customer_id, payment_method\n                FROM billing_accounts\n                WHERE organisation_id = $1\n                FOR UPDATE\n                ",
   "describe": {
     "columns": [
       {
@@ -66,7 +66,7 @@
     ],
     "parameters": {
       "Left": [
-        "Text"
+        "Uuid"
       ]
     },
     "nullable": [
@@ -84,5 +84,5 @@
       false
     ]
   },
-  "hash": "7d7ce4d94bf2769b3299b661a05e917d74dc23dec2f680c5548a487bad54eb69"
+  "hash": "7f141e0f6ae3adc8a657c5d2334612d8ef2c67d015d0bcc358f7169b0ad9d1e8"
 }

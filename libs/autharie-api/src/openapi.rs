@@ -3,6 +3,7 @@ use utoipa::OpenApi;
 use crate::handlers::{
     actions::ActionApiDoc,
     audit::AuditApiDoc,
+    billing::BillingApiDoc,
     cloud_credentials::CloudCredentialApiDoc,
     dataplanes::DataPlaneApiDoc,
     deployments::DeploymentApiDoc,
@@ -50,6 +51,7 @@ use crate::handlers::{
         (path = "/regions", api = RegionApiDoc),
         (path = "/releases", api = ReleaseApiDoc),
         (path = "/platform", api = PlatformApiDoc),
+        (path = "/billing", api = BillingApiDoc),
     )
 )]
 pub struct ApiDoc;
@@ -159,8 +161,8 @@ fn served_paths() -> Vec<&'static str> {
     use axum_extra::routing::TypedPath;
 
     use crate::handlers::{
-        actions, audit, cloud_credentials, dataplanes, deployments, invitations, logs, members,
-        metrics, organisations, permissions, platform, releases, roles, traces, users,
+        actions, audit, billing, cloud_credentials, dataplanes, deployments, invitations, logs,
+        members, metrics, organisations, permissions, platform, releases, roles, traces, users,
     };
 
     vec![
@@ -245,6 +247,7 @@ fn served_paths() -> Vec<&'static str> {
         <platform::deployment_downtime::DeploymentDowntimeRoute as TypedPath>::PATH,
         <platform::dataplane_upgrades::DataplaneUpgradeRoute as TypedPath>::PATH,
         <platform::dataplane_upgrades::DataplaneUpgradesRoute as TypedPath>::PATH,
+        <billing::provider_events::ProviderEventsRoute as TypedPath>::PATH,
     ]
 }
 

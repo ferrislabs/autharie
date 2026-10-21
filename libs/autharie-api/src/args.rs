@@ -1,4 +1,4 @@
-use std::{path::PathBuf, time::Duration};
+use std::{fmt, path::PathBuf, time::Duration};
 
 use clap::Parser;
 
@@ -51,6 +51,9 @@ pub struct Args {
 
     #[command(flatten)]
     pub customer_cloud: CustomerCloudArgs,
+
+    #[command(flatten)]
+    pub billing: BillingArgs,
 }
 
 impl Args {
@@ -309,6 +312,86 @@ impl CustomerCloudArgs {
             claim_lease: Duration::from_secs(self.claim_lease_seconds),
             ..WorkerSettings::default()
         }
+    }
+}
+
+#[derive(clap::Args, Clone)]
+pub struct BillingArgs {
+    #[arg(
+        long = "billing-enabled",
+        env = "BILLING_ENABLED",
+        name = "BILLING_ENABLED",
+        long_help = "Whether this installation invoices its customers"
+    )]
+    pub enabled: bool,
+
+    #[arg(
+        long = "billing-first-period",
+        env = "BILLING_FIRST_PERIOD",
+        name = "BILLING_FIRST_PERIOD",
+        long_help = "The first month that is billed, as YYYY-MM. Nothing earlier is ever invoiced"
+    )]
+    pub first_period: Option<String>,
+
+    #[arg(
+        long = "billing-return-url",
+        env = "BILLING_RETURN_URL",
+        name = "BILLING_RETURN_URL",
+        long_help = "Where a customer lands after adding a payment method"
+    )]
+    pub return_url: Option<String>,
+
+    #[arg(
+        long = "stripe-secret-key",
+        env = "STRIPE_SECRET_KEY",
+        hide_env_values = true,
+        name = "STRIPE_SECRET_KEY",
+        long_help = "The Stripe secret key this control plane calls the Stripe API with"
+    )]
+    pub stripe_secret_key: Option<String>,
+
+    #[arg(
+        long = "stripe-webhook-secret",
+        env = "STRIPE_WEBHOOK_SECRET",
+        hide_env_values = true,
+        name = "STRIPE_WEBHOOK_SECRET",
+        long_help = "The signing secret of the Stripe webhook endpoint, which proves an event is Stripe's"
+    )]
+    pub stripe_webhook_secret: Option<String>,
+
+    #[arg(
+        long = "stripe-api-base",
+        env = "STRIPE_API_BASE",
+        name = "STRIPE_API_BASE",
+        default_value = "https://api.stripe.com",
+        long_help = "Where the Stripe API answers"
+    )]
+    pub stripe_api_base: String,
+}
+
+impl Default for BillingArgs {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            first_period: None,
+            return_url: None,
+            stripe_secret_key: None,
+            stripe_webhook_secret: None,
+            stripe_api_base: "https://api.stripe.com".to_string(),
+        }
+    }
+}
+
+impl fmt::Debug for BillingArgs {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BillingArgs")
+            .field("enabled", &self.enabled)
+            .field("first_period", &self.first_period)
+            .field("return_url", &self.return_url)
+            .field("stripe_secret_key", &format_args!("[redacted]"))
+            .field("stripe_webhook_secret", &format_args!("[redacted]"))
+            .field("stripe_api_base", &self.stripe_api_base)
+            .finish()
     }
 }
 
@@ -1090,5 +1173,77 @@ mod tests {
             args.configured(),
             Some(("autharie-fr-tls".to_string(), "default".to_string()))
         );
+    }
+
+    #[test]
+    fn billing_is_off_by_default_and_defaults_match_the_flags() {
+        let parsed = Args::try_parse_from(["autharie"]).expect("no arguments parse");
+        let defaults = BillingArgs::default();
+
+        assert!(!parsed.billing.enabled);
+        assert!(!defaults.enabled);
+        assert_eq!(parsed.billing.first_period, None);
+        assert_eq!(parsed.billing.return_url, None);
+        assert_eq!(parsed.billing.stripe_secret_key, None);
+        assert_eq!(parsed.billing.stripe_webhook_secret, None);
+        assert_eq!(parsed.billing.stripe_api_base, "https://api.stripe.com");
+        assert_eq!(parsed.billing.stripe_api_base, defaults.stripe_api_base);
+        assert_eq!(
+            parsed.billing.stripe_api_base,
+            autharie_stripe::DEFAULT_API_BASE
+        );
+    }
+
+    #[test]
+    fn billing_reads_its_flags() {
+        let parsed = Args::try_parse_from([
+            "autharie",
+            "--billing-enabled",
+            "--billing-first-period",
+            "2026-12",
+            "--billing-return-url",
+            "https://console.test/billing",
+            "--stripe-secret-key",
+            "sk_test_x",
+            "--stripe-webhook-secret",
+            "whsec_x",
+            "--stripe-api-base",
+            "http://stripe.test",
+        ])
+        .expect("the flags parse");
+
+        assert!(parsed.billing.enabled);
+        assert_eq!(parsed.billing.first_period.as_deref(), Some("2026-12"));
+        assert_eq!(
+            parsed.billing.return_url.as_deref(),
+            Some("https://console.test/billing")
+        );
+        assert_eq!(
+            parsed.billing.stripe_secret_key.as_deref(),
+            Some("sk_test_x")
+        );
+        assert_eq!(
+            parsed.billing.stripe_webhook_secret.as_deref(),
+            Some("whsec_x")
+        );
+        assert_eq!(parsed.billing.stripe_api_base, "http://stripe.test");
+    }
+
+    #[test]
+    fn billing_secrets_are_redacted_wherever_the_arguments_are_printed() {
+        let args = Args {
+            billing: BillingArgs {
+                stripe_secret_key: Some("sk_test_do_not_print".to_string()),
+                stripe_webhook_secret: Some("whsec_do_not_print".to_string()),
+                ..BillingArgs::default()
+            },
+            ..Args::default()
+        };
+
+        for printed in [format!("{:?}", args.billing), format!("{args:?}")] {
+            assert!(!printed.contains("sk_test_do_not_print"), "{printed}");
+            assert!(!printed.contains("whsec_do_not_print"), "{printed}");
+            assert!(printed.contains("[redacted]"), "{printed}");
+        }
     }
 }

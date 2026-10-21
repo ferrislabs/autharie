@@ -181,7 +181,58 @@ pub trait DeploymentPower: Send + Sync {
     fn start(
         &self,
         deployment_ids: &[DeploymentId],
-    ) -> impl Future<Output = Result<(), CoreError>> + Send;
+    ) -> impl Future<Output = Result<Vec<DeploymentId>, CoreError>> + Send;
+}
+
+impl<T: PaymentProvider> PaymentProvider for &T {
+    fn create_customer(
+        &self,
+        organisation_id: &OrganisationId,
+        details: &BillingDetails,
+    ) -> impl Future<Output = Result<ProviderCustomerId, CoreError>> + Send {
+        (**self).create_customer(organisation_id, details)
+    }
+
+    fn update_customer(
+        &self,
+        customer: &ProviderCustomerId,
+        details: &BillingDetails,
+    ) -> impl Future<Output = Result<(), CoreError>> + Send {
+        (**self).update_customer(customer, details)
+    }
+
+    fn payment_method_session(
+        &self,
+        customer: &ProviderCustomerId,
+        return_url: &str,
+    ) -> impl Future<Output = Result<String, CoreError>> + Send {
+        (**self).payment_method_session(customer, return_url)
+    }
+
+    fn set_default_payment_method(
+        &self,
+        customer: &ProviderCustomerId,
+        payment_method: &ProviderPaymentMethodId,
+    ) -> impl Future<Output = Result<(), CoreError>> + Send {
+        (**self).set_default_payment_method(customer, payment_method)
+    }
+
+    fn issue_invoice(
+        &self,
+        customer: &ProviderCustomerId,
+        statement: &Statement,
+    ) -> impl Future<Output = Result<ProviderInvoice, CoreError>> + Send {
+        (**self).issue_invoice(customer, statement)
+    }
+
+    fn read_event(
+        &self,
+        payload: &[u8],
+        signature: &str,
+        now: DateTime<Utc>,
+    ) -> Result<ProviderEvent, BillingError> {
+        (**self).read_event(payload, signature, now)
+    }
 }
 
 pub trait BillingPolicy: Send + Sync {

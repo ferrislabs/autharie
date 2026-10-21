@@ -1,7 +1,7 @@
 use crate::billing::{
     BillingError,
     account::{ProviderCustomerId, provider_reference},
-    statement::ProviderInvoiceId,
+    statement::{ProviderInvoiceId, StatementId},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -38,12 +38,15 @@ pub enum ProviderEventKind {
     },
     InvoicePaid {
         invoice: ProviderInvoiceId,
+        statement: Option<StatementId>,
     },
     PaymentFailed {
         invoice: ProviderInvoiceId,
+        statement: Option<StatementId>,
     },
     InvoiceUncollectible {
         invoice: ProviderInvoiceId,
+        statement: Option<StatementId>,
     },
     Ignored,
 }
@@ -81,6 +84,30 @@ mod tests {
         );
         assert!(ProviderPaymentMethodId::parse("").is_err());
         assert!(ProviderPaymentMethodId::parse("pm 1").is_err());
+    }
+
+    #[test]
+    fn an_invoice_event_is_told_apart_by_the_statement_it_names() {
+        let invoice = ProviderInvoiceId::parse("in_1").unwrap();
+        let named = StatementId::new();
+
+        let paid = |statement| ProviderEventKind::InvoicePaid {
+            invoice: invoice.clone(),
+            statement,
+        };
+        let failed = |statement| ProviderEventKind::PaymentFailed {
+            invoice: invoice.clone(),
+            statement,
+        };
+        let lost = |statement| ProviderEventKind::InvoiceUncollectible {
+            invoice: invoice.clone(),
+            statement,
+        };
+
+        assert_eq!(paid(Some(named)), paid(Some(named)));
+        assert_ne!(paid(Some(named)), paid(None));
+        assert_ne!(failed(Some(named)), failed(Some(StatementId::new())));
+        assert_ne!(lost(Some(named)), lost(None));
     }
 
     #[test]

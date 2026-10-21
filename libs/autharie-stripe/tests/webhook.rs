@@ -3,7 +3,7 @@ mod common;
 use autharie_domain::billing::ports::PaymentProvider;
 use autharie_domain::billing::{
     BillingError, ProviderCustomerId, ProviderEventId, ProviderEventKind, ProviderInvoiceId,
-    ProviderPaymentMethodId,
+    ProviderPaymentMethodId, StatementId,
 };
 use autharie_stripe::StripePaymentProvider;
 use chrono::{DateTime, TimeZone, Utc};
@@ -11,6 +11,7 @@ use common::{WEBHOOK_SECRET, config};
 use hmac::{Hmac, Mac};
 use serde_json::{Value, json};
 use sha2::Sha256;
+use uuid::Uuid;
 
 fn provider() -> StripePaymentProvider {
     StripePaymentProvider::new(config("http://127.0.0.1:1".to_string())).unwrap()
@@ -256,7 +257,8 @@ fn a_paid_invoice_maps_to_invoice_paid() {
     assert_eq!(
         read(&event("invoice.paid", json!({"id": "in_5"}))).unwrap(),
         ProviderEventKind::InvoicePaid {
-            invoice: ProviderInvoiceId::parse("in_5").unwrap()
+            invoice: ProviderInvoiceId::parse("in_5").unwrap(),
+            statement: None,
         }
     );
 }
@@ -266,7 +268,8 @@ fn a_failed_payment_maps_to_payment_failed() {
     assert_eq!(
         read(&event("invoice.payment_failed", json!({"id": "in_5"}))).unwrap(),
         ProviderEventKind::PaymentFailed {
-            invoice: ProviderInvoiceId::parse("in_5").unwrap()
+            invoice: ProviderInvoiceId::parse("in_5").unwrap(),
+            statement: None,
         }
     );
 }
@@ -280,22 +283,101 @@ fn an_uncollectible_invoice_maps_to_invoice_uncollectible() {
         ))
         .unwrap(),
         ProviderEventKind::InvoiceUncollectible {
-            invoice: ProviderInvoiceId::parse("in_5").unwrap()
+            invoice: ProviderInvoiceId::parse("in_5").unwrap(),
+            statement: None,
         }
     );
 }
 
 #[test]
-fn an_invoice_event_without_an_invoice_id_is_refused() {
+fn an_invoice_event_names_the_statement_stripe_was_told_about() {
+    let statement = StatementId(Uuid::from_u128(0x5747));
+    let object = json!({"id": "in_5", "metadata": {"statement_id": statement.to_string()}});
+
+    assert_eq!(
+        read(&event("invoice.paid", object.clone())).unwrap(),
+        ProviderEventKind::InvoicePaid {
+            invoice: ProviderInvoiceId::parse("in_5").unwrap(),
+            statement: Some(statement),
+        }
+    );
+    assert_eq!(
+        read(&event("invoice.payment_failed", object.clone())).unwrap(),
+        ProviderEventKind::PaymentFailed {
+            invoice: ProviderInvoiceId::parse("in_5").unwrap(),
+            statement: Some(statement),
+        }
+    );
+    assert_eq!(
+        read(&event("invoice.marked_uncollectible", object)).unwrap(),
+        ProviderEventKind::InvoiceUncollectible {
+            invoice: ProviderInvoiceId::parse("in_5").unwrap(),
+            statement: Some(statement),
+        }
+    );
+}
+
+#[test]
+fn an_invoice_event_whose_statement_is_missing_or_not_a_uuid_names_none() {
+    for metadata in [
+        json!({}),
+        json!({"statement_id": null}),
+        json!({"statement_id": 7}),
+        json!({"statement_id": "not-a-uuid"}),
+        json!({"statement_id": ""}),
+        json!({"period": "2026-11"}),
+    ] {
+        assert_eq!(
+            read(&event(
+                "invoice.paid",
+                json!({"id": "in_5", "metadata": metadata.clone()})
+            ))
+            .unwrap(),
+            ProviderEventKind::InvoicePaid {
+                invoice: ProviderInvoiceId::parse("in_5").unwrap(),
+                statement: None,
+            },
+            "{metadata}"
+        );
+    }
+}
+
+#[test]
+fn a_signed_invoice_event_without_an_invoice_id_is_ignored() {
     for kind in [
         "invoice.paid",
         "invoice.payment_failed",
         "invoice.marked_uncollectible",
     ] {
-        let payload = event(kind, json!({"object": "invoice"}));
+        for object in [
+            json!({"object": "invoice"}),
+            json!({"id": null}),
+            json!({"id": 5}),
+            json!({"id": ""}),
+            json!({"id": "in 5"}),
+            json!(null),
+        ] {
+            assert_eq!(
+                read(&event(kind, object.clone())).unwrap(),
+                ProviderEventKind::Ignored,
+                "{kind} {object}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_signed_invoice_event_without_data_is_ignored() {
+    for kind in [
+        "invoice.paid",
+        "invoice.payment_failed",
+        "invoice.marked_uncollectible",
+    ] {
+        let payload = serde_json::to_vec(&json!({"id": "evt_1", "type": kind})).unwrap();
+
         assert_eq!(
-            read(&payload),
-            Err(BillingError::InvalidEventSignature),
+            read(&payload).unwrap(),
+            ProviderEventKind::Ignored,
             "{kind}"
         );
     }

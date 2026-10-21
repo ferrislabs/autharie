@@ -9,6 +9,7 @@ use tracing::{error, warn};
 
 use crate::{
     args::Args,
+    billing::BillingRuntime,
     certificate::KubeCertificateSource,
     errors::ApiError,
     quickwit::{QuickwitLogSearchIndex, QuickwitTraceSearchIndex},
@@ -39,6 +40,8 @@ pub struct AppState {
     /// `logs-{organisation_id}`, so it shares that field's `--quickwit-url`
     /// and its `None`-means-unconfigured shape.
     pub quickwit_traces: Option<Arc<QuickwitTraceSearchIndex>>,
+
+    pub billing: Option<Arc<BillingRuntime>>,
 }
 
 pub fn customer_cloud_providers(
@@ -170,12 +173,15 @@ pub async fn state(args: Arc<Args>) -> Result<AppState, ApiError> {
         .configured()
         .map(|url| Arc::new(QuickwitTraceSearchIndex::new(url)));
 
+    let billing = BillingRuntime::from_args(&args.billing)?.map(Arc::new);
+
     Ok(AppState {
         args,
         service,
         certificate_source,
         quickwit_search,
         quickwit_traces,
+        billing,
     })
 }
 

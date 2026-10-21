@@ -13,6 +13,80 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/billing/provider-events": {
+      "post": {
+        "tags": [
+          "billing"
+        ],
+        "summary": "receive a payment provider event",
+        "description": "Called by the payment provider, never by a user: the request carries no bearer token and is trusted only through the signature of its body. An event is applied once, however many times the provider delivers it.",
+        "operationId": "provider_events_handler",
+        "parameters": [
+          {
+            "name": "Stripe-Signature",
+            "in": "header",
+            "description": "The provider's signature of the raw body",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "The event, exactly as the provider sent it",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The event was applied, or had been already",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderEventsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The signature is missing or does not match the body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The payment provider failed while the event was applied; it will deliver the event again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Billing is not enabled on this installation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/dataplanes": {
       "get": {
         "tags": [
@@ -12742,6 +12816,17 @@
           "scaleway"
         ]
       },
+      "ProviderEventsResponse": {
+        "type": "object",
+        "required": [
+          "received"
+        ],
+        "properties": {
+          "received": {
+            "type": "boolean"
+          }
+        }
+      },
       "ProviderName": {
         "type": "string",
         "description": "Which configured key manager a key lives in.\n\nA name rather than an enum of the providers this platform happens to\nsupport today. Adding a customer's own manager is then a line of\nconfiguration and an adapter, not a variant every match in the codebase has\nto learn about.",
@@ -14557,6 +14642,10 @@
     {
       "name": "platform",
       "description": "What the installation runs, for whoever runs it."
+    },
+    {
+      "name": "billing",
+      "description": "Billing endpoints."
     }
   ]
 }

@@ -13,14 +13,37 @@ use common::{
 };
 use httpmock::prelude::*;
 use secrecy::SecretString;
-use serde_json::json;
-use sha2::{Digest, Sha256};
+use serde_json::{Value, json};
 use std::collections::BTreeSet;
+use std::io::{Read, Write};
+use std::net::TcpListener;
 use std::sync::Mutex;
 use uuid::Uuid;
 
 fn customer() -> ProviderCustomerId {
     ProviderCustomerId::parse("cus_123").unwrap()
+}
+
+fn search_result(data: Value) -> Value {
+    json!({"object": "search_result", "data": data, "has_more": false})
+}
+
+fn no_invoice_yet(server: &MockServer) -> httpmock::Mock<'_> {
+    found_invoices(server, json!([]))
+}
+
+fn found_invoices(server: &MockServer, data: Value) -> httpmock::Mock<'_> {
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/v1/invoices/search")
+            .header("Authorization", format!("Bearer {SECRET_KEY}"))
+            .header("Stripe-Version", STRIPE_API_VERSION)
+            .query_param(
+                "query",
+                format!("metadata['statement_id']:'{}'", statement_id()),
+            );
+        then.status(200).json_body(search_result(data));
+    })
 }
 
 fn reason(error: CoreError) -> String {
@@ -93,7 +116,7 @@ async fn the_optional_details_are_sent_only_when_set() {
 }
 
 #[tokio::test]
-async fn updating_a_customer_keys_the_request_by_the_digest_of_its_body() {
+async fn updating_a_customer_posts_the_details_under_a_key_carrying_a_fresh_uuid() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {
         when.method(POST)
@@ -106,9 +129,10 @@ async fn updating_a_customer_keys_the_request_by_the_digest_of_its_body() {
             .x_www_form_urlencoded_tuple("metadata[siren]", "")
             .matches(|request| {
                 let body = request.body.as_deref().unwrap_or_default();
-                let digest = hex::encode(Sha256::digest(body));
-                let expected = format!("customer:cus_123:update:{}", &digest[..32]);
-                header(request, "Idempotency-Key") == Some(expected.as_str())
+                header(request, "Idempotency-Key")
+                    .and_then(|key| key.strip_prefix("customer:cus_123:update:"))
+                    .and_then(|rest| Uuid::parse_str(rest).ok())
+                    .is_some_and(|uuid| uuid.get_version_num() == 4)
                     && !String::from_utf8_lossy(body).contains("organisation_id")
             });
         then.status(200).json_body(json!({"id": "cus_123"}));
@@ -182,25 +206,32 @@ async fn updating_a_customer_clears_an_address_line_that_is_gone() {
     mock.assert();
 }
 
+static UPDATE_KEYS: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
+
 #[tokio::test]
-async fn updating_a_customer_with_other_details_changes_the_key() {
+async fn updating_a_customer_twice_with_the_same_details_never_reuses_a_key() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {
-        when.method(POST).path("/v1/customers/cus_123");
+        when.method(POST)
+            .path("/v1/customers/cus_123")
+            .matches(|request| {
+                let key = header(request, "Idempotency-Key").unwrap_or_default();
+                UPDATE_KEYS.lock().unwrap().insert(key.to_string());
+                true
+            });
         then.status(200).json_body(json!({"id": "cus_123"}));
     });
     let provider = provider(&server);
 
-    provider
-        .update_customer(&customer(), &details())
-        .await
-        .unwrap();
-    provider
-        .update_customer(&customer(), &full_details())
-        .await
-        .unwrap();
+    for _ in 0..2 {
+        provider
+            .update_customer(&customer(), &details())
+            .await
+            .unwrap();
+    }
 
     mock.assert_hits(2);
+    assert_eq!(UPDATE_KEYS.lock().unwrap().len(), 2);
 }
 
 #[tokio::test]
@@ -286,6 +317,33 @@ async fn a_session_without_a_url_is_a_provider_failure() {
 }
 
 #[tokio::test]
+async fn a_session_url_that_is_not_https_is_a_provider_failure_that_does_not_echo_it() {
+    for url in [
+        "http://checkout.stripe.test/c/pay/cs_1",
+        "javascript:alert(1)",
+        "//checkout.stripe.test/c/pay/cs_1",
+        "not a url",
+        "",
+    ] {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(POST).path("/v1/checkout/sessions");
+            then.status(200)
+                .json_body(json!({"id": "cs_1", "url": url}));
+        });
+
+        let error = provider(&server)
+            .payment_method_session(&customer(), "https://app.test/a")
+            .await
+            .unwrap_err();
+
+        let reason = reason(error);
+        assert!(reason.contains("/v1/checkout/sessions"), "{reason}");
+        assert!(url.is_empty() || !reason.contains(url), "{reason}");
+    }
+}
+
+#[tokio::test]
 async fn the_default_payment_method_is_set_under_a_key_naming_both_ids() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {
@@ -319,6 +377,7 @@ async fn an_invoice_is_built_item_by_item_then_finalized_under_stable_keys() {
     let statement = statement(vec![line(0xd1, 0x51, 4900), line(0xd2, 0x52, 1234)]);
     let sid = statement_id();
 
+    let search = no_invoice_yet(&server);
     let invoice = server.mock(|when, then| {
         when.method(POST)
             .path("/v1/invoices")
@@ -402,6 +461,7 @@ async fn an_invoice_is_built_item_by_item_then_finalized_under_stable_keys() {
 
     assert_eq!(issued.id, ProviderInvoiceId::parse("in_77").unwrap());
     assert_eq!(issued.hosted_url, "https://invoice.stripe.test/i/in_77");
+    search.assert();
     invoice.assert();
     first_item.assert();
     second_item.assert();
@@ -411,6 +471,7 @@ async fn an_invoice_is_built_item_by_item_then_finalized_under_stable_keys() {
 #[tokio::test]
 async fn a_refused_invoice_item_stops_the_invoice_before_it_is_finalized() {
     let server = MockServer::start();
+    no_invoice_yet(&server);
     server.mock(|when, then| {
         when.method(POST).path("/v1/invoices");
         then.status(200).json_body(json!({"id": "in_77"}));
@@ -462,6 +523,7 @@ async fn a_refused_invoice_item_stops_the_invoice_before_it_is_finalized() {
 #[tokio::test]
 async fn a_finalized_invoice_without_a_hosted_url_is_a_provider_failure() {
     let server = MockServer::start();
+    no_invoice_yet(&server);
     server.mock(|when, then| {
         when.method(POST).path("/v1/invoices");
         then.status(200).json_body(json!({"id": "in_77"}));
@@ -482,6 +544,316 @@ async fn a_finalized_invoice_without_a_hosted_url_is_a_provider_failure() {
         .unwrap_err();
 
     assert!(reason(error).contains("/v1/invoices/{invoice}/finalize"));
+}
+
+#[tokio::test]
+async fn a_finalized_invoice_whose_hosted_url_is_not_https_is_a_provider_failure() {
+    for url in [
+        "http://invoice.stripe.test/i/in_77",
+        "javascript:alert(1)",
+        "nope",
+    ] {
+        let server = MockServer::start();
+        no_invoice_yet(&server);
+        server.mock(|when, then| {
+            when.method(POST).path("/v1/invoices");
+            then.status(200).json_body(json!({"id": "in_77"}));
+        });
+        server.mock(|when, then| {
+            when.method(POST).path("/v1/invoiceitems");
+            then.status(200).json_body(json!({"id": "ii_1"}));
+        });
+        server.mock(|when, then| {
+            when.method(POST).path("/v1/invoices/in_77/finalize");
+            then.status(200)
+                .json_body(json!({"id": "in_77", "hosted_invoice_url": url}));
+        });
+
+        let error = provider(&server)
+            .issue_invoice(&customer(), &statement(vec![line(0xd1, 0x51, 4900)]))
+            .await
+            .unwrap_err();
+
+        let reason = reason(error);
+        assert!(
+            reason.contains("/v1/invoices/{invoice}/finalize"),
+            "{reason}"
+        );
+        assert!(!reason.contains(url), "{reason}");
+    }
+}
+
+#[tokio::test]
+async fn the_invoice_of_a_statement_is_looked_up_by_its_metadata_before_one_is_created() {
+    let server = MockServer::start();
+    let search = no_invoice_yet(&server);
+    let invoice = server.mock(|when, then| {
+        when.method(POST).path("/v1/invoices");
+        then.status(200).json_body(json!({"id": "in_77"}));
+    });
+    server.mock(|when, then| {
+        when.method(POST).path("/v1/invoiceitems");
+        then.status(200).json_body(json!({"id": "ii_1"}));
+    });
+    server.mock(|when, then| {
+        when.method(POST).path("/v1/invoices/in_77/finalize");
+        then.status(200).json_body(json!({
+            "id": "in_77",
+            "hosted_invoice_url": "https://invoice.stripe.test/i/in_77"
+        }));
+    });
+
+    provider(&server)
+        .issue_invoice(&customer(), &statement(vec![line(0xd1, 0x51, 4900)]))
+        .await
+        .unwrap();
+
+    search.assert_hits(1);
+    invoice.assert_hits(1);
+}
+
+#[tokio::test]
+async fn the_lookup_query_travels_url_encoded() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let served = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = Vec::new();
+        let mut chunk = [0_u8; 1024];
+        while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+            let read = stream.read(&mut chunk).unwrap();
+            request.extend_from_slice(&chunk[..read]);
+        }
+        let body = search_result(json!([{
+            "id": "in_9",
+            "status": "paid",
+            "hosted_invoice_url": "https://invoice.stripe.test/i/in_9"
+        }]))
+        .to_string();
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .unwrap();
+
+        String::from_utf8_lossy(&request)
+            .lines()
+            .next()
+            .unwrap()
+            .to_string()
+    });
+    let provider = StripePaymentProvider::new(config(base)).unwrap();
+
+    provider
+        .issue_invoice(&customer(), &statement(vec![line(0xd1, 0x51, 4900)]))
+        .await
+        .unwrap();
+
+    let request_line = served.join().unwrap();
+    assert_eq!(
+        request_line,
+        format!(
+            "GET /v1/invoices/search?query=metadata%5B%27statement_id%27%5D%3A%27{}%27 HTTP/1.1",
+            statement_id()
+        )
+    );
+}
+
+#[tokio::test]
+async fn a_draft_invoice_found_gets_the_missing_items_then_is_finalized() {
+    let server = MockServer::start();
+    let sid = statement_id();
+    let search = found_invoices(
+        &server,
+        json!([{"id": "in_88", "status": "draft", "hosted_invoice_url": null}]),
+    );
+    let created = server.mock(|when, then| {
+        when.method(POST).path("/v1/invoices");
+        then.status(200).json_body(json!({"id": "in_other"}));
+    });
+    let first_item = server.mock(|when, then| {
+        when.method(POST)
+            .path("/v1/invoiceitems")
+            .header("Idempotency-Key", format!("statement:{sid}:line:0"))
+            .x_www_form_urlencoded_tuple("invoice", "in_88")
+            .x_www_form_urlencoded_tuple("amount", "4900");
+        then.status(200).json_body(json!({"id": "ii_1"}));
+    });
+    let second_item = server.mock(|when, then| {
+        when.method(POST)
+            .path("/v1/invoiceitems")
+            .header("Idempotency-Key", format!("statement:{sid}:line:1"))
+            .x_www_form_urlencoded_tuple("invoice", "in_88")
+            .x_www_form_urlencoded_tuple("amount", "1234");
+        then.status(200).json_body(json!({"id": "ii_2"}));
+    });
+    let finalize = server.mock(|when, then| {
+        when.method(POST)
+            .path("/v1/invoices/in_88/finalize")
+            .header("Idempotency-Key", format!("statement:{sid}:finalize"));
+        then.status(200).json_body(json!({
+            "id": "in_88",
+            "hosted_invoice_url": "https://invoice.stripe.test/i/in_88"
+        }));
+    });
+
+    let issued = provider(&server)
+        .issue_invoice(
+            &customer(),
+            &statement(vec![line(0xd1, 0x51, 4900), line(0xd2, 0x52, 1234)]),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(issued.id, ProviderInvoiceId::parse("in_88").unwrap());
+    assert_eq!(issued.hosted_url, "https://invoice.stripe.test/i/in_88");
+    search.assert();
+    created.assert_hits(0);
+    first_item.assert();
+    second_item.assert();
+    finalize.assert();
+}
+
+#[tokio::test]
+async fn an_invoice_already_open_paid_or_uncollectible_is_returned_without_creating_anything() {
+    for status in ["open", "paid", "uncollectible"] {
+        let server = MockServer::start();
+        let search = found_invoices(
+            &server,
+            json!([{
+                "id": "in_99",
+                "status": status,
+                "hosted_invoice_url": "https://invoice.stripe.test/i/in_99"
+            }]),
+        );
+        let anything = server.mock(|when, then| {
+            when.method(POST);
+            then.status(200).json_body(json!({"id": "in_other"}));
+        });
+
+        let issued = provider(&server)
+            .issue_invoice(&customer(), &statement(vec![line(0xd1, 0x51, 4900)]))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            issued.id,
+            ProviderInvoiceId::parse("in_99").unwrap(),
+            "{status}"
+        );
+        assert_eq!(
+            issued.hosted_url, "https://invoice.stripe.test/i/in_99",
+            "{status}"
+        );
+        search.assert();
+        anything.assert_hits(0);
+    }
+}
+
+#[tokio::test]
+async fn an_invoice_found_without_a_usable_hosted_url_is_a_provider_failure() {
+    for hosted in [
+        json!(null),
+        json!("http://invoice.stripe.test/i/in_99"),
+        json!("nope"),
+    ] {
+        let server = MockServer::start();
+        found_invoices(
+            &server,
+            json!([{"id": "in_99", "status": "open", "hosted_invoice_url": hosted}]),
+        );
+        let anything = server.mock(|when, then| {
+            when.method(POST);
+            then.status(200).json_body(json!({"id": "in_other"}));
+        });
+
+        let error = provider(&server)
+            .issue_invoice(&customer(), &statement(vec![line(0xd1, 0x51, 4900)]))
+            .await
+            .unwrap_err();
+
+        let reason = reason(error);
+        assert!(reason.contains("/v1/invoices/search"), "{reason}");
+        assert!(!reason.contains("in_99/"), "{reason}");
+        anything.assert_hits(0);
+    }
+}
+
+#[tokio::test]
+async fn an_invoice_in_any_other_state_is_a_provider_failure_and_nothing_is_created() {
+    for status in [json!("void"), json!("deleted"), json!(null)] {
+        let server = MockServer::start();
+        found_invoices(
+            &server,
+            json!([{
+                "id": "in_99",
+                "status": status,
+                "hosted_invoice_url": "https://invoice.stripe.test/i/in_99"
+            }]),
+        );
+        let anything = server.mock(|when, then| {
+            when.method(POST);
+            then.status(200).json_body(json!({"id": "in_other"}));
+        });
+
+        let error = provider(&server)
+            .issue_invoice(&customer(), &statement(vec![line(0xd1, 0x51, 4900)]))
+            .await
+            .unwrap_err();
+
+        let reason = reason(error);
+        assert!(reason.contains("/v1/invoices/search"), "{reason}");
+        anything.assert_hits(0);
+    }
+}
+
+#[tokio::test]
+async fn a_lookup_stripe_refuses_creates_nothing() {
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method(GET).path("/v1/invoices/search");
+        then.status(429)
+            .json_body(json!({"error": {"type": "invalid_request_error", "code": "rate_limit"}}));
+    });
+    let anything = server.mock(|when, then| {
+        when.method(POST);
+        then.status(200).json_body(json!({"id": "in_other"}));
+    });
+
+    let error = provider(&server)
+        .issue_invoice(&customer(), &statement(vec![line(0xd1, 0x51, 4900)]))
+        .await
+        .unwrap_err();
+
+    let reason = reason(error);
+    assert!(reason.starts_with("GET /v1/invoices/search"), "{reason}");
+    assert!(reason.contains("429"), "{reason}");
+    assert!(!reason.contains(SECRET_KEY), "{reason}");
+    anything.assert_hits(0);
+}
+
+#[tokio::test]
+async fn a_refused_lookup_never_carries_the_key_nor_the_statement() {
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method(GET).path("/v1/invoices/search");
+        then.status(401).json_body(json!({
+            "error": {"type": "invalid_request_error", "message": format!("Invalid API Key {SECRET_KEY}")}
+        }));
+    });
+
+    let error = provider(&server)
+        .issue_invoice(&customer(), &statement(vec![line(0xd1, 0x51, 4900)]))
+        .await
+        .unwrap_err();
+
+    let rendered = format!("{error} {error:?}");
+    assert!(!rendered.contains(SECRET_KEY), "{rendered}");
+    assert!(
+        !rendered.contains(&statement_id().to_string()),
+        "{rendered}"
+    );
 }
 
 #[tokio::test]
@@ -614,6 +986,44 @@ async fn an_answer_that_is_not_the_expected_shape_is_a_provider_failure() {
         .unwrap_err();
 
     assert!(reason(error).contains("/v1/customers"));
+}
+
+#[test]
+fn an_api_base_that_is_not_https_is_refused_unless_it_is_a_loopback_address() {
+    for base in [
+        "http://api.stripe.com",
+        "http://stripe.test",
+        "http://127.0.0.1.evil.test",
+        "http://localhost.evil.test",
+        "http://0.0.0.0:8080",
+        "http://10.0.0.1",
+        "ftp://127.0.0.1",
+        "ws://localhost",
+    ] {
+        assert_eq!(
+            StripePaymentProvider::new(config(base.to_string())).unwrap_err(),
+            BillingError::NotConfigured,
+            "{base}"
+        );
+    }
+}
+
+#[test]
+fn an_https_api_base_and_a_loopback_one_are_accepted() {
+    for base in [
+        "https://api.stripe.com",
+        "https://proxy.test/stripe/",
+        "http://127.0.0.1",
+        "http://127.0.0.1:8080",
+        "http://localhost:8080",
+        "http://LOCALHOST:8080/",
+        "http://[::1]:8080",
+    ] {
+        assert!(
+            StripePaymentProvider::new(config(base.to_string())).is_ok(),
+            "{base}"
+        );
+    }
 }
 
 #[test]

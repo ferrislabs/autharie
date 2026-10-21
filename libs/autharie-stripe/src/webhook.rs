@@ -1,6 +1,6 @@
 use autharie_domain::billing::{
     BillingError, ProviderCustomerId, ProviderEvent, ProviderEventId, ProviderEventKind,
-    ProviderInvoiceId, ProviderPaymentMethodId,
+    ProviderInvoiceId, ProviderPaymentMethodId, StatementId,
 };
 use chrono::{DateTime, Utc};
 use hmac::{Hmac, Mac};
@@ -8,6 +8,7 @@ use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
 use serde_json::Value;
 use sha2::Sha256;
+use uuid::Uuid;
 
 const TOLERANCE_SECONDS: u64 = 300;
 
@@ -77,11 +78,17 @@ fn verify(
     }
 }
 
-fn invoice_of(data: &Value) -> Result<ProviderInvoiceId, BillingError> {
+fn invoice_of(data: &Value) -> Option<ProviderInvoiceId> {
     data.pointer("/object/id")
         .and_then(Value::as_str)
         .and_then(|raw| ProviderInvoiceId::parse(raw).ok())
-        .ok_or(BillingError::InvalidEventSignature)
+}
+
+fn statement_of(data: &Value) -> Option<StatementId> {
+    data.pointer("/object/metadata/statement_id")
+        .and_then(Value::as_str)
+        .and_then(|raw| Uuid::parse_str(raw).ok())
+        .map(StatementId)
 }
 
 fn payment_method_ready(data: &Value) -> ProviderEventKind {
@@ -103,19 +110,23 @@ fn payment_method_ready(data: &Value) -> ProviderEventKind {
     }
 }
 
-fn kind_of(kind: &str, data: &Value) -> Result<ProviderEventKind, BillingError> {
+fn kind_of(kind: &str, data: &Value) -> ProviderEventKind {
+    let statement = statement_of(data);
+
     match kind {
-        "setup_intent.succeeded" => Ok(payment_method_ready(data)),
-        "invoice.paid" => Ok(ProviderEventKind::InvoicePaid {
-            invoice: invoice_of(data)?,
+        "setup_intent.succeeded" => payment_method_ready(data),
+        "invoice.paid" => invoice_of(data).map_or(ProviderEventKind::Ignored, |invoice| {
+            ProviderEventKind::InvoicePaid { invoice, statement }
         }),
-        "invoice.payment_failed" => Ok(ProviderEventKind::PaymentFailed {
-            invoice: invoice_of(data)?,
-        }),
-        "invoice.marked_uncollectible" => Ok(ProviderEventKind::InvoiceUncollectible {
-            invoice: invoice_of(data)?,
-        }),
-        _ => Ok(ProviderEventKind::Ignored),
+        "invoice.payment_failed" => invoice_of(data)
+            .map_or(ProviderEventKind::Ignored, |invoice| {
+                ProviderEventKind::PaymentFailed { invoice, statement }
+            }),
+        "invoice.marked_uncollectible" => invoice_of(data)
+            .map_or(ProviderEventKind::Ignored, |invoice| {
+                ProviderEventKind::InvoiceUncollectible { invoice, statement }
+            }),
+        _ => ProviderEventKind::Ignored,
     }
 }
 
@@ -131,7 +142,7 @@ pub(crate) fn read(
         serde_json::from_slice(payload).map_err(|_| BillingError::InvalidEventSignature)?;
     let id =
         ProviderEventId::parse(&envelope.id).map_err(|_| BillingError::InvalidEventSignature)?;
-    let kind = kind_of(&envelope.kind, &envelope.data)?;
+    let kind = kind_of(&envelope.kind, &envelope.data);
 
     Ok(ProviderEvent { id, kind })
 }

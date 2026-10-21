@@ -13,6 +13,7 @@ autharie-auth = { path = "../autharie-auth" }
 autharie-s3 = { path = "../autharie-s3" }
 autharie-transit = { path = "../autharie-transit" }
 autharie-ovh = { path = "../autharie-ovh" }
+autharie-stripe = { path = "../autharie-stripe" }
 kube = { version = "2.0.1", features = ["client"] }
 k8s-openapi = { version = "0.26.0", features = ["latest"] }
 axum = "0.8.8"
@@ -40,4 +41,7 @@ serde_json = "1.0.145"
 tower = { version = "0.5", features = ["util"] }
 uuid = { version = "1.19.0", features = ["v4"] }
 sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "postgres"] }
+hex = "0.4"
+hmac = "0.12"
 httpmock = "0.7.0"
+sha2 = "0.10"
