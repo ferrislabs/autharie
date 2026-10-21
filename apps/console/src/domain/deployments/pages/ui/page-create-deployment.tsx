@@ -1,6 +1,7 @@
 import type { Schemas } from '@/api/api.client'
 import { Button } from '@/components/ui/button'
 import { newestInstallable } from '@/domain/releases/catalogue'
+import type { BillingAccess } from '@/domain/billing/billing'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -14,6 +15,7 @@ import { Page, PageTitle, Section } from '@/components/layout/page'
 import { useOrganisationPath } from '@/domain/organisations/hooks/use-organisation-path'
 import { useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
+import { createBlock } from '../../create-deployment-request'
 import { type Environment } from '../../types/deployment'
 import { OFFER_COPY, openOffers, type Offer, type OfferAvailability } from '../../offers'
 import { FREE_OFFER, FREE_OFFER_COPY, isFreeOnly } from '../../free-offer'
@@ -23,6 +25,7 @@ import { applyChange, STARTER_MOVED_NOTICE } from '../../pricing/selection'
 import { FreeOfferSection } from './components/free-offer-section'
 import { PlanPicker } from './components/plan-picker'
 import { PriceSummary } from './components/price-summary'
+import { TierPicker } from './components/tier-picker'
 import { VolumePicker } from './components/volume-picker'
 
 const PLANS: PlanId[] = ['starter', 'business', 'scale']
@@ -33,6 +36,7 @@ interface Props {
     version: string
     environment: Environment
     offer: Offer
+    tier?: string
   }) => void
   isSubmitting?: boolean
   /** What the platform said when the last attempt failed. */
@@ -41,6 +45,38 @@ interface Props {
   offersLoading: boolean
   releases: Schemas.Release[]
   releasesLoading: boolean
+  tiers: Schemas.TierResponse[]
+  billing: BillingAccess
+}
+
+interface CreateActionsProps {
+  canSubmit: boolean
+  block: string | null
+  isSubmitting: boolean
+  onCancel: () => void
+}
+
+export function CreateActions({ canSubmit, block, isSubmitting, onCancel }: CreateActionsProps) {
+  return (
+    <div className='space-y-2'>
+      {block && (
+        <p
+          role='status'
+          className='rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200'
+        >
+          {block}
+        </p>
+      )}
+      <div className='flex items-center justify-end gap-2'>
+        <Button type='button' variant='ghost' onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button type='submit' disabled={!canSubmit || block !== null}>
+          {isSubmitting ? 'Creating…' : 'Create deployment'}
+        </Button>
+      </div>
+    </div>
+  )
 }
 
 export default function PageCreateDeployment({
@@ -51,6 +87,8 @@ export default function PageCreateDeployment({
   offersLoading,
   releases,
   releasesLoading,
+  tiers,
+  billing,
 }: Props) {
   const navigate = useNavigate()
   const organisationPath = useOrganisationPath()
@@ -60,6 +98,7 @@ export default function PageCreateDeployment({
   const [picked, setPlan] = useState<PlanId>('business')
   const [volume, setVolume] = useState(10000)
   const [movedToBusiness, setMovedToBusiness] = useState(false)
+  const [pickedTier, setPickedTier] = useState<string | null>(null)
 
   const open = openOffers(offers)
   const freeOnly = isFreeOnly(open)
@@ -91,6 +130,9 @@ export default function PageCreateDeployment({
     setMovedToBusiness(change.movedToBusiness)
   }
 
+  const tier = tiers.find((candidate) => candidate.code === pickedTier) ?? tiers[0]
+  const block = createBlock(tier, billing)
+
   const canSubmit = !!chosen && name.trim() !== '' && version !== '' && !isSubmitting
 
   return (
@@ -101,12 +143,13 @@ export default function PageCreateDeployment({
         className='mt-8 space-y-8'
         onSubmit={(e) => {
           e.preventDefault()
-          if (chosen) {
+          if (chosen && block === null) {
             onSubmit({
               name,
               version,
               environment,
               offer: chosen,
+              tier: tier?.code,
             })
           }
         }}
@@ -169,6 +212,12 @@ export default function PageCreateDeployment({
           </>
         )}
 
+        {tier && (
+          <Section title='Tier'>
+            <TierPicker tiers={tiers} selected={tier.code} onSelect={setPickedTier} />
+          </Section>
+        )}
+
         {!releasesLoading && version === '' && (
           <p className='rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200'>
             No version of FerrisKey is available yet, so there is nothing to create. Someone
@@ -196,26 +245,20 @@ export default function PageCreateDeployment({
         )}
 
         <div className='sticky bottom-0 -mx-2 space-y-4 border-t bg-background px-2 py-4'>
-          {freeOnly ? (
+          {freeOnly && !tier ? (
             <div className='flex items-baseline justify-between gap-4 rounded-lg border bg-muted/30 p-4'>
               <span className='text-sm font-medium'>Monthly price</span>
               <span className='text-xl font-semibold'>{FREE_OFFER_COPY.price}</span>
             </div>
           ) : (
-            <PriceSummary hosting='managed' price={price} />
+            <PriceSummary hosting='managed' price={price} tier={tier} />
           )}
-          <div className='flex items-center justify-end gap-2'>
-            <Button
-              type='button'
-              variant='ghost'
-              onClick={() => navigate({ to: organisationPath('/deployments') })}
-            >
-              Cancel
-            </Button>
-            <Button type='submit' disabled={!canSubmit}>
-              {isSubmitting ? 'Creating…' : 'Create deployment'}
-            </Button>
-          </div>
+          <CreateActions
+            canSubmit={canSubmit}
+            block={block}
+            isSubmitting={isSubmitting}
+            onCancel={() => navigate({ to: organisationPath('/deployments') })}
+          />
         </div>
       </form>
     </Page>

@@ -274,6 +274,8 @@ describe('can', () => {
       removeMembers: 9,
       viewRoles: 10,
       manageRoles: 11,
+      viewBilling: 12,
+      manageBilling: 13,
       viewBackups: 16,
       manageBackups: 17,
     })

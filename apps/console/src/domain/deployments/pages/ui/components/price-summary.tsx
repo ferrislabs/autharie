@@ -1,27 +1,50 @@
+import type { Schemas } from '@/api/api.client'
+import { formatMinor, isPaid } from '@/domain/billing/billing'
 import type { Hosting, Price } from '../../../pricing/model'
 import {
   BILLED_ON_ITS_OWN,
   INDICATIVE_NOTE,
   formatAmount,
   summaryLines,
+  type SummaryLine,
 } from '../../../pricing/summary'
 
 interface Props {
   hosting: Hosting
   price: Price
   clusterEstimate?: string
+  tier?: Schemas.TierResponse
 }
 
-export function PriceSummary({ hosting, price, clusterEstimate }: Props) {
-  const lines = summaryLines(hosting, price, clusterEstimate)
-  const free = price.kind === 'price' && price.amount === 0
+function tierAmount(tier: Schemas.TierResponse): string {
+  return isPaid(tier) ? formatMinor(tier.monthly_price) : 'Free'
+}
+
+function tierLines(tier: Schemas.TierResponse): SummaryLine[] {
+  const lines: SummaryLine[] = [
+    {
+      label: 'Autharie',
+      value: isPaid(tier) ? `${formatMinor(tier.monthly_price)} per month, excl. VAT` : 'Free',
+    },
+  ]
+
+  if (tier.first_invoice) {
+    lines.push({ label: 'First invoice', value: formatMinor(tier.first_invoice.amount) })
+  }
+
+  return lines
+}
+
+export function PriceSummary({ hosting, price, clusterEstimate, tier }: Props) {
+  const lines = tier ? tierLines(tier) : summaryLines(hosting, price, clusterEstimate)
+  const free = tier ? !isPaid(tier) : price.kind === 'price' && price.amount === 0
 
   return (
     <div aria-live='polite' className='space-y-2 rounded-lg border bg-muted/30 p-4'>
       <div className='flex items-baseline justify-between gap-4'>
         <span className='text-sm font-medium'>Monthly price</span>
         <span className='text-xl font-semibold tabular-nums'>
-          {formatAmount(price)}
+          {tier ? tierAmount(tier) : formatAmount(price)}
           {!free && <span className='text-xs font-normal text-muted-foreground'> excl. VAT</span>}
         </span>
       </div>
@@ -34,7 +57,7 @@ export function PriceSummary({ hosting, price, clusterEstimate }: Props) {
         ))}
       </dl>
       <p className='text-xs text-muted-foreground'>{BILLED_ON_ITS_OWN}</p>
-      <p className='text-xs text-muted-foreground'>{INDICATIVE_NOTE}</p>
+      {!tier && <p className='text-xs text-muted-foreground'>{INDICATIVE_NOTE}</p>}
     </div>
   )
 }

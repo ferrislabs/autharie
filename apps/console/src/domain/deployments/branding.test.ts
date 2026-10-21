@@ -155,8 +155,8 @@ describe('request status', () => {
 })
 
 describe('gate message', () => {
-  it('names the plan when given', () => {
-    expect(describeUnavailable('Business')).toContain('Business')
-    expect(describeUnavailable(null)).not.toContain('from the')
+  it('names the tier when given', () => {
+    expect(describeUnavailable('legacy-free')).toContain('legacy-free')
+    expect(describeUnavailable(null)).toBe('Branding is not included in the tier of this deployment.')
   })
 })

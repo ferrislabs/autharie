@@ -528,11 +528,6 @@ export namespace Schemas {
     operator_version?: (null | Version) | undefined
   }
   export type Hosting = 'shared' | 'self_hosted' | 'customer_cloud'
-  export type IamFeatureAvailability = {
-    feature: IamFeature
-    open: boolean
-    opened_by?: (null | Plan) | undefined
-  }
   export type IamSettingsRequest = { action_id: ActionId; created_at: string; status: ActionStatus }
   export type IamSettingsState = Partial<{
     branding: null | Branding
@@ -579,8 +574,6 @@ export namespace Schemas {
   export type ListDataplanesResponse = { data: Array<DataPlane> }
   export type ListDeploymentsForDataPlaneResponse = { data: Array<Deployment> }
   export type ListDeploymentsResponse = { data: Array<Deployment> }
-  export type PlanFeatures = { features: Array<IamFeatureAvailability>; plan: Plan }
-  export type ListFeaturesResponse = { data: PlanFeatures }
   export type ListFleetAuditLogResponse = {
     data: Array<FleetAuditEntry>
     next_cursor?: (string | null) | undefined
@@ -1515,15 +1508,6 @@ export namespace Endpoints {
     }
     response: Schemas.EnabledFeaturesResponse
   }
-  export type get_List_features_handler = {
-    method: 'GET'
-    path: '/organisations/{organisation_id}/features'
-    requestFormat: 'json'
-    parameters: {
-      path: { organisation_id: string }
-    }
-    response: Schemas.ListFeaturesResponse
-  }
   export type get_List_invitations_handler = {
     method: 'GET'
     path: '/organisations/{organisation_id}/invitations'
@@ -2058,7 +2042,6 @@ export type EndpointByMethod = {
     '/organisations/{organisation_id}/deployments/{deployment_id}/upgrade': Endpoints.get_Upgrade_in_flight_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/usage-metrics/{metric}': Endpoints.get_Get_deployment_usage_handler
     '/organisations/{organisation_id}/feature-flags': Endpoints.get_List_enabled_features_handler
-    '/organisations/{organisation_id}/features': Endpoints.get_List_features_handler
     '/organisations/{organisation_id}/invitations': Endpoints.get_List_invitations_handler
     '/organisations/{organisation_id}/logs/group': Endpoints.get_Group_logs_handler
     '/organisations/{organisation_id}/logs/search': Endpoints.get_Search_logs_handler

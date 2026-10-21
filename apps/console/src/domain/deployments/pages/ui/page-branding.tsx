@@ -42,7 +42,8 @@ import { BrandingPreview } from './components/branding-preview'
 
 interface Props {
   isLoading: boolean
-  feature?: Schemas.IamFeatureAvailability
+  feature?: Schemas.DeploymentFeature
+  tier?: string
   state?: Schemas.IamSettingsState
   onApply: (form: BrandingForm) => void
   onReset: () => void
@@ -53,6 +54,7 @@ interface Props {
 export function PageBranding({
   isLoading,
   feature,
+  tier,
   state,
   onApply,
   onReset,
@@ -72,7 +74,7 @@ export function PageBranding({
         <EmptyState
           icon={<Palette className='h-5 w-5' />}
           title='Branding is not included in your plan'
-          description={describeUnavailable(feature?.opened_by)}
+          description={describeUnavailable(tier)}
         />
       </SectionPage>
     )

@@ -1,4 +1,5 @@
 import type { Schemas } from '@/api/api.client'
+import { isPaid, paidActionBlock, type BillingAccess } from '@/domain/billing/billing'
 import { type Environment } from './types/deployment'
 import type { Offer } from './offers'
 
@@ -13,6 +14,7 @@ export interface CreateDeploymentForm {
   environment: Environment
   /** What they are buying. The size and the isolation come with it. */
   offer: Offer
+  tier?: string
 }
 
 export function toCreateDeploymentRequest(
@@ -24,5 +26,13 @@ export function toCreateDeploymentRequest(
     version: form.version,
     environment: form.environment,
     offer: form.offer,
+    ...(form.tier ? { tier: form.tier } : {}),
   }
+}
+
+export function createBlock(
+  tier: Schemas.TierResponse | undefined,
+  access: BillingAccess,
+): string | null {
+  return tier && isPaid(tier) ? paidActionBlock(access) : null
 }
