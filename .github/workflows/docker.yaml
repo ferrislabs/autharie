@@ -368,6 +368,7 @@ jobs:
           - console
           - genesis
           - herald
+          - mcp-gateway
           - mcp
           - operator
     steps:
@@ -448,6 +449,7 @@ jobs:
           - console
           - genesis
           - herald
+          - mcp-gateway
           - mcp
           - operator
     steps:

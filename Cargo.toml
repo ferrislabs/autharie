@@ -19,6 +19,7 @@ members = [
     "libs/autharie-stripe",
     "libs/autharie-scaleway",
     "libs/autharie-e2e",
+    "apps/mcp-gateway",
 ]
 
 [workspace.package]
