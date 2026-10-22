@@ -15,12 +15,13 @@ import {
   useSavePolicy,
   useUpdateAgentSettings,
 } from '../../hooks/use-agents'
+import type { PolicyTemplateDraft } from '../../policy-templates'
 import type { AgentPolicy } from '../../types'
 import { DeletePolicyDialog } from '../ui/delete-policy-dialog'
 import { PageAgents } from '../ui/page-agents'
 import { PolicySheet } from '../ui/policy-sheet'
 
-type Editing = { policy: AgentPolicy | null } | null
+type Editing = { policy: AgentPolicy | null; initial?: PolicyTemplateDraft } | null
 
 function AgentsTab() {
   const scope = useAgentScope()
@@ -80,9 +81,9 @@ function AgentsTab() {
           )
         }
         onOpenOrganisationSettings={() => void navigate({ to: organisationPath('/settings') })}
-        onCreatePolicy={() => {
+        onCreatePolicy={(initial) => {
           savePolicy.reset()
-          setEditing({ policy: null })
+          setEditing({ policy: null, initial })
         }}
         onEditPolicy={(policy) => {
           savePolicy.reset()
@@ -109,6 +110,7 @@ function AgentsTab() {
       <PolicySheet
         open={editing !== null}
         policy={editing?.policy ?? null}
+        initial={editing?.initial}
         others={list}
         isSaving={savePolicy.isPending}
         error={savePolicy.error?.message}

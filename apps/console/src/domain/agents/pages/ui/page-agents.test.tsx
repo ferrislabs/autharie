@@ -126,15 +126,68 @@ describe('the agents tab states', () => {
   })
 })
 
+describe('the tabs', () => {
+  it('lists the four tabs and opens on the overview', () => {
+    const html = render()
+    for (const label of ['Overview', 'Access map', 'Policies', 'Activity']) {
+      expect(html).toContain(`>${label}</button>`)
+    }
+    expect(html).toContain('Agents on this deployment')
+    expect(html).not.toContain('No policies yet')
+    expect(html).not.toContain('No decisions yet')
+  })
+
+  it('shows a placeholder or the given access map', () => {
+    expect(render({ defaultTab: 'access-map' })).toContain('not available yet')
+    const html = render({ defaultTab: 'access-map', accessMap: <p>the map</p> })
+    expect(html).toContain('the map')
+    expect(html).not.toContain('not available yet')
+  })
+})
+
+describe('the connection guide', () => {
+  it('explains what is missing when agents are off', () => {
+    const html = withSettings({ realm: 'master' })
+    expect(html).toContain('Connect an agent')
+    expect(html).toContain('Turn agents on')
+    expect(html).not.toContain('claude mcp add')
+  })
+
+  it('explains the organisation switch when it is off', () => {
+    const html = withSettings({ organisation_mcp_enabled: false })
+    expect(html).toContain('Connect an agent')
+    expect(html.split('AI access is off for this organisation').length).toBeGreaterThan(2)
+  })
+
+  it('shows the client picker and the Claude Code command when ready', () => {
+    const html = withSettings({
+      enabled: true,
+      realm: 'master',
+      mcp_url: 'https://dep.example.com/mcp',
+      status: { phase: 'Ready', gateway_client_ready: true, updated_at: '' },
+    })
+    expect(html).toContain('Cursor')
+    expect(html).toContain('VS Code')
+    expect(html).toContain('claude mcp add --transport http autharie https://dep.example.com/mcp')
+    expect(html).toContain('watch the Activity tab')
+  })
+})
+
 describe('the policies list', () => {
   it('teaches default deny and offers the first policy', () => {
-    const html = render()
+    const html = render({ defaultTab: 'policies' })
     expect(html).toContain('No policies yet')
     expect(html).toContain('Create your first policy')
   })
 
+  it('offers the templates in the empty state', () => {
+    const html = render({ defaultTab: 'policies' })
+    expect(html).toContain('Read-only for everyone')
+    expect(html).toContain('Block destructive tools')
+  })
+
   it('shows name, effect summary and phase with its message', () => {
-    const html = render({ policies: [policy] })
+    const html = render({ defaultTab: 'policies', policies: [policy] })
     expect(html).toContain('Support reads')
     expect(html).toContain('Permit · custom Cedar')
     expect(html).toContain('Failed')
@@ -144,30 +197,31 @@ describe('the policies list', () => {
   })
 
   it('hides editing from a member who cannot manage', () => {
-    const html = render({ policies: [policy], canManage: false })
+    const html = render({ defaultTab: 'policies', policies: [policy], canManage: false })
     expect(html).not.toContain('New policy')
     expect(html).not.toContain('Edit Support reads')
   })
 
   it('says a disabled policy is not applied', () => {
-    expect(render({ policies: [{ ...policy, enabled: false }] })).toContain('Not applied')
+    expect(render({ defaultTab: 'policies', policies: [{ ...policy, enabled: false }] })).toContain(
+      'Not applied',
+    )
   })
 })
 
 describe('the decision log', () => {
   it('shows the empty state', () => {
-    expect(render()).toContain('No decisions yet')
+    expect(render({ defaultTab: 'activity' })).toContain('No decisions yet')
   })
 
   it('says when filters hide everything', () => {
-    expect(render({ filters: { ...emptyFilters(), decision: 'deny' } })).toContain(
-      'No decision matches these filters',
-    )
-    expect(render({ filters: { ...emptyFilters(), decision: 'deny' } })).toContain('Clear filters')
+    const filters = { ...emptyFilters(), decision: 'deny' as const }
+    expect(render({ defaultTab: 'activity', filters })).toContain('No decision matches these filters')
+    expect(render({ defaultTab: 'activity', filters })).toContain('Clear filters')
   })
 
   it('shows a decision row', () => {
-    const html = render({ decisions: [decision] })
+    const html = render({ defaultTab: 'activity', decisions: [decision] })
     expect(html).toContain('Deny')
     expect(html).toContain('autharie/list_backups')
     expect(html).toContain('User u-1')
