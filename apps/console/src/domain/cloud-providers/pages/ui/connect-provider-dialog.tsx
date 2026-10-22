@@ -33,25 +33,29 @@ function PermissionList({ names }: { names: string[] }) {
   const [copied, setCopied] = useState(false)
 
   return (
-    <div className='rounded-md border bg-muted/40 p-3'>
-      <div className='flex items-start justify-between gap-2'>
-        <ul className='space-y-1 font-mono text-xs'>
-          {names.map((name) => (
-            <li key={name}>{name}</li>
-          ))}
-        </ul>
-        <Button
-          type='button'
-          variant='ghost'
-          size='sm'
-          aria-label='Copy the permission sets'
-          onClick={() => {
-            void navigator.clipboard.writeText(names.join('\n')).then(() => setCopied(true))
-          }}
-        >
-          {copied ? <Check className='h-4 w-4' /> : <Copy className='h-4 w-4' />}
-        </Button>
-      </div>
+    <div className='flex items-start justify-between gap-2 rounded-md border bg-muted/40 p-3'>
+      <ul className='flex flex-wrap gap-1.5'>
+        {names.map((name) => (
+          <li
+            key={name}
+            className='rounded-md border bg-background px-2 py-0.5 font-mono text-xs'
+          >
+            {name}
+          </li>
+        ))}
+      </ul>
+      <Button
+        type='button'
+        variant='ghost'
+        size='sm'
+        className='-my-1 shrink-0'
+        aria-label='Copy the permission sets'
+        onClick={() => {
+          void navigator.clipboard.writeText(names.join('\n')).then(() => setCopied(true))
+        }}
+      >
+        {copied ? <Check className='h-4 w-4' /> : <Copy className='h-4 w-4' />}
+      </Button>
     </div>
   )
 }

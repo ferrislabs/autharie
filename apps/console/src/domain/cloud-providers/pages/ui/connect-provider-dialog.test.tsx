@@ -74,11 +74,18 @@ describe('the credential form', () => {
     expect(html.match(/<li class="relative flex gap-4"/g)).toHaveLength(2)
   })
 
-  it('lists every permission set', () => {
+  it('lists every permission set, one badge each, wrapping onto several lines', () => {
     const html = form()
-    for (const name of providerById('scaleway').permissionSets) {
-      expect(html).toContain(`>${name}</li>`)
+    const names = providerById('scaleway').permissionSets
+    for (const name of names) {
+      expect(html).toMatch(new RegExp(`<li[^>]*class="[^"]*rounded-md border[^"]*"[^>]*>${name}</li>`))
     }
+    expect(html).toContain('<ul class="flex flex-wrap gap-1.5">')
+    expect(html.match(/<li[^>]*font-mono/g)).toHaveLength(names.length)
+  })
+
+  it('still lets the customer copy them', () => {
+    expect(form()).toContain('aria-label="Copy the permission sets"')
   })
 
   it('asks for the five fields, the secret one masked, the name on its own line', () => {
