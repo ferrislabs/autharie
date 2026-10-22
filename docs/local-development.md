@@ -64,6 +64,14 @@ sudo make local-hosts-apply
 
 The deployment is served on `https://<name>.autharie.local:8444`.
 
+The console shows whether a deployment answers, and the control plane measures
+that by requesting it. Inside its container the hosts entry above resolves to
+the container itself, so `make demo` starts it with `REACHABILITY_PROBE_VIA`
+(`host.docker.internal:8444`, the gateway on your machine) and
+`REACHABILITY_PROBE_CA_FILE` (the mkcert CA, mounted from `AUTHARIE_LOCAL_CA`).
+The probe still uses the deployment's hostname for TLS, as in production; both
+settings are empty there.
+
 ## The split
 
 Autharie splits across two runtimes, and running it locally mirrors that split

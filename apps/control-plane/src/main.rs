@@ -35,6 +35,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("allowed origins: {:?}", args.server.allowed_origins);
 
+    let probe_settings = args.reachability.probe_settings()?;
+
     let app_state = state(args.clone()).await?;
 
     // Before the warning below, and awaited rather than spawned: an
@@ -51,7 +53,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::spawn(reconcile_dns_records(app_state.clone()));
     tokio::spawn(run_restore_drills(app_state.clone()));
     tokio::spawn(run_heartbeat_signal_probe(app_state.clone()));
-    tokio::spawn(run_deployment_reachability_probe(app_state.clone()));
+    tokio::spawn(run_deployment_reachability_probe(
+        app_state.clone(),
+        probe_settings,
+    ));
     tokio::spawn(run_action_stuck_signal_probe(app_state.clone()));
     tokio::spawn(run_backup_signal_probe(app_state.clone()));
     tokio::spawn(run_drill_signal_probe(app_state.clone()));
