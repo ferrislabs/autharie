@@ -42,6 +42,16 @@ describe('the guide to connect a Scaleway account', () => {
     expect(organization.sets.map((set) => set.name)).toEqual(['ProjectReadOnly', 'IAMReadOnly'])
   })
 
+  it('names the product to browse to for each permission set of the first rule', () => {
+    const [resources, organization] = scaleway.permissionGroups
+    expect(resources.sets.map((set) => set.product)).toEqual([
+      'Kubernetes',
+      'CPU & GPU Instances',
+      'VPC',
+    ])
+    expect(organization.sets.map((set) => set.product)).toEqual([undefined, undefined])
+  })
+
   it('says why each permission set is needed, and adds a note', () => {
     for (const set of permissionSetsOf(scaleway)) {
       expect(set.description).toMatch(/^Autharie /)

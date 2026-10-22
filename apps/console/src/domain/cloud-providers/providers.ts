@@ -19,6 +19,7 @@ export interface CredentialField {
 
 export interface PermissionSet {
   name: string
+  product?: string
   description: string
   note: string
 }
@@ -80,7 +81,7 @@ export const PROVIDERS: ProviderDefinition[] = [
         title: 'Application',
         heading: 'Create an application',
         intro:
-          'Autharie needs an access of its own to your Scaleway account. An IAM application is a user that is not a person: its API keys keep working when a member leaves your Organization.',
+          'Autharie needs an access of its own to your Scaleway account. An IAM application is a user that is not a person: its API keys keep working when a member leaves your Organization. The menu names in this guide are those of the English Scaleway console.',
         instructions: [
           'In the Scaleway console, click **IAM & API keys** in the top-right menu.',
           'Open the **Applications** tab and click **Create application**.',
@@ -102,11 +103,11 @@ export const PROVIDERS: ProviderDefinition[] = [
           'In IAM, open the **Policies** tab and click **Create policy**.',
           'Enter a name and select your application as the **principal**.',
           {
-            text: 'Add a first rule. Under **Resource management**, select these permission sets. For the scope, select **Specific projects** and choose the project your clusters are created in.',
+            text: 'Add a first rule. Under **Resource management**, browse to the product of each permission set below and tick it. Do not search for the permission set name: it finds nothing. Click **Next**, select **Specific projects** and choose the project your clusters are created in. Click **Next**, skip the conditions, then click **Confirm rule**.',
             permissionGroup: 0,
           },
           {
-            text: 'Click **Add new rule**. Under **Organization management**, select these permission sets.',
+            text: 'Click **Add new rule**. Under **Organization management**, tick these permission sets, then follow **Next** and click **Confirm rule**.',
             permissionGroup: 1,
           },
           'Click **Create policy**.',
@@ -183,18 +184,21 @@ export const PROVIDERS: ProviderDefinition[] = [
         sets: [
           {
             name: 'KubernetesFullAccess',
+            product: 'Kubernetes',
             description:
               'Autharie creates the Kubernetes cluster and its node pool in your project, resizes them, and deletes them.',
             note: 'Full access: read and write on Kubernetes.',
           },
           {
             name: 'InstancesReadOnly',
+            product: 'CPU & GPU Instances',
             description:
               'Autharie reads the catalogue of server types, to offer node sizes and to estimate the cost of your cluster.',
             note: 'Read only: nothing is created or changed with it.',
           },
           {
             name: 'PrivateNetworksFullAccess',
+            product: 'VPC',
             description:
               'Autharie creates a private network for the cluster, and deletes it with the cluster.',
             note: 'Full access: read and write on private networks.',

@@ -52,6 +52,9 @@ function PermissionGroupView({ group }: { group: PermissionGroup }) {
         {group.sets.map((set) => (
           <li key={set.name} className='flex'>
             <Card className='flex w-full flex-col gap-1.5 p-3 shadow-none'>
+              {set.product && (
+                <span className='text-xs text-muted-foreground'>Product · {set.product}</span>
+              )}
               <span className='font-mono text-xs font-semibold'>{set.name}</span>
               <span className='text-sm text-muted-foreground'>{set.description}</span>
               <span className='mt-auto border-t pt-1.5 text-xs text-muted-foreground'>
