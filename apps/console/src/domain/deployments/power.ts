@@ -1,13 +1,13 @@
 import type { DeploymentStatus } from './types/deployment'
 
 /**
- * What the platform stops: a deployment that has started and is not being
- * rewritten or taken away. Mirrors `Deployment::stop`; the platform is the
- * one that decides, this only keeps the menu from offering what it would
- * refuse.
+ * What a person may stop: a deployment that has finished what it was doing and
+ * is not being rewritten or taken away. One still coming up (`in_progress`,
+ * created or started) has a task unfinished, and the platform refuses an order
+ * until it is done. The platform is the one that decides; this only keeps the
+ * menu from offering what it would refuse.
  */
 const STOPPABLE: ReadonlySet<DeploymentStatus> = new Set<DeploymentStatus>([
-  'in_progress',
   'successful',
   'failed',
   'maintenance',

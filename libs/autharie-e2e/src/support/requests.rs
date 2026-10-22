@@ -56,6 +56,10 @@ pub fn is_dataplane_upgrade(action: &Action) -> bool {
 }
 
 impl ActionRepository for InMemoryActions {
+    async fn has_undelivered(&self, _: DeploymentId, _: &[ActionType]) -> Result<bool, CoreError> {
+        Ok(false)
+    }
+
     async fn append(&self, action: Action) -> Result<(), CoreError> {
         self.0.lock().expect("not poisoned").push(action);
         Ok(())

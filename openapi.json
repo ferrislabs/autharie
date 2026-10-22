@@ -5767,7 +5767,7 @@
           "deployments"
         ],
         "summary": "start a stopped deployment",
-        "description": "Powers a stopped deployment back up. It comes back in progress, and is running once its data plane says so. Needs the right to manage deployments. Refused for as long as billing has the organisation suspended, since that is when billing stops deployments and it starts them again itself once the invoice is paid.",
+        "description": "Powers a stopped deployment back up. It comes back in progress, and is running once its data plane says so. Needs the right to manage deployments. Refused for as long as billing has the organisation suspended, since that is when billing stops deployments and it starts them again itself once the invoice is paid. One order at a time: it is refused while an earlier stop or start has not reached its data plane.",
         "operationId": "start_deployment_handler",
         "parameters": [
           {
@@ -5831,7 +5831,7 @@
             }
           },
           "409": {
-            "description": "The deployment is not stopped, or billing has the organisation suspended",
+            "description": "The deployment is not stopped, billing has the organisation suspended, or an earlier order is unfinished",
             "content": {
               "application/json": {
                 "schema": {
@@ -5864,7 +5864,7 @@
           "deployments"
         ],
         "summary": "stop a deployment",
-        "description": "Powers a deployment down, its data kept. It stays billed while stopped. Needs the right to manage deployments. A deployment that has not started, is being upgraded, or is on its way out has nothing to stop.",
+        "description": "Powers a deployment down, its data kept. It stays billed while stopped. Needs the right to manage deployments. A deployment that has not started, is being upgraded, or is on its way out has nothing to stop. One order at a time: it is refused while an earlier stop or start has not reached its data plane, and for as long as the deployment is in progress, whether it is being created or started.",
         "operationId": "stop_deployment_handler",
         "parameters": [
           {
@@ -5928,7 +5928,7 @@
             }
           },
           "409": {
-            "description": "The deployment is not in a state that can be stopped",
+            "description": "The deployment cannot be stopped in its state, or an earlier order is unfinished",
             "content": {
               "application/json": {
                 "schema": {

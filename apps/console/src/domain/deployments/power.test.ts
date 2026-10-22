@@ -17,10 +17,15 @@ const ALL: DeploymentStatus[] = [
 ]
 
 describe('what can be stopped', () => {
-  it('is a deployment that has started and is not being rewritten or removed', () => {
+  it('is a deployment that has finished what it was doing, and is not being rewritten or removed', () => {
     const stoppable = ALL.filter(canStop)
 
-    expect(stoppable).toEqual(['in_progress', 'successful', 'failed', 'maintenance', 'upgrade_required'])
+    expect(stoppable).toEqual(['successful', 'failed', 'maintenance', 'upgrade_required'])
+  })
+
+  it('is not a deployment still coming up, however it got there', () => {
+    expect(canStop('in_progress')).toBe(false)
+    expect(powerItems('in_progress', false).every((item) => item.disabled)).toBe(true)
   })
 
   it('is nothing while the status is not known', () => {

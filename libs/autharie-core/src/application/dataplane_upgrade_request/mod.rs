@@ -433,6 +433,14 @@ mod tests {
     }
 
     impl ActionRepository for FakeActions {
+        async fn has_undelivered(
+            &self,
+            _: DeploymentId,
+            _: &[ActionType],
+        ) -> Result<bool, CoreError> {
+            Ok(false)
+        }
+
         async fn append(&self, action: Action) -> Result<(), CoreError> {
             self.0.lock().unwrap().push(action);
             Ok(())

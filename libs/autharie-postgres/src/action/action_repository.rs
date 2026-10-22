@@ -399,6 +399,34 @@ impl ActionRepository for PostgresActionRepository<'_> {
         })
     }
 
+    async fn has_undelivered(
+        &self,
+        deployment_id: DeploymentId,
+        action_types: &[ActionType],
+    ) -> Result<bool, CoreError> {
+        let types: Vec<String> = action_types.iter().map(|kind| kind.0.clone()).collect();
+        let mut tx = self.tx.lock().await;
+
+        sqlx::query_scalar!(
+            r#"
+            SELECT EXISTS (
+                SELECT 1
+                FROM actions
+                WHERE deployment_id = $1
+                  AND action_type = ANY($2)
+                  AND status IN ('pending', 'leased', 'pulled')
+            ) AS "undelivered!"
+            "#,
+            deployment_id.0,
+            &types
+        )
+        .fetch_one(&mut ***tx)
+        .await
+        .map_err(|e| CoreError::DatabaseError {
+            message: format!("Failed to look for undelivered actions: {e}"),
+        })
+    }
+
     async fn claim_pending(
         &self,
         dataplane_id: DataPlaneId,

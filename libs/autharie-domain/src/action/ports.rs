@@ -38,6 +38,18 @@ pub trait ActionRepository: Send + Sync {
         action_type: &ActionType,
     ) -> impl Future<Output = Result<Option<DateTime<Utc>>, CoreError>> + Send;
 
+    /// Whether this deployment has an action of one of these types that has
+    /// not reached its data plane: still pending, leased or pulled, neither
+    /// published nor failed.
+    ///
+    /// What "an order is still on its way" means. An action that failed is not
+    /// on its way any more, and one that was published is the data plane's.
+    fn has_undelivered(
+        &self,
+        deployment_id: DeploymentId,
+        action_types: &[ActionType],
+    ) -> impl Future<Output = Result<bool, CoreError>> + Send;
+
     /// Claims up to `max` actions for each of `deployment_ids`, leasing them
     /// until `lease_until`, in one query.
     ///
