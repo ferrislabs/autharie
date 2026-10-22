@@ -10,7 +10,7 @@ use autharie_crds::v1alpha::identity_instance::{
 };
 use autharie_crds::v1alpha::identity_instance_upgrade::IdentityInstanceUpgrade;
 use futures::StreamExt;
-use k8s_openapi::api::apps::v1::{Deployment, DeploymentSpec};
+use k8s_openapi::api::apps::v1::{Deployment, DeploymentSpec, DeploymentStrategy};
 use k8s_openapi::api::batch::v1::{CronJob, Job, JobSpec};
 use k8s_openapi::api::core::v1::{
     Affinity, Container, ContainerPort, EnvVar, EnvVarSource, HTTPGetAction, PodAffinityTerm,
@@ -2333,6 +2333,20 @@ fn webapp_allowed_hosts(hostname: &str) -> String {
 
 const DATABASE_NAME_ENV: &str = "DATABASE_NAME";
 
+/// On the shared cluster a tenant's role may hold `ROLE_CONNECTION_LIMIT`
+/// connections, and FerrisKey keeps 5 open from start. A rolling update runs
+/// the new pod beside the old one, which already holds most of them, so the new
+/// one times out on its pool and the rollout never completes. A Free instance
+/// has one replica either way, so it is replaced instead.
+fn replace_rather_than_roll(api: &mut Deployment) {
+    if let Some(spec) = api.spec.as_mut() {
+        spec.strategy = Some(DeploymentStrategy {
+            type_: Some("Recreate".to_string()),
+            rolling_update: None,
+        });
+    }
+}
+
 fn use_database_name(api: &mut Deployment, database: &str) {
     let containers = api
         .spec
@@ -3284,6 +3298,7 @@ fn build_ferriskey_runtime(
     if shared.is_some() {
         let database = SharedDatabaseName::for_instance_name(&name)?;
         use_database_name(&mut api, database.as_str());
+        replace_rather_than_roll(&mut api);
     }
     let api_service = build_ferriskey_service(
         &api_name,
@@ -4699,6 +4714,25 @@ mod tests {
             env_value(&pod_spec.containers[0], "DATABASE_NAME")
                 .and_then(|var| var.value.as_deref()),
             Some("free_abc")
+        );
+    }
+
+    #[test]
+    fn a_shared_instance_is_replaced_rather_than_rolled() {
+        let instance = stopped(IdentityProvider::Ferriskey);
+        let dedicated =
+            build_ferriskey_runtime(&instance, "default", None, None, None, None).unwrap();
+        assert!(dedicated.api.spec.as_ref().unwrap().strategy.is_none());
+
+        let mut api = dedicated.api;
+        replace_rather_than_roll(&mut api);
+        assert_eq!(
+            api.spec
+                .unwrap()
+                .strategy
+                .and_then(|strategy| strategy.type_)
+                .as_deref(),
+            Some("Recreate")
         );
     }
 
