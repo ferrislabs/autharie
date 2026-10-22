@@ -19,7 +19,6 @@ interface OpenSub {
 }
 
 const MENU_WIDTH = 224
-const ROW_HEIGHT = 32
 
 const ITEM =
   'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm outline-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground disabled:pointer-events-none disabled:opacity-50'
@@ -35,6 +34,7 @@ function MenuList({
   items,
   label,
   flip,
+  up,
   autoFocus,
   className,
   onClose,
@@ -43,6 +43,7 @@ function MenuList({
   items: MenuItem[]
   label?: string
   flip: boolean
+  up: boolean
   autoFocus: boolean
   className?: string
   onClose: () => void
@@ -148,8 +149,9 @@ function MenuList({
                 items={item.items}
                 label={item.label}
                 flip={flip}
+                up={up}
                 autoFocus={open.keyboard}
-                className={cn('absolute top-0', flip ? 'right-full mr-1' : 'left-full ml-1')}
+                className={cn('absolute', up ? 'bottom-0' : 'top-0', flip ? 'right-full mr-1' : 'left-full ml-1')}
                 onClose={onClose}
                 onBack={() => closeSub(item.id)}
               />
@@ -179,6 +181,12 @@ export function CanvasContextMenu({
   onClose: () => void
 }) {
   const root = useRef<HTMLDivElement>(null)
+  const [menuHeight, setMenuHeight] = useState(0)
+
+  function measure(element: HTMLDivElement | null) {
+    root.current = element
+    if (element && element.offsetHeight !== menuHeight) setMenuHeight(element.offsetHeight)
+  }
 
   useEffect(() => {
     function onPointerDown(event: PointerEvent) {
@@ -189,17 +197,18 @@ export function CanvasContextMenu({
   }, [onClose])
 
   const left = Math.max(4, Math.min(x, width - MENU_WIDTH - 4))
-  const top = Math.max(4, Math.min(y, height - items.length * ROW_HEIGHT - 16))
+  const top = Math.max(4, Math.min(y, height - menuHeight - 4))
+  const up = top + menuHeight / 2 > height / 2
   const flip = left + MENU_WIDTH * 2 + 8 > width
 
   return (
     <div
-      ref={root}
+      ref={measure}
       className='absolute z-50'
       style={{ left, top }}
       onContextMenu={(event) => event.preventDefault()}
     >
-      <MenuList items={items} label={label} flip={flip} autoFocus onClose={onClose} />
+      <MenuList items={items} label={label} flip={flip} up={up} autoFocus onClose={onClose} />
     </div>
   )
 }
