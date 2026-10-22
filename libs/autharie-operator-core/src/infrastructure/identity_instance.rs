@@ -1363,6 +1363,9 @@ impl FerriskeyProviderHandler {
         let services: Api<Service> = Api::namespaced(self.client.clone(), namespace);
         let params = kube::api::PatchParams::apply("autharie-operator").force();
 
+        if is_recreated(&api_deployment) {
+            clear_rolling_update(&deployments, &api_name).await?;
+        }
         deployments
             .patch(
                 &api_name,
@@ -2332,6 +2335,42 @@ fn webapp_allowed_hosts(hostname: &str) -> String {
 }
 
 const DATABASE_NAME_ENV: &str = "DATABASE_NAME";
+
+fn is_recreated(deployment: &Deployment) -> bool {
+    deployment
+        .spec
+        .as_ref()
+        .and_then(|spec| spec.strategy.as_ref())
+        .and_then(|strategy| strategy.type_.as_deref())
+        == Some("Recreate")
+}
+
+/// The API server fills in `rollingUpdate` on every Deployment, and a
+/// server-side apply that switches to `Recreate` leaves it there, which the API
+/// server then refuses. It is removed with a merge patch first. A Deployment
+/// not created yet has nothing to clear.
+async fn clear_rolling_update(
+    deployments: &Api<Deployment>,
+    name: &str,
+) -> Result<(), OperatorError> {
+    let patch = serde_json::json!({
+        "spec": { "strategy": { "type": "Recreate", "rollingUpdate": null } }
+    });
+    match deployments
+        .patch(
+            name,
+            &kube::api::PatchParams::default(),
+            &kube::api::Patch::Merge(&patch),
+        )
+        .await
+    {
+        Ok(_) => Ok(()),
+        Err(kube::Error::Api(response)) if response.code == 404 => Ok(()),
+        Err(error) => Err(OperatorError::Kube {
+            message: error.to_string(),
+        }),
+    }
+}
 
 /// On the shared cluster a tenant's role may hold `ROLE_CONNECTION_LIMIT`
 /// connections, and FerrisKey keeps 5 open from start. A rolling update runs
@@ -4725,7 +4764,9 @@ mod tests {
         assert!(dedicated.api.spec.as_ref().unwrap().strategy.is_none());
 
         let mut api = dedicated.api;
+        assert!(!is_recreated(&api));
         replace_rather_than_roll(&mut api);
+        assert!(is_recreated(&api));
         assert_eq!(
             api.spec
                 .unwrap()
