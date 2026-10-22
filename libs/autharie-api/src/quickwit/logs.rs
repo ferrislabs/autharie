@@ -193,6 +193,7 @@ fn build_query(filter: &LogSearchFilter) -> String {
     let mut clauses = vec![
         level_clause(filter.level_floor),
         "NOT kind:webhook_delivery".to_string(),
+        "NOT kind:agent_decision".to_string(),
     ];
 
     if let Some(deployment_id) = filter.deployment_id {

@@ -132,6 +132,8 @@ mod tests {
 
     fn caller() -> Identity {
         Identity::User(autharie_auth::User {
+            scopes: Vec::new(),
+            act: None,
             id: "someone".to_string(),
             username: "someone".to_string(),
             email: None,

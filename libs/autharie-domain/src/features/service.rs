@@ -501,6 +501,7 @@ mod tests {
             client_id: "somebody".to_string(),
             roles: vec![],
             scopes: vec![],
+            act: None,
         })
     }
 
@@ -518,6 +519,7 @@ mod tests {
             created_at: now,
             updated_at: now,
             deleted_at: None,
+            mcp_enabled: false,
         }
     }
 

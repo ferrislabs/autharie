@@ -1,5 +1,5 @@
 use autharie_core::{
-    CoreError, backups::keys::KeyError, billing::BillingError,
+    CoreError, agents::AgentError, backups::keys::KeyError, billing::BillingError,
     dataplane::credential::CredentialError, webhooks::WebhookError,
 };
 use axum::{Json, http::StatusCode, response::IntoResponse};
@@ -175,6 +175,12 @@ impl IntoResponse for ApiError {
             )
                 .into_response(),
         }
+    }
+}
+
+impl From<AgentError> for ApiError {
+    fn from(value: AgentError) -> Self {
+        CoreError::Agent(value).into()
     }
 }
 
@@ -437,6 +443,20 @@ impl From<CoreError> for ApiError {
             CoreError::Webhook(WebhookError::UnsupportedKind) => ApiError::Conflict {
                 reason: value.to_string(),
             },
+            CoreError::Agent(AgentError::InvalidCedar { .. }) => ApiError::Unprocessable {
+                reason: value.to_string(),
+            },
+            CoreError::Agent(AgentError::Invalid { .. }) => ApiError::BadRequest {
+                reason: value.to_string(),
+            },
+            CoreError::Agent(AgentError::PolicyNotFound { .. }) => ApiError::NotFound {
+                reason: value.to_string(),
+            },
+            CoreError::Agent(AgentError::UnsupportedKind | AgentError::TooManyPolicies { .. }) => {
+                ApiError::Conflict {
+                    reason: value.to_string(),
+                }
+            }
             CoreError::Key(KeyError::ProviderUnavailable { .. }) => {
                 tracing::error!(error = %value, "the key manager is not available");
 

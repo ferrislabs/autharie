@@ -7,6 +7,8 @@ use crate::domain::entities::identity_instance::{
     DesiredIdentityInstance, DesiredUpgrade, IdentityInstanceRef, InFlightUpgrade, UpgradeRef,
 };
 use crate::domain::entities::outcome::DeploymentOutcomeReport;
+use crate::domain::entities::webhooks_outcome::WebhooksOutcomeReport;
+use crate::domain::entities::webhooks_payload::{WebhookRequestEntry, WebhooksPayloadV1};
 use crate::domain::error::GenesisError;
 use std::future::Future;
 use std::pin::Pin;
@@ -173,4 +175,30 @@ pub trait OutcomePublisher: Send + Sync {
         &'a self,
         report: DeploymentOutcomeReport,
     ) -> BoxFuture<'a, Result<(), GenesisError>>;
+}
+
+pub trait WebhookOutcomePublisher: Send + Sync {
+    fn publish_webhooks<'a>(
+        &'a self,
+        report: &'a WebhooksOutcomeReport,
+    ) -> impl Future<Output = Result<(), GenesisError>> + Send + 'a;
+}
+
+pub trait WebhookPort: Send + Sync {
+    fn revision<'a>(
+        &'a self,
+        reference: &'a IdentityInstanceRef,
+    ) -> impl Future<Output = Result<u64, GenesisError>> + Send + 'a;
+
+    fn apply<'a>(
+        &'a self,
+        reference: &'a IdentityInstanceRef,
+        desired: &'a WebhooksPayloadV1,
+    ) -> impl Future<Output = Result<(), GenesisError>> + Send + 'a;
+
+    fn request<'a>(
+        &'a self,
+        reference: &'a IdentityInstanceRef,
+        request: &'a WebhookRequestEntry,
+    ) -> impl Future<Output = Result<(), GenesisError>> + Send + 'a;
 }

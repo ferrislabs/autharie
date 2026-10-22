@@ -1,5 +1,6 @@
 use autharie_auth::Identity;
 use autharie_core::{
+    agents::{AgentError, commands::AgentsOutcome, ports::AgentOutcomeService},
     dataplane::{credential::SecretString, ports::DataPlaneService, value_objects::DataPlaneId},
     deployments::{DeploymentId, commands::ReportDeploymentOutcomeCommand},
     webhooks::{
@@ -50,17 +51,52 @@ pub struct WebhookRequestReport {
 }
 
 #[derive(Deserialize, ToSchema)]
+pub struct AgentPolicyReport {
+    pub id: Uuid,
+    /// `Applied`, `Invalid` or `Failed`.
+    pub phase: String,
+    pub message: Option<String>,
+}
+
+#[derive(Deserialize, ToSchema)]
 pub struct ReportOutcomeRequest {
-    /// `webhooks` for a report of a deployment's webhooks; absent for the
-    /// outcome of the deployment itself.
-    ///
-    /// Absent rather than defaulted to a name so that a data plane built
-    /// before webhooks existed keeps reporting exactly as it did.
+    /// `webhooks` for a report of a deployment's webhooks, `deployment.agents`
+    /// for a report of its agents; absent for the outcome of the deployment
+    /// itself.
     #[serde(default)]
     pub kind: Option<String>,
 
+    /// The revision of the `deployment.webhooks` or `deployment.agents` action
+    /// this report reflects. Required with either kind.
+    #[serde(default)]
+    pub revision: Option<u64>,
+
+    /// Must be the deployment of the route when sent.
+    #[serde(default)]
+    pub deployment_id: Option<Uuid>,
+
+    /// `Applying`, `Ready` or `Failed`. Only with `kind: deployment.agents`.
+    #[serde(default)]
+    pub phase: Option<String>,
+
+    /// Whether the gateway's client exists in the realm. Only with `kind: deployment.agents`.
+    #[serde(default)]
+    pub gateway_client_ready: bool,
+
+    /// Where the deployment's MCP endpoint answers. Only with `kind: deployment.agents`.
+    #[serde(default)]
+    pub mcp_url: Option<String>,
+
+    /// Why the agents are not ready, when the data plane knows. Only with `kind: deployment.agents`.
+    #[serde(default)]
+    pub message: Option<String>,
+
+    /// What became of each enabled policy. Only with `kind: deployment.agents`.
+    #[serde(default)]
+    pub policies: Vec<AgentPolicyReport>,
+
     /// What the data plane observed: `running`, `failed` or `deleted`.
-    /// Not sent with `kind: webhooks`.
+    /// Not sent with `kind: webhooks` or `kind: deployment.agents`.
     ///
     /// All three are things a component saw rather than inferred -- the
     /// operator wrote `Running`/`ready` or `Failed` onto the resource, and
@@ -68,15 +104,6 @@ pub struct ReportOutcomeRequest {
     /// which is why none needs a policy about when to give up.
     #[serde(default)]
     pub outcome: String,
-
-    /// The revision of the `deployment.webhooks` action this report reflects.
-    /// Required with `kind: webhooks`.
-    #[serde(default)]
-    pub revision: Option<u64>,
-
-    /// Must be the deployment of the route when sent.
-    #[serde(default)]
-    pub deployment_id: Option<Uuid>,
 
     #[serde(default)]
     pub webhooks: Vec<WebhookStateReport>,
@@ -183,6 +210,43 @@ fn webhooks_outcome(
     })
 }
 
+fn agents_outcome(
+    deployment_id: DeploymentId,
+    request: ReportOutcomeRequest,
+) -> Result<AgentsOutcome, ApiError> {
+    if request
+        .deployment_id
+        .is_some_and(|reported| reported != deployment_id.0)
+    {
+        return Err(ApiError::BadRequest {
+            reason: "the report names another deployment than the route".to_string(),
+        });
+    }
+
+    let revision = request.revision.ok_or_else(|| ApiError::BadRequest {
+        reason: "an agents report needs the revision it reflects".to_string(),
+    })?;
+    let phase = request.phase.ok_or_else(|| ApiError::BadRequest {
+        reason: "an agents report needs a phase".to_string(),
+    })?;
+
+    AgentsOutcome::parse(
+        revision,
+        &phase,
+        request.gateway_client_ready,
+        request.mcp_url,
+        request.message,
+        request
+            .policies
+            .into_iter()
+            .map(|report| (report.id, report.phase, report.message))
+            .collect(),
+    )
+    .map_err(|error: AgentError| ApiError::BadRequest {
+        reason: error.to_string(),
+    })
+}
+
 #[utoipa::path(
     post,
     path = "/{dataplane_id}/deployments/{deployment_id}/outcome",
@@ -192,8 +256,9 @@ fn webhooks_outcome(
                    path by which the control plane learns what happened to a deployment \
                    after it was handed over. With `kind: webhooks` it records the state of \
                    the deployment's webhooks, new signing secrets, its realms and the result \
-                   of rotation and retry requests instead; a report older than the one \
-                   already applied changes nothing.",
+                   of rotation and retry requests instead; with `kind: deployment.agents` it \
+                   records the status of the deployment's agents and the phase of each policy. \
+                   A report older than the one already applied changes nothing.",
     params(ReportOutcomeRoute),
     request_body = ReportOutcomeRequest,
     responses(
@@ -235,6 +300,14 @@ pub async fn report_outcome_handler(
             state
                 .service
                 .report_webhooks_outcome(identity, deployment_id, outcome)
+                .await?
+        }
+        Some("deployment.agents") => {
+            let outcome = agents_outcome(deployment_id, request)?;
+
+            state
+                .service
+                .report_agents_outcome(identity, deployment_id, outcome)
                 .await?
         }
         Some(other) => {
@@ -340,6 +413,56 @@ mod tests {
                 .is_ok(),
                 "{outcome}"
             );
+        }
+    }
+
+    #[test]
+    fn an_agents_report_is_read_as_the_data_plane_sends_it() {
+        let deployment = DeploymentId(Uuid::new_v4());
+        let policy = Uuid::new_v4();
+
+        let outcome = agents_outcome(
+            deployment,
+            request(serde_json::json!({
+                "deployment_id": deployment.0,
+                "kind": "deployment.agents",
+                "revision": 4,
+                "phase": "Ready",
+                "gateway_client_ready": true,
+                "mcp_url": "https://auth.example.com/mcp",
+                "policies": [
+                    { "id": policy, "phase": "Invalid", "message": "unexpected token" }
+                ]
+            })),
+        )
+        .expect("accepted");
+
+        assert_eq!(outcome.revision, 4);
+        assert!(outcome.gateway_client_ready);
+        assert_eq!(outcome.policies.len(), 1);
+        assert_eq!(
+            outcome.policies[0].message.as_deref(),
+            Some("unexpected token")
+        );
+    }
+
+    #[test]
+    fn an_agents_report_needs_a_revision_a_known_phase_and_its_own_deployment() {
+        let deployment = DeploymentId(Uuid::new_v4());
+
+        for body in [
+            serde_json::json!({ "kind": "deployment.agents", "phase": "Ready" }),
+            serde_json::json!({ "kind": "deployment.agents", "revision": 1 }),
+            serde_json::json!({ "kind": "deployment.agents", "revision": 1, "phase": "Exploded" }),
+            serde_json::json!({ "kind": "deployment.agents", "revision": 1, "phase": "Ready",
+                "policies": [{ "id": Uuid::new_v4(), "phase": "Pending" }] }),
+            serde_json::json!({ "kind": "deployment.agents", "revision": 1, "phase": "Ready",
+                "deployment_id": Uuid::new_v4() }),
+        ] {
+            assert!(matches!(
+                agents_outcome(deployment, request(body)),
+                Err(ApiError::BadRequest { .. })
+            ));
         }
     }
 }

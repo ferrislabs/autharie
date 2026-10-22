@@ -63,6 +63,11 @@ services:
       # the wrong one meant the control plane could not fetch the JWKS -- so
       # every authenticated request failed with what looked like a bad token.
       AUTH_ISSUER: http://ferriskey-api:3333/realms/autharie
+      # FerrisKey puts the host a token was requested on into `iss`, and the
+      # console and CLI reach it as localhost, not as ferriskey-api. The API
+      # refuses any other issuer, so every spelling is listed. The last is the
+      # one scripts/demo.sh installs Herald with inside k3d.
+      AUTH_TOKEN_ISSUER: http://localhost:${FERRISKEY_API_PORT:-3334}/realms/autharie,http://host.k3d.internal:${FERRISKEY_API_PORT:-3334}/realms/autharie
       # Without this the CORS layer allows no origin at all, and the console
       # cannot call the API. It has been required since the origins became
       # configurable rather than hardcoded to localhost:5173.
@@ -134,6 +139,18 @@ services:
       REALM_ADMIN_URL: http://ferriskey-api:3333
       REALM_ADMIN_USERNAME: ${FERRISKEY_ADMIN_USER:-admin}
       REALM_ADMIN_PASSWORD: ${FERRISKEY_ADMIN_PASSWORD:-admin}
+      # Local stack only. Deployments are served by the k3d gateway published
+      # on the host, but their name resolves to this container itself here, so
+      # the reachability probe connects to this address instead and keeps the
+      # deployment's hostname for TLS. Empty in production: real DNS.
+      REACHABILITY_PROBE_VIA: ${REACHABILITY_PROBE_VIA:-}
+      # The path inside the container, set only when AUTHARIE_LOCAL_CA is.
+      REACHABILITY_PROBE_CA_FILE: ${AUTHARIE_LOCAL_CA:+/etc/autharie/local-ca.pem}
+    volumes:
+      # /dev/null when unset keeps `up` working; nothing reads it then.
+      - ${AUTHARIE_LOCAL_CA:-/dev/null}:/etc/autharie/local-ca.pem:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       autharie-migrations:
         condition: service_completed_successfully

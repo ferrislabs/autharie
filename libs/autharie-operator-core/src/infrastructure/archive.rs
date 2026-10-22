@@ -295,6 +295,9 @@ mod tests {
                 ..Default::default()
             },
             spec: IdentityInstanceSpec {
+                webhooks: Vec::new(),
+                webhooks_revision: 0,
+                webhook_requests: Vec::new(),
                 restore: None,
                 organisation_id: "org-1".to_string(),
                 provider: IdentityProvider::Keycloak,

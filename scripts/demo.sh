@@ -115,6 +115,23 @@ else
     DNS_RECORDS="not published (DEMO_PUBLISH_DNS=1 to publish)"
 fi
 
+# Deployments are served by the k3d gateway on this machine, but inside the
+# control plane's container their name resolves to the container itself (the
+# /etc/hosts entry leaks in), so the availability probe would call itself and
+# report every deployment down. It is pointed at the host's published HTTPS
+# port instead and told to trust the mkcert CA that signed the certificate.
+# Not with DEMO_PUBLISH_DNS=1: that zone is real and resolves for real.
+# mkcert -install is what creates the CA on a fresh machine; it is idempotent.
+if [ "${DEMO_PUBLISH_DNS}" != "1" ]; then
+    command -v mkcert >/dev/null 2>&1 || die "mkcert is required (brew install mkcert)"
+    mkcert -install >/dev/null 2>&1
+    MKCERT_CAROOT="$(mkcert -CAROOT)"
+    [ -f "${MKCERT_CAROOT}/rootCA.pem" ] \
+        || die "no mkcert CA at ${MKCERT_CAROOT}/rootCA.pem (run: mkcert -install)"
+    export AUTHARIE_LOCAL_CA="${MKCERT_CAROOT}/rootCA.pem"
+    export REACHABILITY_PROBE_VIA="host.docker.internal:${AUTHARIE_HTTPS_PORT}"
+fi
+
 # Recreated rather than restarted: the control plane reads its configuration
 # from the environment at startup, and a restart keeps the environment it had.
 # Everything exported above -- ports, bootstrap operator, zone -- goes with it.

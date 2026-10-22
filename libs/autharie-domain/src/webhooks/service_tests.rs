@@ -307,6 +307,8 @@ fn caller() -> Identity {
         email: None,
         name: None,
         roles: vec![],
+        scopes: vec![],
+        act: None,
     })
 }
 

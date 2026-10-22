@@ -480,6 +480,12 @@ fn to_identity_instance(desired: &DesiredIdentityInstance) -> IdentityInstance {
         });
 
     let spec = IdentityInstanceSpec {
+        // Empty and skipped on serialisation, so this apply never claims the
+        // webhook fields: they are written under their own field manager, and
+        // an instance update applied from here must not wipe them.
+        webhooks: Vec::new(),
+        webhooks_revision: 0,
+        webhook_requests: Vec::new(),
         // Carried whole from the action. Both paths are the source's, computed
         // by the control plane because it owns the archive layout -- rebuilding
         // either here would be a second implementation of the prefix rule, and
@@ -824,6 +830,18 @@ mod tests {
 
         assert!(is_not_found(&not_found));
         assert!(!is_not_found(&conflict));
+    }
+
+    #[test]
+    fn the_spec_genesis_applies_never_names_the_webhook_fields() {
+        let applied = serde_json::to_value(to_identity_instance(&desired(
+            IdentityInstanceProvider::Ferriskey,
+        )))
+        .expect("serialises");
+
+        for key in ["webhooks", "webhooksRevision", "webhookRequests"] {
+            assert!(applied["spec"].get(key).is_none(), "{key}");
+        }
     }
 
     #[test]

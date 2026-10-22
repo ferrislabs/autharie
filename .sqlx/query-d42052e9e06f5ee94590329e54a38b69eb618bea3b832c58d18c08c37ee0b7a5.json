@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT o.id,\n                   o.name,\n                   o.slug,\n                   o.owner_id,\n                   o.status,\n                   o.plan,\n                   o.max_instances,\n                   o.max_users,\n                   o.max_storage_gb,\n                   o.created_at,\n                   o.updated_at,\n                   o.deleted_at,\n                   -- The same two subqueries the listing uses, for the same\n                   -- reason: joined, they multiply, and three deployments\n                   -- beside two members would report six of each.\n                   (SELECT COUNT(*) FROM deployments d\n                     WHERE d.organisation_id = o.id\n                       AND d.status <> 'deleted') AS \"deployments!\",\n                   (SELECT COUNT(*) FROM members m\n                     WHERE m.organisation_id = o.id) AS \"members!\"\n            FROM organisations o\n            WHERE o.id = $1\n            ",
+  "query": "\n            SELECT o.id, o.name, o.slug, o.owner_id, o.status, o.plan,\n                   o.max_instances, o.max_users, o.max_storage_gb, o.mcp_enabled,\n                   o.created_at, o.updated_at, o.deleted_at\n            FROM organisations o\n            INNER JOIN members m ON o.id = m.organisation_id\n            WHERE m.user_id = $1\n            ORDER BY o.created_at DESC\n            ",
   "describe": {
     "columns": [
       {
@@ -50,28 +50,23 @@
       },
       {
         "ordinal": 9,
+        "name": "mcp_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 10,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 10,
+        "ordinal": 11,
         "name": "updated_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 11,
+        "ordinal": 12,
         "name": "deleted_at",
         "type_info": "Timestamptz"
-      },
-      {
-        "ordinal": 12,
-        "name": "deployments!",
-        "type_info": "Int8"
-      },
-      {
-        "ordinal": 13,
-        "name": "members!",
-        "type_info": "Int8"
       }
     ],
     "parameters": {
@@ -91,10 +86,9 @@
       false,
       false,
       false,
-      true,
-      null,
-      null
+      false,
+      true
     ]
   },
-  "hash": "29267248b3953938d8b06b2420ec02aa6e33f92b5047580424679690faaddee6"
+  "hash": "d42052e9e06f5ee94590329e54a38b69eb618bea3b832c58d18c08c37ee0b7a5"
 }

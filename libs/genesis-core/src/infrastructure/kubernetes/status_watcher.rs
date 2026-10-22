@@ -5,16 +5,25 @@ use std::time::{Duration, Instant};
 use autharie_crds::v1alpha::identity_instance::{
     IdentityInstance, IdentityInstanceStatus, Settled,
 };
+use k8s_openapi::api::core::v1::Secret;
 use kube::runtime::watcher;
 use kube::runtime::watcher::Event;
 use kube::{Api, Client};
+use std::collections::BTreeMap;
 use tokio_stream::StreamExt;
 use tracing::{info, warn};
 use uuid::Uuid;
 
+use crate::domain::entities::identity_instance::IdentityInstanceRef;
 use crate::domain::entities::outcome::DeploymentOutcomeReport;
 use crate::domain::error::GenesisError;
-use crate::domain::ports::OutcomePublisher;
+use crate::domain::ports::{OutcomePublisher, WebhookOutcomePublisher};
+use crate::infrastructure::kubernetes::webhook_status::{
+    Observation, WebhookTracker, build_report,
+};
+use crate::infrastructure::kubernetes::webhooks::{
+    patch_requests, secrets_secret_name, without_requests,
+};
 
 /// Watches `IdentityInstance` resources and reports what the operator decided.
 ///
@@ -39,14 +48,94 @@ const REPORT_AGAIN_AFTER: Duration = Duration::from_secs(300);
 /// serving traffic; `Failed` is the operator saying it gave up. Neither is
 /// inferred from a timeout, which is why this needs no policy about when to
 /// declare a deployment lost.
-pub struct IdentityInstanceStatusWatcher {
+pub struct IdentityInstanceStatusWatcher<W> {
     client: Client,
     outcomes: Arc<dyn OutcomePublisher>,
+    webhook_outcomes: Arc<W>,
 }
 
-impl IdentityInstanceStatusWatcher {
-    pub fn new(client: Client, outcomes: Arc<dyn OutcomePublisher>) -> Self {
-        Self { client, outcomes }
+impl<W: WebhookOutcomePublisher> IdentityInstanceStatusWatcher<W> {
+    pub fn new(
+        client: Client,
+        outcomes: Arc<dyn OutcomePublisher>,
+        webhook_outcomes: Arc<W>,
+    ) -> Self {
+        Self {
+            client,
+            outcomes,
+            webhook_outcomes,
+        }
+    }
+
+    async fn report_webhooks(
+        &self,
+        instance: &IdentityInstance,
+        deployment_id: Uuid,
+        tracker: &mut WebhookTracker,
+    ) {
+        let (Some(name), Some(namespace)) = (
+            instance.metadata.name.as_deref(),
+            instance.metadata.namespace.as_deref(),
+        ) else {
+            return;
+        };
+
+        let observation = Observation::of(instance.status.as_ref());
+
+        if tracker.is_due(deployment_id, &observation) {
+            let secret_values = if tracker.needs_secrets(deployment_id, &observation) {
+                self.read_secrets(name, namespace).await
+            } else {
+                BTreeMap::new()
+            };
+
+            let report = build_report(
+                deployment_id,
+                instance.spec.webhooks_revision,
+                &observation,
+                tracker,
+                &secret_values,
+            );
+
+            match self.webhook_outcomes.publish_webhooks(&report).await {
+                Ok(()) => tracker.record(deployment_id, observation, &report),
+                Err(err) => {
+                    warn!(%err, %deployment_id, "failed to publish a webhooks outcome");
+                }
+            }
+        }
+
+        let published = tracker.published_requests(deployment_id);
+        if let Some(kept) = without_requests(&instance.spec.webhook_requests, &published) {
+            let reference = IdentityInstanceRef {
+                name: name.to_string(),
+                namespace: namespace.to_string(),
+            };
+
+            if let Err(err) = patch_requests(&self.client, &reference, instance, &kept).await {
+                warn!(%err, %deployment_id, "failed to prune webhook requests");
+            }
+        }
+    }
+
+    async fn read_secrets(&self, instance: &str, namespace: &str) -> BTreeMap<String, String> {
+        let api: Api<Secret> = Api::namespaced(self.client.clone(), namespace);
+
+        let secret = match api.get_opt(&secrets_secret_name(instance)).await {
+            Ok(Some(secret)) => secret,
+            Ok(None) => return BTreeMap::new(),
+            Err(err) => {
+                warn!(%err, instance, "failed to read the webhook secrets");
+                return BTreeMap::new();
+            }
+        };
+
+        secret
+            .data
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|(key, value)| String::from_utf8(value.0).ok().map(|text| (key, text)))
+            .collect()
     }
 
     /// Runs until the watch stream ends, which it does not do on its own.
@@ -66,6 +155,8 @@ impl IdentityInstanceStatusWatcher {
         // nothing.
         let mut reported: HashMap<Uuid, (&'static str, Option<String>, Instant)> = HashMap::new();
 
+        let mut webhooks = WebhookTracker::default();
+
         info!("watching IdentityInstance status");
 
         while let Some(event) = stream.next().await {
@@ -84,13 +175,16 @@ impl IdentityInstanceStatusWatcher {
                 }
             };
 
-            let Some(outcome) = outcome_for(instance.status.as_ref()) else {
-                continue;
-            };
-
             let Some(deployment_id) = deployment_id_of(instance.metadata.name.as_deref()) else {
                 // Something else created an IdentityInstance in this cluster.
                 // Not ours to report on.
+                continue;
+            };
+
+            self.report_webhooks(&instance, deployment_id, &mut webhooks)
+                .await;
+
+            let Some(outcome) = outcome_for(instance.status.as_ref()) else {
                 continue;
             };
 

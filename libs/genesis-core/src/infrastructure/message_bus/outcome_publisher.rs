@@ -4,8 +4,9 @@ use serde_json::to_vec;
 use tracing::info;
 
 use crate::domain::entities::outcome::DeploymentOutcomeReport;
+use crate::domain::entities::webhooks_outcome::WebhooksOutcomeReport;
 use crate::domain::error::GenesisError;
-use crate::domain::ports::{BoxFuture, OutcomePublisher};
+use crate::domain::ports::{BoxFuture, OutcomePublisher, WebhookOutcomePublisher};
 
 /// Publishes outcomes to the outcomes topic, where every Herald reads them.
 ///
@@ -37,6 +38,33 @@ impl IggyOutcomePublisher {
     }
 }
 
+impl IggyOutcomePublisher {
+    async fn send(&self, payload: Vec<u8>) -> Result<(), GenesisError> {
+        let stream = named(STREAM).map_err(|e| GenesisError::MessageBus {
+            message: e.to_string(),
+        })?;
+        let topic = named(OUTCOMES_TOPIC).map_err(|e| GenesisError::MessageBus {
+            message: e.to_string(),
+        })?;
+
+        bounded(
+            "a publish",
+            self.client.send_messages(
+                &stream,
+                &topic,
+                &Partitioning::partition_id(PARTITION),
+                &mut [IggyMessage::from(payload)],
+            ),
+        )
+        .await
+        .map_err(|e| GenesisError::MessageBus {
+            message: format!("failed to publish outcome: {e}"),
+        })?;
+
+        Ok(())
+    }
+}
+
 impl OutcomePublisher for IggyOutcomePublisher {
     fn publish<'a>(
         &'a self,
@@ -53,31 +81,29 @@ impl OutcomePublisher for IggyOutcomePublisher {
                 "reporting outcome"
             );
 
-            let stream = named(STREAM).map_err(|e| GenesisError::MessageBus {
-                message: e.to_string(),
-            })?;
-            let topic = named(OUTCOMES_TOPIC).map_err(|e| GenesisError::MessageBus {
-                message: e.to_string(),
-            })?;
-
-            // Persisted durability on the topic: an outcome lost to a broker
-            // restart is a deployment stuck in a transient state with nothing
-            // left to move it.
-            bounded(
-                "a publish",
-                self.client.send_messages(
-                    &stream,
-                    &topic,
-                    &Partitioning::partition_id(PARTITION),
-                    &mut [IggyMessage::from(payload)],
-                ),
-            )
-            .await
-            .map_err(|e| GenesisError::MessageBus {
-                message: format!("failed to publish outcome: {e}"),
-            })?;
-
-            Ok(())
+            self.send(payload).await
         })
+    }
+}
+
+impl WebhookOutcomePublisher for IggyOutcomePublisher {
+    async fn publish_webhooks<'a>(
+        &'a self,
+        report: &'a WebhooksOutcomeReport,
+    ) -> Result<(), GenesisError> {
+        let payload = to_vec(report).map_err(|e| GenesisError::MessageBus {
+            message: format!("failed to serialise outcome: {e}"),
+        })?;
+
+        info!(
+            deployment_id = %report.deployment_id,
+            revision = report.revision,
+            webhooks = report.webhooks.len(),
+            secrets = report.secrets.len(),
+            requests = report.requests.len(),
+            "reporting webhooks outcome"
+        );
+
+        self.send(payload).await
     }
 }

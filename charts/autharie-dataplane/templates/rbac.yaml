@@ -41,9 +41,14 @@ rules:
   # Accepted for #185 because the alternative -- refusing to verify the
   # restored data plane actually answers a query -- was judged the worse
   # trade-off; read-only, and revisit if a way to scope it ever exists.
+  #
+  # `create` and `patch` are for a deployment's webhook header values, which
+  # Genesis server-side applies into `<instance>-webhook-headers` so they never
+  # sit in the IdentityInstance. Same widest-grant caveat: the name is per
+  # instance and the namespace per deployment, so nothing narrower fits.
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["get"]
+    verbs: ["get", "create", "patch"]
   # Genesis creates the upgrade and reads back the one already there to decide
   # whether a redelivery is a no-op or a conflict. It never writes status:
   # that is the operator's, and the two writing it would fight.
@@ -176,6 +181,11 @@ rules:
   - apiGroups: [""]
     resources: ["services", "secrets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # The recent webhook deliveries of each instance, published for Herald in
+  # the instance's own namespace and owned by the instance.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "create", "update", "patch"]
   # Kept while instances created before the move to Gateway API still carry
   # one. The operator deletes those as it reconciles them, and cannot delete
   # what it may not see.

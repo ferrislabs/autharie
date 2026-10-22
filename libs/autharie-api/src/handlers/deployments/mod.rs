@@ -4,6 +4,14 @@ use utoipa::OpenApi;
 
 use crate::{
     handlers::deployments::{
+        agents::{
+            __path_create_agent_policy_handler, __path_delete_agent_policy_handler,
+            __path_get_agents_handler, __path_list_agent_decisions_handler,
+            __path_list_agent_policies_handler, __path_put_agents_handler,
+            __path_update_agent_policy_handler, create_agent_policy_handler,
+            delete_agent_policy_handler, get_agents_handler, list_agent_decisions_handler,
+            list_agent_policies_handler, put_agents_handler, update_agent_policy_handler,
+        },
         availability::{
             __path_get_deployment_availability_handler, get_deployment_availability_handler,
         },
@@ -54,6 +62,7 @@ use crate::{
     state::AppState,
 };
 
+pub mod agents;
 pub mod availability;
 pub mod backups;
 pub mod create_deployment;
@@ -111,6 +120,13 @@ pub mod webhooks;
         list_webhook_deliveries_handler,
         retry_webhook_delivery_handler,
         list_webhook_realms_handler,
+        get_agents_handler,
+        put_agents_handler,
+        list_agent_policies_handler,
+        create_agent_policy_handler,
+        update_agent_policy_handler,
+        delete_agent_policy_handler,
+        list_agent_decisions_handler,
     ),
     tags(
         (name = "deployments", description = "Deployment management endpoints scoped to organisations.")
@@ -152,6 +168,13 @@ pub fn deployment_routes(app_state: AppState) -> Router<AppState> {
         .typed_post(retry_webhook_delivery_handler)
         .typed_get(list_webhook_realms_handler)
         .typed_get(list_webhook_events_handler)
+        .typed_get(get_agents_handler)
+        .typed_put(put_agents_handler)
+        .typed_get(list_agent_policies_handler)
+        .typed_post(create_agent_policy_handler)
+        .typed_put(update_agent_policy_handler)
+        .typed_delete(delete_agent_policy_handler)
+        .typed_get(list_agent_decisions_handler)
         .typed_get(get_deployment_handler)
         .typed_patch(update_deployment_handler)
         .typed_delete(delete_deployment_handler)

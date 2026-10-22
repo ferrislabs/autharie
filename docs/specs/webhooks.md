@@ -42,7 +42,8 @@ Design
   Data plane
     - Genesis: handlers for the three actions. `deployment.webhooks` writes `spec.webhooks` on the IdentityInstance and the header values into Secret `<instance>-webhook-headers` (keys `<webhook id>.<header name>`). Rotation and retry write request entries (`spec.webhookRequests`) the operator consumes idempotently by id. The status watcher publishes webhook outcomes when `status.webhooks` or `status.realms` change, reading new secrets from Secret `<instance>-webhook-secrets` (key `<webhook id>`).
     - Operator: reconciles `spec.webhooks` against FerrisKey for FerrisKey instances (create, update, delete managed webhooks; after a create, rotate once to obtain the secret), executes `spec.webhookRequests`, writes the secret into `<instance>-webhook-secrets`, reports `status.webhooks[]` and `status.realms`. Uses the instance's admin credentials as branding does.
-    - Herald: relays the new outcomes; polls the deliveries of managed webhooks every cycle (per deployment that has webhooks) using a view-only FerrisKey client the operator creates in the master realm (`autharie-herald`, ViewWebhooks), and ships them to the organisation's log index as documents of kind `webhook_delivery`.
+    - Operator: also reads the deliveries of managed webhooks on each webhook pass and writes the newest 200 into ConfigMap `<instance>-webhook-deliveries` (key `deliveries.json`, no secrets in a delivery record).
+    - Herald: relays the new outcomes; reads `<instance>-webhook-deliveries` every cycle and ships new or changed records to the organisation's log index as documents of kind `webhook_delivery`.
   Console
     - New deployment tab "Webhooks" (FerrisKey only): list, create/edit form (realm, name, description, endpoint, events grouped by resource, custom headers), state badge (Pending/Active/Failed), reveal signing secret (with copy, audited), rotate, delete; per webhook a deliveries view (status, event, attempts, last response code, time) with retry.
 
@@ -71,9 +72,9 @@ Simulation
   No. Ordering is handled by revisions and idempotent request ids, tested directly.
 
 Workstreams
-  W1 CRD and operator: `spec.webhooks`, `spec.webhookRequests`, `status.webhooks`, `status.realms`; reconcile; secrets Secret; Herald's view-only client. Owns libs/autharie-crds, libs/autharie-operator-core, chart CRDs and RBAC.
+  W1 CRD and operator: `spec.webhooks`, `spec.webhookRequests`, `status.webhooks`, `status.realms`; reconcile; secrets Secret; deliveries ConfigMap. Owns libs/autharie-crds, libs/autharie-operator-core, chart CRDs and RBAC.
   W2 Genesis: the three handlers, header Secret, watcher outcomes. Owns libs/genesis-core. Depends on W1's CRD types.
-  W3 Herald: relay outcomes, poll and index deliveries. Owns libs/herald-core, apps/herald. Depends on W1 (client Secret name) and the outcome contract.
+  W3 Herald: relay outcomes, read the deliveries ConfigMap and index deliveries. Owns libs/herald-core, apps/herald. Depends on W1 (ConfigMap contract) and the outcome contract.
   W4 Control plane: domain, storage, migration, encryption, API, outcome ingestion, audit, limits, deliveries search. Owns libs/autharie-domain, -core, -postgres, -api, .sqlx, openapi.json. Depends on contracts only.
   W5 Console: Webhooks tab. Owns apps/console. Depends on W4's API (regenerate client).
   Order: W1 and W4 in parallel; then W2, W3, W5; end-to-end on k3d last.
@@ -96,7 +97,8 @@ Frozen contracts
   status.webhooks: [ { id, ferriskeyId?, phase: Pending|Active|Failed, message?, secretVersion: u64 } ]
   status.realms: [str]
   status.webhookRequests: [ { id, phase: Done|Failed, message? } ]
-  Secrets in the tenant namespace: <instance>-webhook-headers, <instance>-webhook-secrets, <instance>-herald-webhooks (client_id, client_secret)
+  Secrets in the tenant namespace: <instance>-webhook-headers, <instance>-webhook-secrets (and the operator-private <instance>-webhook-applied)
+  ConfigMap <instance>-webhook-deliveries, key deliveries.json: [ { webhook_id, delivery_id, event, status: pending|delivering|succeeded|failed, attempt_count, last_status_code?, last_error?, created_at, updated_at } ] newest first, at most 200
 
   // Outcome (Genesis → control plane), new kinds next to DeploymentOutcomeReport
   { "deployment_id", "kind": "webhooks", "revision": u64,
@@ -129,3 +131,5 @@ Verify (exit)
   pnpm --dir apps/console lint && pnpm --dir apps/console test && pnpm --dir apps/console build
   helm lint charts/autharie-dataplane
   End to end on k3d: @spec-wh-1, -2, -3, -4, -7 by hand with a real receiver.
+
+Amended: 2026-10-22 Herald reads deliveries from a ConfigMap the operator writes, instead of a view-only FerrisKey client: a master service account only gets permissions on another realm through a role per realm, which would have to be recreated for every new realm.

@@ -268,6 +268,7 @@ impl Env {
             client_id: "herald".to_string(),
             roles: vec![],
             scopes: vec![],
+            act: None,
         }))
     }
 
@@ -344,6 +345,8 @@ fn user(sub: Uuid) -> Identity {
         email: None,
         name: None,
         roles: vec![],
+        scopes: vec![],
+        act: None,
     })
 }
 
@@ -953,6 +956,7 @@ async fn an_outcome_from_another_data_plane_is_refused() {
         client_id: "herald".to_string(),
         roles: vec![],
         scopes: vec![],
+        act: None,
     });
 
     let (status, body) = call(
