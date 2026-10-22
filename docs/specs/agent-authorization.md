@@ -38,7 +38,8 @@ Design
   Components
     apps/mcp-gateway (Rust, Autharie repo): stateless HTTP service. Per upstream it has a canonical URI, a PDP (issuer + realm + evaluation endpoint + service account), a token exchange client, and a tool server URL. For each POST: validate the bearer (JWKS, `iss`, `aud` = canonical URI); on 401 send `WWW-Authenticate: Bearer resource_metadata="…", scope="…"`; serve `/.well-known/oauth-protected-resource[/path]`; read `Mcp-Method`/`Mcp-Name` and the body; build AuthZEN requests (mapping below); for `tools/list` forward, then filter the result with one batch evaluation; exchange the token; forward; record the decision.
     apps/autharie-mcp (Rust, rmcp, Autharie repo): MCP server whose tools are a curated set of Autharie API operations (list organisations, deployments, a deployment's status/metrics/logs/backups, create/upgrade/stop a deployment, webhooks...), each a thin call to the API with the exchanged token. Behind the gateway at `https://app.<domain>/mcp` (canonical URI), PDP = the `autharie` realm.
-    FerrisKey MCP server (FerrisKey repo, crate ferriskey-api-mcp, `{root}/mcp`): tools over FerrisKey's admin services (users, clients, roles, groups, organisations, webhooks, sessions, authorization), each guarded by FerrisKey's own permissions. Behind the data plane's gateway at `https://<deployment host>/mcp`, PDP = that deployment's realm.
+    apps/ferriskey-mcp (Rust, rmcp, Autharie repo for now, see ADR 0010): tools over a FerrisKey instance's admin API (users, clients, roles, groups, organisations, webhooks, security events), called over HTTP with the exchanged token so FerrisKey's own permissions apply. One per data plane, behind the data plane's gateway at `https://<deployment host>/mcp`, PDP = that deployment's realm. The gateway's upstream URL names the instance (`/instances/<namespace>/<name>/mcp`); the server maps it to the instance's in-cluster API service and never to anything else.
+    Organisation switch `mcp_enabled` (as in Mestier): off by default, changed by members who can manage the organisation. The Autharie API recognises a delegated call by the `act` claim (only the gateway may exchange to the API audience); on such a call an organisation without the switch answers 403 and is left out of the organisation list, and a delegated token only reaches the routes autharie-mcp calls. A deployment's agents (gateway route, FerrisKey MCP) are applied only while its organisation has the switch on.
     Data plane: one mcp-gateway per data plane, routed by hostname for every FerrisKey deployment with agents enabled. The operator enables `AUTHZ_ENABLED`, creates the gateway's service account (EvaluateAuthorization) and token-exchange policy, adds the canonical URI to the realm's `allowed_resources`, enables CIMD, and reconciles agent policies (desired state from the control plane, like webhooks).
     Control plane: agent settings per deployment (enabled, realm), agent policies (desired state: builder model + compiled Cedar), action `deployment.agent_policies`, outcome ingestion (applied/failed per policy), decision log search (Herald ships the gateway's decision records to the log index, kind `agent_decision`).
     Console: deployment tab "Agents": connection card (MCP URL, how to connect a client), policy builder (visual rules ↔ Cedar, validated and simulated in the browser with cedar-wasm against the realm schema), decision log.
@@ -56,7 +57,7 @@ FerrisKey gap table (from the audit)
   | AuthZEN batch `/access/v1/evaluations` | trait default, not routed | route + semantics | 1 | S |
   | `/.well-known/authzen-configuration` at spec path | realm-suffixed variant | keep, document | 1 | S |
   | Cedar built-in types for agents/tools/MCP | missing | schema extension | 1 | S |
-  | MCP server over admin API | missing | ferriskey-api-mcp | 1 | L |
+  | MCP server over admin API | missing | apps/ferriskey-mcp in Autharie for now (ADR 0010) | 1 | L |
   | Decision log (persist + query) | missing | table + route (sampling) | 2 | M |
   | PKCE without method defaults to `plain` | gap | refuse plain for public clients | 1 | S |
   | private_key_jwt client auth | missing | RFC 7523 client auth | 2 | M |
@@ -82,7 +83,8 @@ Workstreams
   Wave 0 (now): A0 security — Autharie API validates iss/aud (and parses scopes for later). Autharie repo.
   Wave 1 (parallel):
     F1 FerrisKey: authz management routes + validate/simulate + batch evaluations + Cedar agent types + PKCE plain refusal. FerrisKey repo.
-    F2 FerrisKey: MCP server crate over admin services. FerrisKey repo.
+    F2 Autharie: apps/ferriskey-mcp (rmcp) over a FerrisKey instance's admin API.
+    A6 Autharie: organisation switch `mcp_enabled` (migration, API, console setting) and delegated-call enforcement in the API (403, list filter, route allowlist).
     A1 Autharie: apps/mcp-gateway (PEP) + libs it needs, with a fake PDP and fake upstream in tests. Starts from Mestier's `apps/mcp-gateway` (Mestier ADR 0004: same PEP, AuthZEN and exchange design, built to serve other ferrislabs products), extended with several upstreams, the batch filter of `tools/list`, the `Mcp-Name` check and decision records.
     A2 Autharie: apps/autharie-mcp (rmcp) over the API.
   Wave 2 (parallel, after the contracts are proven):
@@ -102,7 +104,7 @@ Frozen contracts
   spec.agents: { enabled, realm, policies: [ { id, name, cedar } ], policiesRevision }   status.agents: { phase, gatewayClientReady, policies: [ { id, phase, message? } ] }
 
 Risks / open questions
-  - FerrisKey's MCP crate makes FerrisKey's admin surface agent-reachable; every tool must re-check FerrisKey permissions and the PDP. Owner: F2.
+  - The FerrisKey MCP server makes FerrisKey's admin surface agent-reachable; FerrisKey's permissions apply through the exchanged token and the PDP decides first. It must map an instance name only to that instance's API service (no URL from the request). Owner: F2.
   - Policy builder ↔ Cedar round-trip: only builder-made policies are editable visually; raw Cedar is shown read-only in the builder and editable as text. Owner: A5.
   - cedar-wasm bundle size in the console; lazy-loaded on the Agents tab. Owner: A5.
   - Phase-2 gaps (ID-JAG, private_key_jwt) limit workforce agents to delegated (user sign-in) and client_secret client credentials for now.
