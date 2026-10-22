@@ -179,7 +179,7 @@ impl<W: WebhookOutcomePublisher + AgentsOutcomePublisher> IdentityInstanceStatus
         // clock makes the status converge instead: whatever went missing is
         // sent again, and the control plane ignores a report that changes
         // nothing.
-        let mut reported: HashMap<Uuid, (&'static str, Option<String>, Instant)> = HashMap::new();
+        let mut reported = Reported::new();
 
         let mut webhooks = WebhookTracker::default();
         let mut agents = AgentsTracker::default();
@@ -214,6 +214,7 @@ impl<W: WebhookOutcomePublisher + AgentsOutcomePublisher> IdentityInstanceStatus
                 .await;
 
             let Some(outcome) = outcome_for(instance.status.as_ref()) else {
+                forget_unsettled(&mut reported, deployment_id);
                 continue;
             };
 
@@ -255,8 +256,24 @@ impl<W: WebhookOutcomePublisher + AgentsOutcomePublisher> IdentityInstanceStatus
     }
 }
 
+/// What was last published for each deployment: the outcome, the version, and when.
+type Reported = HashMap<Uuid, (&'static str, Option<String>, Instant)>;
+
 /// What was last published for a deployment, and how long ago.
 type LastReport<'a> = (&'a str, Option<&'a str>, Duration);
+
+/// Drops what was last published for a deployment that is not settled.
+///
+/// An instance that stops serving has left the state it was reported in, and
+/// the control plane has moved on with it: a stop is answered at once, and a
+/// start puts the deployment back to `in_progress` until the data plane says
+/// it is serving. If the memory outlived the gap, the instance coming back
+/// would look like an unchanged `running` and stay quiet for the whole window,
+/// and a started deployment would read as starting until something else
+/// happened to it.
+fn forget_unsettled(reported: &mut Reported, deployment_id: Uuid) {
+    reported.remove(&deployment_id);
+}
 
 /// Whether an observation is worth publishing, given what was last published
 /// for this deployment and how long ago.
@@ -311,6 +328,49 @@ mod tests {
             ready,
             ..Default::default()
         }
+    }
+
+    /// The stop and start of a deployment: the instance stops serving, the
+    /// control plane records `stopped`, and on start it records `in_progress`
+    /// and waits to be told. Serving again at the same version is, to a watcher
+    /// that remembered, the `running` it already published.
+    #[test]
+    fn serving_again_after_a_gap_is_reported_at_once() {
+        let id = Uuid::new_v4();
+        let mut reported = Reported::new();
+        reported.insert(id, ("running", Some("26.0.0".to_string()), Instant::now()));
+
+        forget_unsettled(&mut reported, id);
+
+        let previous = reported
+            .get(&id)
+            .map(|(last, version, at)| (*last, version.as_deref(), at.elapsed()));
+        assert!(should_report(previous, "running", Some("26.0.0")));
+    }
+
+    #[test]
+    fn what_is_still_serving_stays_quiet() {
+        let id = Uuid::new_v4();
+        let mut reported = Reported::new();
+        reported.insert(id, ("running", Some("26.0.0".to_string()), Instant::now()));
+
+        let previous = reported
+            .get(&id)
+            .map(|(last, version, at)| (*last, version.as_deref(), at.elapsed()));
+        assert!(!should_report(previous, "running", Some("26.0.0")));
+    }
+
+    #[test]
+    fn forgetting_one_deployment_leaves_the_others_remembered() {
+        let (stopped, running) = (Uuid::new_v4(), Uuid::new_v4());
+        let mut reported = Reported::new();
+        reported.insert(stopped, ("running", None, Instant::now()));
+        reported.insert(running, ("running", None, Instant::now()));
+
+        forget_unsettled(&mut reported, stopped);
+
+        assert!(!reported.contains_key(&stopped));
+        assert!(reported.contains_key(&running));
     }
 
     #[test]
