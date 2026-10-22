@@ -97,7 +97,7 @@ Frozen contracts
   // Gateway upstream config (TOML/env), one per upstream
   { canonical_uri, issuer, jwks_uri?, pdp: { evaluation_url, evaluations_url, client_id, client_secret }, exchange: { token_url, client_id, client_secret, audience }, upstream_url, server_name, scopes_supported[] }
   // Decision record (gateway → stdout JSON line, shipped by Herald/collector)
-  { kind: "agent_decision", time, server, method, tool?, subject_type, subject_id, agent, delegated, decision, policies[], reason?, request_id }
+  { kind: "agent_decision", time, server, resource (the upstream canonical URI), method, tool?, subject_type, subject_id, agent, delegated, decision, policies[], reason?, request_id }
   // FerrisKey authz management (new routes, under {root}/realms/{realm}/authz)
   GET/PUT schema; GET/POST policies; GET/PUT/DELETE policies/{id}; POST policies/validate; POST simulate {policies?, entities, request}; GET/POST templates…; GET/PUT state
   // IdentityInstance (agents)
