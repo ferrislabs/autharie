@@ -4,6 +4,7 @@ use autharie_auth::{Identity, Token};
 use autharie_core::{
     CoreError,
     auth::ports::AuthService,
+    organisation::{OrganisationId, ports::OrganisationMcpSwitch},
     user::{commands::CreateUserCommand, ports::UserService},
 };
 use axum::{
@@ -28,6 +29,7 @@ pub mod backup_signal;
 pub mod billing;
 pub mod billing_periods;
 pub mod certificate;
+pub mod delegated;
 pub mod deployment_reachability;
 pub mod dns;
 pub mod drill;
@@ -73,6 +75,8 @@ pub(crate) mod test_helpers {
 
     pub fn user_identity(id: &str) -> Identity {
         Identity::User(User {
+            scopes: Vec::new(),
+            act: None,
             id: id.to_string(),
             username: "user".to_string(),
             email: None,
@@ -132,6 +136,9 @@ pub enum MiddlewareError {
     MissingAuthHeader,
     InvalidAuthHeader,
     AuthenticationFailed(CoreError),
+    DelegatedRouteForbidden,
+    OrganisationMcpDisabled,
+    DelegationCheckFailed(CoreError),
 }
 
 impl From<MiddlewareError> for StatusCode {
@@ -140,6 +147,10 @@ impl From<MiddlewareError> for StatusCode {
             MiddlewareError::MissingAuthHeader => StatusCode::UNAUTHORIZED,
             MiddlewareError::InvalidAuthHeader => StatusCode::UNAUTHORIZED,
             MiddlewareError::AuthenticationFailed(_) => StatusCode::UNAUTHORIZED,
+            MiddlewareError::DelegatedRouteForbidden | MiddlewareError::OrganisationMcpDisabled => {
+                StatusCode::FORBIDDEN
+            }
+            MiddlewareError::DelegationCheckFailed(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 }
@@ -161,6 +172,21 @@ impl IntoResponse for MiddlewareError {
                 StatusCode::UNAUTHORIZED,
                 "E_AUTHENTICATION_FAILED",
                 "Authentication failed",
+            ),
+            MiddlewareError::DelegatedRouteForbidden => (
+                StatusCode::FORBIDDEN,
+                "E_DELEGATED_ROUTE_FORBIDDEN",
+                "This route is not available to AI agents",
+            ),
+            MiddlewareError::OrganisationMcpDisabled => (
+                StatusCode::FORBIDDEN,
+                "E_ORGANISATION_MCP_DISABLED",
+                "AI access is turned off for this organisation",
+            ),
+            MiddlewareError::DelegationCheckFailed(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "E_INTERNAL_SERVER_ERROR",
+                "Could not check this organisation's AI access",
             ),
         };
 
@@ -188,7 +214,7 @@ pub async fn auth_middleware<T>(
     next: Next,
 ) -> Result<Response, MiddlewareError>
 where
-    T: AuthService + UserService + Clone + Send + Sync + 'static,
+    T: AuthService + UserService + OrganisationMcpSwitch + Clone + Send + Sync + 'static,
 {
     auth_middleware_impl(State(state), req, |req| next.run(req)).await
 }
@@ -199,7 +225,7 @@ pub(crate) async fn auth_middleware_impl<T, F, Fut>(
     next: F,
 ) -> Result<Response, MiddlewareError>
 where
-    T: AuthService + UserService + Clone + Send + Sync + 'static,
+    T: AuthService + UserService + OrganisationMcpSwitch + Clone + Send + Sync + 'static,
     F: FnOnce(Request) -> Fut,
     Fut: std::future::Future<Output = Response> + Send,
 {
@@ -216,6 +242,10 @@ where
         error!("Auth middleware: failed to identify user {:?}", e);
         MiddlewareError::AuthenticationFailed(e)
     })?;
+
+    if identity.is_delegated() {
+        admit_delegated(&state, req.method(), req.uri().path()).await?;
+    }
 
     if let Identity::User(user) = &identity {
         let name = user.name.clone().unwrap_or_else(|| user.username.clone());
@@ -237,6 +267,31 @@ where
     req.extensions_mut().insert(identity);
 
     Ok(next(req).await)
+}
+
+async fn admit_delegated<T>(
+    state: &T,
+    method: &axum::http::Method,
+    path: &str,
+) -> Result<(), MiddlewareError>
+where
+    T: OrganisationMcpSwitch,
+{
+    match delegated::classify(method, path).ok_or(MiddlewareError::DelegatedRouteForbidden)? {
+        delegated::Target::UserOrganisations => Ok(()),
+        delegated::Target::Organisation(id) => {
+            let enabled = state
+                .mcp_enabled(OrganisationId(id))
+                .await
+                .map_err(MiddlewareError::DelegationCheckFailed)?;
+
+            if enabled {
+                Ok(())
+            } else {
+                Err(MiddlewareError::OrganisationMcpDisabled)
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -306,6 +361,36 @@ mod tests {
     #[derive(Clone)]
     struct FakeAuthService {
         fail: bool,
+        delegated: bool,
+        mcp_enabled: bool,
+    }
+
+    impl FakeAuthService {
+        fn new(fail: bool) -> Self {
+            Self {
+                fail,
+                delegated: false,
+                mcp_enabled: false,
+            }
+        }
+
+        fn delegated(mcp_enabled: bool) -> Self {
+            Self {
+                fail: false,
+                delegated: true,
+                mcp_enabled,
+            }
+        }
+    }
+
+    impl OrganisationMcpSwitch for FakeAuthService {
+        fn mcp_enabled(
+            &self,
+            _id: OrganisationId,
+        ) -> impl Future<Output = Result<bool, CoreError>> + Send {
+            let enabled = self.mcp_enabled;
+            Box::pin(async move { Ok(enabled) })
+        }
     }
 
     impl AuthService for FakeAuthService {
@@ -314,11 +399,14 @@ mod tests {
             _token: &str,
         ) -> impl Future<Output = Result<Identity, CoreError>> + Send {
             let fail = self.fail;
+            let delegated = self.delegated;
             Box::pin(async move {
                 if fail {
                     Err(CoreError::InvalidIdentity)
                 } else {
                     Ok(Identity::User(User {
+                        scopes: Vec::new(),
+                        act: delegated.then(autharie_auth::Actor::default),
                         id: "user-1".to_string(),
                         username: "user".to_string(),
                         email: None,
@@ -345,7 +433,7 @@ mod tests {
 
     #[tokio::test]
     async fn auth_middleware_impl_rejects_missing_header() {
-        let state = FakeAuthService { fail: false };
+        let state = FakeAuthService::new(false);
         let req = Request::builder().uri("/").body(Body::empty()).unwrap();
 
         let result = auth_middleware_impl(State(state), req, |_req| async move {
@@ -358,7 +446,7 @@ mod tests {
 
     #[tokio::test]
     async fn auth_middleware_impl_rejects_invalid_token() {
-        let state = FakeAuthService { fail: false };
+        let state = FakeAuthService::new(false);
         let req = Request::builder()
             .uri("/")
             .header(AUTHORIZATION, "Token abc")
@@ -375,7 +463,7 @@ mod tests {
 
     #[tokio::test]
     async fn auth_middleware_impl_rejects_failed_identity() {
-        let state = FakeAuthService { fail: true };
+        let state = FakeAuthService::new(true);
         let req = Request::builder()
             .uri("/")
             .header(AUTHORIZATION, "Bearer token")
@@ -395,7 +483,7 @@ mod tests {
 
     #[tokio::test]
     async fn auth_middleware_impl_inserts_identity_on_success() {
-        let state = FakeAuthService { fail: false };
+        let state = FakeAuthService::new(false);
         let req = Request::builder()
             .uri("/")
             .header(AUTHORIZATION, "Bearer token")
@@ -411,6 +499,117 @@ mod tests {
             };
             response.into_response()
         })
+        .await;
+
+        assert!(matches!(result, Ok(response) if response.status() == StatusCode::OK));
+    }
+
+    fn delegated_request(method: &str, path: &str) -> Request {
+        Request::builder()
+            .method(method)
+            .uri(path)
+            .header(AUTHORIZATION, "Bearer token")
+            .body(Body::empty())
+            .unwrap()
+    }
+
+    async fn call(state: FakeAuthService, req: Request) -> Result<Response, MiddlewareError> {
+        auth_middleware_impl(State(state), req, |_req| async move {
+            StatusCode::OK.into_response()
+        })
+        .await
+    }
+
+    const ORG: &str = "6f1c1b0e-5a53-4b9b-8d1e-0a5f3f1f9c11";
+
+    #[tokio::test]
+    async fn a_delegated_call_to_an_organisation_with_the_switch_on_passes() {
+        let result = call(
+            FakeAuthService::delegated(true),
+            delegated_request("GET", &format!("/organisations/{ORG}/deployments")),
+        )
+        .await;
+
+        assert!(matches!(result, Ok(response) if response.status() == StatusCode::OK));
+    }
+
+    #[tokio::test]
+    async fn a_delegated_call_to_an_organisation_with_the_switch_off_is_refused() {
+        let result = call(
+            FakeAuthService::delegated(false),
+            delegated_request("GET", &format!("/organisations/{ORG}/deployments")),
+        )
+        .await;
+
+        let Err(error) = result else {
+            panic!("the call was let through");
+        };
+        assert!(matches!(error, MiddlewareError::OrganisationMcpDisabled));
+        let response = error.into_response();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["code"], "E_ORGANISATION_MCP_DISABLED");
+        assert_eq!(
+            body["message"],
+            "AI access is turned off for this organisation"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_delegated_call_cannot_patch_the_organisation_even_with_the_switch_on() {
+        let result = call(
+            FakeAuthService::delegated(true),
+            delegated_request("PATCH", &format!("/organisations/{ORG}")),
+        )
+        .await;
+
+        let Err(error) = result else {
+            panic!("the call was let through");
+        };
+        assert!(matches!(error, MiddlewareError::DelegatedRouteForbidden));
+        let response = error.into_response();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["code"], "E_DELEGATED_ROUTE_FORBIDDEN");
+    }
+
+    #[tokio::test]
+    async fn a_delegated_call_to_a_route_off_the_allowlist_is_refused() {
+        let result = call(
+            FakeAuthService::delegated(true),
+            delegated_request("GET", &format!("/organisations/{ORG}/members")),
+        )
+        .await;
+
+        assert!(matches!(
+            result,
+            Err(MiddlewareError::DelegatedRouteForbidden)
+        ));
+    }
+
+    #[tokio::test]
+    async fn the_organisation_list_does_not_need_a_switch() {
+        let result = call(
+            FakeAuthService::delegated(false),
+            delegated_request("GET", "/users/@me/organisations"),
+        )
+        .await;
+
+        assert!(matches!(result, Ok(response) if response.status() == StatusCode::OK));
+    }
+
+    #[tokio::test]
+    async fn an_ordinary_call_is_not_subject_to_the_switch_or_the_allowlist() {
+        let result = call(
+            FakeAuthService::new(false),
+            delegated_request("PATCH", &format!("/organisations/{ORG}")),
+        )
         .await;
 
         assert!(matches!(result, Ok(response) if response.status() == StatusCode::OK));

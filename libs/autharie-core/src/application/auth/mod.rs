@@ -10,6 +10,18 @@ pub fn set_auth_issuer(issuer: String) {
     let _ = AUTH_ISSUER.set(issuer);
 }
 
+static AUTH_TOKEN_ISSUERS: OnceLock<Vec<String>> = OnceLock::new();
+
+pub fn set_auth_token_issuers(token_issuers: Vec<String>) {
+    let _ = AUTH_TOKEN_ISSUERS.set(token_issuers);
+}
+
+static AUTH_AUDIENCES: OnceLock<Vec<String>> = OnceLock::new();
+
+pub fn set_auth_audiences(audiences: Vec<String>) {
+    let _ = AUTH_AUDIENCES.set(audiences);
+}
+
 fn auth_issuer() -> Result<&'static str, CoreError> {
     AUTH_ISSUER
         .get()
@@ -20,7 +32,11 @@ fn auth_issuer() -> Result<&'static str, CoreError> {
 impl AuthService for AutharieService {
     async fn get_identity(&self, token: &str) -> Result<Identity, CoreError> {
         let issuer = auth_issuer()?;
-        let auth_repository = FerrisKeyRepository::new(issuer.to_string(), None);
+        let auth_repository = FerrisKeyRepository::new(
+            issuer.to_string(),
+            AUTH_AUDIENCES.get().cloned().unwrap_or_default(),
+        )
+        .with_token_issuers(AUTH_TOKEN_ISSUERS.get().cloned().unwrap_or_default());
         let auth_service = AuthServiceImpl::new(std::sync::Arc::new(auth_repository));
 
         auth_service.get_identity(token).await

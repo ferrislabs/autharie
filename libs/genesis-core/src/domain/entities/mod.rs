@@ -1,4 +1,6 @@
 pub mod action_event;
+pub mod agents_outcome;
+pub mod agents_payload;
 pub mod dataplane_upgrade;
 pub mod dataplane_upgrade_payload;
 pub mod deployment_payload;

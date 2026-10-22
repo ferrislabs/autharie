@@ -108,6 +108,7 @@ mod tests {
                 client_id: "herald-service".to_string(),
                 roles: vec![],
                 scopes: vec![],
+                act: None,
             })),
         )
         .await;
@@ -133,6 +134,7 @@ mod tests {
                 client_id: "herald-service".to_string(),
                 roles: vec![],
                 scopes: vec![],
+                act: None,
             })),
         )
         .await;

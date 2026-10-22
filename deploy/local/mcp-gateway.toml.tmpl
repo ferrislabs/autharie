@@ -1,0 +1,27 @@
+# The local MCP gateway's configuration, with the client secret left out.
+# scripts/bootstrap-ferriskey.sh writes mcp-gateway.toml beside this file once
+# the realm exists; the gateway starts without it and loads it when it appears.
+#
+# Two addresses for the same realm: `issuer` is what a client on this machine
+# sees (the published FerrisKey port) and what the tokens it obtains carry;
+# every other URL is what the gateway sees from inside the compose network.
+
+[[upstreams]]
+canonical_uri = "http://localhost:9090/mcp"
+issuer = "http://localhost:3334/realms/autharie"
+jwks_uri = "http://ferriskey-api:3333/realms/autharie/protocol/openid-connect/certs"
+upstream_url = "http://autharie-mcp:8081/mcp"
+server_name = "autharie"
+scopes_supported = []
+
+[upstreams.pdp]
+evaluation_url = "http://ferriskey-api:3333/realms/autharie/authzen/access/v1/evaluation"
+evaluations_url = "http://ferriskey-api:3333/realms/autharie/authzen/access/v1/evaluations"
+client_id = "mcp-gateway"
+client_secret = "@CLIENT_SECRET@"
+
+[upstreams.exchange]
+token_url = "http://ferriskey-api:3333/realms/autharie/protocol/openid-connect/token"
+client_id = "mcp-gateway"
+client_secret = "@CLIENT_SECRET@"
+audience = "autharie-realm"
