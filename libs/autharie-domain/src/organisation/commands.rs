@@ -87,6 +87,7 @@ impl CreateOrganisationData {
 pub struct UpdateOrganisationCommand {
     pub name: Option<OrganisationName>,
     pub slug: Option<OrganisationSlug>,
+    pub mcp_enabled: Option<bool>,
 }
 
 impl UpdateOrganisationCommand {
@@ -94,7 +95,13 @@ impl UpdateOrganisationCommand {
         Self {
             name: None,
             slug: None,
+            mcp_enabled: None,
         }
+    }
+
+    pub fn with_mcp_enabled(mut self, enabled: bool) -> Self {
+        self.mcp_enabled = Some(enabled);
+        self
     }
 
     pub fn with_name(mut self, name: OrganisationName) -> Self {
@@ -108,7 +115,7 @@ impl UpdateOrganisationCommand {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.name.is_none() && self.slug.is_none()
+        self.name.is_none() && self.slug.is_none() && self.mcp_enabled.is_none()
     }
 }
 
@@ -169,5 +176,8 @@ mod tests {
         let with_name =
             UpdateOrganisationCommand::new().with_name(OrganisationName::new("Acme Corp").unwrap());
         assert!(!with_name.is_empty());
+
+        let with_switch = UpdateOrganisationCommand::new().with_mcp_enabled(true);
+        assert!(!with_switch.is_empty());
     }
 }

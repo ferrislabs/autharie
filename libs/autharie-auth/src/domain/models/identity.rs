@@ -1,6 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-use crate::domain::models::{claims::Claims, client::Client, user::User};
+use crate::domain::models::{
+    claims::{Actor, Claims},
+    client::Client,
+    user::User,
+};
 
 /// Realm role that marks an identity as operating this installation.
 pub const OPERATOR_ROLE: &str = "autharie-operator";
@@ -51,6 +55,24 @@ impl Identity {
         }
     }
 
+    pub fn scopes(&self) -> &[String] {
+        match self {
+            Identity::User(u) => &u.scopes,
+            Identity::Client(c) => &c.scopes,
+        }
+    }
+
+    pub fn actor(&self) -> Option<&Actor> {
+        match self {
+            Identity::User(u) => u.act.as_ref(),
+            Identity::Client(c) => c.act.as_ref(),
+        }
+    }
+
+    pub fn is_delegated(&self) -> bool {
+        self.actor().is_some()
+    }
+
     pub fn has_role(&self, role: &str) -> bool {
         self.roles().iter().any(|r| r == role)
     }
@@ -59,13 +81,16 @@ impl Identity {
 impl From<Claims> for Identity {
     fn from(claims: Claims) -> Self {
         let roles = claims.realm_roles().to_vec();
+        let scopes = claims.scopes();
+        let act = claims.act;
 
         if let Some(client_id) = claims.client_id {
             Identity::Client(Client {
                 id: claims.sub.0,
                 client_id,
                 roles,
-                scopes: Vec::new(),
+                scopes,
+                act,
             })
         } else {
             Identity::User(User {
@@ -73,6 +98,8 @@ impl From<Claims> for Identity {
                 email: claims.email,
                 name: claims.name,
                 roles,
+                scopes,
+                act,
                 username: claims.preferred_username.unwrap_or(claims.sub.0),
             })
         }
@@ -157,6 +184,7 @@ mod tests {
                     .map(|r: &&str| r.to_string())
                     .collect(),
             }),
+            act: None,
             extra: serde_json::Map::new(),
         }
     }
@@ -181,8 +209,42 @@ mod tests {
                     .map(|r: &&str| r.to_string())
                     .collect(),
             }),
+            act: None,
             extra: serde_json::Map::new(),
         }
+    }
+
+    #[test]
+    fn the_scope_claim_is_parsed_into_the_identity() {
+        let user = Identity::from(create_user_claims());
+        let client = Identity::from(create_service_account_claims());
+
+        assert_eq!(user.scopes(), ["openid", "profile", "email"]);
+        assert_eq!(
+            client.scopes(),
+            ["admin:all", "read:users", "write:messages"]
+        );
+    }
+
+    #[test]
+    fn an_act_claim_makes_the_identity_delegated() {
+        let mut claims = create_user_claims();
+        assert!(!Identity::from(claims.clone()).is_delegated());
+
+        claims.act = Some(crate::domain::models::claims::Actor::default());
+        assert!(Identity::from(claims).is_delegated());
+
+        let mut client = create_service_account_claims();
+        client.act = Some(crate::domain::models::claims::Actor::default());
+        assert!(Identity::from(client).is_delegated());
+    }
+
+    #[test]
+    fn an_empty_scope_claim_yields_no_scopes() {
+        let mut claims = create_user_claims();
+        claims.scope = "  ".to_string();
+
+        assert!(Identity::from(claims).scopes().is_empty());
     }
 
     #[test]

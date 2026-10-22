@@ -138,6 +138,8 @@ mod tests {
         let service = SignalServiceImpl::new(signals, AllowingPolicy);
 
         let test_identity = autharie_auth::Identity::User(autharie_auth::User {
+            scopes: Vec::new(),
+            act: None,
             id: "test-user".to_string(),
             username: "test".to_string(),
             email: None,

@@ -10,11 +10,15 @@ use autharie_transit::TransitKeyProvider;
 
 use crate::{
     AutharieConfig, CoreError,
-    application::{auth::set_auth_issuer, cloud_credentials::ClusterResizers},
+    application::{
+        auth::{set_auth_audiences, set_auth_issuer, set_auth_token_issuers},
+        cloud_credentials::ClusterResizers,
+    },
     infrastructure::{credentials::CloudProviders, logs::InProcessLogRelay},
 };
 
 mod action;
+pub mod agents;
 mod audit;
 mod auth;
 mod backup;
@@ -264,6 +268,8 @@ pub async fn create_service(config: AutharieConfig) -> Result<AutharieService, C
             message: e.to_string(),
         })?;
     set_auth_issuer(config.auth.issuer);
+    set_auth_token_issuers(config.auth.token_issuers);
+    set_auth_audiences(config.auth.audiences);
 
     Ok(AutharieService::with_config(
         pg_pool,
@@ -290,6 +296,8 @@ mod tests {
             },
             auth: crate::domain::AuthConfig {
                 issuer: "http://issuer.test".to_string(),
+                token_issuers: Vec::new(),
+                audiences: Vec::new(),
             },
             dataplane: DataPlaneConfig {
                 heartbeat_window: chrono::Duration::seconds(90),
