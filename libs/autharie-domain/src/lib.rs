@@ -5,6 +5,7 @@ use uuid::{NoContext, Timestamp, Uuid};
 use crate::dataplane::value_objects::DataPlaneId;
 
 pub mod action;
+pub mod agents;
 pub mod audit;
 pub mod backups;
 pub mod billing;
@@ -104,6 +105,8 @@ pub struct DatabaseConfig {
 #[derive(Clone, Debug)]
 pub struct AuthConfig {
     pub issuer: String,
+    pub token_issuers: Vec<String>,
+    pub audiences: Vec<String>,
 }
 
 #[derive(Debug, Error)]
@@ -252,6 +255,9 @@ pub enum CoreError {
 
     #[error(transparent)]
     Billing(#[from] crate::billing::BillingError),
+
+    #[error(transparent)]
+    Agent(#[from] crate::agents::AgentError),
 
     #[error(transparent)]
     Profile(#[from] crate::dataplane::cluster_profile::ProfileError),

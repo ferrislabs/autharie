@@ -114,6 +114,14 @@ EXPOSE 8080
 
 ENTRYPOINT [ "ferriskey-mcp" ]
 
+FROM runtime AS mcp
+
+COPY --from=builder /usr/local/src/autharie/target/release/autharie-mcp /usr/local/bin/
+
+EXPOSE 8081
+
+ENTRYPOINT [ "autharie-mcp" ]
+
 FROM node:24.12-alpine AS console-build
 
 WORKDIR /usr/local/src/autharie

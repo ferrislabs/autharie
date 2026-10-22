@@ -4,6 +4,7 @@ members = [
     "apps/control-plane",
     "apps/operator",
     "apps/ferriskey-mcp",
+    "apps/autharie-mcp",
 
     "libs/autharie-core",
     "libs/autharie-api",

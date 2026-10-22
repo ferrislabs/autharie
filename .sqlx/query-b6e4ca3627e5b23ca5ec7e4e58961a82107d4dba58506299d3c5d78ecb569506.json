@@ -1,0 +1,88 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT id, deployment_id, name, description, enabled, rule, cedar, phase, message,\n                   desired_revision, created_at, updated_at\n            FROM agent_policies\n            WHERE deployment_id = $1\n            ORDER BY created_at, id\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "deployment_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 5,
+        "name": "rule",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 6,
+        "name": "cedar",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "phase",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "message",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "desired_revision",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 10,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 11,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "b6e4ca3627e5b23ca5ec7e4e58961a82107d4dba58506299d3c5d78ecb569506"
+}

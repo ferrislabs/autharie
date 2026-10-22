@@ -31,8 +31,8 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Clone)]
 pub struct QuickwitLogSearchIndex {
-    client: Client,
-    base_url: String,
+    pub(super) client: Client,
+    pub(super) base_url: String,
 }
 
 impl QuickwitLogSearchIndex {
@@ -48,7 +48,7 @@ impl QuickwitLogSearchIndex {
         }
     }
 
-    fn search_url(&self, organisation_id: OrganisationId) -> String {
+    pub(super) fn search_url(&self, organisation_id: OrganisationId) -> String {
         format!("{}/api/v1/logs-{}/search", self.base_url, organisation_id.0)
     }
 
@@ -190,7 +190,10 @@ fn level_clause(floor: LogLevel) -> String {
 /// language understands, so nothing the caller sent ever reaches Quickwit
 /// except through this translation.
 fn build_query(filter: &LogSearchFilter) -> String {
-    let mut clauses = vec![level_clause(filter.level_floor)];
+    let mut clauses = vec![
+        level_clause(filter.level_floor),
+        "NOT kind:agent_decision".to_string(),
+    ];
 
     if let Some(deployment_id) = filter.deployment_id {
         clauses.push(format!(

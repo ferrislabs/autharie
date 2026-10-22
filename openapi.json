@@ -1044,7 +1044,7 @@
           "dataplanes"
         ],
         "summary": "report what a data plane did with a deployment",
-        "description": "Records an outcome the data plane observed directly. This is the only path by which the control plane learns what happened to a deployment after it was handed over.",
+        "description": "Records an outcome the data plane observed directly. This is the only path by which the control plane learns what happened to a deployment after it was handed over. With `kind: deployment.agents` it records the status of the deployment's agents and the phase of each policy instead; a report older than the one already applied changes nothing.",
         "operationId": "report_outcome_handler",
         "parameters": [
           {
@@ -1532,6 +1532,190 @@
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/organisations/{organisation_id}": {
+      "get": {
+        "tags": [
+          "organisation"
+        ],
+        "summary": "get organisation",
+        "description": "Read an organisation the caller is a member of, with its settings.",
+        "operationId": "get_organisation_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The organisation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganisationResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not see this organisation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such organisation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "organisation"
+        ],
+        "summary": "update organisation",
+        "description": "Change an organisation's settings: whether AI agents may act on it through MCP. Needs the right to manage the organisation, and is refused to a delegated (AI agent) token. Any other field is refused with a 422.",
+        "operationId": "update_organisation_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateOrganisationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Organisation updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganisationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Nothing to change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not manage this organisation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such organisation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The body carries a field that is not a setting",
             "content": {
               "application/json": {
                 "schema": {
@@ -3276,6 +3460,817 @@
           },
           "403": {
             "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/organisations/{organisation_id}/deployments/{deployment_id}/agents": {
+      "get": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "read a deployment's agent settings",
+        "description": "Whether AI agents may reach the deployment through MCP, the realm that decides, the MCP URL, whether the organisation's AI switch is on, and what the data plane last reported. Requires VIEW_INSTANCES.",
+        "operationId": "get_agents_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The agent settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not view this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "change a deployment's agent settings",
+        "description": "Stores the settings and asks the data plane to apply them. Agents only run while the organisation's AI switch is on as well. FerrisKey deployments only. Requires MANAGE_INSTANCES.",
+        "operationId": "put_agents_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutAgentsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Stored, and being applied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The realm is not valid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not change this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The deployment is not a FerrisKey one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/organisations/{organisation_id}/deployments/{deployment_id}/agents/decisions": {
+      "get": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "search the decisions taken for a deployment's agents",
+        "description": "Read from the organisation's log index, where the gateway's decision records are shipped (`kind: agent_decision`). Newest first. Requires VIEW_INSTANCES.",
+        "operationId": "list_agent_decisions_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Start of the range, inclusive.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "End of the range, exclusive.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "decision",
+            "in": "query",
+            "description": "`allow` or `deny`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tool",
+            "in": "query",
+            "description": "Exact tool name.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "subject",
+            "in": "query",
+            "description": "Exact subject id.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "At most 200, 50 when left out.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The decisions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentDecisionsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A filter is not valid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not view this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "This installation has no Quickwit configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/organisations/{organisation_id}/deployments/{deployment_id}/agents/policies": {
+      "get": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "list a deployment's agent policies",
+        "description": "Each policy carries the phase the data plane last reported for it. Requires VIEW_INSTANCES.",
+        "operationId": "list_agent_policies_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The policies",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentPoliciesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not view this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "create an agent policy",
+        "description": "Checks that the Cedar parses, stores the policy and asks the data plane to apply the deployment's enabled policies. Requires MANAGE_INSTANCES.",
+        "operationId": "create_agent_policy_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentPolicyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created, and being applied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentPolicyResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A field is not valid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not change this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The deployment is not a FerrisKey one, or already holds 100 policies",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The Cedar does not parse; the message is the parser's",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/organisations/{organisation_id}/deployments/{deployment_id}/agents/policies/{policy_id}": {
+      "put": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "replace an agent policy",
+        "description": "Replaces the policy, puts it back to `Pending` and asks the data plane to apply the deployment's enabled policies. Requires MANAGE_INSTANCES.",
+        "operationId": "update_agent_policy_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "policy_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentPolicyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Stored, and being applied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentPolicyResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A field is not valid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not change this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment or policy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The deployment is not a FerrisKey one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The Cedar does not parse; the message is the parser's",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "delete an agent policy",
+        "description": "Removes the policy and asks the data plane to apply the remaining ones, which removes it from FerrisKey. Requires MANAGE_INSTANCES.",
+        "operationId": "delete_agent_policy_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "policy_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not change this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment or policy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The deployment is not a FerrisKey one",
             "content": {
               "application/json": {
                 "schema": {
@@ -9397,7 +10392,7 @@
           "users"
         ],
         "summary": "get user's organisations",
-        "description": "Retrieve a list of organisations the authenticated user is a member of.",
+        "description": "Retrieve a list of organisations the authenticated user is a member of. For an AI agent acting for the user, only the organisations that allow MCP.",
         "operationId": "get_user_organisations_handler",
         "responses": {
           "200": {
@@ -9855,6 +10850,321 @@
         "type": "integer",
         "format": "int32",
         "minimum": 0
+      },
+      "AgentDecision": {
+        "type": "object",
+        "required": [
+          "kind",
+          "time",
+          "deployment_id",
+          "server",
+          "method",
+          "subject_type",
+          "subject_id",
+          "agent",
+          "delegated",
+          "decision",
+          "policies",
+          "request_id"
+        ],
+        "properties": {
+          "agent": {
+            "type": "string"
+          },
+          "decision": {
+            "$ref": "#/components/schemas/DecisionVerdict"
+          },
+          "delegated": {
+            "type": "boolean"
+          },
+          "deployment_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "method": {
+            "type": "string"
+          },
+          "policies": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "resource": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "server": {
+            "type": "string"
+          },
+          "subject_id": {
+            "type": "string"
+          },
+          "subject_type": {
+            "type": "string"
+          },
+          "time": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "tool": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "AgentDecisionsResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentDecision"
+            }
+          }
+        }
+      },
+      "AgentPoliciesResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentPolicy"
+            }
+          }
+        }
+      },
+      "AgentPolicy": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "enabled",
+          "cedar",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "cedar": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "$ref": "#/components/schemas/PolicyId"
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "phase": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PolicyPhase"
+              }
+            ]
+          },
+          "rule": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AgentPolicyReport": {
+        "type": "object",
+        "required": [
+          "id",
+          "phase"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phase": {
+            "type": "string",
+            "description": "`Applied`, `Invalid` or `Failed`."
+          }
+        }
+      },
+      "AgentPolicyRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "enabled",
+          "cedar"
+        ],
+        "properties": {
+          "cedar": {
+            "type": "string",
+            "description": "The Cedar source. It must parse, otherwise the answer is a 422 carrying the parser's message."
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "rule": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The console's builder model. Opaque to the API: stored and returned as sent."
+          }
+        },
+        "additionalProperties": false
+      },
+      "AgentPolicyResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AgentPolicy"
+          }
+        }
+      },
+      "AgentStatus": {
+        "type": "object",
+        "required": [
+          "phase",
+          "gateway_client_ready",
+          "updated_at"
+        ],
+        "properties": {
+          "gateway_client_ready": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phase": {
+            "$ref": "#/components/schemas/AgentsPhase"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AgentsPhase": {
+        "type": "string",
+        "enum": [
+          "Applying",
+          "Ready",
+          "Failed"
+        ]
+      },
+      "AgentsResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AgentsView"
+          }
+        }
+      },
+      "AgentsView": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "realm",
+          "organisation_mcp_enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "mcp_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "organisation_mcp_enabled": {
+            "type": "boolean"
+          },
+          "realm": {
+            "type": "string"
+          },
+          "status": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AgentStatus"
+              }
+            ]
+          }
+        }
       },
       "AllowList": {
         "type": "array",
@@ -11588,6 +12898,13 @@
             }
           }
         }
+      },
+      "DecisionVerdict": {
+        "type": "string",
+        "enum": [
+          "allow",
+          "deny"
+        ]
       },
       "DeleteDeploymentResponse": {
         "type": "object",
@@ -13834,6 +15151,7 @@
           "status",
           "plan",
           "limits",
+          "mcp_enabled",
           "created_at",
           "updated_at"
         ],
@@ -13854,6 +15172,9 @@
           },
           "limits": {
             "$ref": "#/components/schemas/OrganisationLimits"
+          },
+          "mcp_enabled": {
+            "type": "boolean"
           },
           "name": {
             "$ref": "#/components/schemas/OrganisationName"
@@ -13907,6 +15228,17 @@
       "OrganisationName": {
         "type": "string",
         "description": "Organisation name value object"
+      },
+      "OrganisationResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Organisation"
+          }
+        }
       },
       "OrganisationSlug": {
         "type": "string",
@@ -13994,6 +15326,19 @@
           "$ref": "#/components/schemas/PlatformRight"
         },
         "description": "What one identity holds.\n\nA set rather than a list: granting the same right twice is granting it\nonce, and a caller that sent it twice meant it once."
+      },
+      "PolicyId": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "PolicyPhase": {
+        "type": "string",
+        "enum": [
+          "Pending",
+          "Applied",
+          "Invalid",
+          "Failed"
+        ]
       },
       "PostgresMajor": {
         "type": "integer",
@@ -14172,6 +15517,25 @@
             "minimum": 0
           }
         }
+      },
+      "PutAgentsRequest": {
+        "type": "object",
+        "required": [
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "realm": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A realm of the deployment. `master` when left out."
+          }
+        },
+        "additionalProperties": false
       },
       "Radius": {
         "type": "integer",
@@ -14562,13 +15926,57 @@
       },
       "ReportOutcomeRequest": {
         "type": "object",
-        "required": [
-          "outcome"
-        ],
         "properties": {
+          "deployment_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Must be the deployment of the route when sent."
+          },
+          "gateway_client_ready": {
+            "type": "boolean",
+            "description": "Whether the gateway's client exists in the realm. Only with `kind: deployment.agents`."
+          },
+          "kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`deployment.agents` for a report of a deployment's agents; absent for\nthe outcome of the deployment itself."
+          },
+          "mcp_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where the deployment's MCP endpoint answers. Only with `kind: deployment.agents`."
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the agents are not ready, when the data plane knows. Only with `kind: deployment.agents`."
+          },
           "outcome": {
             "type": "string",
             "description": "What the data plane observed: `running`, `failed` or `deleted`.\n\nAll three are things a component saw rather than inferred -- the\noperator wrote `Running`/`ready` or `Failed` onto the resource, and\ndeletion is reported by whatever removed it. None of them is a timeout,\nwhich is why none needs a policy about when to give up."
+          },
+          "phase": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`Applying`, `Ready` or `Failed`. Only with `kind: deployment.agents`."
+          },
+          "policies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentPolicyReport"
+            },
+            "description": "What became of each enabled policy. Only with `kind: deployment.agents`."
           },
           "reason": {
             "type": [
@@ -14576,6 +15984,15 @@
               "null"
             ],
             "description": "Why the data plane gave up, sent with `failed` when it knows."
+          },
+          "revision": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The revision of the `deployment.agents` action this report reflects.\nRequired with `kind: deployment.agents`.",
+            "minimum": 0
           },
           "version": {
             "type": [
@@ -15822,6 +17239,18 @@
             "$ref": "#/components/schemas/Deployment"
           }
         }
+      },
+      "UpdateOrganisationRequest": {
+        "type": "object",
+        "properties": {
+          "mcp_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
       },
       "UpdateRoleRequest": {
         "type": "object",
