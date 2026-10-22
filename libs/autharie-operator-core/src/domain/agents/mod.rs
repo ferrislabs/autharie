@@ -135,7 +135,7 @@ pub fn settings_with_resource(current: &RealmSettings, canonical: &str) -> Optio
         .allowed_resources
         .iter()
         .any(|resource| resource == canonical);
-    if present && current.cimd_enabled && !current.dcr_enabled {
+    if present && current.cimd_enabled {
         return None;
     }
 
@@ -146,7 +146,8 @@ pub fn settings_with_resource(current: &RealmSettings, canonical: &str) -> Optio
     Some(RealmSettings {
         allowed_resources,
         cimd_enabled: true,
-        dcr_enabled: false,
+        // Registration is the realm owner's choice; agents only need CIMD.
+        dcr_enabled: current.dcr_enabled,
     })
 }
 
@@ -304,7 +305,10 @@ mod tests {
             wanted.allowed_resources,
             vec!["https://other.test/mcp".to_string(), CANONICAL.to_string()]
         );
-        assert!(!wanted.dcr_enabled);
+        assert!(
+            wanted.dcr_enabled,
+            "the owner's registration choice is kept"
+        );
     }
 
     #[test]
