@@ -59,7 +59,7 @@ describe('the provider picker', () => {
 describe('the size of the modal', () => {
   it('is narrower on the provider cards than on the configuration it turns into', () => {
     expect(stepWidth({ provider: null })).toBe('sm:max-w-lg')
-    expect(stepWidth({ provider: 'scaleway' })).toBe('sm:max-w-2xl')
+    expect(stepWidth({ provider: 'scaleway' })).toBe('sm:max-w-4xl')
   })
 })
 
@@ -88,8 +88,14 @@ describe('the credential form', () => {
     expect(html.match(/<li class="flex"><div class="rounded-lg border bg-card/g)).toHaveLength(5)
   })
 
-  it('puts two cards on a line', () => {
-    expect(form()).toContain('<ul class="grid gap-2 sm:grid-cols-2">')
+  it('puts three cards on a line, two on a narrow screen', () => {
+    expect(form()).toContain('<ul class="grid gap-2 sm:grid-cols-2 md:grid-cols-3">')
+  })
+
+  it('leaves room between the Back button and the title', () => {
+    const html = form()
+    const back = html.match(/<button[^>]*>(?:(?!<\/button>).)*Back<\/button>/)![0]
+    expect(back).not.toContain('-mb-')
   })
 
   it('still lets the customer copy the names', () => {

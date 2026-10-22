@@ -50,7 +50,7 @@ function PermissionList({ sets }: { sets: PermissionSet[] }) {
           Copy names
         </Button>
       </div>
-      <ul className='grid gap-2 sm:grid-cols-2'>
+      <ul className='grid gap-2 sm:grid-cols-2 md:grid-cols-3'>
         {sets.map((set) => (
           <li key={set.name} className='flex'>
             <Card className='flex w-full flex-col gap-1.5 p-3 shadow-none'>
@@ -113,7 +113,7 @@ export function CredentialForm({ provider, isSaving, refusal, onBack, onSubmit }
         onSubmit(request)
       }}
     >
-      <Button type='button' variant='ghost' size='sm' className='-mb-2 -ml-2' onClick={onBack}>
+      <Button type='button' variant='ghost' size='sm' className='-ml-2' onClick={onBack}>
         <ArrowLeft className='h-4 w-4' />
         Back
       </Button>
