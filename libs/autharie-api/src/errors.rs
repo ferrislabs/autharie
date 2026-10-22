@@ -1,4 +1,7 @@
-use autharie_core::{CoreError, billing::BillingError, dataplane::credential::CredentialError};
+use autharie_core::{
+    CoreError, agents::AgentError, backups::keys::KeyError, billing::BillingError,
+    dataplane::credential::CredentialError, webhooks::WebhookError,
+};
 use axum::{Json, http::StatusCode, response::IntoResponse};
 use serde::Serialize;
 use thiserror::Error;
@@ -172,6 +175,12 @@ impl IntoResponse for ApiError {
             )
                 .into_response(),
         }
+    }
+}
+
+impl From<AgentError> for ApiError {
+    fn from(value: AgentError) -> Self {
+        CoreError::Agent(value).into()
     }
 }
 
@@ -423,6 +432,38 @@ impl From<CoreError> for ApiError {
             ) => ApiError::ServiceUnavailable {
                 reason: value.to_string(),
             },
+            CoreError::Webhook(WebhookError::Invalid { .. }) => ApiError::BadRequest {
+                reason: value.to_string(),
+            },
+            CoreError::Webhook(
+                WebhookError::NotFound { .. } | WebhookError::SecretNotReceived,
+            ) => ApiError::NotFound {
+                reason: value.to_string(),
+            },
+            CoreError::Webhook(WebhookError::UnsupportedKind) => ApiError::Conflict {
+                reason: value.to_string(),
+            },
+            CoreError::Agent(AgentError::InvalidCedar { .. }) => ApiError::Unprocessable {
+                reason: value.to_string(),
+            },
+            CoreError::Agent(AgentError::Invalid { .. }) => ApiError::BadRequest {
+                reason: value.to_string(),
+            },
+            CoreError::Agent(AgentError::PolicyNotFound { .. }) => ApiError::NotFound {
+                reason: value.to_string(),
+            },
+            CoreError::Agent(AgentError::UnsupportedKind | AgentError::TooManyPolicies { .. }) => {
+                ApiError::Conflict {
+                    reason: value.to_string(),
+                }
+            }
+            CoreError::Key(KeyError::ProviderUnavailable { .. }) => {
+                tracing::error!(error = %value, "the key manager is not available");
+
+                ApiError::ServiceUnavailable {
+                    reason: "no key manager is available to protect this secret".to_string(),
+                }
+            }
             // Everything else stays deliberately opaque to the caller: a
             // database error or an internal invariant is not something they
             // can act on, and its message may name things they should not see.

@@ -366,8 +366,11 @@ jobs:
         target:
           - control-plane
           - console
+          - ferriskey-mcp
           - genesis
           - herald
+          - mcp-gateway
+          - mcp
           - operator
     steps:
       - name: checkout
@@ -445,8 +448,11 @@ jobs:
         target:
           - control-plane
           - console
+          - ferriskey-mcp
           - genesis
           - herald
+          - mcp-gateway
+          - mcp
           - operator
     steps:
       - name: set up builx

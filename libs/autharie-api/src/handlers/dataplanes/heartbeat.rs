@@ -168,6 +168,7 @@ mod tests {
             client_id: "some-other-service".to_string(),
             roles: vec![],
             scopes: vec![],
+            act: None,
         })
     }
 

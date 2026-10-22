@@ -20,7 +20,7 @@ pub struct GetUserOrganisationsRoute;
     get,
     path = "/@me/organisations",
     summary = "get user's organisations",
-    description = "Retrieve a list of organisations the authenticated user is a member of.",
+    description = "Retrieve a list of organisations the authenticated user is a member of. For an AI agent acting for the user, only the organisations that allow MCP.",
     responses(
         (status = 200, description = "List of user's organisations", body = GetUserOrganisationsResponse),
         (status = 401, description = "Unauthorized", body = ApiError),
@@ -33,7 +33,11 @@ pub async fn get_user_organisations_handler(
     State(state): State<AppState>,
     Extension(identity): Extension<Identity>,
 ) -> Result<Response<GetUserOrganisationsResponse>, ApiError> {
-    let orgs = state.service.get_organisations_by_member(identity).await?;
+    let delegated = identity.is_delegated();
+    let mut orgs = state.service.get_organisations_by_member(identity).await?;
+    if delegated {
+        orgs.retain(|organisation| organisation.mcp_enabled);
+    }
 
     Ok(Response::OK(GetUserOrganisationsResponse { data: orgs }))
 }

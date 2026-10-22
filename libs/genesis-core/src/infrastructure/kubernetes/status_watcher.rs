@@ -17,7 +17,10 @@ use uuid::Uuid;
 use crate::domain::entities::identity_instance::IdentityInstanceRef;
 use crate::domain::entities::outcome::DeploymentOutcomeReport;
 use crate::domain::error::GenesisError;
-use crate::domain::ports::{OutcomePublisher, WebhookOutcomePublisher};
+use crate::domain::ports::{AgentsOutcomePublisher, OutcomePublisher, WebhookOutcomePublisher};
+use crate::infrastructure::kubernetes::agents_status::{
+    AgentsTracker, Observation as AgentsObservation, build_report as build_agents_report,
+};
 use crate::infrastructure::kubernetes::webhook_status::{
     Observation, WebhookTracker, build_report,
 };
@@ -54,7 +57,7 @@ pub struct IdentityInstanceStatusWatcher<W> {
     webhook_outcomes: Arc<W>,
 }
 
-impl<W: WebhookOutcomePublisher> IdentityInstanceStatusWatcher<W> {
+impl<W: WebhookOutcomePublisher + AgentsOutcomePublisher> IdentityInstanceStatusWatcher<W> {
     pub fn new(
         client: Client,
         outcomes: Arc<dyn OutcomePublisher>,
@@ -118,6 +121,29 @@ impl<W: WebhookOutcomePublisher> IdentityInstanceStatusWatcher<W> {
         }
     }
 
+    async fn report_agents(
+        &self,
+        instance: &IdentityInstance,
+        deployment_id: Uuid,
+        tracker: &mut AgentsTracker,
+    ) {
+        let observation = AgentsObservation::of(instance.status.as_ref());
+
+        if !tracker.is_due(deployment_id, &observation) {
+            return;
+        }
+        let Some(report) = build_agents_report(deployment_id, &observation) else {
+            return;
+        };
+
+        match self.webhook_outcomes.publish_agents(&report).await {
+            Ok(()) => tracker.record(deployment_id, observation),
+            Err(err) => {
+                warn!(%err, %deployment_id, "failed to publish an agents outcome");
+            }
+        }
+    }
+
     async fn read_secrets(&self, instance: &str, namespace: &str) -> BTreeMap<String, String> {
         let api: Api<Secret> = Api::namespaced(self.client.clone(), namespace);
 
@@ -156,6 +182,7 @@ impl<W: WebhookOutcomePublisher> IdentityInstanceStatusWatcher<W> {
         let mut reported: HashMap<Uuid, (&'static str, Option<String>, Instant)> = HashMap::new();
 
         let mut webhooks = WebhookTracker::default();
+        let mut agents = AgentsTracker::default();
 
         info!("watching IdentityInstance status");
 
@@ -182,6 +209,8 @@ impl<W: WebhookOutcomePublisher> IdentityInstanceStatusWatcher<W> {
             };
 
             self.report_webhooks(&instance, deployment_id, &mut webhooks)
+                .await;
+            self.report_agents(&instance, deployment_id, &mut agents)
                 .await;
 
             let Some(outcome) = outcome_for(instance.status.as_ref()) else {

@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO deployment_webhook_sync (deployment_id, revision)\n            VALUES ($1, 1)\n            ON CONFLICT (deployment_id) DO UPDATE\n            SET revision = deployment_webhook_sync.revision + 1,\n                updated_at = now()\n            RETURNING revision\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "revision",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "0b60751c13dec400212ff4e105037010bf9ad26b04f8e102156d7ea3f0d36cff"
+}

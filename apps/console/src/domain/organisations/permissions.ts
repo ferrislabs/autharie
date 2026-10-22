@@ -198,6 +198,8 @@ export function can(mask: number | undefined, bit: number): boolean {
 
 /** The bits, by name, for the places that gate on one. */
 export const CAN = {
+  viewOrganisation: 0,
+  manageOrganisation: 1,
   viewInstances: 2,
   createInstances: 3,
   manageInstances: 4,

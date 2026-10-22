@@ -86,6 +86,93 @@ doc_mapping:
       tokenizer: raw
       fast: true
 
+    - name: kind
+      type: text
+      tokenizer: raw
+      fast: true
+    - name: webhook_id
+      type: text
+      tokenizer: raw
+      fast: true
+    - name: delivery_id
+      type: text
+      tokenizer: raw
+      fast: true
+    - name: event
+      type: text
+      tokenizer: raw
+      fast: true
+    - name: status
+      type: text
+      tokenizer: raw
+      fast: true
+    - name: attempt_count
+      type: u64
+      fast: true
+    - name: last_status_code
+      type: u64
+      fast: true
+    - name: last_error
+      type: text
+      tokenizer: default
+    - name: created_at
+      type: datetime
+      input_formats:
+        - rfc3339
+      fast: true
+    - name: updated_at
+      type: datetime
+      input_formats:
+        - rfc3339
+      fast: true
+    - name: decision
+      type: text
+      tokenizer: raw
+      fast: true
+    - name: method
+      type: text
+      tokenizer: raw
+      fast: true
+    - name: tool
+      type: text
+      tokenizer: raw
+      fast: true
+    - name: subject_type
+      type: text
+      tokenizer: raw
+      fast: true
+    - name: subject_id
+      type: text
+      tokenizer: raw
+      fast: true
+    - name: agent
+      type: text
+      tokenizer: raw
+      fast: true
+    - name: server
+      type: text
+      tokenizer: raw
+      fast: true
+    - name: resource
+      type: text
+      tokenizer: raw
+      fast: true
+    - name: request_id
+      type: text
+      tokenizer: raw
+      fast: true
+    - name: policies
+      type: array<text>
+      tokenizer: raw
+      fast: true
+    - name: reason
+      type: text
+      tokenizer: raw
+      fast: true
+    - name: delegated
+      type: bool
+      fast: true
+
   timestamp_field: timestamp
 
 # V1 stopped forcing a commit on every ingest call (#294): under continuous
