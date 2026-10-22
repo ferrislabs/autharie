@@ -507,6 +507,42 @@ async fn ensure_role_assigned<C: Caller>(
     .map(|_| ())
 }
 
+/// FerrisKey only exchanges a token for an audience that is a client of the
+/// realm. The realm's own API audience, `<realm>-realm`, usually is not one, so
+/// it is created as a client nobody signs in with.
+async fn ensure_audience_client<C: Caller>(caller: &C, realm: &str) -> Result<(), AgentsError> {
+    let audience = evaluator_audience(realm);
+    let body = send(
+        caller,
+        ApiRequest::new(Method::GET, format!("/realms/{}/clients", segment(realm)?))
+            .query("client_id_exact", audience.as_str())
+            .query("limit", 10),
+    )
+    .await?;
+    if items(&body)
+        .into_iter()
+        .any(|client| text(client, "client_id") == Some(audience.as_str()))
+    {
+        return Ok(());
+    }
+    send(
+        caller,
+        ApiRequest::new(Method::POST, format!("/realms/{}/clients", segment(realm)?)).body(json!({
+            "name": format!("{realm} API"),
+            "client_id": audience,
+            "client_type": "confidential",
+            "service_account_enabled": false,
+            "public_client": false,
+            "enabled": true,
+            "direct_access_grants_enabled": false,
+            "token_exchange_enabled": false,
+            "require_pkce": false,
+        })),
+    )
+    .await
+    .map(|_| ())
+}
+
 async fn ensure_exchange_policy<C: Caller>(
     caller: &C,
     realm: &str,
@@ -626,6 +662,7 @@ async fn ensure_gateway_client<C: Caller>(
     let role = ensure_evaluator_role(caller, realm, &client).await?;
     let user = service_account(caller, realm, &client).await?;
     ensure_role_assigned(caller, realm, &user, &role).await?;
+    ensure_audience_client(caller, realm).await?;
     ensure_exchange_policy(caller, realm, &client).await?;
     ensure_owner(caller, realm, &client, canonical).await?;
     Ok(GatewayClient { secret })
@@ -979,7 +1016,7 @@ mod tests {
                 json!({ "data": [{
                     "id": "c1", "client_id": "mcp-gateway", "enabled": true,
                     "token_exchange_enabled": true
-                }] }),
+                }, { "id": "c2", "client_id": "acme-realm", "enabled": true }] }),
             ),
             (
                 Method::GET,
@@ -1098,6 +1135,22 @@ mod tests {
                 { "uri": CANONICAL, "client_id": "c1" }
             ] })
         );
+    }
+
+    #[tokio::test]
+    async fn the_realm_api_audience_becomes_a_client_to_exchange_for() {
+        let world = fresh_realm();
+
+        ensure_audience_client(&world, "acme")
+            .await
+            .expect("ensured");
+
+        let created = world
+            .wrote(Method::POST, "/realms/acme/clients")
+            .expect("a client was created");
+        assert_eq!(created["client_id"], "acme-realm");
+        assert_eq!(created["service_account_enabled"], false);
+        assert_eq!(created["direct_access_grants_enabled"], false);
     }
 
     #[tokio::test]
