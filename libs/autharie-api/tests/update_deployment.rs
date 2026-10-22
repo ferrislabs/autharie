@@ -3,7 +3,8 @@ use std::{sync::Arc, time::Duration};
 use autharie_api::{
     args::Args,
     handlers::deployments::{
-        get_deployment::get_deployment_handler, update_deployment::update_deployment_handler,
+        get_deployment::get_deployment_handler, list_deployments::list_deployments_handler,
+        update_deployment::update_deployment_handler,
     },
     state::AppState,
 };
@@ -139,8 +140,14 @@ async fn forget(pool: &PgPool, fixture: &Fixture) {
 }
 
 fn app(pool: PgPool, owner: Uuid) -> Router {
+    app_in_zone(pool, owner, "")
+}
+
+fn app_in_zone(pool: PgPool, owner: Uuid, zone: &str) -> Router {
+    let mut args = Args::default();
+    args.ovh.zone = zone.to_string();
     let state = AppState {
-        args: Arc::new(Args::default()),
+        args: Arc::new(args),
         service: AutharieService::new(pool),
         certificate_source: None,
         quickwit_search: None,
@@ -150,6 +157,7 @@ fn app(pool: PgPool, owner: Uuid) -> Router {
 
     Router::new()
         .typed_get(get_deployment_handler)
+        .typed_get(list_deployments_handler)
         .typed_patch(update_deployment_handler)
         .layer(Extension(Identity::User(User {
             id: owner.to_string(),
@@ -256,4 +264,32 @@ async fn a_customer_patch_still_renames_and_switches_log_shipping() {
     assert_eq!(after_data["name"], "renamed", "{after}");
     assert_eq!(after_data["log_shipping_enabled"], true, "{after}");
     assert_eq!(platform_record(&after), platform_record(&before));
+}
+
+#[tokio::test]
+async fn a_deployment_carries_its_hostname_only_when_a_zone_is_configured() {
+    let Some(pool) = pool().await else { return };
+    let fixture = Fixture::new();
+    seed_failed_deployment(&pool, &fixture).await;
+    let list_uri = format!("/organisations/{}/deployments", fixture.organisation);
+
+    let zoned = app_in_zone(pool.clone(), fixture.owner, "tenants.autharie.test");
+    let (_, one) = call(&zoned, Method::GET, &fixture.uri(), None).await;
+    let (_, many) = call(&zoned, Method::GET, &list_uri, None).await;
+    let unzoned = app(pool.clone(), fixture.owner);
+    let (_, bare) = call(&unzoned, Method::GET, &fixture.uri(), None).await;
+    let (_, bare_list) = call(&unzoned, Method::GET, &list_uri, None).await;
+    forget(&pool, &fixture).await;
+
+    assert_eq!(
+        one["data"]["hostname"], "auth.tenants.autharie.test",
+        "{one}"
+    );
+    assert_eq!(one["data"]["name"], "auth", "{one}");
+    assert_eq!(
+        many["data"][0]["hostname"], "auth.tenants.autharie.test",
+        "{many}"
+    );
+    assert_eq!(bare["data"]["hostname"], Value::Null, "{bare}");
+    assert_eq!(bare_list["data"][0]["hostname"], Value::Null, "{bare_list}");
 }

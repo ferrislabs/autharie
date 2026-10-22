@@ -1,17 +1,19 @@
 use autharie_auth::Identity;
-use autharie_core::deployments::{Deployment, ports::DeploymentService};
+use autharie_core::deployments::ports::DeploymentService;
 use axum::extract::{Extension, State};
 use axum_extra::routing::TypedPath;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
-use crate::{errors::ApiError, response::Response, state::AppState};
+use crate::{
+    errors::ApiError, handlers::deployments::deployment_view::DeploymentView, response::Response,
+    state::AppState,
+};
 
 #[derive(Serialize, ToSchema, PartialEq)]
 pub struct ListDeploymentsResponse {
-    #[schema(value_type = Vec<Deployment>)]
-    data: Vec<Deployment>,
+    data: Vec<DeploymentView>,
 }
 
 #[derive(TypedPath, IntoParams, Deserialize)]
@@ -45,7 +47,14 @@ pub async fn list_deployments_handler(
         .list_deployments_by_organisation(identity, organisation_id)
         .await?;
 
-    Ok(Response::OK(ListDeploymentsResponse { data: deployments }))
+    let zone = state.args.ovh.domain();
+
+    Ok(Response::OK(ListDeploymentsResponse {
+        data: deployments
+            .into_iter()
+            .map(|deployment| DeploymentView::new(deployment, zone.as_deref()))
+            .collect(),
+    }))
 }
 
 #[cfg(test)]

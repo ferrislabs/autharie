@@ -2,14 +2,20 @@ use autharie_auth::Identity;
 use autharie_domain::deployments::{
     DeploymentId,
     reachability_history::{
-        DeploymentDowntime, DeploymentUptime, ReachabilityCheck, ReachabilityCheckRepository,
+        AvailabilityHistory, DeploymentDowntime, DeploymentUptime, ReachabilityCheck,
+        ReachabilityCheckRepository, history_service::AvailabilityHistoryServiceImpl,
         service::ReachabilityServiceImpl,
     },
 };
+use autharie_domain::organisation::OrganisationId;
 use autharie_macros::transactional;
 use chrono::{DateTime, Duration, Utc};
 
-use crate::{AutharieService, CoreError, policy::PlatformRightsPolicy};
+use crate::{
+    AutharieService, CoreError,
+    infrastructure::role::permissions_in,
+    policy::{AuthariePolicy, PlatformRightsPolicy},
+};
 
 impl AutharieService {
     #[transactional(reachability_check)]
@@ -51,6 +57,23 @@ impl AutharieService {
         );
 
         service.get_downtime(identity, deployment_id, since).await
+    }
+
+    #[transactional(reachability_check, deployment)]
+    pub async fn get_deployment_availability(
+        &self,
+        identity: Identity,
+        organisation_id: OrganisationId,
+        deployment_id: DeploymentId,
+        days: u32,
+    ) -> Result<AvailabilityHistory, CoreError> {
+        AvailabilityHistoryServiceImpl::new(
+            reachability_check_repository,
+            deployment_repository,
+            AuthariePolicy::new(permissions_in(&tx)),
+        )
+        .history(identity, organisation_id, deployment_id, days)
+        .await
     }
 
     #[transactional(reachability_check)]

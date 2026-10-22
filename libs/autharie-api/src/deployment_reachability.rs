@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use autharie_core::deployments::ports::DeploymentService;
-use autharie_core::deployments::reachability_history::ReachabilityCheck;
+use autharie_core::deployments::reachability_history::{PROBE_INTERVAL_SECONDS, ReachabilityCheck};
 use autharie_core::signals::{Signal, SignalId, SignalKind, SignalSubject};
 use chrono::Utc;
 use reqwest::Client;
@@ -11,12 +11,15 @@ use uuid::Uuid;
 
 use crate::state::AppState;
 
-const EVERY: Duration = Duration::from_secs(60);
+const EVERY: Duration = Duration::from_secs(PROBE_INTERVAL_SECONDS as u64);
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 
 fn health_path_for_kind(kind: &autharie_core::deployments::DeploymentKind) -> &'static str {
     match kind {
-        autharie_core::deployments::DeploymentKind::Ferriskey => "/health",
+        // The webapp's nginx answers 200 to any path on the host, so "/health"
+        // reports up while the API is down. The API serves its own health
+        // under its root path, which the HTTPRoute sends to the API.
+        autharie_core::deployments::DeploymentKind::Ferriskey => "/api/health/ready",
         autharie_core::deployments::DeploymentKind::Keycloak => "/health/ready",
     }
 }
@@ -119,11 +122,19 @@ mod tests {
 
     #[test]
     fn health_path_is_correct_per_kind() {
-        assert_eq!(health_path_for_kind(&DeploymentKind::Ferriskey), "/health");
+        assert_eq!(
+            health_path_for_kind(&DeploymentKind::Ferriskey),
+            "/api/health/ready"
+        );
         assert_eq!(
             health_path_for_kind(&DeploymentKind::Keycloak),
             "/health/ready"
         );
+    }
+
+    #[test]
+    fn probe_runs_every_interval_the_history_counts_in() {
+        assert_eq!(EVERY.as_secs(), 60);
     }
 
     #[test]

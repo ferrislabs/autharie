@@ -1,18 +1,19 @@
 use autharie_auth::Identity;
-use autharie_core::deployments::{
-    Deployment, ports::DeploymentService, provisioning::Provisioning,
-};
+use autharie_core::deployments::{ports::DeploymentService, provisioning::Provisioning};
 use axum::extract::{Extension, State};
 use axum_extra::routing::TypedPath;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
-use crate::{errors::ApiError, response::Response, state::AppState};
+use crate::{
+    errors::ApiError, handlers::deployments::deployment_view::DeploymentView, response::Response,
+    state::AppState,
+};
 
 #[derive(Serialize, ToSchema, PartialEq)]
 pub struct GetDeploymentResponse {
-    data: Deployment,
+    data: DeploymentView,
     #[serde(skip_serializing_if = "Option::is_none")]
     provisioning: Option<Provisioning>,
 }
@@ -62,7 +63,7 @@ pub async fn get_deployment_handler(
         .await?;
 
     Ok(Response::OK(GetDeploymentResponse {
-        data: deployment,
+        data: DeploymentView::new(deployment, state.args.ovh.domain().as_deref()),
         provisioning,
     }))
 }

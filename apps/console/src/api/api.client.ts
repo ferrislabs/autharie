@@ -112,6 +112,19 @@ export namespace Schemas {
     target: AuditTarget
   }
   export type AutoUpgradePolicy = 'manual' | 'patch' | 'patch_and_minor'
+  export type DailyAvailability = {
+    checks: number
+    day: string
+    down_seconds: number
+    failed: number
+    uptime?: (number | null) | undefined
+  }
+  export type AvailabilityHistory = {
+    days: Array<DailyAvailability>
+    probe_interval_seconds: number
+    uptime?: (number | null) | undefined
+  }
+  export type AvailabilityResponse = { data: AvailabilityHistory }
   export type BackupId = string
   export type ObjectLocation = string
   export type BackupMethod = 'logical' | 'physical'
@@ -433,6 +446,7 @@ export namespace Schemas {
     uptime_7d: UptimeWindow
   }
   export type DeploymentUptimeResponse = { data: DeploymentUptime }
+  export type DeploymentView = Deployment & Partial<{ hostname: string | null }>
   export type Feature = 'customer_cloud'
   export type EnabledFeaturesResponse = { enabled: Array<Feature> }
   export type Ending = 'finished' | 'unreadable'
@@ -508,7 +522,7 @@ export namespace Schemas {
     step?: (null | ProvisioningStep) | undefined
   }
   export type GetDeploymentResponse = {
-    data: Deployment
+    data: DeploymentView
     provisioning?: (null | Provisioning) | undefined
   }
   export type UsageBucketResponse = { bucket: string; value: number }
@@ -576,7 +590,7 @@ export namespace Schemas {
   export type ListBackupsResponse = { data: Array<Backup> }
   export type ListDataplanesResponse = { data: Array<DataPlane> }
   export type ListDeploymentsForDataPlaneResponse = { data: Array<Deployment> }
-  export type ListDeploymentsResponse = { data: Array<Deployment> }
+  export type ListDeploymentsResponse = { data: Array<DeploymentView> }
   export type ListFleetAuditLogResponse = {
     data: Array<FleetAuditEntry>
     next_cursor?: (string | null) | undefined
@@ -1312,6 +1326,16 @@ export namespace Endpoints {
     }
     response: Schemas.GetActiveUsersResponse
   }
+  export type get_Get_deployment_availability_handler = {
+    method: 'GET'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/availability'
+    requestFormat: 'json'
+    parameters: {
+      query: Partial<{ days: number }>
+      path: { organisation_id: string; deployment_id: string }
+    }
+    response: Schemas.AvailabilityResponse
+  }
   export type get_Get_backup_schedule_handler = {
     method: 'GET'
     path: '/organisations/{organisation_id}/deployments/{deployment_id}/backup-schedule'
@@ -2035,6 +2059,7 @@ export type EndpointByMethod = {
     '/organisations/{organisation_id}/deployments/{deployment_id}/actions': Endpoints.get_List_actions_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/actions/{action_id}': Endpoints.get_Get_action_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/active-users': Endpoints.get_Get_active_users_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/availability': Endpoints.get_Get_deployment_availability_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/backup-schedule': Endpoints.get_Get_backup_schedule_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/backups': Endpoints.get_List_backups_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/features': Endpoints.get_Get_deployment_features_handler

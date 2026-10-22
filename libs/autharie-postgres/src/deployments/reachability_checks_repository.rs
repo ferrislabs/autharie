@@ -1,10 +1,10 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 
 use autharie_domain::{
     CoreError,
     deployments::{
         DeploymentId,
-        reachability_history::{ReachabilityCheck, ReachabilityCheckRepository},
+        reachability_history::{DailyCheckCount, ReachabilityCheck, ReachabilityCheckRepository},
     },
 };
 use autharie_macros::repository;
@@ -81,6 +81,46 @@ impl ReachabilityCheckRepository for PostgresReachabilityChecksRepository<'_> {
                 deployment_id,
                 checked_at,
                 reachable,
+            })
+            .collect())
+    }
+
+    async fn daily_check_counts(
+        &self,
+        deployment_id: DeploymentId,
+        since: NaiveDate,
+    ) -> Result<Vec<DailyCheckCount>, CoreError> {
+        let from = since.and_time(chrono::NaiveTime::MIN).and_utc();
+        let mut tx = self.tx.lock().await;
+
+        // Days are UTC calendar days whatever the session time zone is, so
+        // the console and the database agree on where a day starts.
+        let rows: Vec<(NaiveDate, i64, i64)> = sqlx::query_as(
+            r#"
+            SELECT (checked_at AT TIME ZONE 'UTC')::date AS day,
+                   COUNT(*) AS checks,
+                   COUNT(*) FILTER (WHERE NOT reachable) AS failed
+            FROM deployment_reachability_checks
+            WHERE deployment_id = $1
+              AND checked_at >= $2
+            GROUP BY 1
+            ORDER BY 1 ASC
+            "#,
+        )
+        .bind(deployment_id.0)
+        .bind(from)
+        .fetch_all(&mut ***tx)
+        .await
+        .map_err(|e| CoreError::DatabaseError {
+            message: format!("Failed to count checks per day since {since}: {e}"),
+        })?;
+
+        Ok(rows
+            .into_iter()
+            .map(|(day, checks, failed)| DailyCheckCount {
+                day,
+                checks,
+                failed,
             })
             .collect())
     }
