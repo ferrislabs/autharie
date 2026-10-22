@@ -28,4 +28,8 @@ describe('DeploymentKindLabel', () => {
     expect(html).toContain('aria-hidden="true"')
     expect(html).toContain('alt=""')
   })
+
+  it.each(['ferriskey', 'keycloak'] as const)('draws the %s logo at 24 px', (kind) => {
+    expect(renderToStaticMarkup(<DeploymentKindLabel kind={kind} />)).toContain('size-6')
+  })
 })
