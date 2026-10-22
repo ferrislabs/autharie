@@ -103,6 +103,23 @@ Frozen contracts
   // IdentityInstance (agents)
   spec.agents: { enabled, realm, policies: [ { id, name, cedar } ], policiesRevision }   status.agents: { phase, gatewayClientReady, policies: [ { id, phase, message? } ] }
 
+  // Control plane → data plane action, applied by Genesis into spec.agents (same transport as webhooks: action kind "deployment.agents")
+  { enabled, realm, policies: [ { id, name, cedar } ], revision }   // enabled = deployment agents on AND organisation mcp_enabled
+  // Outcome, Genesis → Iggy → Herald → control plane (same transport as webhooks outcomes, kind "deployment.agents")
+  { revision, phase: "Applying"|"Ready"|"Failed", gateway_client_ready, mcp_url?, message?, policies: [ { id, phase: "Applied"|"Invalid"|"Failed", message? } ] }
+  // Gateway config in a data plane: one Secret "mcp-gateway-config" (key config.toml), all upstreams, rebuilt by the operator from every IdentityInstance with agents enabled; the gateway reloads it when the file changes
+  // FerrisKey MCP upstream_url: http://ferriskey-mcp.<release ns>.svc:8080/instances/<namespace>/<name>/mcp
+  // Control plane API (console contract), all under /organisations/{organisation_id}
+  GET  /deployments/{deployment_id}/agents                → { data: { enabled, realm, mcp_url?, organisation_mcp_enabled, status?: { phase, gateway_client_ready, message?, updated_at } } }
+  PUT  /deployments/{deployment_id}/agents  { enabled, realm }
+  GET  /deployments/{deployment_id}/agents/policies       → { data: [ AgentPolicy ] }
+  POST /deployments/{deployment_id}/agents/policies  { name, description?, enabled, rule?, cedar }   → { data: AgentPolicy }
+  PUT/DELETE /deployments/{deployment_id}/agents/policies/{policy_id}
+  GET  /deployments/{deployment_id}/agents/decisions?from&to&decision&tool&subject&limit → { data: [ decision record + deployment_id ] }
+  AgentPolicy = { id, name, description?, enabled, rule?: RuleModel (opaque JSON for the API, owned by the console), cedar, phase?: "Pending"|"Applied"|"Invalid"|"Failed", message?, created_at, updated_at }
+  The console compiles the builder's rule to Cedar; the API stores both, checks the Cedar parses (cedar-policy crate) and sends only enabled policies' Cedar.
+  Organisation: GET/PATCH /organisations/{organisation_id} carries mcp_enabled (default false; PATCH needs the organisation-management permission).
+
 Risks / open questions
   - The FerrisKey MCP server makes FerrisKey's admin surface agent-reachable; FerrisKey's permissions apply through the exchanged token and the PDP decides first. It must map an instance name only to that instance's API service (no URL from the request). Owner: F2.
   - Policy builder ↔ Cedar round-trip: only builder-made policies are editable visually; raw Cedar is shown read-only in the builder and editable as text. Owner: A5.
