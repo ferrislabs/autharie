@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT id, organisation_id, provider, label, scope_checked_at, created_at\n            FROM cloud_credentials\n            WHERE organisation_id = $1\n            ORDER BY created_at ASC, id ASC\n            ",
+  "query": "\n            SELECT id, organisation_id, provider, label, scope_checked_at, application_name, created_at\n            FROM cloud_credentials\n            WHERE id = $1\n            ",
   "describe": {
     "columns": [
       {
@@ -30,6 +30,11 @@
       },
       {
         "ordinal": 5,
+        "name": "application_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
         "name": "created_at",
         "type_info": "Timestamptz"
       }
@@ -45,8 +50,9 @@
       false,
       false,
       false,
+      true,
       false
     ]
   },
-  "hash": "b17099859d094892bc8f806b9d063b2fdc441c8ffc45bdce61371a48335683c0"
+  "hash": "6d6ba47b6ca3997a0af72f755f4181e6d2cc433d83ef68e4ee27fbb73dbdd7ef"
 }

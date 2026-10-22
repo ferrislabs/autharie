@@ -19,6 +19,7 @@ struct CredentialRow {
     provider: String,
     label: String,
     scope_checked_at: DateTime<Utc>,
+    application_name: Option<String>,
     created_at: DateTime<Utc>,
 }
 
@@ -31,6 +32,7 @@ impl CredentialRow {
             label: self.label,
             scope_check: ScopeCheck {
                 checked_at: self.scope_checked_at,
+                application_name: self.application_name,
             },
             created_at: self.created_at,
         })
@@ -63,15 +65,17 @@ impl CloudCredentialRepository for PostgresCloudCredentialRepository<'_> {
                 provider,
                 label,
                 scope_checked_at,
+                application_name,
                 created_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             "#,
                 credential.id.0,
                 credential.organisation_id.0,
                 credential.provider.as_str(),
                 credential.label,
                 credential.scope_check.checked_at,
+                credential.scope_check.application_name,
                 credential.created_at,
             )
             .execute(&mut ***tx)
@@ -90,7 +94,7 @@ impl CloudCredentialRepository for PostgresCloudCredentialRepository<'_> {
             sqlx::query_as!(
                 CredentialRow,
                 r#"
-            SELECT id, organisation_id, provider, label, scope_checked_at, created_at
+            SELECT id, organisation_id, provider, label, scope_checked_at, application_name, created_at
             FROM cloud_credentials
             WHERE id = $1
             "#,
@@ -115,7 +119,7 @@ impl CloudCredentialRepository for PostgresCloudCredentialRepository<'_> {
             sqlx::query_as!(
                 CredentialRow,
                 r#"
-            SELECT id, organisation_id, provider, label, scope_checked_at, created_at
+            SELECT id, organisation_id, provider, label, scope_checked_at, application_name, created_at
             FROM cloud_credentials
             WHERE organisation_id = $1
             ORDER BY created_at ASC, id ASC

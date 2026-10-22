@@ -700,7 +700,10 @@ mod tests {
                     organisation_id: organisation,
                     provider: Provider::Scaleway,
                     label: "prod".to_string(),
-                    scope_check: ScopeCheck { checked_at: at },
+                    scope_check: ScopeCheck {
+                        checked_at: at,
+                        application_name: None,
+                    },
                     created_at: at,
                 }),
                 audit: Audit {

@@ -163,6 +163,7 @@ async fn seed_account(pool: &PgPool) -> Seeded {
                 label: "claims".to_string(),
                 scope_check: ScopeCheck {
                     checked_at: Utc::now(),
+                    application_name: None,
                 },
                 created_at: Utc::now(),
             })
