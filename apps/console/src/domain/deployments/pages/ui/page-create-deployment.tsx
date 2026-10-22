@@ -4,13 +4,6 @@ import { newestInstallable } from '@/domain/releases/catalogue'
 import { fittingTiers, type BillingAccess } from '@/domain/billing/billing'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Page, PageTitle, Section } from '@/components/layout/page'
 import { useOrganisationPath } from '@/domain/organisations/hooks/use-organisation-path'
 import { useNavigate } from '@tanstack/react-router'
@@ -23,13 +16,14 @@ import {
   type CreateDeploymentForm,
   type SubmissionInput,
 } from '../../create-deployment-request'
-import { type Environment } from '../../types/deployment'
+import { ENVIRONMENT_OPTIONS, type Environment } from '../../types/deployment'
 import { OFFER_COPY, openOffers, type Offer, type OfferAvailability } from '../../offers'
 import { FREE_OFFER, FREE_OFFER_COPY, isFreeOnly } from '../../free-offer'
 import { firstOpenPlan, isOpen, offerFor, planIsOpen } from '../../pricing/offer-for'
 import { priceOf, type PlanId, type Selection } from '../../pricing/model'
 import { applyChange, STARTER_MOVED_NOTICE } from '../../pricing/selection'
 import { FreeOfferSection } from './components/free-offer-section'
+import { OptionCard } from './components/option-card'
 import { PlanPicker } from './components/plan-picker'
 import { PriceSummary } from './components/price-summary'
 import { TierPicker } from './components/tier-picker'
@@ -69,12 +63,12 @@ export function CreateActions({ canSubmit, block, isSubmitting, onCancel }: Crea
           {block}
         </p>
       )}
-      <div className='flex items-center justify-end gap-2'>
-        <Button type='button' variant='ghost' onClick={onCancel}>
-          Cancel
-        </Button>
+      <div className='flex flex-col gap-2'>
         <Button type='submit' disabled={!canSubmit || block !== null}>
           {isSubmitting ? 'Creating…' : 'Create deployment'}
+        </Button>
+        <Button type='button' variant='ghost' onClick={onCancel}>
+          Cancel
         </Button>
       </div>
     </div>
@@ -153,109 +147,113 @@ export default function PageCreateDeployment({
   const canSubmit = readyToSubmit(draft)
 
   return (
-    <Page className='max-w-3xl'>
+    <Page className='max-w-7xl px-4 py-6'>
       <PageTitle title='New deployment' />
 
       <form
-        className='mt-8 space-y-8'
+        className='mt-6 grid gap-8 lg:grid-cols-[minmax(0,1fr)_18rem] lg:items-start'
         onSubmit={(e) => {
           e.preventDefault()
           const form = submission(draft)
           if (form) onSubmit(form)
         }}
       >
-        <Section title='Details'>
-          <div className='grid gap-4 sm:grid-cols-2'>
-            <div className='space-y-2'>
-              <Label htmlFor='name'>Name</Label>
-              <Input
-                id='name'
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder='auth'
-                required
-              />
-            </div>
-
-            <div className='space-y-2'>
-              <Label htmlFor='environment'>Environment</Label>
-              <Select
-                value={environment}
-                onValueChange={(value) => setEnvironment(value as Environment)}
-              >
-                <SelectTrigger id='environment' className='w-full'>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value='development'>Development</SelectItem>
-                  <SelectItem value='staging'>Staging</SelectItem>
-                  <SelectItem value='production'>Production</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-        </Section>
-
-        {!tier &&
-          (freeOnly ? (
-            <Section title='Offer'>
-              <FreeOfferSection />
-            </Section>
-          ) : (
-            <>
-              <Section title='Plan'>
-                <PlanPicker
-                  selection={selection}
-                  onSelect={(next) => commit({ plan: next })}
-                  movedNotice={movedToBusiness ? STARTER_MOVED_NOTICE : undefined}
-                  closedPlans={closedPlans}
+        <div className='min-w-0 space-y-8'>
+          <Section title='Details'>
+            <div className='space-y-4'>
+              <div className='space-y-2'>
+                <Label htmlFor='name'>Name</Label>
+                <Input
+                  id='name'
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder='My deployment'
+                  required
                 />
-              </Section>
+              </div>
 
-              <Section title='Expected volume'>
-                <VolumePicker
-                  hosting='managed'
-                  engine='ferriskey'
-                  volume={volume}
-                  onChange={(next) => commit({ volume: next })}
-                />
-              </Section>
-            </>
-          ))}
-
-        {tier && (
-          <Section title='Tier'>
-            <TierPicker tiers={fitting} selected={tier.code} onSelect={setPickedTier} />
+              <div className='space-y-2'>
+                <Label id='environment-label'>Environment</Label>
+                <div
+                  role='group'
+                  aria-labelledby='environment-label'
+                  className='grid gap-3 sm:grid-cols-3'
+                >
+                  {ENVIRONMENT_OPTIONS.map((option) => (
+                    <OptionCard
+                      key={option.id}
+                      selected={environment === option.id}
+                      onSelect={() => setEnvironment(option.id)}
+                      label={option.label}
+                      description={option.description}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
           </Section>
-        )}
 
-        {!releasesLoading && version === '' && (
-          <p className='rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200'>
-            No version of FerrisKey is available yet, so there is nothing to create. Someone
-            operating the platform publishes one and makes it available.
-          </p>
-        )}
+          {!tier &&
+            (freeOnly ? (
+              <Section title='Offer'>
+                <FreeOfferSection />
+              </Section>
+            ) : (
+              <>
+                <Section title='Expected volume'>
+                  <VolumePicker
+                    hosting='managed'
+                    engine='ferriskey'
+                    volume={volume}
+                    onChange={(next) => commit({ volume: next })}
+                  />
+                </Section>
 
-        {!tier && !offersLoading && open.length === 0 && (
-          <p className='rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive'>
-            This organisation's plan opens no offer, so there is nothing to deploy on.
-          </p>
-        )}
+                <Section title='Plan'>
+                  <PlanPicker
+                    selection={selection}
+                    onSelect={(next) => commit({ plan: next })}
+                    movedNotice={movedToBusiness ? STARTER_MOVED_NOTICE : undefined}
+                    closedPlans={closedPlans}
+                  />
+                </Section>
+              </>
+            ))}
 
-        {!tier && derivedClosed && (
-          <p className='rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200'>
-            {OFFER_COPY[derived].label} fits this choice, but it is not available on your plan.
-            Choose another plan or volume.
-          </p>
-        )}
+          {tier && (
+            <Section title='Tier'>
+              <TierPicker tiers={fitting} selected={tier.code} onSelect={setPickedTier} />
+            </Section>
+          )}
 
-        {refusal && (
-          <p className='rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive'>
-            {refusal}
-          </p>
-        )}
+          {!releasesLoading && version === '' && (
+            <p className='rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200'>
+              No version of FerrisKey is available yet, so there is nothing to create. Someone
+              operating the platform publishes one and makes it available.
+            </p>
+          )}
 
-        <div className='sticky bottom-0 -mx-2 space-y-4 border-t bg-background px-2 py-4'>
+          {!tier && !offersLoading && open.length === 0 && (
+            <p className='rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive'>
+              This organisation's plan opens no offer, so there is nothing to deploy on.
+            </p>
+          )}
+
+          {!tier && derivedClosed && (
+            <p className='rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200'>
+              {OFFER_COPY[derived].label} fits this choice, but it is not available on your plan.
+              Choose another plan or volume.
+            </p>
+          )}
+
+          {refusal && (
+            <p className='rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive'>
+              {refusal}
+            </p>
+          )}
+        </div>
+
+        <aside className='space-y-4 lg:sticky lg:top-6'>
           {freeOnly && !tier ? (
             <div className='flex items-baseline justify-between gap-4 rounded-lg border bg-muted/30 p-4'>
               <span className='text-sm font-medium'>Monthly price</span>
@@ -270,7 +268,7 @@ export default function PageCreateDeployment({
             isSubmitting={isSubmitting}
             onCancel={() => navigate({ to: organisationPath('/deployments') })}
           />
-        </div>
+        </aside>
       </form>
     </Page>
   )

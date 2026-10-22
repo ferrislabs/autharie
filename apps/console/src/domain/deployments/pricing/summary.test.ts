@@ -53,10 +53,10 @@ describe('the Keycloak notice', () => {
     )
     expect(KEYCLOAK_NOTICE.switch).toBe('Switch to FerrisKey')
     expect(ferriskeyOnlyFeatures('managed')).toEqual([
-      'Distributed authorisations (ReBAC) included',
-      'MCP gateway (AI and agents) included',
+      'Distributed authorisations (ReBAC)',
+      'MCP gateway (AI and agents)',
     ])
-    expect(ferriskeyOnlyFeatures('byoc')).toEqual(['ReBAC and MCP included'])
+    expect(ferriskeyOnlyFeatures('byoc')).toEqual(['ReBAC and MCP'])
   })
 })
 
