@@ -1,10 +1,10 @@
-import { useAuthStore } from '@/stores/auth'
+import { currentAccessToken } from '@/lib/auth/access-token'
 import { Fetcher } from './api.client'
 
 export const fetcher: Fetcher = async (method, apiUrl, params) => {
   const headers = new Headers()
 
-  const accessToken = useAuthStore.getState().accessToken
+  const accessToken = await currentAccessToken()
 
   // Replace path parameters (supports both {param} and :param formats)
   const actualUrl = replacePathParams(apiUrl, (params?.path ?? {}) as Record<string, string>)
