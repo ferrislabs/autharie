@@ -78,6 +78,35 @@ export const useDeleteDeployment = () => {
   })
 }
 
+function usePowerMutation(verb: 'stop' | 'start') {
+  const queryClient = useQueryClient()
+  const path = `/organisations/{organisation_id}/deployments/{deployment_id}/${verb}` as const
+
+  return useMutation({
+    ...window.api.mutation('post', path).mutationOptions,
+    onSuccess: async (_, variables) => {
+      const { organisation_id, deployment_id } = variables.path
+
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: window.api.get('/organisations/{organisation_id}/deployments', {
+            path: { organisation_id },
+          }).queryKey,
+        }),
+        queryClient.invalidateQueries({
+          queryKey: window.api.get('/organisations/{organisation_id}/deployments/{deployment_id}', {
+            path: { organisation_id, deployment_id },
+          }).queryKey,
+        }),
+      ])
+    },
+  })
+}
+
+export const useStopDeployment = () => usePowerMutation('stop')
+
+export const useStartDeployment = () => usePowerMutation('start')
+
 export const useGetDeploymentActions = (deploymentId: string | null) => {
   const organisationId = useResolvedOrganisationId()
   const accessToken = useAuthStore(selectAccessToken)
