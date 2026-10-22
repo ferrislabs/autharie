@@ -17,11 +17,12 @@ import {
 } from '../../hooks/use-agents'
 import type { PolicyTemplateDraft } from '../../policy-templates'
 import type { AgentPolicy } from '../../types'
-import { describeRule } from '../../summary'
-import { AccessMap } from '../ui/access-map'
 import { DeletePolicyDialog } from '../ui/delete-policy-dialog'
 import { PageAgents } from '../ui/page-agents'
+import { PolicyCanvas } from '../ui/policy-canvas/policy-canvas'
 import { PolicySheet } from '../ui/policy-sheet'
+
+const NO_POLICIES: AgentPolicy[] = []
 
 type Editing = { policy: AgentPolicy | null; initial?: PolicyTemplateDraft } | null
 
@@ -47,7 +48,7 @@ function AgentsTab() {
 
   const current = settings.data
   const realm = realmDraft ?? current?.realm ?? ''
-  const list = policies.data ?? []
+  const list = policies.data ?? NO_POLICIES
   const canManage = can(CAN.manageInstances)
 
   const openEditor = (next: NonNullable<Editing>) => {
@@ -90,14 +91,15 @@ function AgentsTab() {
         }
         onOpenOrganisationSettings={() => void navigate({ to: organisationPath('/settings') })}
         accessMap={
-          <AccessMap
+          <PolicyCanvas
             policies={list}
             canManage={canManage}
-            onEditPolicy={(policy) => openEditor({ policy })}
-            onCreatePolicy={() => openEditor({ policy: null })}
-            onCreateRule={(rule) =>
-              openEditor({ policy: null, initial: { name: describeRule(rule), description: '', rule } })
-            }
+            publisher={{
+              create: (input) => savePolicy.mutateAsync({ id: null, input }),
+              update: (id, input) => savePolicy.mutateAsync({ id, input }),
+              remove: (id) => deletePolicy.mutateAsync(id),
+            }}
+            onOpenAdvanced={(policy) => openEditor({ policy })}
           />
         }
         onCreatePolicy={(initial) => openEditor({ policy: null, initial })}
