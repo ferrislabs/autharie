@@ -1,8 +1,18 @@
 import { Outlet, useParams } from '@tanstack/react-router'
-import { Boxes, LayoutGrid, Radar, Settings } from 'lucide-react'
+import {
+  Boxes,
+  DatabaseBackup,
+  LayoutGrid,
+  Palette,
+  Radar,
+  Settings,
+  ShieldCheck,
+} from 'lucide-react'
 import { useGetDeployment } from '@/api/deployment.api'
 import { useDeploymentPath } from '@/domain/deployments/hooks/use-deployment-path'
+import { useMyPermissions } from '@/domain/organisations/hooks/use-my-permissions'
 import { useOrganisationPath } from '@/domain/organisations/hooks/use-organisation-path'
+import { CAN } from '@/domain/organisations/permissions'
 import { NavTabs, type Tab } from './nav-tabs'
 import { TopBar, type Crumb } from './top-bar'
 
@@ -18,6 +28,7 @@ export function DeploymentLayout() {
   const { deploymentId } = useParams({ strict: false }) as { deploymentId?: string }
   const organisationPath = useOrganisationPath()
   const deploymentPath = useDeploymentPath()
+  const { can } = useMyPermissions()
 
   const deployment = useGetDeployment(deploymentId ?? null)
   const name = deployment.data?.data.name
@@ -28,6 +39,11 @@ export function DeploymentLayout() {
     // DeploymentObservabilityLayout -- so this section grows without
     // growing this bar.
     { label: 'Observability', to: deploymentPath('/observability'), icon: Radar },
+    ...(can(CAN.viewBackups)
+      ? [{ label: 'Backups', to: deploymentPath('/backups'), icon: DatabaseBackup }]
+      : []),
+    { label: 'Security', to: deploymentPath('/security'), icon: ShieldCheck },
+    { label: 'Customization', to: deploymentPath('/customization'), icon: Palette },
     { label: 'Settings', to: deploymentPath('/settings'), icon: Settings },
   ]
 

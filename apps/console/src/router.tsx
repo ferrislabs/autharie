@@ -1,16 +1,17 @@
 import { createRootRoute, createRoute, createRouter, redirect } from '@tanstack/react-router'
-import { platformPath } from './lib/paths'
+import { movedSettingsPath, platformPath } from './lib/paths'
 import { AppShell } from './components/layout/app-shell'
 import { AppLayout } from './components/layout/main-layout'
 import { DeploymentLayout } from './components/layout/deployment-layout'
 import { DeploymentObservabilityLayout } from './components/layout/deployment-observability-layout'
 import { DeploymentSettingsLayout } from './components/layout/deployment-settings-layout'
+import { DeploymentTabLayout } from './components/layout/deployment-tab-layout'
 import { OnboardingLayout } from './components/layout/onboarding-layout'
 import { PlatformLayout } from './components/layout/platform-layout'
 import PageDashboardFeature from './domain/dashboard/pages/feature/page-dashboard-feature'
 import DeploymentsOverviewFeature from './domain/deployments/pages/feature/page-deployments-overview-feature'
 import PageCreateDeploymentFeature from './domain/deployments/pages/feature/page-create-deployment-feature'
-import PageDeploymentDetailFeature from './domain/deployments/pages/feature/page-deployment-detail-feature'
+import PageDeploymentOverviewFeature from './domain/deployments/pages/feature/page-deployment-overview-feature'
 import PageDeploymentGeneralFeature from './domain/deployments/pages/feature/page-deployment-general-feature'
 import PageDeploymentResourcesFeature from './domain/deployments/pages/feature/page-deployment-resources-feature'
 import PageDeploymentDangerFeature from './domain/deployments/pages/feature/page-deployment-danger-feature'
@@ -111,7 +112,7 @@ const deploymentLayoutRoute = createRoute({
 const deploymentOverviewRoute = createRoute({
   getParentRoute: () => deploymentLayoutRoute,
   path: '/',
-  component: PageDeploymentDetailFeature,
+  component: PageDeploymentOverviewFeature,
 })
 
 // Logs, traces and usage, grouped behind one top tab -- see
@@ -139,6 +140,32 @@ const deploymentObservabilityUsageRoute = createRoute({
   getParentRoute: () => deploymentObservabilityLayoutRoute,
   path: '/usage',
   component: PageUsageFeature,
+})
+
+// Backups, security and customization are top tabs of their own, each one
+// page inside the same padded frame rather than a side nav of one entry.
+const deploymentTabLayoutRoute = createRoute({
+  getParentRoute: () => deploymentLayoutRoute,
+  id: 'deployment-tab',
+  component: DeploymentTabLayout,
+})
+
+const deploymentBackupsRoute = createRoute({
+  getParentRoute: () => deploymentTabLayoutRoute,
+  path: '/backups',
+  component: PageBackupsFeature,
+})
+
+const deploymentSecurityRoute = createRoute({
+  getParentRoute: () => deploymentTabLayoutRoute,
+  path: '/security',
+  component: PageNetworkAccessFeature,
+})
+
+const deploymentCustomizationRoute = createRoute({
+  getParentRoute: () => deploymentTabLayoutRoute,
+  path: '/customization',
+  component: PageBrandingFeature,
 })
 
 const deploymentSettingsLayoutRoute = createRoute({
@@ -171,23 +198,20 @@ const deploymentAutomaticUpgradesRoute = createRoute({
   component: PageAutomaticUpgradesFeature,
 })
 
-const deploymentNetworkAccessRoute = createRoute({
-  getParentRoute: () => deploymentSettingsLayoutRoute,
-  path: '/network-access',
-  component: PageNetworkAccessFeature,
-})
+const movedSettingsRoute = (page: 'network-access' | 'branding' | 'backups') =>
+  createRoute({
+    getParentRoute: () => deploymentSettingsLayoutRoute,
+    path: `/${page}`,
+    beforeLoad: ({ params }) => {
+      throw redirect({
+        to: movedSettingsPath(params.organisationId, params.deploymentId, page),
+      })
+    },
+  })
 
-const deploymentBrandingRoute = createRoute({
-  getParentRoute: () => deploymentSettingsLayoutRoute,
-  path: '/branding',
-  component: PageBrandingFeature,
-})
-
-const deploymentBackupsRoute = createRoute({
-  getParentRoute: () => deploymentSettingsLayoutRoute,
-  path: '/backups',
-  component: PageBackupsFeature,
-})
+const deploymentNetworkAccessRedirect = movedSettingsRoute('network-access')
+const deploymentBrandingRedirect = movedSettingsRoute('branding')
+const deploymentBackupsRedirect = movedSettingsRoute('backups')
 
 const deploymentDangerRoute = createRoute({
   getParentRoute: () => deploymentSettingsLayoutRoute,
@@ -333,10 +357,15 @@ const routeTree = rootRoute.addChildren([
       deploymentResourcesRoute,
       deploymentVersionRoute,
       deploymentAutomaticUpgradesRoute,
-      deploymentNetworkAccessRoute,
-      deploymentBrandingRoute,
-      deploymentBackupsRoute,
+      deploymentNetworkAccessRedirect,
+      deploymentBrandingRedirect,
+      deploymentBackupsRedirect,
       deploymentDangerRoute,
+    ]),
+    deploymentTabLayoutRoute.addChildren([
+      deploymentBackupsRoute,
+      deploymentSecurityRoute,
+      deploymentCustomizationRoute,
     ]),
   ]),
   platformLayoutRoute.addChildren([

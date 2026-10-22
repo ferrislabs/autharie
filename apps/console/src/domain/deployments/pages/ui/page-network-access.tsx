@@ -48,11 +48,11 @@ export function PageNetworkAccess({ deployment, access, isLoading, onApply, isSa
 
   return (
     <SectionPage
-      title='Network access'
-      description='Which source addresses may reach this deployment.'
+      title='Security'
+      description='Who and what may reach this deployment.'
     >
       <Section
-        title='Applied now'
+        title='Network access'
         aside={
           <Button size='sm' onClick={() => setAdding(true)} disabled={isSaving}>
             <Plus className='h-3.5 w-3.5' />

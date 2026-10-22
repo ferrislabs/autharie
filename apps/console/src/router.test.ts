@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { isRedirect } from '@tanstack/react-router'
 import { router } from './router'
 
 const ORGANISATION = '/organisations/org-1'
@@ -48,9 +49,9 @@ describe('the route tree', () => {
       '/observability/usage',
       '/settings',
       '/settings/version',
-      '/settings/network-access',
-      '/settings/branding',
-      '/settings/backups',
+      '/backups',
+      '/security',
+      '/customization',
     ]) {
       const shells = shellsFor(`${DEPLOYMENT}${path}`)
 
@@ -96,10 +97,11 @@ describe('the route tree', () => {
 
   it('puts the settings navigation only on settings pages', () => {
     expect(shellsFor(`${DEPLOYMENT}/settings`)).toContain('DeploymentSettingsLayout')
-    expect(shellsFor(`${DEPLOYMENT}/settings/network-access`)).toContain(
-      'DeploymentSettingsLayout',
-    )
+    expect(shellsFor(`${DEPLOYMENT}/settings/resources`)).toContain('DeploymentSettingsLayout')
     expect(shellsFor(`${DEPLOYMENT}/observability`)).not.toContain('DeploymentSettingsLayout')
+    for (const path of ['/backups', '/security', '/customization']) {
+      expect(shellsFor(`${DEPLOYMENT}${path}`), path).not.toContain('DeploymentSettingsLayout')
+    }
   })
 
   /**
@@ -121,8 +123,11 @@ describe('the route tree', () => {
   /// Asserted on the leaf, not on the shell. A route re-nested under the wrong
   /// parent still puts the settings navigation on screen, and a test that only
   /// checked for that would have passed.
-  it('opens the backups screen under the settings navigation', () => {
-    expect(shellsFor(`${DEPLOYMENT}/settings/backups`)).toContain('PageBackupsFeature')
+  it('opens the backups screen as a tab of its own, not under the settings navigation', () => {
+    const shells = shellsFor(`${DEPLOYMENT}/backups`)
+
+    expect(shells).toContain('PageBackupsFeature')
+    expect(shells).not.toContain('DeploymentSettingsLayout')
   })
 
   /**
@@ -183,5 +188,34 @@ describe('the route tree', () => {
     const match = router.getMatchedRoutes('/platform/deployments')
 
     expect(match.foundRoute?.options.validateSearch).toBeDefined()
+  })
+})
+
+describe('the settings pages that became tabs', () => {
+  it('puts each tab on its own page', () => {
+    expect(shellsFor(`${DEPLOYMENT}/backups`)).toContain('PageBackupsFeature')
+    expect(shellsFor(`${DEPLOYMENT}/security`)).toContain('PageNetworkAccessFeature')
+    expect(shellsFor(`${DEPLOYMENT}/customization`)).toContain('PageBrandingFeature')
+  })
+
+  it.each([
+    ['/settings/network-access', '/security'],
+    ['/settings/branding', '/customization'],
+    ['/settings/backups', '/backups'],
+  ])('sends the old address %s to %s', (from, to) => {
+    const { foundRoute } = router.getMatchedRoutes(`${DEPLOYMENT}${from}`)
+    const beforeLoad = foundRoute?.options.beforeLoad as
+      | ((context: { params: Record<string, string> }) => void)
+      | undefined
+
+    let thrown: unknown
+    try {
+      beforeLoad?.({ params: { organisationId: 'org-1', deploymentId: 'dep-1' } })
+    } catch (error) {
+      thrown = error
+    }
+
+    expect(isRedirect(thrown)).toBe(true)
+    expect((thrown as { options: { to: string } }).options.to).toBe(`${DEPLOYMENT}${to}`)
   })
 })
