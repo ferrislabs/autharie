@@ -7,6 +7,9 @@ use genesis_core::application::handlers::drill::DrillEventHandler;
 use genesis_core::application::handlers::iam_settings::IamSettingsEventHandler;
 use genesis_core::application::handlers::network_access::NetworkAccessEventHandler;
 use genesis_core::application::handlers::upgrade::UpgradeEventHandler;
+use genesis_core::application::handlers::webhooks::{
+    WebhookRequestEventHandler, WebhooksEventHandler,
+};
 use genesis_core::domain::ports::{
     DatabaseProbe, DataplaneUpgradePort, EventConsumer, EventHandler, IdentityInstancePort,
     IdentityInstanceUpgradePort, OutcomePublisher,
@@ -15,6 +18,7 @@ use genesis_core::infrastructure::kubernetes::dataplane_upgrade::KubeDataplaneUp
 use genesis_core::infrastructure::kubernetes::identity_instance::KubeIdentityInstancePort;
 use genesis_core::infrastructure::kubernetes::identity_instance_upgrade::KubeIdentityInstanceUpgradePort;
 use genesis_core::infrastructure::kubernetes::status_watcher::IdentityInstanceStatusWatcher;
+use genesis_core::infrastructure::kubernetes::webhooks::KubeWebhookPort;
 use genesis_core::infrastructure::message_bus::consumer::IggyConsumer;
 use genesis_core::infrastructure::message_bus::outcome_publisher::IggyOutcomePublisher;
 use genesis_core::infrastructure::postgres::database_probe::SqlxDatabaseProbe;
@@ -74,8 +78,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Its own connection rather than the consumer's channel: the consumer owns
     // its channel for the lifetime of the run loop, and threading a publisher
     // through it would couple two things that fail independently.
-    let outcomes: Arc<dyn OutcomePublisher> =
-        Arc::new(IggyOutcomePublisher::connect(&iggy_url).await?);
+    let publisher = Arc::new(IggyOutcomePublisher::connect(&iggy_url).await?);
+    let outcomes: Arc<dyn OutcomePublisher> = publisher.clone();
+    let webhook_port = Arc::new(KubeWebhookPort::new(kube.clone()));
     let database: Arc<dyn DatabaseProbe> = Arc::new(SqlxDatabaseProbe);
 
     let handlers: Vec<Arc<dyn EventHandler>> = vec![
@@ -95,6 +100,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )),
         Arc::new(NetworkAccessEventHandler::new(identity_instances.clone())),
         Arc::new(IamSettingsEventHandler::new(identity_instances.clone())),
+        Arc::new(WebhooksEventHandler::new(webhook_port.clone())),
+        Arc::new(WebhookRequestEventHandler::rotate_secret(
+            webhook_port.clone(),
+        )),
+        Arc::new(WebhookRequestEventHandler::retry_delivery(webhook_port)),
         Arc::new(BackupEventHandler::new(identity_instances.clone())),
         Arc::new(DrillEventHandler::new(
             identity_instances.clone(),
@@ -109,7 +119,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Watching what the operator decided is the other half of Genesis's job,
     // and it is independent of the queue: a broker outage must not stop status
     // being observed, and an empty queue must not mean nothing is watched.
-    let watcher = IdentityInstanceStatusWatcher::new(kube, outcomes);
+    let watcher = IdentityInstanceStatusWatcher::new(kube, outcomes, publisher);
 
     // Either ending is a Genesis that has stopped doing half its work, so
     // neither is survived: the pod exits and Kubernetes restarts it, which is

@@ -395,6 +395,13 @@ mod tests {
     }
 
     #[test]
+    fn the_webhook_actions_are_bound() {
+        assert!(is_bound("deployment.webhooks"));
+        assert!(is_bound("deployment.webhook.rotate_secret"));
+        assert!(is_bound("deployment.webhook.retry_delivery"));
+    }
+
+    #[test]
     fn a_realm_action_is_no_longer_bound() {
         assert!(!is_bound("realm.create"));
     }
