@@ -1558,6 +1558,190 @@
         ]
       }
     },
+    "/organisations/{organisation_id}": {
+      "get": {
+        "tags": [
+          "organisation"
+        ],
+        "summary": "get organisation",
+        "description": "Read an organisation the caller is a member of, with its settings.",
+        "operationId": "get_organisation_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The organisation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganisationResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not see this organisation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such organisation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "organisation"
+        ],
+        "summary": "update organisation",
+        "description": "Change an organisation's settings: whether AI agents may act on it through MCP. Needs the right to manage the organisation, and is refused to a delegated (AI agent) token. Any other field is refused with a 422.",
+        "operationId": "update_organisation_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateOrganisationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Organisation updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganisationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Nothing to change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not manage this organisation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such organisation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The body carries a field that is not a setting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/organisations/{organisation_id}/audit-log": {
       "get": {
         "tags": [
@@ -9397,7 +9581,7 @@
           "users"
         ],
         "summary": "get user's organisations",
-        "description": "Retrieve a list of organisations the authenticated user is a member of.",
+        "description": "Retrieve a list of organisations the authenticated user is a member of. For an AI agent acting for the user, only the organisations that allow MCP.",
         "operationId": "get_user_organisations_handler",
         "responses": {
           "200": {
@@ -13834,6 +14018,7 @@
           "status",
           "plan",
           "limits",
+          "mcp_enabled",
           "created_at",
           "updated_at"
         ],
@@ -13854,6 +14039,9 @@
           },
           "limits": {
             "$ref": "#/components/schemas/OrganisationLimits"
+          },
+          "mcp_enabled": {
+            "type": "boolean"
           },
           "name": {
             "$ref": "#/components/schemas/OrganisationName"
@@ -13907,6 +14095,17 @@
       "OrganisationName": {
         "type": "string",
         "description": "Organisation name value object"
+      },
+      "OrganisationResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Organisation"
+          }
+        }
       },
       "OrganisationSlug": {
         "type": "string",
@@ -15822,6 +16021,18 @@
             "$ref": "#/components/schemas/Deployment"
           }
         }
+      },
+      "UpdateOrganisationRequest": {
+        "type": "object",
+        "properties": {
+          "mcp_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
       },
       "UpdateRoleRequest": {
         "type": "object",
