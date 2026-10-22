@@ -44,7 +44,7 @@ export function DeploymentKindLogo({
 export function DeploymentKindLabel({ kind }: { kind: DeploymentKind }) {
   return (
     <span className='inline-flex items-center gap-2'>
-      <DeploymentKindLogo kind={kind} className='size-4 shrink-0' />
+      <DeploymentKindLogo kind={kind} className='size-6 shrink-0' />
       {KIND_LABELS[kind]}
     </span>
   )
