@@ -113,6 +113,7 @@ impl CredentialVerifier for CloudProviders {
             Self::Fixed(fixed) => match &fixed.verdict {
                 FixedVerdict::Accept => Ok(ScopeCheck {
                     checked_at: Utc::now(),
+                    application_name: None,
                 }),
                 FixedVerdict::Invalid => Err(CredentialError::Invalid),
                 FixedVerdict::Missing(missing) => Err(CredentialError::MissingPermissions {

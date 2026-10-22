@@ -37,6 +37,7 @@ pub struct CloudCredentialResponse {
     pub provider: Provider,
     pub label: String,
     pub scope_checked_at: DateTime<Utc>,
+    pub application_name: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -47,6 +48,7 @@ impl From<CloudCredential> for CloudCredentialResponse {
             provider: credential.provider,
             label: credential.label,
             scope_checked_at: credential.scope_check.checked_at,
+            application_name: credential.scope_check.application_name,
             created_at: credential.created_at,
         }
     }
@@ -127,6 +129,7 @@ mod tests {
             provider: Provider::Scaleway,
             label: "prod".to_string(),
             scope_checked_at: Utc::now(),
+            application_name: Some("autharie".to_string()),
             created_at: Utc::now(),
         })
         .expect("serialised");
@@ -141,7 +144,14 @@ mod tests {
 
         assert_eq!(
             keys,
-            ["created_at", "id", "label", "provider", "scope_checked_at"]
+            [
+                "application_name",
+                "created_at",
+                "id",
+                "label",
+                "provider",
+                "scope_checked_at"
+            ]
         );
     }
 }

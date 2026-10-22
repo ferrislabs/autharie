@@ -44,9 +44,15 @@ impl SecretString {
 }
 
 /// The outcome of the permission check a credential passed to be registered.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+///
+/// `application_name` is what the check learned about whose key it is, when
+/// the provider says: the name of the application the key belongs to, so that
+/// somebody with several credentials can tell them apart. Not a secret, and
+/// absent for a key that belongs to a person rather than an application.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct ScopeCheck {
     pub checked_at: DateTime<Utc>,
+    pub application_name: Option<String>,
 }
 
 /// Everything about a credential except the secret, which only the store holds.

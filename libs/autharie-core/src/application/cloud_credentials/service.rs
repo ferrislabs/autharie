@@ -559,6 +559,7 @@ mod tests {
             label: "production".to_string(),
             scope_check: ScopeCheck {
                 checked_at: Utc::now(),
+                application_name: None,
             },
             created_at: Utc::now(),
         }

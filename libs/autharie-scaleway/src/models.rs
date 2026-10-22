@@ -123,6 +123,11 @@ pub(crate) struct ApiKey {
 }
 
 #[derive(Deserialize)]
+pub(crate) struct Application {
+    pub name: String,
+}
+
+#[derive(Deserialize)]
 pub(crate) struct Project {
     pub organization_id: String,
 }

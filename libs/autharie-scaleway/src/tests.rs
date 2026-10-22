@@ -16,7 +16,7 @@ use autharie_domain::{
             ProviderOffers,
         },
         cluster_profile::{ClusterMode, ClusterProfile, Replication},
-        credential::{CloudCredentialId, CredentialError, SecretString},
+        credential::{CloudCredentialId, CredentialError, ScopeCheck, SecretString},
         entities::DataPlane,
         herald_identity::HeraldBinding,
         inventory::{ProvisionedResource, ResourceKind},
@@ -1026,6 +1026,111 @@ async fn verifier_accepts_the_minimal_permission_sets() {
     mock_iam(&server, &MINIMAL);
 
     verify(&server).await.expect("accepted");
+}
+
+async fn verified(server: &MockServer) -> Result<ScopeCheck, CredentialError> {
+    ScalewayVerifier::new(&config(server))
+        .expect("verifier")
+        .verify(Provider::Scaleway, &SecretString::new(secret_json()))
+        .await
+}
+
+fn mock_application(server: &MockServer, name: &str) {
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/iam/v1alpha1/applications/app-1")
+            .header("x-auth-token", SECRET_KEY);
+        then.status(200)
+            .json_body(serde_json::json!({"id": "app-1", "name": name}));
+    });
+}
+
+#[tokio::test]
+async fn verifier_names_the_application_its_key_belongs_to() {
+    let server = MockServer::start_async().await;
+    mock_iam(&server, &MINIMAL);
+    mock_application(&server, "autharie");
+
+    let check = verified(&server).await.expect("accepted");
+
+    assert_eq!(check.application_name.as_deref(), Some("autharie"));
+}
+
+#[tokio::test]
+async fn verifier_trims_the_name_of_the_application() {
+    let server = MockServer::start_async().await;
+    mock_iam(&server, &MINIMAL);
+    mock_application(&server, "  autharie  ");
+
+    let check = verified(&server).await.expect("accepted");
+
+    assert_eq!(check.application_name.as_deref(), Some("autharie"));
+}
+
+#[tokio::test]
+async fn verifier_gives_no_name_to_an_application_without_one() {
+    let server = MockServer::start_async().await;
+    mock_iam(&server, &MINIMAL);
+    mock_application(&server, "   ");
+
+    let check = verified(&server).await.expect("accepted");
+
+    assert_eq!(check.application_name, None);
+}
+
+#[tokio::test]
+async fn verifier_accepts_a_key_whose_application_cannot_be_read() {
+    let server = MockServer::start_async().await;
+    mock_iam(&server, &MINIMAL);
+    server.mock(|when, then| {
+        when.method(GET).path("/iam/v1alpha1/applications/app-1");
+        then.status(403).json_body(
+            serde_json::json!({"type": "permissions_denied", "message": "no application access"}),
+        );
+    });
+
+    let check = verified(&server).await.expect("accepted");
+
+    assert_eq!(check.application_name, None);
+}
+
+#[tokio::test]
+async fn verifier_gives_no_name_to_a_key_that_belongs_to_a_person() {
+    let server = MockServer::start_async().await;
+    server.mock(|when, then| {
+        when.method(GET).path("/iam/v1alpha1/api-keys/SCWACCESSKEY");
+        then.status(200)
+            .json_body(serde_json::json!({"user_id": "user-1"}));
+    });
+    server.mock(|when, then| {
+        when.method(GET).path("/account/v3/projects/proj-1");
+        then.status(200)
+            .json_body(serde_json::json!({"organization_id": "org-1"}));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/iam/v1alpha1/policies")
+            .query_param("user_ids", "user-1");
+        then.status(200)
+            .json_body(serde_json::json!({"policies": [{"id": "pol-1"}]}));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/iam/v1alpha1/rules")
+            .query_param("policy_id", "pol-1");
+        then.status(200)
+            .json_body(serde_json::json!({"rules": [{"permission_set_names": MINIMAL}]}));
+    });
+    let person = server.mock(|when, then| {
+        when.method(GET).path("/iam/v1alpha1/users/user-1");
+        then.status(200)
+            .json_body(serde_json::json!({"email": "me@example.test"}));
+    });
+
+    let check = verified(&server).await.expect("accepted");
+
+    assert_eq!(check.application_name, None);
+    assert_eq!(person.hits(), 0);
 }
 
 async fn verify_with_organization(
