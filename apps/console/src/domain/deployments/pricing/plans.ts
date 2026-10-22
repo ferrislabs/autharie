@@ -1,99 +1,130 @@
 import type { Engine, Hosting, PlanId } from './model'
 
-export interface Feature {
-  text: string
+export type Cell = boolean | string
+
+export interface FeatureRow {
+  label: string
+  hint?: string
+  cells: Record<PlanId, Cell>
   ferriskeyOnly?: boolean
 }
 
 export interface PlanCopy {
   name: string
   tagline: string
-  features: Feature[]
 }
-
-const only = (text: string): Feature => ({ text, ferriskeyOnly: true })
 
 export const PLAN_ORDER: PlanId[] = ['starter', 'business', 'scale']
 
 export const PLANS: Record<Hosting, Record<PlanId, PlanCopy>> = {
   managed: {
-    starter: {
-      name: 'Starter',
-      tagline: 'Ideal for an MVP or internal applications.',
-      features: [
-        { text: '99% availability' },
-        { text: 'Email support, next business day (best effort)' },
-        { text: 'Audit history: 7 days' },
-        { text: 'One-click updates, with rollback' },
-      ],
-    },
-    business: {
-      name: 'Business',
-      tagline: 'For products in production.',
-      features: [
-        { text: '99.5% availability' },
-        { text: 'Guaranteed priority support (under 4 h)' },
-        {
-          text: 'Ephemeral staging sandbox: a test environment in one click, on a copy of your data, to validate breaking changes and version upgrades before production',
-        },
-        { text: 'Audit and analytics: 30 days (managed Quickwit / Datafusion)' },
-        only('Distributed authorisations (ReBAC) included'),
-        only('MCP gateway (AI and agents) included'),
-      ],
-    },
+    starter: { name: 'Starter', tagline: 'Ideal for an MVP or internal applications.' },
+    business: { name: 'Business', tagline: 'For products in production.' },
     scale: {
       name: 'Scale',
       tagline: 'To go further, with the highest level of support.',
-      features: [
-        { text: '99.9% availability, multi-AZ, high availability' },
-        {
-          text: 'Highest support: dedicated Slack or Teams channel, critical 24/7 on-call (under 1 h)',
-        },
-        { text: 'Unlimited staging sandboxes, with automated cloning' },
-        {
-          text: 'Advanced analytics: search across all audit and sign-in logs, usage dashboards',
-        },
-        { text: 'Audit retention from 90 to 365 days, and compliance exports' },
-        only('Distributed authorisations (ReBAC) included'),
-        only('MCP gateway (AI and agents) included'),
-      ],
     },
   },
   byoc: {
-    starter: {
-      name: 'BYOC Starter',
-      tagline: 'The control plane with us, the data with you.',
-      features: [
-        { text: '99% control plane availability' },
-        { text: 'Email support' },
-        { text: 'Raw log export' },
-      ],
-    },
-    business: {
-      name: 'BYOC Business',
-      tagline: 'For production in your cloud.',
-      features: [
-        { text: '99.5% control plane availability' },
-        { text: 'Support in under 4 h' },
-        { text: 'Ephemeral staging sandbox, orchestrated in your cloud' },
-        { text: 'Managed Quickwit deployment in your account' },
-        only('ReBAC and MCP included'),
-      ],
-    },
+    starter: { name: 'BYOC Starter', tagline: 'The control plane with us, the data with you.' },
+    business: { name: 'BYOC Business', tagline: 'For production in your cloud.' },
     scale: {
       name: 'BYOC Scale',
       tagline: 'Several clusters, the highest level of support.',
-      features: [
-        { text: '99.9% control plane availability' },
-        { text: 'Multi-cluster' },
-        { text: '24/7 support, with a dedicated channel' },
-        { text: 'Unlimited staging sandboxes, orchestrated in your clouds' },
-        { text: 'Advanced analytics: search across all logs, usage dashboards' },
-        { text: 'Automated canary deployments' },
-        only('ReBAC and MCP included'),
-      ],
     },
   },
+}
+
+export const FEATURES: Record<Hosting, FeatureRow[]> = {
+  managed: [
+    {
+      label: 'Availability',
+      cells: { starter: '99%', business: '99.5%', scale: '99.9%, multi-AZ, high availability' },
+    },
+    {
+      label: 'Support',
+      cells: {
+        starter: 'Email, next business day (best effort)',
+        business: 'Guaranteed priority support (under 4 h)',
+        scale: 'Dedicated Slack or Teams channel, critical 24/7 on-call (under 1 h)',
+      },
+    },
+    {
+      label: 'Audit history',
+      cells: { starter: '7 days', business: '30 days', scale: '90 to 365 days, with compliance exports' },
+    },
+    {
+      label: 'Analytics',
+      cells: {
+        starter: false,
+        business: 'Managed Quickwit / Datafusion',
+        scale: 'Advanced: search across all audit and sign-in logs, usage dashboards',
+      },
+    },
+    {
+      label: 'Staging sandbox',
+      hint: 'A test environment on a copy of your data, to validate breaking changes and version upgrades before production.',
+      cells: {
+        starter: false,
+        business: 'Ephemeral, in one click',
+        scale: 'Unlimited, with automated cloning',
+      },
+    },
+    {
+      label: 'One-click updates, with rollback',
+      cells: { starter: true, business: true, scale: true },
+    },
+    {
+      label: 'Distributed authorisations (ReBAC)',
+      cells: { starter: false, business: true, scale: true },
+      ferriskeyOnly: true,
+    },
+    {
+      label: 'MCP gateway (AI and agents)',
+      cells: { starter: false, business: true, scale: true },
+      ferriskeyOnly: true,
+    },
+  ],
+  byoc: [
+    {
+      label: 'Control plane availability',
+      cells: { starter: '99%', business: '99.5%', scale: '99.9%' },
+    },
+    {
+      label: 'Support',
+      cells: {
+        starter: 'Email',
+        business: 'Under 4 h',
+        scale: '24/7, with a dedicated channel',
+      },
+    },
+    {
+      label: 'Logs',
+      cells: {
+        starter: 'Raw export',
+        business: 'Managed Quickwit deployment in your account',
+        scale: 'Advanced analytics: search across all logs, usage dashboards',
+      },
+    },
+    {
+      label: 'Staging sandbox',
+      cells: {
+        starter: false,
+        business: 'Ephemeral, orchestrated in your cloud',
+        scale: 'Unlimited, orchestrated in your clouds',
+      },
+    },
+    { label: 'Multi-cluster', cells: { starter: false, business: false, scale: true } },
+    {
+      label: 'Automated canary deployments',
+      cells: { starter: false, business: false, scale: true },
+    },
+    {
+      label: 'ReBAC and MCP',
+      cells: { starter: false, business: true, scale: true },
+      ferriskeyOnly: true,
+    },
+  ],
 }
 
 export const ENGINES: Record<Engine, { name: string; badge: string; description: string }> = {
@@ -129,13 +160,7 @@ export const VOLUME_NOTES = {
 }
 
 export function ferriskeyOnlyFeatures(hosting: Hosting): string[] {
-  return [
-    ...new Set(
-      PLAN_ORDER.flatMap((id) =>
-        PLANS[hosting][id].features.filter((f) => f.ferriskeyOnly).map((f) => f.text),
-      ),
-    ),
-  ]
+  return FEATURES[hosting].filter((row) => row.ferriskeyOnly).map((row) => row.label)
 }
 
 export function volumeNotes(hosting: Hosting, engine: Engine, volume: number): string[] {

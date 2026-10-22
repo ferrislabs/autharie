@@ -12,6 +12,7 @@ interface Props {
    * says what exists, which is how somebody learns what their plan would open.
    */
   disabled?: boolean
+  className?: string
 }
 
 export function OptionCard({
@@ -21,6 +22,7 @@ export function OptionCard({
   description,
   footer,
   disabled = false,
+  className,
 }: Props) {
   return (
     <button
@@ -32,6 +34,7 @@ export function OptionCard({
         'relative flex flex-col gap-1 rounded-lg border p-4 text-left transition-colors',
         'hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
         selected ? 'border-primary bg-primary/5' : 'border-border',
+        className,
       )}
     >
       {selected && <Check className='absolute right-3 top-3 h-4 w-4 text-primary' />}

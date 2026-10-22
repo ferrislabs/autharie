@@ -1,6 +1,7 @@
+import { Check, Minus, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { priceOf, type Selection, type PlanId } from '../../../pricing/model'
-import { PLAN_ORDER, PLANS } from '../../../pricing/plans'
+import { FEATURES, PLAN_ORDER, PLANS, type Cell } from '../../../pricing/plans'
 import { describePrice } from '../../../pricing/summary'
 import { OptionCard } from './option-card'
 
@@ -9,6 +10,34 @@ interface Props {
   onSelect: (plan: PlanId) => void
   movedNotice?: string
   closedPlans?: PlanId[]
+}
+
+function CellValue({ cell, missing }: { cell: Cell; missing: boolean }) {
+  if (missing) {
+    return (
+      <>
+        <X aria-hidden='true' className='h-4 w-4 text-muted-foreground' />
+        <span className='sr-only'>Not available with this engine</span>
+      </>
+    )
+  }
+  if (cell === true) {
+    return (
+      <>
+        <Check aria-hidden='true' className='h-4 w-4 text-primary' />
+        <span className='sr-only'>Included</span>
+      </>
+    )
+  }
+  if (cell === false) {
+    return (
+      <>
+        <Minus aria-hidden='true' className='h-4 w-4 text-muted-foreground' />
+        <span className='sr-only'>Not included</span>
+      </>
+    )
+  }
+  return <span>{cell}</span>
 }
 
 export function PlanPicker({ selection, onSelect, movedNotice, closedPlans = [] }: Props) {
@@ -21,47 +50,74 @@ export function PlanPicker({ selection, onSelect, movedNotice, closedPlans = [] 
           {movedNotice}
         </p>
       )}
-      <div className='grid gap-3 md:grid-cols-3'>
-        {PLAN_ORDER.map((id) => {
-          const copy = PLANS[hosting][id]
-          const price = priceOf({ ...selection, plan: id })
-          const closed = closedPlans.includes(id)
-          const unavailable = price.kind === 'unavailable'
+      <div className='overflow-x-auto'>
+        <table className='w-full min-w-[42rem] table-fixed border-collapse text-sm'>
+          <thead>
+            <tr>
+              <th scope='col' className='w-1/4'>
+                <span className='sr-only'>Feature</span>
+              </th>
+              {PLAN_ORDER.map((id) => {
+                const copy = PLANS[hosting][id]
+                const price = priceOf({ ...selection, plan: id })
+                const closed = closedPlans.includes(id)
+                const unavailable = price.kind === 'unavailable'
 
-          return (
-            <OptionCard
-              key={id}
-              selected={plan === id}
-              disabled={unavailable || closed}
-              onSelect={() => onSelect(id)}
-              label={copy.name}
-              description={copy.tagline}
-              footer={
-                <span className='flex flex-col gap-2'>
-                  <span className='text-sm font-semibold'>
-                    {closed
-                      ? 'Not available on your plan.'
-                      : unavailable
-                        ? 'Up to 25,000 accounts. Beyond that, choose Business.'
-                        : describePrice(price)}
-                  </span>
-                  <ul className='space-y-1 text-xs text-muted-foreground'>
-                    {copy.features.map((feature) => {
-                      const missing = feature.ferriskeyOnly && engine !== 'ferriskey'
+                return (
+                  <th key={id} scope='col' className='h-px p-1.5 align-top font-normal'>
+                    <OptionCard
+                      className='h-full w-full'
+                      selected={plan === id}
+                      disabled={unavailable || closed}
+                      onSelect={() => onSelect(id)}
+                      label={copy.name}
+                      description={copy.tagline}
+                      footer={
+                        <span className='text-sm font-semibold'>
+                          {closed
+                            ? 'Not available on your plan.'
+                            : unavailable
+                              ? 'Up to 25,000 accounts. Beyond that, choose Business.'
+                              : describePrice(price)}
+                        </span>
+                      }
+                    />
+                  </th>
+                )
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {FEATURES[hosting].map((row) => {
+              const missing = row.ferriskeyOnly === true && engine !== 'ferriskey'
 
-                      return (
-                        <li key={feature.text} className={cn(missing && 'line-through opacity-60')}>
-                          {missing ? '× ' : '✓ '}
-                          {feature.text}
-                        </li>
-                      )
-                    })}
-                  </ul>
-                </span>
-              }
-            />
-          )
-        })}
+              return (
+                <tr key={row.label} className='border-t'>
+                  <th scope='row' className='py-3 pr-4 text-left align-top font-medium'>
+                    {row.label}
+                    {row.hint && (
+                      <span className='mt-0.5 block text-xs font-normal text-muted-foreground'>
+                        {row.hint}
+                      </span>
+                    )}
+                  </th>
+                  {PLAN_ORDER.map((id) => (
+                    <td
+                      key={id}
+                      className={cn(
+                        'px-3.5 py-3 align-top',
+                        typeof row.cells[id] === 'string' && !missing && 'text-muted-foreground',
+                        plan === id && 'bg-primary/5',
+                      )}
+                    >
+                      <CellValue cell={row.cells[id]} missing={missing} />
+                    </td>
+                  ))}
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   )
