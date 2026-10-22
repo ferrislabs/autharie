@@ -18,6 +18,7 @@ use crate::{
 };
 
 mod action;
+pub mod agents;
 mod audit;
 mod auth;
 mod backup;
