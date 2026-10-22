@@ -3,6 +3,7 @@
 //! Both speak to the same Quickwit deployment over the same HTTP API and
 //! share nothing beyond that; see each module's own doc comment.
 
+pub mod decisions;
 pub mod logs;
 pub mod traces;
 

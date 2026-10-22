@@ -114,6 +114,14 @@ COPY --from=builder /usr/local/src/autharie/target/release/genesis /usr/local/bi
 
 ENTRYPOINT [ "genesis" ]
 
+FROM runtime AS mcp
+
+COPY --from=builder /usr/local/src/autharie/target/release/autharie-mcp /usr/local/bin/
+
+EXPOSE 8081
+
+ENTRYPOINT [ "autharie-mcp" ]
+
 FROM node:24.12-alpine AS console-build
 
 WORKDIR /usr/local/src/autharie

@@ -1,4 +1,6 @@
-use autharie_core::{CoreError, billing::BillingError, dataplane::credential::CredentialError};
+use autharie_core::{
+    CoreError, agents::AgentError, billing::BillingError, dataplane::credential::CredentialError,
+};
 use axum::{Json, http::StatusCode, response::IntoResponse};
 use serde::Serialize;
 use thiserror::Error;
@@ -172,6 +174,12 @@ impl IntoResponse for ApiError {
             )
                 .into_response(),
         }
+    }
+}
+
+impl From<AgentError> for ApiError {
+    fn from(value: AgentError) -> Self {
+        CoreError::Agent(value).into()
     }
 }
 
@@ -423,6 +431,20 @@ impl From<CoreError> for ApiError {
             ) => ApiError::ServiceUnavailable {
                 reason: value.to_string(),
             },
+            CoreError::Agent(AgentError::InvalidCedar { .. }) => ApiError::Unprocessable {
+                reason: value.to_string(),
+            },
+            CoreError::Agent(AgentError::Invalid { .. }) => ApiError::BadRequest {
+                reason: value.to_string(),
+            },
+            CoreError::Agent(AgentError::PolicyNotFound { .. }) => ApiError::NotFound {
+                reason: value.to_string(),
+            },
+            CoreError::Agent(AgentError::UnsupportedKind | AgentError::TooManyPolicies { .. }) => {
+                ApiError::Conflict {
+                    reason: value.to_string(),
+                }
+            }
             // Everything else stays deliberately opaque to the caller: a
             // database error or an internal invariant is not something they
             // can act on, and its message may name things they should not see.

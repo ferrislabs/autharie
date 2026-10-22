@@ -62,6 +62,15 @@ auth:
   # The issuer the API validates bearer tokens against. Usually the same
   # value as oidc.issuerUrl.
   issuer: ""
+  # Values of `iss` the API accepts, when tokens carry another host than the
+  # one `issuer` points at (FerrisKey derives `iss` from the request host).
+  # Accepted in addition to `issuer`.
+  tokenIssuers: []
+  # Audiences the API accepts; a token needs one of them. Empty means the realm
+  # audience FerrisKey puts in every access token, `<realm>-realm`, taken from
+  # `issuer`. A token minted for another resource, such as the MCP gateway, is
+  # refused.
+  audiences: []
 
 log:
   filter: info
