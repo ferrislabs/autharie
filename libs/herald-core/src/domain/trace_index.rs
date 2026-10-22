@@ -4,6 +4,8 @@
 //! `docker/quickwit/trace-index-config.template.yaml`, and this is the one
 //! place that maps a decoded `Span` onto it.
 
+use std::collections::HashSet;
+
 use chrono::{DateTime, Utc};
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use opentelemetry_proto::tonic::common::v1::{
@@ -17,6 +19,7 @@ use serde_json::{Map, Value};
 
 use super::entities::deployment::DeploymentId;
 use super::entities::logs::OrganisationId;
+use super::operational::is_operational_span_name;
 
 /// The service name a resource carries no attribute for.
 ///
@@ -188,12 +191,40 @@ pub fn from_export_request(
     organisation_id: &OrganisationId,
     deployment_id: &DeploymentId,
 ) -> Vec<SpanDocument> {
-    request
+    let documents = request
         .resource_spans
         .iter()
         .flat_map(|resource_spans| {
             SpanDocument::from_resource_spans(resource_spans, organisation_id, deployment_id)
         })
+        .collect();
+
+    without_operational_traces(documents)
+}
+
+/// Drops the traces of health checks and metric scrapes: every root span named
+/// after an operational request, and the rest of that trace found in the same
+/// batch (a readiness check's database query, say).
+///
+/// Spans of a dropped trace that arrive in a later batch are not tracked.
+/// Keeping state across batches is not worth it for spans that are noise
+/// anyway.
+pub fn without_operational_traces(documents: Vec<SpanDocument>) -> Vec<SpanDocument> {
+    let dropped: HashSet<String> = documents
+        .iter()
+        .filter(|document| {
+            document.parent_span_id.is_empty() && is_operational_span_name(&document.name)
+        })
+        .map(|document| document.trace_id.clone())
+        .collect();
+
+    if dropped.is_empty() {
+        return documents;
+    }
+
+    documents
+        .into_iter()
+        .filter(|document| !dropped.contains(&document.trace_id))
         .collect()
 }
 
@@ -348,5 +379,73 @@ mod tests {
         );
         assert_eq!(documents[0].service_name, "a");
         assert_eq!(documents[1].service_name, "b");
+    }
+
+    fn document(trace: u8, span: u8, parent: &str, name: &str) -> SpanDocument {
+        let mut document =
+            SpanDocument::from_resource_spans(&resource_spans(Some("svc")), &ids().0, &ids().1)
+                .remove(0);
+        document.trace_id = format!("{trace:02x}");
+        document.span_id = format!("{span:02x}");
+        document.parent_span_id = parent.to_string();
+        document.name = name.to_string();
+        document
+    }
+
+    fn names(documents: &[SpanDocument]) -> Vec<&str> {
+        documents.iter().map(|d| d.name.as_str()).collect()
+    }
+
+    #[test]
+    fn an_operational_root_is_dropped_with_its_children_in_the_batch() {
+        let kept = without_operational_traces(vec![
+            document(1, 1, "", "GET /api/health/ready"),
+            document(1, 2, "01", "SELECT 1"),
+            document(2, 3, "", "GET /api/realms/{realm}"),
+            document(2, 4, "03", "query"),
+        ]);
+
+        assert_eq!(names(&kept), ["GET /api/realms/{realm}", "query"]);
+    }
+
+    #[test]
+    fn a_child_named_like_a_health_check_is_kept_when_its_root_is_not_operational() {
+        let kept = without_operational_traces(vec![
+            document(1, 1, "", "GET /api/realms/{realm}"),
+            document(1, 2, "01", "GET /api/health"),
+        ]);
+
+        assert_eq!(kept.len(), 2);
+    }
+
+    #[test]
+    fn a_child_named_like_a_health_check_goes_only_with_its_dropped_root() {
+        let kept = without_operational_traces(vec![
+            document(1, 1, "", "GET /api/metrics"),
+            document(1, 2, "01", "GET /api/health"),
+        ]);
+
+        assert!(kept.is_empty());
+    }
+
+    #[test]
+    fn an_export_made_only_of_probes_yields_nothing() {
+        let request = ExportTraceServiceRequest {
+            resource_spans: vec![ResourceSpans {
+                scope_spans: vec![ScopeSpans {
+                    spans: vec![Span {
+                        trace_id: vec![0x11; 16],
+                        span_id: vec![0x22; 8],
+                        name: "GET /api/health/live".to_string(),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+        };
+        let (organisation_id, deployment_id) = ids();
+
+        assert!(from_export_request(&request, &organisation_id, &deployment_id).is_empty());
     }
 }
