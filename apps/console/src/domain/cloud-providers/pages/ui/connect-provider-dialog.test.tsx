@@ -74,18 +74,26 @@ describe('the credential form', () => {
     expect(html.match(/<li class="relative flex gap-4"/g)).toHaveLength(2)
   })
 
-  it('lists every permission set, one badge each, wrapping onto several lines', () => {
+  it('shows each permission set as a card with its name, why it is needed and a note', () => {
     const html = form()
-    const names = providerById('scaleway').permissionSets
-    for (const name of names) {
-      expect(html).toMatch(new RegExp(`<li[^>]*class="[^"]*rounded-md border[^"]*"[^>]*>${name}</li>`))
+    const sets = providerById('scaleway').permissionSets
+    expect(sets).toHaveLength(5)
+    for (const set of sets) {
+      expect(html).toContain(`>${set.name}</span>`)
+      expect(html).toContain(set.description.replace(/'/g, '&#x27;'))
+      expect(html).toContain(set.note)
+      expect(set.description).not.toBe('')
+      expect(set.note).not.toBe('')
     }
-    expect(html).toContain('<ul class="flex flex-wrap gap-1.5">')
-    expect(html.match(/<li[^>]*font-mono/g)).toHaveLength(names.length)
+    expect(html.match(/<li class="flex"><div class="rounded-lg border bg-card/g)).toHaveLength(5)
   })
 
-  it('still lets the customer copy them', () => {
-    expect(form()).toContain('aria-label="Copy the permission sets"')
+  it('puts two cards on a line', () => {
+    expect(form()).toContain('<ul class="grid gap-2 sm:grid-cols-2">')
+  })
+
+  it('still lets the customer copy the names', () => {
+    expect(form()).toContain('Copy names')
   })
 
   it('asks for the five fields, the secret one masked, the name on its own line', () => {
