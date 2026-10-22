@@ -18,11 +18,12 @@ use super::ferriskey_admin::{
     AdminCredentials, api_base_url, name_and_namespace, read_credentials,
 };
 use super::ferriskey_webhooks::{
-    ApiFailure, ApiRequest, FerriskeyWebhookApi, MAX_PAGES, PAGE_LIMIT, TokenCache, next_page,
+    ApiFailure, ApiRequest, FerriskeyWebhookApi, PAGE_LIMIT, TokenCache,
 };
 
 const EVALUATOR_ROLE: &str = "authz-evaluator";
 const EVALUATE_PERMISSION: &str = "evaluate_authorization";
+const MINIMAL_SCHEMA: &str = "namespace App {}";
 
 trait Caller: Send + Sync {
     fn call(&self, request: &ApiRequest) -> impl Future<Output = Result<Value, ApiFailure>> + Send;
@@ -131,11 +132,12 @@ fn policies_path(realm: &str) -> Result<String, AgentsError> {
     Ok(format!("/realms/{}/authz/policies", segment(realm)?))
 }
 
-pub fn list_policies_request(realm: &str, page: u32) -> Result<ApiRequest, AgentsError> {
-    Ok(ApiRequest::new(Method::GET, policies_path(realm)?)
-        .query("managed_by", MANAGED_BY)
-        .query("page", page)
-        .query("limit", PAGE_LIMIT))
+fn schema_path(realm: &str) -> Result<String, AgentsError> {
+    Ok(format!("/realms/{}/authz/schema", segment(realm)?))
+}
+
+pub fn list_policies_request(realm: &str) -> Result<ApiRequest, AgentsError> {
+    Ok(ApiRequest::new(Method::GET, policies_path(realm)?).query("managed_by", MANAGED_BY))
 }
 
 fn policy_body(write: &PolicyWrite) -> Value {
@@ -143,13 +145,14 @@ fn policy_body(write: &PolicyWrite) -> Value {
         "name": write.name,
         "description": write.description,
         "enabled": write.enabled,
-        "managed_by": MANAGED_BY,
         "body": { "type": "static", "source": write.source },
     })
 }
 
 pub fn create_policy_request(realm: &str, write: &PolicyWrite) -> Result<ApiRequest, AgentsError> {
-    Ok(ApiRequest::new(Method::POST, policies_path(realm)?).body(policy_body(write)))
+    Ok(ApiRequest::new(Method::POST, policies_path(realm)?)
+        .query("managed_by", MANAGED_BY)
+        .body(policy_body(write)))
 }
 
 pub fn update_policy_request(
@@ -161,6 +164,7 @@ pub fn update_policy_request(
         Method::PUT,
         format!("{}/{}", policies_path(realm)?, segment(ferriskey_id)?),
     )
+    .query("managed_by", MANAGED_BY)
     .body(policy_body(write)))
 }
 
@@ -172,28 +176,124 @@ pub fn delete_policy_request(realm: &str, ferriskey_id: &str) -> Result<ApiReque
     .query("managed_by", MANAGED_BY))
 }
 
+pub fn validate_policy_request(
+    realm: &str,
+    write: &PolicyWrite,
+) -> Result<ApiRequest, AgentsError> {
+    Ok(
+        ApiRequest::new(Method::POST, format!("{}/validate", policies_path(realm)?)).body(json!({
+            "policies": [{
+                "name": write.name,
+                "body": { "type": "static", "source": write.source },
+            }],
+        })),
+    )
+}
+
+pub fn first_issue(body: &Value) -> Result<Option<String>, AgentsError> {
+    match body["valid"].as_bool() {
+        Some(true) => Ok(None),
+        Some(false) => {
+            let issue = &body["issues"][0];
+            Ok(Some(
+                match (issue["message"].as_str(), issue["line"].as_u64()) {
+                    (Some(message), Some(line)) => format!("{message} (line {line})"),
+                    (Some(message), None) => message.to_string(),
+                    (None, _) => "FerrisKey found the policy invalid".to_string(),
+                },
+            ))
+        }
+        None => Err(malformed("a policy validation")),
+    }
+}
+
+pub fn schema_request(realm: &str) -> Result<ApiRequest, AgentsError> {
+    Ok(ApiRequest::new(Method::GET, schema_path(realm)?))
+}
+
+pub fn put_schema_request(realm: &str) -> Result<ApiRequest, AgentsError> {
+    Ok(ApiRequest::new(Method::PUT, schema_path(realm)?)
+        .body(json!({ "namespace": "App", "source": MINIMAL_SCHEMA })))
+}
+
 pub fn parse_policy(value: &Value) -> Result<RemotePolicy, AgentsError> {
-    let source = text(&value["body"], "source")
-        .or_else(|| text(value, "source"))
-        .or_else(|| text(value, "cedar"))
-        .unwrap_or_default();
     Ok(RemotePolicy {
-        ferriskey_id: id_of(value, "a policy")?,
+        ferriskey_id: text(value, "id")
+            .ok_or_else(|| malformed("a policy"))?
+            .to_string(),
         name: text(value, "name")
             .ok_or_else(|| malformed("a policy"))?
             .to_string(),
         description: text(value, "description").map(ToOwned::to_owned),
-        source: source.to_string(),
+        source: text(&value["body"], "source")
+            .unwrap_or_default()
+            .to_string(),
         enabled: value["enabled"].as_bool().unwrap_or(true),
     })
 }
 
-pub fn parse_policies(body: &Value) -> Result<(Vec<RemotePolicy>, Option<u32>), AgentsError> {
-    let policies = items(body)
-        .into_iter()
+pub fn parse_policies(body: &Value) -> Result<Vec<RemotePolicy>, AgentsError> {
+    body.as_array()
+        .ok_or_else(|| malformed("a list of policies"))?
+        .iter()
         .map(parse_policy)
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok((policies, next_page(body)))
+        .collect()
+}
+
+async fn enable_authorization<C: Caller>(caller: &C, realm: &str) -> Result<(), AgentsError> {
+    set_state(caller, realm, true).await?;
+    match send(caller, schema_request(realm)?).await {
+        Ok(_) => Ok(()),
+        Err(AgentsError::NotFound) => send(caller, put_schema_request(realm)?).await.map(|_| ()),
+        Err(error) => Err(error),
+    }
+}
+
+async fn set_state<C: Caller>(caller: &C, realm: &str, enabled: bool) -> Result<(), AgentsError> {
+    match send(caller, authorization_state_request(realm, enabled)?).await {
+        Ok(_) => Ok(()),
+        Err(AgentsError::NotFound) => Err(AgentsError::Retry {
+            message: "FerrisKey's authorization API is not available yet".to_string(),
+        }),
+        Err(error) => Err(error),
+    }
+}
+
+async fn check_policy<C: Caller>(
+    caller: &C,
+    realm: &str,
+    write: &PolicyWrite,
+) -> Result<(), AgentsError> {
+    let body = send(caller, validate_policy_request(realm, write)?).await?;
+    match first_issue(&body)? {
+        None => Ok(()),
+        Some(issue) => Err(AgentsError::Rejected {
+            message: format!("FerrisKey refused the policy: {issue}"),
+        }),
+    }
+}
+
+async fn create_checked<C: Caller>(
+    caller: &C,
+    realm: &str,
+    write: &PolicyWrite,
+) -> Result<(), AgentsError> {
+    check_policy(caller, realm, write).await?;
+    send(caller, create_policy_request(realm, write)?)
+        .await
+        .map(|_| ())
+}
+
+async fn update_checked<C: Caller>(
+    caller: &C,
+    realm: &str,
+    ferriskey_id: &str,
+    write: &PolicyWrite,
+) -> Result<(), AgentsError> {
+    check_policy(caller, realm, write).await?;
+    send(caller, update_policy_request(realm, ferriskey_id, write)?)
+        .await
+        .map(|_| ())
 }
 
 struct RemoteClient {
@@ -313,6 +413,11 @@ async fn ensure_evaluator_role<C: Caller>(
                 .as_array()
                 .is_some_and(|list| list.iter().any(|p| p.as_str() == Some(EVALUATE_PERMISSION)));
             if !permitted {
+                let mut permissions: Vec<&str> = role["permissions"]
+                    .as_array()
+                    .map(|list| list.iter().filter_map(Value::as_str).collect())
+                    .unwrap_or_default();
+                permissions.push(EVALUATE_PERMISSION);
                 send(
                     caller,
                     ApiRequest::new(
@@ -323,7 +428,7 @@ async fn ensure_evaluator_role<C: Caller>(
                             segment(&id)?
                         ),
                     )
-                    .body(json!({ "permissions": [EVALUATE_PERMISSION] })),
+                    .body(json!({ "permissions": permissions })),
                 )
                 .await?;
             }
@@ -551,18 +656,7 @@ async fn all_policies<C: Caller>(
     caller: &C,
     realm: &str,
 ) -> Result<Vec<RemotePolicy>, AgentsError> {
-    let mut all = Vec::new();
-    let mut page = 1;
-    for _ in 0..MAX_PAGES {
-        let body = send(caller, list_policies_request(realm, page)?).await?;
-        let (mut found, next) = parse_policies(&body)?;
-        all.append(&mut found);
-        match next {
-            Some(next) if next > page => page = next,
-            _ => break,
-        }
-    }
-    Ok(all)
+    parse_policies(&send(caller, list_policies_request(realm)?).await?)
 }
 
 pub struct KubeFerriskeyAgents {
@@ -665,17 +759,10 @@ impl FerriskeyAgentsPort for KubeFerriskeyAgents {
         realm: &str,
         enabled: bool,
     ) -> Result<(), AgentsError> {
-        match send(
-            &self.bound(instance),
-            authorization_state_request(realm, enabled)?,
-        )
-        .await
-        {
-            Ok(_) => Ok(()),
-            Err(AgentsError::NotFound) => Err(AgentsError::Retry {
-                message: "FerrisKey's authorization API is not available yet".to_string(),
-            }),
-            Err(error) => Err(error),
+        if enabled {
+            enable_authorization(&self.bound(instance), realm).await
+        } else {
+            set_state(&self.bound(instance), realm, false).await
         }
     }
 
@@ -731,9 +818,7 @@ impl FerriskeyAgentsPort for KubeFerriskeyAgents {
         realm: &str,
         write: &PolicyWrite,
     ) -> Result<(), AgentsError> {
-        send(&self.bound(instance), create_policy_request(realm, write)?)
-            .await
-            .map(|_| ())
+        create_checked(&self.bound(instance), realm, write).await
     }
 
     async fn update_policy(
@@ -743,12 +828,13 @@ impl FerriskeyAgentsPort for KubeFerriskeyAgents {
         policy: &ManagedPolicy,
         write: &PolicyWrite,
     ) -> Result<(), AgentsError> {
-        send(
+        update_checked(
             &self.bound(instance),
-            update_policy_request(realm, &policy.policy.ferriskey_id, write)?,
+            realm,
+            &policy.policy.ferriskey_id,
+            write,
         )
         .await
-        .map(|_| ())
     }
 
     async fn delete_policy(
@@ -1210,47 +1296,45 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn every_page_of_policies_is_read() {
-        struct Pages;
-        impl Caller for Pages {
-            async fn call(&self, request: &ApiRequest) -> Result<Value, ApiFailure> {
-                let page = request
-                    .query
-                    .iter()
-                    .find(|(key, _)| *key == "page")
-                    .map(|(_, value)| value.as_str())
-                    .unwrap_or("1");
-                Ok(match page {
-                    "1" => json!({
-                        "data": [{ "id": "p1", "name": "autharie:a", "body": { "source": "x" } }],
-                        "metadata": { "next_page": 2 }
-                    }),
-                    _ => json!({
-                        "data": [{ "id": "p2", "name": "autharie:b", "source": "y" }],
-                        "metadata": { "next_page": null }
-                    }),
-                })
-            }
-        }
+    async fn the_managed_policies_are_a_plain_list() {
+        let world = World::new(vec![(
+            Method::GET,
+            "/realms/acme/authz/policies",
+            json!([
+                {
+                    "id": "0b9ad3c4-4a5f-4c3b-8d57-0b2d6d9e1a11", "name": "autharie:a",
+                    "description": null, "origin": "custom", "enabled": true,
+                    "managed_by": "autharie",
+                    "body": { "type": "static", "source": "x" }
+                },
+                {
+                    "id": "1b9ad3c4-4a5f-4c3b-8d57-0b2d6d9e1a11", "name": "autharie:b",
+                    "description": "d", "origin": "custom", "enabled": false,
+                    "managed_by": "autharie",
+                    "body": { "type": "static", "source": "y" }
+                }
+            ]),
+        )]);
 
-        let found = all_policies(&Pages, "acme").await.expect("listed");
+        let found = all_policies(&world, "acme").await.expect("listed");
 
         assert_eq!(found.len(), 2);
         assert_eq!(found[1].source, "y");
+        assert!(!found[1].enabled);
+        assert!(
+            parse_policies(&json!({ "data": [] }))
+                .expect_err("not a list")
+                .is_retry()
+        );
     }
 
     #[test]
     fn listing_asks_only_for_what_autharie_manages() {
-        let request = list_policies_request("acme", 2).expect("a request");
+        let request = list_policies_request("acme").expect("a request");
 
         assert_eq!(request.method, Method::GET);
         assert_eq!(request.path, "/realms/acme/authz/policies");
-        assert!(
-            request
-                .query
-                .contains(&("managed_by", "autharie".to_string()))
-        );
-        assert!(request.query.contains(&("page", "2".to_string())));
+        assert_eq!(request.query, vec![("managed_by", "autharie".to_string())]);
     }
 
     fn write() -> PolicyWrite {
@@ -1263,18 +1347,18 @@ mod tests {
     }
 
     #[test]
-    fn a_policy_is_written_as_a_labelled_static_policy() {
+    fn a_policy_is_written_as_a_static_policy_labelled_by_the_query() {
         let request = create_policy_request("acme", &write()).expect("a request");
 
         assert_eq!(request.method, Method::POST);
         assert_eq!(request.path, "/realms/acme/authz/policies");
+        assert_eq!(request.query, vec![("managed_by", "autharie".to_string())]);
         assert_eq!(
             request.body,
             Some(json!({
                 "name": "autharie:0b9ad3c4-4a5f-4c3b-8d57-0b2d6d9e1a11",
                 "description": "Read only",
                 "enabled": true,
-                "managed_by": "autharie",
                 "body": { "type": "static", "source": "permit (principal, action, resource);" },
             }))
         );
@@ -1287,14 +1371,11 @@ mod tests {
 
         assert_eq!(update.method, Method::PUT);
         assert_eq!(update.path, "/realms/acme/authz/policies/f1");
-        assert_eq!(update.body.as_ref().unwrap()["managed_by"], "autharie");
+        assert_eq!(update.query, vec![("managed_by", "autharie".to_string())]);
+        assert!(update.body.as_ref().unwrap().get("managed_by").is_none());
         assert_eq!(delete.method, Method::DELETE);
         assert_eq!(delete.path, "/realms/acme/authz/policies/f1");
-        assert!(
-            delete
-                .query
-                .contains(&("managed_by", "autharie".to_string()))
-        );
+        assert_eq!(delete.query, vec![("managed_by", "autharie".to_string())]);
     }
 
     #[test]
@@ -1305,21 +1386,186 @@ mod tests {
     }
 
     #[test]
-    fn a_policy_is_read_from_its_body_or_its_flat_fields() {
-        let nested = parse_policy(&json!({
+    fn a_policy_is_read_from_its_body() {
+        let parsed = parse_policy(&json!({
             "id": "p1", "name": "autharie:a", "description": "d", "enabled": false,
+            "origin": "custom", "managed_by": "autharie",
             "body": { "type": "static", "source": "permit;" }
         }))
         .expect("parsed");
-        let flat =
-            parse_policy(&json!({ "id": "p2", "name": "n", "cedar": "forbid;" })).expect("parsed");
 
-        assert_eq!(nested.source, "permit;");
-        assert!(!nested.enabled);
-        assert_eq!(nested.description.as_deref(), Some("d"));
-        assert_eq!(flat.source, "forbid;");
-        assert!(flat.enabled);
+        assert_eq!(parsed.source, "permit;");
+        assert!(!parsed.enabled);
+        assert_eq!(parsed.description.as_deref(), Some("d"));
         assert!(parse_policy(&json!({ "name": "n" })).is_err());
+    }
+
+    #[test]
+    fn a_policy_is_validated_as_a_candidate_before_it_is_stored() {
+        let request = validate_policy_request("acme", &write()).expect("a request");
+
+        assert_eq!(request.method, Method::POST);
+        assert_eq!(request.path, "/realms/acme/authz/policies/validate");
+        assert!(request.query.is_empty());
+        assert_eq!(
+            request.body,
+            Some(json!({ "policies": [{
+                "name": "autharie:0b9ad3c4-4a5f-4c3b-8d57-0b2d6d9e1a11",
+                "body": { "type": "static", "source": "permit (principal, action, resource);" },
+            }] }))
+        );
+    }
+
+    #[test]
+    fn the_first_issue_carries_its_message_and_line() {
+        assert_eq!(
+            first_issue(&json!({ "valid": true, "issues": [] })).expect("read"),
+            None
+        );
+        assert_eq!(
+            first_issue(&json!({ "valid": false, "issues": [
+                { "policy": "autharie:a", "message": "unknown action", "line": 3, "column": 9 },
+                { "policy": "autharie:a", "message": "later", "line": 4, "column": 1 }
+            ] }))
+            .expect("read"),
+            Some("unknown action (line 3)".to_string())
+        );
+        assert_eq!(
+            first_issue(&json!({ "valid": false, "issues": [
+                { "policy": null, "message": "bad", "line": null, "column": null }
+            ] }))
+            .expect("read"),
+            Some("bad".to_string())
+        );
+        assert!(first_issue(&json!({})).expect_err("unknown").is_retry());
+    }
+
+    #[tokio::test]
+    async fn an_invalid_policy_is_reported_and_not_written() {
+        let world = World::new(vec![
+            (
+                Method::POST,
+                "/realms/acme/authz/policies/validate",
+                json!({ "valid": false, "issues": [
+                    { "policy": "autharie:x", "message": "unknown action `fly`", "line": 2, "column": 5 }
+                ] }),
+            ),
+            (Method::POST, "/realms/acme/authz/policies", json!({})),
+            (Method::PUT, "/realms/acme/authz/policies/f1", json!({})),
+        ]);
+
+        let created = create_checked(&world, "acme", &write())
+            .await
+            .expect_err("invalid");
+        let updated = update_checked(&world, "acme", "f1", &write())
+            .await
+            .expect_err("invalid");
+
+        for error in [created, updated] {
+            assert_eq!(
+                error,
+                AgentsError::Rejected {
+                    message: "FerrisKey refused the policy: unknown action `fly` (line 2)"
+                        .to_string()
+                }
+            );
+        }
+        assert_eq!(world.writes().len(), 2);
+        assert!(
+            world
+                .writes()
+                .iter()
+                .all(|(_, path, _)| path.ends_with("/validate"))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_valid_policy_is_written_after_it_is_validated() {
+        let world = World::new(vec![
+            (
+                Method::POST,
+                "/realms/acme/authz/policies/validate",
+                json!({ "valid": true, "issues": [] }),
+            ),
+            (Method::POST, "/realms/acme/authz/policies", json!({})),
+        ]);
+
+        create_checked(&world, "acme", &write())
+            .await
+            .expect("created");
+
+        let paths: Vec<_> = world
+            .writes()
+            .into_iter()
+            .map(|(_, path, _)| path)
+            .collect();
+        assert_eq!(
+            paths,
+            vec![
+                "/realms/acme/authz/policies/validate",
+                "/realms/acme/authz/policies"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_realm_without_a_schema_is_given_the_minimal_one_after_the_state_is_on() {
+        let world = World::new(vec![
+            (
+                Method::PUT,
+                "/realms/acme/authz/state",
+                json!({ "enabled": true, "version": 1 }),
+            ),
+            (
+                Method::PUT,
+                "/realms/acme/authz/schema",
+                json!({ "namespace": "App", "source": "namespace App {}" }),
+            ),
+        ]);
+
+        enable_authorization(&world, "acme").await.expect("enabled");
+
+        let writes = world.writes();
+        assert_eq!(writes[0].1, "/realms/acme/authz/state");
+        assert_eq!(writes[0].2, Some(json!({ "enabled": true })));
+        assert_eq!(writes[1].0, Method::PUT);
+        assert_eq!(writes[1].1, "/realms/acme/authz/schema");
+        assert_eq!(
+            writes[1].2,
+            Some(json!({ "namespace": "App", "source": "namespace App {}" }))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_realm_with_a_schema_keeps_it() {
+        let world = World::new(vec![
+            (
+                Method::PUT,
+                "/realms/acme/authz/state",
+                json!({ "enabled": true, "version": 1 }),
+            ),
+            (
+                Method::GET,
+                "/realms/acme/authz/schema",
+                json!({ "namespace": "App", "source": "namespace App { entity Doc; }" }),
+            ),
+        ]);
+
+        enable_authorization(&world, "acme").await.expect("enabled");
+
+        assert_eq!(world.writes().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn authorization_that_is_not_mounted_is_a_reason_to_wait() {
+        let world = World::new(Vec::new());
+
+        assert!(
+            enable_authorization(&world, "acme")
+                .await
+                .expect_err("waits")
+                .is_retry()
+        );
     }
 
     #[test]
