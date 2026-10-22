@@ -87,6 +87,53 @@
         }
       }
     },
+    "/cloud-providers": {
+      "get": {
+        "tags": [
+          "cloud-providers"
+        ],
+        "summary": "list the cloud providers this installation can connect",
+        "description": "The providers an organisation can register a credential for here. Empty when customer cloud is off, or on but unable to run, so a client can tell whether to offer cloud accounts at all. Says nothing about any organisation, which is what makes it safe to answer for any caller.",
+        "operationId": "list_cloud_providers_handler",
+        "responses": {
+          "200": {
+            "description": "Providers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListCloudProvidersResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/dataplanes": {
       "get": {
         "tags": [
@@ -15518,6 +15565,20 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/Backup"
+            }
+          }
+        }
+      },
+      "ListCloudProvidersResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Provider"
             }
           }
         }

@@ -2,6 +2,7 @@ pub mod actions;
 pub mod audit;
 pub mod billing;
 pub mod cloud_credentials;
+pub mod cloud_providers;
 pub mod dataplanes;
 pub mod deployments;
 pub mod invitations;

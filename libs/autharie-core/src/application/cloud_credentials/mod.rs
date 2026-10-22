@@ -31,6 +31,11 @@ use crate::{
 };
 
 pub trait CloudProviderService: Send + Sync {
+    fn list_cloud_providers(
+        &self,
+        identity: Identity,
+    ) -> impl Future<Output = Result<Vec<Provider>, CoreError>> + Send;
+
     fn register_cloud_credential(
         &self,
         identity: Identity,
@@ -89,6 +94,10 @@ pub trait CloudProviderService: Send + Sync {
 }
 
 impl CloudProviderService for AutharieService {
+    async fn list_cloud_providers(&self, _identity: Identity) -> Result<Vec<Provider>, CoreError> {
+        Ok(self.cloud_providers().providers())
+    }
+
     #[transactional(cloud_credential, sealed_secret)]
     async fn register_cloud_credential(
         &self,
@@ -216,5 +225,63 @@ impl CloudProviderService for AutharieService {
         )
         .execute(identity, organisation_id, deployment_id, spec)
         .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use autharie_auth::User;
+    use autharie_domain::dataplane::cloud_provider::ProviderOffers;
+    use sqlx::postgres::PgPoolOptions;
+
+    use super::*;
+    use crate::infrastructure::credentials::{CloudProviders, FixedCloudProvider, FixedVerdict};
+
+    fn service(cloud: CloudProviders) -> AutharieService {
+        let pool = PgPoolOptions::new()
+            .acquire_timeout(Duration::from_millis(50))
+            .connect_lazy("postgres://user:pass@127.0.0.1:1/db")
+            .expect("valid database url");
+
+        AutharieService::new(pool).with_cloud_providers(cloud)
+    }
+
+    fn identity() -> Identity {
+        Identity::User(User {
+            id: "user-1".to_string(),
+            username: "user".to_string(),
+            email: None,
+            name: None,
+            roles: vec![],
+            scopes: vec![],
+            act: None,
+        })
+    }
+
+    #[tokio::test]
+    async fn an_installation_without_a_cloud_provider_lists_none() {
+        let providers = service(CloudProviders::Unconfigured)
+            .list_cloud_providers(identity())
+            .await
+            .expect("an answer");
+
+        assert!(providers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_installation_with_a_cloud_provider_lists_it() {
+        let cloud = CloudProviders::Fixed(FixedCloudProvider {
+            offers: ProviderOffers::default(),
+            verdict: FixedVerdict::Accept,
+        });
+
+        let providers = service(cloud)
+            .list_cloud_providers(identity())
+            .await
+            .expect("an answer");
+
+        assert_eq!(providers, vec![Provider::Scaleway]);
     }
 }

@@ -1,9 +1,10 @@
 import { Outlet } from '@tanstack/react-router'
-import { Boxes, Cloud, CreditCard, LayoutGrid, Settings, ShieldCheck, Users } from 'lucide-react'
+import { offersCloudProviders } from '@/domain/cloud-providers/availability'
+import { useCloudProviders } from '@/domain/cloud-providers/hooks/use-cloud-providers'
 import { useMyPermissions } from '@/domain/organisations/hooks/use-my-permissions'
-import { CAN } from '@/domain/organisations/permissions'
 import { useOrganisationPath } from '@/domain/organisations/hooks/use-organisation-path'
-import { NavTabs, type Tab } from './nav-tabs'
+import { NavTabs } from './nav-tabs'
+import { organisationTabs } from './organisation-tabs'
 import { TopBar } from './top-bar'
 
 /**
@@ -18,30 +19,13 @@ import { TopBar } from './top-bar'
 export function AppLayout() {
   const organisationPath = useOrganisationPath()
   const { can } = useMyPermissions()
+  const cloudProviders = useCloudProviders()
 
-  // A tab leading to a page that answers 403 is worse than no tab: it invites
-  // the click and then blames the person for it.
-  const tabs: Tab[] = [
-    { label: 'Overview', to: organisationPath(), icon: LayoutGrid, exact: true },
-    ...(can(CAN.viewInstances)
-      ? [{ label: 'Deployments', to: organisationPath('/deployments'), icon: Boxes }]
-      : []),
-    ...(can(CAN.viewInstances)
-      ? [{ label: 'Cloud accounts', to: organisationPath('/cloud-accounts'), icon: Cloud }]
-      : []),
-    ...(can(CAN.viewMembers)
-      ? [{ label: 'Members', to: organisationPath('/members'), icon: Users }]
-      : []),
-    ...(can(CAN.viewRoles)
-      ? [{ label: 'Roles', to: organisationPath('/roles'), icon: ShieldCheck }]
-      : []),
-    ...(can(CAN.viewBilling)
-      ? [{ label: 'Billing', to: organisationPath('/billing'), icon: CreditCard }]
-      : []),
-    ...(can(CAN.viewOrganisation)
-      ? [{ label: 'Settings', to: organisationPath('/settings'), icon: Settings }]
-      : []),
-  ]
+  const tabs = organisationTabs({
+    can,
+    organisationPath,
+    cloudAccounts: offersCloudProviders(cloudProviders.data),
+  })
 
   return (
     <div className='min-h-svh bg-background'>
