@@ -128,6 +128,7 @@ export default function PageDeploymentOverviewFeature() {
       adminUrl={adminUrlOf(endpoint, subject.kind)}
       banner={notice && <ProvisioningNoticeBanner notice={notice} />}
       facts={{
+        kind: subject.kind,
         endpoint,
         issuer: issuerOf(endpoint, subject.kind),
         version: subject.version,

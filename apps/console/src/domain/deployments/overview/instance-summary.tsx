@@ -1,8 +1,11 @@
 import { useState } from 'react'
 import { Check, Copy } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { DeploymentKindLabel } from '../pages/ui/components/deployment-kind'
+import type { DeploymentKind } from '../types/deployment'
 
 export interface InstanceFacts {
+  kind: DeploymentKind
   endpoint?: string
   issuer?: string
   version: string
@@ -58,6 +61,9 @@ export function InstanceSummary({ facts }: { facts: InstanceFacts }) {
         <h2 className='text-sm font-semibold'>Instance</h2>
       </div>
       <dl className='divide-y px-4 py-1'>
+        <Row term='Provider'>
+          <DeploymentKindLabel kind={facts.kind} />
+        </Row>
         {facts.endpoint && (
           <Row term='Endpoint'>
             <CopyValue value={facts.endpoint} label='endpoint' />
