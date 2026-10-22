@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE deployment_webhook_requests\n            SET phase = $2, message = $3, updated_at = $4\n            WHERE id = $1 AND phase = 'pending' AND $2 <> 'pending'\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3377c68dc5d1e2148e9da19de95eead5c81ce60b98f71aa5a3c50578ba9a2e7f"
+}

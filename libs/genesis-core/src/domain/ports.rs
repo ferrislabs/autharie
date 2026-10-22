@@ -1,4 +1,6 @@
 use crate::domain::entities::action_event::ActionEvent;
+use crate::domain::entities::agents_outcome::AgentsOutcomeReport;
+use crate::domain::entities::agents_payload::AgentsPayloadV1;
 use crate::domain::entities::dataplane_upgrade::{
     DataplaneUpgradeRef, DesiredDataplaneUpgrade, ExistingDataplaneUpgrade,
 };
@@ -200,5 +202,25 @@ pub trait WebhookPort: Send + Sync {
         &'a self,
         reference: &'a IdentityInstanceRef,
         request: &'a WebhookRequestEntry,
+    ) -> impl Future<Output = Result<(), GenesisError>> + Send + 'a;
+}
+
+pub trait AgentsOutcomePublisher: Send + Sync {
+    fn publish_agents<'a>(
+        &'a self,
+        report: &'a AgentsOutcomeReport,
+    ) -> impl Future<Output = Result<(), GenesisError>> + Send + 'a;
+}
+
+pub trait AgentsPort: Send + Sync {
+    fn revision<'a>(
+        &'a self,
+        reference: &'a IdentityInstanceRef,
+    ) -> impl Future<Output = Result<u64, GenesisError>> + Send + 'a;
+
+    fn apply<'a>(
+        &'a self,
+        reference: &'a IdentityInstanceRef,
+        desired: &'a AgentsPayloadV1,
     ) -> impl Future<Output = Result<(), GenesisError>> + Send + 'a;
 }

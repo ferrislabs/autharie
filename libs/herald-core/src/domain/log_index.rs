@@ -12,8 +12,10 @@ use regex::Regex;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
+use super::agent_decisions::AgentDecisionFields;
 use super::entities::deployment::DeploymentId;
 use super::entities::logs::{LogLine, LogStreamRequest, OrganisationId};
+use super::webhook_deliveries::WebhookDeliveryFields;
 
 /// The level Herald could not find in a line's own text.
 const UNKNOWN_LEVEL: &str = "unknown";
@@ -43,6 +45,10 @@ pub struct LogIndexDocument {
     /// Computed here, at ingest, from [`normalise_message`] -- see
     /// [`fingerprint`].
     pub fingerprint: String,
+    #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    pub delivery: Option<WebhookDeliveryFields>,
+    #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    pub agent_decision: Option<AgentDecisionFields>,
 }
 
 impl LogIndexDocument {
@@ -61,6 +67,8 @@ impl LogIndexDocument {
             // them off has to be one signature, not two.
             fingerprint: fingerprint(&message),
             message,
+            delivery: None,
+            agent_decision: None,
         }
     }
 }

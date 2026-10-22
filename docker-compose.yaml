@@ -63,6 +63,11 @@ services:
       # the wrong one meant the control plane could not fetch the JWKS -- so
       # every authenticated request failed with what looked like a bad token.
       AUTH_ISSUER: http://ferriskey-api:3333/realms/autharie
+      # FerrisKey puts the host a token was requested on into `iss`, and the
+      # console and CLI reach it as localhost, not as ferriskey-api. The API
+      # refuses any other issuer, so every spelling is listed. The last is the
+      # one scripts/demo.sh installs Herald with inside k3d.
+      AUTH_TOKEN_ISSUER: http://localhost:${FERRISKEY_API_PORT:-3334}/realms/autharie,http://host.k3d.internal:${FERRISKEY_API_PORT:-3334}/realms/autharie
       # Without this the CORS layer allows no origin at all, and the console
       # cannot call the API. It has been required since the origins became
       # configurable rather than hardcoded to localhost:5173.
@@ -189,6 +194,9 @@ services:
       DATABASE_NAME: ferriskey
       DATABASE_PASSWORD: autharie
       DATABASE_USER: autharie
+      # The decision endpoint the MCP gateway asks (AuthZEN), off by default in
+      # FerrisKey.
+      AUTHZ_ENABLED: "true"
     ports:
       - "${FERRISKEY_API_PORT:-3334}:3333"
     depends_on:
@@ -207,6 +215,41 @@ services:
       - "${FERRISKEY_WEBAPP_PORT:-5556}:80"
     depends_on:
       - ferriskey-api
+
+  # === Agents (MCP) ===
+  # Private: reached only through the gateway, which authenticates the caller,
+  # asks FerrisKey whether the call is allowed and exchanges the token first.
+  autharie-mcp:
+    build:
+      context: .
+      target: mcp
+    networks:
+      - autharie
+    environment:
+      AUTHARIE_MCP_API_URL: http://autharie:7777
+    depends_on:
+      - autharie
+
+  # The only door: http://localhost:${MCP_GATEWAY_PORT}/mcp. Its configuration
+  # holds the mcp-gateway client's secret, so it is written by
+  # scripts/bootstrap-ferriskey.sh (deploy/local/mcp-gateway.toml.tmpl is the
+  # shape). The directory is mounted, not the file: the gateway starts without
+  # it and loads it when it appears, and picks up every later change.
+  mcp-gateway:
+    build:
+      context: .
+      target: mcp-gateway
+    ports:
+      - "${MCP_GATEWAY_PORT:-9090}:8080"
+    networks:
+      - autharie
+    environment:
+      MCP_GATEWAY_CONFIG: /etc/mcp-gateway/mcp-gateway.toml
+      MCP_GATEWAY_RELOAD_SECS: "3"
+    volumes:
+      - ./deploy/local:/etc/mcp-gateway:ro
+    depends_on:
+      - autharie-mcp
 
   # === Key manager ===
   # Transit is the engine every key manager this platform talks to looks like:

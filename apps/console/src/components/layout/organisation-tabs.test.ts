@@ -35,6 +35,7 @@ describe('the tabs of an organisation', () => {
       CAN.viewMembers,
       CAN.viewRoles,
       CAN.viewBilling,
+      CAN.viewOrganisation,
     ]
 
     expect(labels(everything, true)).toEqual([
@@ -44,6 +45,7 @@ describe('the tabs of an organisation', () => {
       'Members',
       'Roles',
       'Billing',
+      'Settings',
     ])
   })
 

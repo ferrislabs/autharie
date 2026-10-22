@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE agent_policies\n            SET phase = $4,\n                message = $5\n            WHERE deployment_id = $1\n              AND id = $2\n              AND enabled\n              AND desired_revision <= $3\n              AND (phase IS DISTINCT FROM $4 OR message IS DISTINCT FROM $5)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int8",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0dadf1690f350019d20783c2f7e15bdc2b93053ce50591efd0135ab526f6535e"
+}

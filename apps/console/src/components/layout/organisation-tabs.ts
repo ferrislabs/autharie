@@ -1,4 +1,4 @@
-import { Boxes, Cloud, CreditCard, LayoutGrid, ShieldCheck, Users } from 'lucide-react'
+import { Boxes, Cloud, CreditCard, LayoutGrid, Settings, ShieldCheck, Users } from 'lucide-react'
 import { CAN } from '@/domain/organisations/permissions'
 import type { Tab } from './nav-tabs'
 
@@ -34,6 +34,9 @@ export function organisationTabs({ can, organisationPath, cloudAccounts }: Optio
       : []),
     ...(can(CAN.viewBilling)
       ? [{ label: 'Billing', to: organisationPath('/billing'), icon: CreditCard }]
+      : []),
+    ...(can(CAN.viewOrganisation)
+      ? [{ label: 'Settings', to: organisationPath('/settings'), icon: Settings }]
       : []),
   ]
 }

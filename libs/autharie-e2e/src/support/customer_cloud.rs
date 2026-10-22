@@ -936,6 +936,8 @@ impl AuditService for Audit {
 
 pub fn member() -> Identity {
     Identity::User(autharie_auth::User {
+        scopes: Vec::new(),
+        act: None,
         id: Uuid::from_u128(7).to_string(),
         username: "member".to_string(),
         email: None,

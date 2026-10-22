@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO deployment_agents (deployment_id, revision, updated_at)\n            VALUES ($1, 1, $2)\n            ON CONFLICT (deployment_id) DO UPDATE\n            SET revision = deployment_agents.revision + 1\n            RETURNING revision\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "revision",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "bf9736b1eb6c20649c0887be7c7e5a3218f4c3de17f2d00cd3422948b7f6eb31"
+}

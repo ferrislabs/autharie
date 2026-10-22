@@ -149,24 +149,14 @@ where
         }
 
         // 5. Apply updates to the organisation
-        match (command.name, command.slug) {
-            (Some(name), Some(slug)) => {
-                organisation.update_name(name, slug);
-            }
-            (Some(name), None) => {
-                // Keep existing slug
-                let slug = organisation.slug.clone();
-                organisation.update_name(name, slug);
-            }
-            (None, Some(slug)) => {
-                // Keep existing name
-                let name = organisation.name.clone();
-                organisation.update_name(name, slug);
-            }
-            (None, None) => {
-                // This shouldn't happen due to is_empty() check, but handle it anyway
-                return Err(CoreError::InternalError("No fields to update".to_string()));
-            }
+        if command.name.is_some() || command.slug.is_some() {
+            let name = command.name.unwrap_or_else(|| organisation.name.clone());
+            let slug = command.slug.unwrap_or_else(|| organisation.slug.clone());
+            organisation.update_name(name, slug);
+        }
+
+        if let Some(enabled) = command.mcp_enabled {
+            organisation.set_mcp_enabled(enabled);
         }
 
         let updated = self.organisation_repository.update(organisation).await?;
@@ -282,6 +272,7 @@ mod tests {
             created_at: Utc::now(),
             updated_at: Utc::now(),
             deleted_at: None,
+            mcp_enabled: false,
         }
     }
 
@@ -506,6 +497,33 @@ mod tests {
         let org = result.unwrap();
         assert_eq!(org.name.as_str(), "New Name");
         assert_eq!(org.slug.as_str(), "new-slug");
+    }
+
+    #[tokio::test]
+    async fn test_update_organisation_switches_mcp_without_touching_the_name() {
+        let mut mock_repo = MockOrganisationRepository::new();
+        let org_id = OrganisationId::new();
+        let owner_id = UserId(Uuid::new_v4());
+        let existing_org = create_test_organisation("Acme", "acme", owner_id, Plan::Free);
+        assert!(!existing_org.mcp_enabled);
+
+        mock_repo.expect_find_by_id().times(1).returning(move |_| {
+            let org = existing_org.clone();
+            Box::pin(async move { Ok(Some(org)) })
+        });
+        mock_repo
+            .expect_update()
+            .withf(|org| {
+                org.mcp_enabled && org.name.as_str() == "Acme" && org.slug.as_str() == "acme"
+            })
+            .times(1)
+            .returning(|org| Box::pin(async move { Ok(org) }));
+
+        let service = OrganisationServiceImpl::new(mock_repo, FakeUserRepository::new(None));
+        let command = UpdateOrganisationCommand::new().with_mcp_enabled(true);
+
+        let org = service.update_organisation(org_id, command).await.unwrap();
+        assert!(org.mcp_enabled);
     }
 
     #[tokio::test]

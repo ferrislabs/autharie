@@ -90,6 +90,14 @@ pub struct LogIndexArgs {
                 The trace pipeline ships to the same instance, under a different index prefix."
     )]
     pub quickwit_url: Option<String>,
+
+    #[arg(
+        long = "mcp-gateway-namespace",
+        env = "MCP_GATEWAY_NAMESPACE",
+        help = "Namespace the MCP gateway runs in. With --quickwit-url set, its agent \
+                decision records are shipped to the search index. Absent means they are not."
+    )]
+    pub mcp_gateway_namespace: Option<String>,
 }
 
 /// Where the OTLP trace receiver listens, if at all.

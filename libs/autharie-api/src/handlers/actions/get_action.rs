@@ -3,6 +3,7 @@ use autharie_core::{
     action::{Action, ActionId, ports::ActionService},
     deployments::ports::DeploymentService,
     organisation::OrganisationId,
+    webhooks::redacted,
 };
 use axum::extract::{Extension, State};
 use axum_extra::routing::TypedPath;
@@ -63,7 +64,9 @@ pub async fn get_action_handler(
             reason: "action not found".to_string(),
         })?;
 
-    Ok(Response::OK(GetActionResponse { data: action }))
+    Ok(Response::OK(GetActionResponse {
+        data: redacted(action),
+    }))
 }
 
 #[cfg(test)]

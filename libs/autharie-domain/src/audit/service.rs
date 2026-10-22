@@ -112,6 +112,8 @@ mod tests {
 
     fn identity() -> Identity {
         Identity::User(User {
+            scopes: Vec::new(),
+            act: None,
             id: "user-1".to_string(),
             username: "user".to_string(),
             email: None,
