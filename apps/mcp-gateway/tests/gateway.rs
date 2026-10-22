@@ -782,6 +782,7 @@ async fn spec_ag_1_tools_list_shows_only_what_the_caller_may_call() {
     assert_eq!(response.headers()["vary"], "authorization");
     let body: Value = response.json().await.unwrap();
     assert_eq!(tool_names(&body), ["read_a", "secret_c"]);
+    assert_eq!(body["result"]["cacheScope"], "private");
     assert_eq!(body["id"], 2);
 
     let batches = h.pdp.batches.lock().unwrap().clone();

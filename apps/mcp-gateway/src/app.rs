@@ -259,6 +259,11 @@ impl<S: DecisionSink> Call<'_, S> {
                 }
                 let mut allowed = decisions.iter().map(|d| d.allowed);
                 tools.retain(|_| allowed.next().unwrap_or(false));
+                // The list now depends on who asked, whatever the server said
+                // about caching it.
+                if let Some(result) = message.get_mut("result").and_then(Value::as_object_mut) {
+                    result.insert("cacheScope".to_owned(), json!("private"));
+                }
                 Ok(())
             }
             Err(error) => {
