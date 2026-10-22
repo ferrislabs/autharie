@@ -5,5 +5,5 @@ export interface ConnectStep {
 }
 
 export function stepWidth(step: ConnectStep): string {
-  return step.provider ? 'sm:max-w-2xl' : 'sm:max-w-lg'
+  return step.provider ? 'sm:max-w-4xl' : 'sm:max-w-lg'
 }

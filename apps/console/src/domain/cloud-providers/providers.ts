@@ -68,7 +68,7 @@ export const PROVIDERS: ProviderDefinition[] = [
       {
         name: 'IAMReadOnly',
         description:
-          "Autharie reads the key's policies, to check that it holds the permissions above and nothing more.",
+          'Autharie reads the policies of the key, to check that it holds the permissions above and nothing more.',
         note: 'Read only, and only used for that check.',
       },
     ],
