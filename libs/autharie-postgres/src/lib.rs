@@ -9,6 +9,9 @@ extern crate self as autharie_postgres;
 pub mod action;
 
 #[cfg_attr(coverage_nightly, coverage(off))]
+pub mod agents;
+
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub mod audit;
 
 #[cfg_attr(coverage_nightly, coverage(off))]
@@ -54,6 +57,9 @@ pub mod upgrades;
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod user;
 
+#[cfg_attr(coverage_nightly, coverage(off))]
+pub mod webhooks;
+
 /// Turns an sqlx failure into the domain's error.
 ///
 /// It lives here because this is the only crate that knows both types: the
@@ -82,6 +88,7 @@ pub mod registry {
     /// They carry no data and exist only to key the `RepoFor` lookup.
     pub mod domain {
         pub struct Action;
+        pub struct Agent;
         pub struct Audit;
         pub struct Backup;
         pub struct BackupSchedule;
@@ -109,6 +116,7 @@ pub mod registry {
         pub struct User;
         pub struct ReachabilityCheck;
         pub struct SealedSecret;
+        pub struct Webhook;
     }
 
     pub mod backend {
@@ -150,6 +158,7 @@ mod registry_completeness {
     #[test]
     fn every_domain_has_a_postgres_repository() {
         assert_registered::<domain::Action>();
+        assert_registered::<domain::Agent>();
         assert_registered::<domain::Audit>();
         assert_registered::<domain::Backup>();
         assert_registered::<domain::BackupSchedule>();
@@ -169,6 +178,7 @@ mod registry_completeness {
         assert_registered::<domain::ClusterClaims>();
         assert_registered::<domain::ClusterInventory>();
         assert_registered::<domain::SealedSecret>();
+        assert_registered::<domain::Webhook>();
         assert_registered::<domain::Tier>();
         assert_registered::<domain::Subscription>();
         assert_registered::<domain::BillingAccount>();

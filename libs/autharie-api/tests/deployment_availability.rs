@@ -201,6 +201,8 @@ fn app(pool: PgPool, user: Uuid) -> Router {
     Router::new()
         .typed_get(get_deployment_availability_handler)
         .layer(Extension(Identity::User(User {
+            scopes: Vec::new(),
+            act: None,
             id: user.to_string(),
             username: "someone".to_string(),
             email: None,

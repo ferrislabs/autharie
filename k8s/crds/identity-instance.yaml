@@ -36,6 +36,37 @@ spec:
         properties:
           spec:
             properties:
+              agents:
+                description: The agent settings this deployment should have, whole. FerrisKey only.
+                nullable: true
+                properties:
+                  enabled:
+                    type: boolean
+                  policies:
+                    items:
+                      properties:
+                        cedar:
+                          type: string
+                        id:
+                          type: string
+                        name:
+                          type: string
+                      required:
+                      - cedar
+                      - id
+                      - name
+                      type: object
+                    type: array
+                  policiesRevision:
+                    format: uint64
+                    minimum: 0.0
+                    type: integer
+                  realm:
+                    type: string
+                required:
+                - enabled
+                - realm
+                type: object
               allowedCidrs:
                 description: |-
                   Source ranges allowed to reach this instance, in CIDR notation.
@@ -410,6 +441,51 @@ spec:
                 description: Admin console URL
                 nullable: true
                 type: string
+              agents:
+                description: What became of `spec.agents`. Absent until the operator has had something to do.
+                nullable: true
+                properties:
+                  gatewayClientReady:
+                    default: false
+                    type: boolean
+                  mcpUrl:
+                    nullable: true
+                    type: string
+                  message:
+                    nullable: true
+                    type: string
+                  observedRevision:
+                    format: uint64
+                    minimum: 0.0
+                    type: integer
+                  phase:
+                    enum:
+                    - Applying
+                    - Ready
+                    - Failed
+                    type: string
+                  policies:
+                    items:
+                      properties:
+                        id:
+                          type: string
+                        message:
+                          nullable: true
+                          type: string
+                        phase:
+                          enum:
+                          - Applied
+                          - Invalid
+                          - Failed
+                          type: string
+                      required:
+                      - id
+                      - phase
+                      type: object
+                    type: array
+                required:
+                - phase
+                type: object
               conditions:
                 description: Conditions represent the latest available observations
                 items:

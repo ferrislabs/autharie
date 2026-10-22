@@ -7,6 +7,7 @@ use crate::handlers::{
     cloud_credentials::CloudCredentialApiDoc,
     dataplanes::DataPlaneApiDoc,
     deployments::DeploymentApiDoc,
+    deployments::webhooks::__path_list_webhook_events_handler,
     invitations::{InvitationApiDoc, accept::__path_accept_invitation_handler},
     logs::LogsApiDoc,
     members::MemberApiDoc,
@@ -31,7 +32,7 @@ use crate::handlers::{
     // Declared here rather than nested: whoever is accepting an invitation is
     // not in an organisation yet, so the route cannot sit under one, and
     // nest() has no way to say "no prefix".
-    paths(accept_invitation_handler),
+    paths(accept_invitation_handler, list_webhook_events_handler),
     nest(
         (path = "/organisations", api = OrganisationApiDoc),
         (path = "/organisations", api = RoleApiDoc),
@@ -187,6 +188,18 @@ fn served_paths() -> Vec<&'static str> {
         <deployments::resize_cluster::ClusterProfileRoute as TypedPath>::PATH,
         <deployments::subscription::SubscriptionRoute as TypedPath>::PATH,
         <deployments::features::DeploymentFeaturesRoute as TypedPath>::PATH,
+        <deployments::webhooks::WebhooksRoute as TypedPath>::PATH,
+        <deployments::webhooks::WebhookRoute as TypedPath>::PATH,
+        <deployments::webhooks::RotateSecretRoute as TypedPath>::PATH,
+        <deployments::webhooks::WebhookSecretRoute as TypedPath>::PATH,
+        <deployments::webhooks::DeliveriesRoute as TypedPath>::PATH,
+        <deployments::webhooks::RetryDeliveryRoute as TypedPath>::PATH,
+        <deployments::webhooks::WebhookRealmsRoute as TypedPath>::PATH,
+        <deployments::webhooks::WebhookEventsRoute as TypedPath>::PATH,
+        <deployments::agents::AgentsRoute as TypedPath>::PATH,
+        <deployments::agents::AgentPoliciesRoute as TypedPath>::PATH,
+        <deployments::agents::AgentPolicyRoute as TypedPath>::PATH,
+        <deployments::agents::AgentDecisionsRoute as TypedPath>::PATH,
         <cloud_credentials::register_credential::CloudCredentialsRoute as TypedPath>::PATH,
         <cloud_credentials::delete_credential::CloudCredentialRoute as TypedPath>::PATH,
         <cloud_credentials::list_offers::ProviderOffersRoute as TypedPath>::PATH,

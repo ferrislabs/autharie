@@ -100,11 +100,35 @@ COPY --from=builder /usr/local/src/autharie/target/release/herald /usr/local/bin
 
 ENTRYPOINT [ "herald" ]
 
+FROM runtime AS mcp-gateway
+
+COPY --from=builder /usr/local/src/autharie/target/release/mcp-gateway /usr/local/bin/
+
+EXPOSE 8080
+
+ENTRYPOINT [ "mcp-gateway" ]
+
 FROM runtime AS genesis
 
 COPY --from=builder /usr/local/src/autharie/target/release/genesis /usr/local/bin/
 
 ENTRYPOINT [ "genesis" ]
+
+FROM runtime AS ferriskey-mcp
+
+COPY --from=builder /usr/local/src/autharie/target/release/ferriskey-mcp /usr/local/bin/
+
+EXPOSE 8080
+
+ENTRYPOINT [ "ferriskey-mcp" ]
+
+FROM runtime AS mcp
+
+COPY --from=builder /usr/local/src/autharie/target/release/autharie-mcp /usr/local/bin/
+
+EXPOSE 8081
+
+ENTRYPOINT [ "autharie-mcp" ]
 
 FROM node:24.12-alpine AS console-build
 

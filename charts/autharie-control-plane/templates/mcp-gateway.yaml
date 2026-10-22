@@ -1,0 +1,102 @@
+{{- if .Values.agents.enabled }}
+{{- $name := printf "%s-mcp-gateway" (include "autharie-control-plane.fullname" .) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "autharie-control-plane.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mcp-gateway
+spec:
+  replicas: {{ .Values.agents.gateway.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "autharie-control-plane.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: mcp-gateway
+  template:
+    metadata:
+      labels:
+        {{- include "autharie-control-plane.labels" . | nindent 8 }}
+        app.kubernetes.io/component: mcp-gateway
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/mcp-gateway-configmap.yaml") . | sha256sum }}
+    spec:
+      initContainers:
+        - name: render-config
+          image: {{ .Values.agents.gateway.initImage }}
+          command:
+            - sh
+            - -c
+            - |
+              awk '{
+                while ((i = index($0, "@CLIENT_SECRET@")) > 0)
+                  $0 = substr($0, 1, i - 1) ENVIRON["CLIENT_SECRET"] substr($0, i + 15)
+                print
+              }' /template/config.toml.tmpl > /config/config.toml
+          env:
+            - name: CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.agents.gateway.existingSecret }}
+                  key: {{ .Values.agents.gateway.existingSecretClientSecretKey }}
+          volumeMounts:
+            - name: template
+              mountPath: /template
+              readOnly: true
+            - name: config
+              mountPath: /config
+      containers:
+        - name: mcp-gateway
+          image: {{ include "autharie-control-plane.image" (dict "root" . "component" "mcp-gateway" "tag" .Values.image.mcpGatewayTag) }}
+          imagePullPolicy: {{ include "autharie-control-plane.pullPolicy" (dict "root" . "tag" .Values.image.mcpGatewayTag) }}
+          env:
+            - name: MCP_GATEWAY_CONFIG
+              value: /config/config.toml
+            - name: MCP_GATEWAY_LISTEN
+              value: 0.0.0.0:8080
+            - name: MCP_GATEWAY_RELOAD_SECS
+              value: "3600"
+          ports:
+            - name: http
+              containerPort: 8080
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          resources:
+            {{- toYaml .Values.agents.gateway.resources | nindent 12 }}
+      volumes:
+        - name: template
+          configMap:
+            name: {{ $name }}
+        - name: config
+          emptyDir:
+            medium: Memory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "autharie-control-plane.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mcp-gateway
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: {{ include "autharie-control-plane.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: mcp-gateway
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+{{- end }}

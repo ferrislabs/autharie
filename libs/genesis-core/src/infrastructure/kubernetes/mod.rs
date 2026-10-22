@@ -1,3 +1,5 @@
+pub mod agents;
+pub mod agents_status;
 pub mod dataplane_upgrade;
 pub mod identity_instance;
 pub mod identity_instance_upgrade;

@@ -845,6 +845,8 @@ mod tests {
 
     fn caller() -> autharie_auth::Identity {
         autharie_auth::Identity::User(autharie_auth::User {
+            scopes: Vec::new(),
+            act: None,
             id: uuid::Uuid::from_u128(9).to_string(),
             username: "somebody".to_string(),
             email: None,
@@ -899,6 +901,7 @@ mod tests {
             created_at: now,
             updated_at: now,
             deleted_at: None,
+            mcp_enabled: false,
         }
     }
 
