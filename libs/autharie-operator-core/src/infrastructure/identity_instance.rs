@@ -46,7 +46,9 @@ use crate::infrastructure::edge::{
 };
 use crate::infrastructure::ferriskey_theme::KubeInstanceTheme;
 use crate::infrastructure::ferriskey_webhooks::KubeFerriskeyWebhooks;
-use crate::infrastructure::kube_webhooks::{KubeWebhookSecrets, KubeWebhookStatus};
+use crate::infrastructure::kube_webhooks::{
+    KubeWebhookDeliveries, KubeWebhookSecrets, KubeWebhookStatus,
+};
 use crate::infrastructure::shared_database::{self, SharedCluster};
 
 pub struct KubeIdentityInstanceRepository {
@@ -2018,6 +2020,7 @@ pub async fn run() -> Result<(), OperatorError> {
         Arc::new(KubeWebhookStatus::new(client.clone())),
         Arc::new(KubeFerriskeyWebhooks::new(client.clone())),
         Arc::new(KubeWebhookSecrets::new(client.clone())),
+        Arc::new(KubeWebhookDeliveries::new(client.clone())),
     ));
     let deployer = Arc::new(KubeIdentityInstanceDeployer::new(
         client.clone(),
@@ -2054,7 +2057,12 @@ pub async fn run() -> Result<(), OperatorError> {
                     KubeInstanceTheme,
                 >,
                 KubeIdentityInstanceDeployer,
-                WebhookReconciler<KubeWebhookStatus, KubeFerriskeyWebhooks, KubeWebhookSecrets>,
+                WebhookReconciler<
+                    KubeWebhookStatus,
+                    KubeFerriskeyWebhooks,
+                    KubeWebhookSecrets,
+                    KubeWebhookDeliveries,
+                >,
             >,
             error_policy::<
                 OperatorApplication<
@@ -2063,7 +2071,12 @@ pub async fn run() -> Result<(), OperatorError> {
                     KubeInstanceTheme,
                 >,
                 KubeIdentityInstanceDeployer,
-                WebhookReconciler<KubeWebhookStatus, KubeFerriskeyWebhooks, KubeWebhookSecrets>,
+                WebhookReconciler<
+                    KubeWebhookStatus,
+                    KubeFerriskeyWebhooks,
+                    KubeWebhookSecrets,
+                    KubeWebhookDeliveries,
+                >,
             >,
             context,
         )

@@ -176,6 +176,11 @@ rules:
   - apiGroups: [""]
     resources: ["services", "secrets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # The recent webhook deliveries of each instance, published for Herald in
+  # the instance's own namespace and owned by the instance.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "create", "update", "patch"]
   # Kept while instances created before the move to Gateway API still carry
   # one. The operator deletes those as it reconciles them, and cannot delete
   # what it may not see.

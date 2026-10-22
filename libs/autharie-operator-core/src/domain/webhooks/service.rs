@@ -6,10 +6,11 @@ use autharie_crds::v1alpha::identity_instance::{
     WebhookRequestKind, WebhookRequestPhase, WebhookRequestStatus, WebhookSpec, WebhookStatus,
 };
 
+use super::deliveries::{self, RemoteDelivery};
 use super::plan::{Change, DesiredWebhook, plan};
 use super::ports::{
-    FerriskeyWebhookPort, IdentityInstanceWebhooks, SecretsSnapshot, WebhookOutcome,
-    WebhookSecretsPort, WebhookStatusReport, WebhookStatusRepository,
+    FerriskeyWebhookPort, IdentityInstanceWebhooks, SecretsSnapshot, WebhookDeliveriesStore,
+    WebhookOutcome, WebhookSecretsPort, WebhookStatusReport, WebhookStatusRepository,
 };
 use super::{
     ManagedRemote, WebhookError, WebhookWrite, headers_fingerprint, managed_id, managed_name,
@@ -19,18 +20,20 @@ use super::{
 /// Old results are kept so a request is never run twice, but not for ever.
 const MAX_RECORDED_REQUESTS: usize = 100;
 
-pub struct WebhookReconciler<R, F, K> {
+pub struct WebhookReconciler<R, F, K, C> {
     repository: Arc<R>,
     ferriskey: Arc<F>,
     secrets: Arc<K>,
+    deliveries: Arc<C>,
 }
 
-impl<R, F, K> WebhookReconciler<R, F, K> {
-    pub fn new(repository: Arc<R>, ferriskey: Arc<F>, secrets: Arc<K>) -> Self {
+impl<R, F, K, C> WebhookReconciler<R, F, K, C> {
+    pub fn new(repository: Arc<R>, ferriskey: Arc<F>, secrets: Arc<K>, deliveries: Arc<C>) -> Self {
         Self {
             repository,
             ferriskey,
             secrets,
+            deliveries,
         }
     }
 }
@@ -48,11 +51,12 @@ struct SyncResult {
     retry: bool,
 }
 
-impl<R, F, K> IdentityInstanceWebhooks for WebhookReconciler<R, F, K>
+impl<R, F, K, C> IdentityInstanceWebhooks for WebhookReconciler<R, F, K, C>
 where
     R: WebhookStatusRepository,
     F: FerriskeyWebhookPort,
     K: WebhookSecretsPort,
+    C: WebhookDeliveriesStore,
 {
     async fn reconcile(&self, instance: &IdentityInstance) -> WebhookOutcome {
         if instance.spec.provider != IdentityProvider::Ferriskey
@@ -113,6 +117,8 @@ where
         }
         trim_recorded(&mut recorded, &spec.webhook_requests);
 
+        self.publish_deliveries(instance, &synced.statuses).await;
+
         let report = WebhookStatusReport {
             webhooks: synced.statuses,
             realms,
@@ -139,11 +145,56 @@ where
     }
 }
 
-impl<R, F, K> WebhookReconciler<R, F, K>
+impl<R, F, K, C> WebhookReconciler<R, F, K, C>
 where
     F: FerriskeyWebhookPort,
     K: WebhookSecretsPort,
+    C: WebhookDeliveriesStore,
 {
+    /// Failing to read deliveries is not a webhook failure: the document
+    /// stays as it was and the next pass tries again.
+    async fn publish_deliveries(&self, instance: &IdentityInstance, statuses: &[WebhookStatus]) {
+        let mut gathered: Vec<(&str, Vec<RemoteDelivery>)> = Vec::new();
+        for status in statuses {
+            let Some(ferriskey_id) = status.ferriskey_id.as_deref() else {
+                continue;
+            };
+            let Some(webhook) = instance
+                .spec
+                .webhooks
+                .iter()
+                .find(|webhook| webhook.id == status.id)
+            else {
+                continue;
+            };
+            match self
+                .ferriskey
+                .list_deliveries(instance, &webhook.realm, ferriskey_id)
+                .await
+            {
+                Ok(found) => gathered.push((webhook.id.as_str(), found)),
+                Err(error) => {
+                    tracing::warn!(webhook = %webhook.id, error = %error.message(), "could not read deliveries; keeping the previous ones");
+                    return;
+                }
+            }
+        }
+
+        let rendered = deliveries::render(&deliveries::collect(gathered));
+        let current = match self.deliveries.current(instance).await {
+            Ok(current) => current,
+            Err(error) => {
+                tracing::warn!(error = %error.message(), "could not read the published deliveries");
+                return;
+            }
+        };
+        if deliveries::needs_write(current.as_deref(), &rendered)
+            && let Err(error) = self.deliveries.publish(instance, &rendered).await
+        {
+            tracing::warn!(error = %error.message(), "could not publish the deliveries");
+        }
+    }
+
     async fn sync(
         &self,
         instance: &IdentityInstance,
@@ -537,6 +588,7 @@ mod tests {
         counter: u32,
         failures: BTreeMap<String, WebhookError>,
         sent_headers: Vec<Option<BTreeMap<String, String>>>,
+        deliveries: BTreeMap<String, Vec<RemoteDelivery>>,
     }
 
     #[derive(Default)]
@@ -691,6 +743,23 @@ mod tests {
             Ok(format!("whsec-{}", state.counter))
         }
 
+        async fn list_deliveries(
+            &self,
+            _: &IdentityInstance,
+            _: &str,
+            ferriskey_id: &str,
+        ) -> Result<Vec<RemoteDelivery>, WebhookError> {
+            self.enter(format!("deliveries {ferriskey_id}"), "deliveries")?;
+            Ok(self
+                .state
+                .lock()
+                .unwrap()
+                .deliveries
+                .get(ferriskey_id)
+                .cloned()
+                .unwrap_or_default())
+        }
+
         async fn retry_delivery(
             &self,
             _: &IdentityInstance,
@@ -810,6 +879,24 @@ mod tests {
     }
 
     #[derive(Default)]
+    struct FakeDeliveries {
+        document: Mutex<Option<String>>,
+        writes: Mutex<u32>,
+    }
+
+    impl WebhookDeliveriesStore for FakeDeliveries {
+        async fn current(&self, _: &IdentityInstance) -> Result<Option<String>, WebhookError> {
+            Ok(self.document.lock().unwrap().clone())
+        }
+
+        async fn publish(&self, _: &IdentityInstance, document: &str) -> Result<(), WebhookError> {
+            *self.document.lock().unwrap() = Some(document.to_string());
+            *self.writes.lock().unwrap() += 1;
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
     struct FakeRepository {
         reports: Mutex<Vec<WebhookStatusReport>>,
         fail: Mutex<bool>,
@@ -848,19 +935,23 @@ mod tests {
         repository: Arc<FakeRepository>,
         ferriskey: Arc<FakeFerriskey>,
         secrets: Arc<FakeSecrets>,
-        reconciler: WebhookReconciler<FakeRepository, FakeFerriskey, FakeSecrets>,
+        deliveries: Arc<FakeDeliveries>,
+        reconciler: WebhookReconciler<FakeRepository, FakeFerriskey, FakeSecrets, FakeDeliveries>,
     }
 
     fn harness(ferriskey: FakeFerriskey, secrets: FakeSecrets) -> Harness {
         let repository = Arc::new(FakeRepository::default());
         let ferriskey = Arc::new(ferriskey);
         let secrets = Arc::new(secrets);
+        let deliveries = Arc::new(FakeDeliveries::default());
         Harness {
             reconciler: WebhookReconciler::new(
                 repository.clone(),
                 ferriskey.clone(),
                 secrets.clone(),
+                deliveries.clone(),
             ),
+            deliveries,
             repository,
             ferriskey,
             secrets,
@@ -970,7 +1061,8 @@ mod tests {
                 "list_realms",
                 "list master",
                 "create master",
-                "rotate master fk-1"
+                "rotate master fk-1",
+                "deliveries fk-1"
             ]
         );
         let hooks = h.ferriskey.hooks();
@@ -1004,7 +1096,10 @@ mod tests {
         let outcome = h.reconciler.reconcile(&settled).await;
 
         assert_eq!(outcome, WebhookOutcome::Settled);
-        assert_eq!(h.ferriskey.calls(), vec!["list_realms", "list master"]);
+        assert_eq!(
+            h.ferriskey.calls(),
+            vec!["list_realms", "list master", "deliveries fk-1"]
+        );
         assert_eq!(h.repository.reports().len(), patches);
     }
 
@@ -1105,7 +1200,12 @@ mod tests {
 
         assert_eq!(
             h.ferriskey.calls(),
-            vec!["list_realms", "list master", "update master fk-1"]
+            vec![
+                "list_realms",
+                "list master",
+                "update master fk-1",
+                "deliveries fk-1"
+            ]
         );
         let state = h.ferriskey.state.lock().unwrap();
         assert_eq!(state.sent_headers.last().unwrap(), &None);
@@ -1132,13 +1232,16 @@ mod tests {
 
         h.ferriskey.clear_calls();
         h.reconciler.reconcile(&created).await;
-        assert_eq!(h.ferriskey.calls(), vec!["list_realms", "list master"]);
+        assert_eq!(
+            h.ferriskey.calls(),
+            vec!["list_realms", "list master", "deliveries fk-1"]
+        );
 
         h.secrets
             .set_header(&format!("{ID_A}.Authorization"), "Bearer two");
         h.reconciler.reconcile(&created).await;
         let state = h.ferriskey.state.lock().unwrap();
-        assert_eq!(state.calls.last().unwrap(), "update master fk-1");
+        assert!(state.calls.contains(&"update master fk-1".to_string()));
         assert_eq!(
             state.sent_headers.last().unwrap().as_ref().unwrap()["Authorization"],
             "Bearer two"
@@ -1541,6 +1644,105 @@ mod tests {
             .await;
 
         assert_eq!(outcome, WebhookOutcome::Retry);
+    }
+
+    fn remote_delivery(id: &str, created: i64) -> RemoteDelivery {
+        use chrono::TimeZone;
+        RemoteDelivery {
+            id: id.to_string(),
+            event: "user.created".to_string(),
+            status: "succeeded".to_string(),
+            attempt_count: 1,
+            last_status_code: Some(200),
+            last_error: None,
+            created_at: chrono::Utc
+                .timestamp_opt(1_790_000_000 + created, 0)
+                .unwrap(),
+            updated_at: chrono::Utc
+                .timestamp_opt(1_790_000_001 + created, 0)
+                .unwrap(),
+        }
+    }
+
+    #[tokio::test]
+    async fn deliveries_are_published_under_the_autharie_id_and_only_rewritten_on_change() {
+        let h = harness(
+            FakeFerriskey::with_realms(&["master"]),
+            FakeSecrets::default(),
+        );
+        let first = instance(vec![webhook(ID_A, "master")], vec![]);
+        h.reconciler.reconcile(&first).await;
+        let created = after(first, &h.repository.last());
+        h.ferriskey.state.lock().unwrap().deliveries.insert(
+            "fk-1".to_string(),
+            vec![remote_delivery("d2", 10), remote_delivery("d1", 0)],
+        );
+
+        h.reconciler.reconcile(&created).await;
+        h.reconciler.reconcile(&created).await;
+
+        let document = h.deliveries.document.lock().unwrap().clone().unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&document).unwrap();
+        assert_eq!(parsed[0]["delivery_id"], "d2");
+        assert_eq!(parsed[0]["webhook_id"], ID_A);
+        assert_eq!(parsed[1]["delivery_id"], "d1");
+        assert_eq!(*h.deliveries.writes.lock().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_failed_delivery_read_keeps_the_previous_document_and_the_webhook_active() {
+        let h = harness(
+            FakeFerriskey::with_realms(&["master"]),
+            FakeSecrets::default(),
+        );
+        let first = instance(vec![webhook(ID_A, "master")], vec![]);
+        h.reconciler.reconcile(&first).await;
+        let created = after(first, &h.repository.last());
+        h.ferriskey
+            .state
+            .lock()
+            .unwrap()
+            .deliveries
+            .insert("fk-1".to_string(), vec![remote_delivery("d1", 0)]);
+        h.reconciler.reconcile(&created).await;
+        let before = h.deliveries.document.lock().unwrap().clone();
+        h.ferriskey.fail(
+            "deliveries",
+            WebhookError::Retry {
+                message: "FerrisKey is unreachable".to_string(),
+            },
+        );
+        h.ferriskey.state.lock().unwrap().deliveries.clear();
+
+        let outcome = h.reconciler.reconcile(&created).await;
+
+        assert_eq!(outcome, WebhookOutcome::Settled);
+        assert_eq!(*h.deliveries.document.lock().unwrap(), before);
+        assert_eq!(h.repository.reports().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn removing_every_webhook_empties_the_published_document() {
+        let h = harness(
+            FakeFerriskey::with_realms(&["master"]),
+            FakeSecrets::default(),
+        );
+        let first = instance(vec![webhook(ID_A, "master")], vec![]);
+        h.reconciler.reconcile(&first).await;
+        let created = after(first, &h.repository.last());
+        h.ferriskey
+            .state
+            .lock()
+            .unwrap()
+            .deliveries
+            .insert("fk-1".to_string(), vec![remote_delivery("d1", 0)]);
+        h.reconciler.reconcile(&created).await;
+
+        let mut emptied = created;
+        emptied.spec.webhooks.clear();
+        h.reconciler.reconcile(&emptied).await;
+
+        assert_eq!(h.deliveries.document.lock().unwrap().as_deref(), Some("[]"));
     }
 
     #[test]

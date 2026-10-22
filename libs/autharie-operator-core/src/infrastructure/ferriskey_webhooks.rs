@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 
 use autharie_crds::v1alpha::identity_instance::IdentityInstance;
 
+use crate::domain::webhooks::deliveries::RemoteDelivery;
 use crate::domain::webhooks::ports::FerriskeyWebhookPort;
 use crate::domain::webhooks::{RemoteWebhook, WebhookError, WebhookWrite};
 
@@ -19,6 +20,10 @@ use super::ferriskey_admin::{
 
 const PAGE_LIMIT: u32 = 100;
 const MAX_PAGES: u32 = 100;
+
+/// Pages of deliveries read per webhook: the instance keeps 200 in all, so a
+/// single webhook never needs more than two pages of 100.
+const DELIVERY_PAGES: u32 = 2;
 
 /// Refreshed this long before FerrisKey says it expires, so a call never
 /// starts with a token about to die.
@@ -214,6 +219,56 @@ fn list_webhooks_request(realm: &str, page: u32) -> Result<ApiRequest, WebhookEr
     )
 }
 
+fn list_deliveries_request(
+    realm: &str,
+    ferriskey_id: &str,
+    page: u32,
+) -> Result<ApiRequest, WebhookError> {
+    Ok(ApiRequest::new(
+        Method::GET,
+        format!("{}/deliveries", webhook_path(realm, ferriskey_id)?),
+    )
+    .query("order_by", "created_at")
+    .query("order", "desc")
+    .query("page", page)
+    .query("limit", PAGE_LIMIT))
+}
+
+fn parse_delivery(value: &Value) -> Result<RemoteDelivery, WebhookError> {
+    let text = |key: &str| value[key].as_str().map(ToOwned::to_owned);
+    let time = |key: &str| {
+        value[key]
+            .as_str()
+            .and_then(|raw| chrono::DateTime::parse_from_rfc3339(raw).ok())
+            .map(|time| time.with_timezone(&chrono::Utc))
+            .ok_or_else(|| malformed("a delivery"))
+    };
+    Ok(RemoteDelivery {
+        id: text("id").ok_or_else(|| malformed("a delivery"))?,
+        event: text("event").ok_or_else(|| malformed("a delivery"))?,
+        status: text("status").ok_or_else(|| malformed("a delivery"))?,
+        attempt_count: value["attempt_count"]
+            .as_u64()
+            .and_then(|count| u32::try_from(count).ok())
+            .unwrap_or_default(),
+        last_status_code: value["last_status_code"]
+            .as_u64()
+            .and_then(|code| u16::try_from(code).ok()),
+        last_error: text("last_error_detail").or_else(|| text("last_error_code")),
+        created_at: time("created_at")?,
+        updated_at: time("updated_at")?,
+    })
+}
+
+fn parse_deliveries(body: &Value) -> Result<(Vec<RemoteDelivery>, Option<u32>), WebhookError> {
+    let data = body["data"].as_array().ok_or_else(|| malformed("a list"))?;
+    let deliveries = data
+        .iter()
+        .map(parse_delivery)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((deliveries, next_page(body)))
+}
+
 fn write_body(write: &WebhookWrite) -> Value {
     let mut body = json!({
         "name": write.name,
@@ -388,9 +443,19 @@ impl KubeFerriskeyWebhooks {
         request: impl Fn(u32) -> Result<ApiRequest, WebhookError>,
         parse: impl Fn(&Value) -> Result<(Vec<T>, Option<u32>), WebhookError>,
     ) -> Result<Vec<T>, WebhookError> {
+        self.pages_up_to(instance, MAX_PAGES, request, parse).await
+    }
+
+    async fn pages_up_to<T>(
+        &self,
+        instance: &IdentityInstance,
+        max_pages: u32,
+        request: impl Fn(u32) -> Result<ApiRequest, WebhookError>,
+        parse: impl Fn(&Value) -> Result<(Vec<T>, Option<u32>), WebhookError>,
+    ) -> Result<Vec<T>, WebhookError> {
         let mut all = Vec::new();
         let mut page = 1;
-        for _ in 0..MAX_PAGES {
+        for _ in 0..max_pages {
             let body = self
                 .call(instance, &request(page)?)
                 .await
@@ -479,6 +544,21 @@ impl FerriskeyWebhookPort for KubeFerriskeyWebhooks {
             .await
             .map_err(ApiFailure::into_error)?;
         parse_secret(&body)
+    }
+
+    async fn list_deliveries(
+        &self,
+        instance: &IdentityInstance,
+        realm: &str,
+        ferriskey_id: &str,
+    ) -> Result<Vec<RemoteDelivery>, WebhookError> {
+        self.pages_up_to(
+            instance,
+            DELIVERY_PAGES,
+            |page| list_deliveries_request(realm, ferriskey_id, page),
+            parse_deliveries,
+        )
+        .await
     }
 
     async fn retry_delivery(
@@ -672,6 +752,70 @@ mod tests {
                 .head
                 .starts_with("GET /realms/acme/webhooks?name=autharie%3A&page=2&limit=100 ")
         );
+    }
+
+    #[test]
+    fn a_delivery_is_read_without_payload_headers_or_signature() {
+        let (parsed, next) = parse_deliveries(&json!({
+            "data": [{
+                "id": "d1", "webhook_id": "f1", "event": "user.created",
+                "resource_id": "r1", "status": "failed", "attempt_count": 3,
+                "next_attempt_at": null, "last_attempt_at": "2026-10-22T10:00:00Z",
+                "last_status_code": 500, "last_error_code": "http_500",
+                "last_error_detail": "upstream said no",
+                "created_at": "2026-10-22T09:00:00.123456Z",
+                "updated_at": "2026-10-22T10:00:00Z",
+                "headers": {"Authorization": "Bearer leaked"},
+                "signature": "sig-leaked"
+            }, {
+                "id": "d2", "event": "user.deleted", "status": "pending",
+                "attempt_count": 0, "last_status_code": null,
+                "last_error_code": "transport_error", "last_error_detail": null,
+                "created_at": "2026-10-22T09:00:00Z", "updated_at": "2026-10-22T09:00:00Z"
+            }],
+            "metadata": {"next_page": null}
+        }))
+        .unwrap();
+
+        assert_eq!(next, None);
+        assert_eq!(parsed[0].id, "d1");
+        assert_eq!(parsed[0].last_status_code, Some(500));
+        assert_eq!(parsed[0].last_error.as_deref(), Some("upstream said no"));
+        assert_eq!(parsed[1].last_error.as_deref(), Some("transport_error"));
+        assert_eq!(parsed[1].last_status_code, None);
+        let debug = format!("{parsed:?}");
+        assert!(!debug.contains("leaked"));
+    }
+
+    #[test]
+    fn a_delivery_without_a_time_is_not_guessed_at() {
+        assert!(parse_delivery(&json!({"id": "d", "event": "e", "status": "failed"})).is_err());
+    }
+
+    #[tokio::test]
+    async fn the_deliveries_call_asks_for_the_newest_page_of_one_webhook() {
+        let (url, server) = serve(vec![(
+            200,
+            r#"{"data":[{"id":"d1","event":"user.created","status":"succeeded","attempt_count":1,"last_status_code":200,"created_at":"2026-10-22T09:00:00Z","updated_at":"2026-10-22T09:00:01Z"}],"metadata":{"next_page":null}}"#,
+        )]);
+        let request = list_deliveries_request("acme", "f1", 1).unwrap();
+
+        let body = FerriskeyWebhookApi::new()
+            .execute(&url, "t", &request)
+            .await
+            .unwrap();
+
+        let (deliveries, _) = parse_deliveries(&body).unwrap();
+        assert_eq!(deliveries[0].id, "d1");
+        let seen = server.join().unwrap();
+        assert!(seen[0].head.starts_with(
+            "GET /realms/acme/webhooks/f1/deliveries?order_by=created_at&order=desc&page=1&limit=100 "
+        ));
+    }
+
+    #[test]
+    fn a_delivery_route_cannot_leave_its_webhook() {
+        assert!(list_deliveries_request("acme", "../x", 1).is_err());
     }
 
     #[tokio::test]

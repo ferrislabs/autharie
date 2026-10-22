@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use k8s_openapi::api::core::v1::Secret;
+use k8s_openapi::api::core::v1::{ConfigMap, Secret};
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use kube::api::{Patch, PatchParams, PostParams};
 use kube::{Api, Client, Resource};
@@ -11,7 +11,8 @@ use autharie_crds::v1alpha::identity_instance::IdentityInstance;
 use crate::domain::OperatorError;
 use crate::domain::webhooks::WebhookError;
 use crate::domain::webhooks::ports::{
-    SecretsSnapshot, WebhookSecretsPort, WebhookStatusReport, WebhookStatusRepository,
+    SecretsSnapshot, WebhookDeliveriesStore, WebhookSecretsPort, WebhookStatusReport,
+    WebhookStatusRepository,
 };
 
 use super::ferriskey_admin::name_and_namespace;
@@ -210,6 +211,76 @@ impl WebhookSecretsPort for KubeWebhookSecrets {
     }
 }
 
+/// The recent deliveries as JSON, for Herald to read. The operator writes it.
+pub fn webhook_deliveries_config_map_name(instance_name: &str) -> String {
+    format!("{instance_name}-webhook-deliveries")
+}
+
+pub const DELIVERIES_KEY: &str = "deliveries.json";
+
+pub struct KubeWebhookDeliveries {
+    client: Client,
+}
+
+impl KubeWebhookDeliveries {
+    pub fn new(client: Client) -> Self {
+        Self { client }
+    }
+}
+
+impl WebhookDeliveriesStore for KubeWebhookDeliveries {
+    async fn current(&self, instance: &IdentityInstance) -> Result<Option<String>, WebhookError> {
+        let (name, namespace) = located(instance)?;
+        let maps: Api<ConfigMap> = Api::namespaced(self.client.clone(), namespace);
+        Ok(maps
+            .get_opt(&webhook_deliveries_config_map_name(name))
+            .await
+            .map_err(kube_error)?
+            .and_then(|map| map.data)
+            .and_then(|mut data| data.remove(DELIVERIES_KEY)))
+    }
+
+    async fn publish(
+        &self,
+        instance: &IdentityInstance,
+        document: &str,
+    ) -> Result<(), WebhookError> {
+        let (name, namespace) = located(instance)?;
+        let maps: Api<ConfigMap> = Api::namespaced(self.client.clone(), namespace);
+        let map_name = webhook_deliveries_config_map_name(name);
+        let patch = json!({ "data": { DELIVERIES_KEY: document } });
+
+        match maps
+            .patch(&map_name, &PatchParams::default(), &Patch::Merge(&patch))
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(error) if is_not_found(&error) => {
+                let map = ConfigMap {
+                    metadata: ObjectMeta {
+                        name: Some(map_name),
+                        namespace: Some(namespace.to_string()),
+                        owner_references: instance
+                            .controller_owner_ref(&())
+                            .map(|owner| vec![owner]),
+                        ..Default::default()
+                    },
+                    data: Some(BTreeMap::from([(
+                        DELIVERIES_KEY.to_string(),
+                        document.to_string(),
+                    )])),
+                    ..Default::default()
+                };
+                maps.create(&PostParams::default(), &map)
+                    .await
+                    .map(|_| ())
+                    .map_err(kube_error)
+            }
+            Err(error) => Err(kube_error(error)),
+        }
+    }
+}
+
 pub struct KubeWebhookStatus {
     client: Client,
 }
@@ -276,6 +347,10 @@ mod tests {
         assert_eq!(webhook_headers_secret_name("acme"), "acme-webhook-headers");
         assert_eq!(webhook_secrets_secret_name("acme"), "acme-webhook-secrets");
         assert_eq!(webhook_applied_secret_name("acme"), "acme-webhook-applied");
+        assert_eq!(
+            webhook_deliveries_config_map_name("acme"),
+            "acme-webhook-deliveries"
+        );
     }
 
     #[test]

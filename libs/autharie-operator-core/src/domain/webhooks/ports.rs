@@ -5,6 +5,7 @@ use autharie_crds::v1alpha::identity_instance::{
     IdentityInstance, WebhookRequestStatus, WebhookStatus,
 };
 
+use super::deliveries::RemoteDelivery;
 use super::{RemoteWebhook, WebhookError, WebhookWrite};
 use crate::domain::OperatorError;
 
@@ -66,6 +67,14 @@ pub trait FerriskeyWebhookPort: Send + Sync {
         realm: &str,
         ferriskey_id: &str,
     ) -> impl Future<Output = Result<String, WebhookError>> + Send;
+
+    /// The newest deliveries of one webhook, newest first.
+    fn list_deliveries(
+        &self,
+        instance: &IdentityInstance,
+        realm: &str,
+        ferriskey_id: &str,
+    ) -> impl Future<Output = Result<Vec<RemoteDelivery>, WebhookError>> + Send;
 
     fn retry_delivery(
         &self,
@@ -130,4 +139,19 @@ pub trait WebhookStatusRepository: Send + Sync {
         instance: &IdentityInstance,
         report: &WebhookStatusReport,
     ) -> impl Future<Output = Result<(), OperatorError>> + Send;
+}
+
+/// Where the instance's recent deliveries are published for Herald to read.
+pub trait WebhookDeliveriesStore: Send + Sync {
+    /// The published document, if there is one.
+    fn current(
+        &self,
+        instance: &IdentityInstance,
+    ) -> impl Future<Output = Result<Option<String>, WebhookError>> + Send;
+
+    fn publish(
+        &self,
+        instance: &IdentityInstance,
+        document: &str,
+    ) -> impl Future<Output = Result<(), WebhookError>> + Send;
 }
