@@ -7,7 +7,6 @@ import {
   getBezierPath,
   Handle,
   MarkerType,
-  Panel,
   Position,
   ReactFlow,
   useNodesState,
@@ -39,6 +38,7 @@ import { cn } from '@/lib/utils'
 import {
   buildAccessGraph,
   COLUMN_X,
+  ROW_GAP,
   connectedPolicies,
   ruleFromConnection,
   type AccessEdgeData,
@@ -123,22 +123,25 @@ function useEdgeDimmed(policyId: string | undefined): boolean {
   return focus.policies !== null && !focus.policies.has(policyId ?? '')
 }
 
-const HANDLE = 'size-2.5! border-2! border-background! bg-muted-foreground!'
+const HANDLE = 'size-2.5! border-2! border-background! bg-primary! opacity-0 transition-opacity'
+const TARGET_HANDLE = cn(HANDLE, '[&.connectingto]:opacity-100')
 
 function AccessNodeCard({ id, data, left, right }: { id: string; data: MapNodeData; left: boolean; right: boolean }) {
   const autonomous = data.caption === 'acts on its own'
-  const handle = cn(HANDLE, data.canManage && 'bg-primary!')
+  const handle = cn(HANDLE, data.canManage && 'group-hover:opacity-100')
   const dimmed = useNodeDimmed(id)
 
   return (
     <div
       className={cn(
-        'flex items-center gap-3 rounded-lg border bg-card px-3 py-2 text-card-foreground shadow-xs transition-opacity',
+        'group flex items-center gap-3 rounded-lg border bg-card px-3 py-2 text-card-foreground shadow-xs transition-opacity',
         data.destructive && 'border-destructive/50',
       )}
       style={{ width: NODE_WIDTH, opacity: dimmed ? 0.25 : 1 }}
     >
-      {left && <Handle type='target' position={Position.Left} className={HANDLE} isConnectable={false} />}
+      {left && (
+        <Handle type='target' position={Position.Left} className={TARGET_HANDLE} isConnectableStart={false} />
+      )}
       <div
         className={cn(
           'flex size-8 shrink-0 items-center justify-center rounded-md border bg-muted text-muted-foreground',
@@ -149,12 +152,12 @@ function AccessNodeCard({ id, data, left, right }: { id: string; data: MapNodeDa
         <NodeIcon id={id} />
       </div>
       <div className='min-w-0 flex-1'>
-        <p className='truncate text-sm font-medium' title={data.label}>
+        <p className='truncate text-sm font-medium' title={data.members.length > 0 ? data.members.join('\n') : data.label}>
           {data.label}
         </p>
         <p className='flex items-center gap-1 truncate text-xs text-muted-foreground'>
           {data.destructive && <AlertTriangle className='size-3 shrink-0 text-destructive' />}
-          <span className='truncate'>{data.destructive ? 'destructive, ' : ''}{data.caption}</span>
+          <span className='truncate'>{data.destructive && data.members.length === 0 ? 'destructive, ' : ''}{data.caption}</span>
         </p>
       </div>
       {right && <Handle type='source' position={Position.Right} className={handle} />}
@@ -221,11 +224,11 @@ function AccessEdgeView({
         <EdgeLabelRenderer>
           <div
             className={cn(
-              'nodrag nopan pointer-events-none absolute flex items-center gap-1 rounded-full border bg-card px-2 py-0.5 text-[11px] text-card-foreground transition-opacity',
+              'nodrag nopan pointer-events-none absolute flex items-center gap-1 whitespace-nowrap rounded-full border bg-card px-2 py-0.5 text-[11px] text-card-foreground shadow-xs transition-opacity',
               selected && 'ring-2 ring-ring',
             )}
             style={{
-              transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+              transform: `translate(-50%, -100%) translate(${labelX}px, ${labelY - 8}px)`,
               borderColor: color,
               opacity: dimmed ? 0.2 : 1,
             }}
@@ -273,7 +276,7 @@ function Legend() {
   )
 
   return (
-    <div className='flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border bg-card/90 px-3 py-1.5 text-xs text-muted-foreground'>
+    <div className='flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground'>
       <LegendItem line={swatch(PERMIT)}>Permit</LegendItem>
       <LegendItem line={swatch(FORBID)}>Forbid</LegendItem>
       <LegendItem line={swatch(MUTED, true)}>Disabled</LegendItem>
@@ -345,7 +348,7 @@ export function AccessMap({
         const color = strokeOf(edge.data)
         return {
           ...edge,
-          markerEnd: { type: MarkerType.ArrowClosed, color, width: 16, height: 16 },
+          markerEnd: { type: MarkerType.ArrowClosed, color, width: 6, height: 6 },
           style: {
             stroke: color,
             strokeWidth: edge.data.enabled ? 2.5 : 2,
@@ -356,6 +359,11 @@ export function AccessMap({
       }),
     [graph],
   )
+
+  const height = useMemo(() => {
+    const rows = Math.max(0, ...graph.nodes.map((node) => node.position.y / ROW_GAP + 1))
+    return Math.min(640, Math.max(280, rows * ROW_GAP + 160))
+  }, [graph])
 
   const structure = useMemo(() => graph.nodes.map((node) => node.id).join('|'), [graph])
 
@@ -394,7 +402,7 @@ export function AccessMap({
   return (
     <div className='space-y-4'>
       {graph.nodes.length > 0 ? (
-        <div className='h-[560px] w-full overflow-hidden rounded-lg border bg-background'>
+        <div className='w-full overflow-hidden rounded-lg border bg-background' style={{ height }}>
           <FocusContext.Provider value={focus}>
             <ReactFlow
               key={structure}
@@ -422,9 +430,6 @@ export function AccessMap({
             >
               <Background gap={20} />
               <Controls showInteractive={false} />
-              <Panel position='bottom-right'>
-                <Legend />
-              </Panel>
             </ReactFlow>
           </FocusContext.Provider>
         </div>
@@ -434,10 +439,15 @@ export function AccessMap({
         </p>
       )}
 
-      {canManage && graph.nodes.length > 0 && (
-        <p className='text-xs text-muted-foreground'>
-          Click a line to edit its rule. Drag from a person or agent to a tool to start a new rule.
-        </p>
+      {graph.nodes.length > 0 && (
+        <div className='flex flex-wrap items-center justify-between gap-3'>
+          <Legend />
+          {canManage && (
+            <p className='text-xs text-muted-foreground'>
+              Click a line to edit its rule. Drag from a person or agent to a tool to start a new rule.
+            </p>
+          )}
+        </div>
       )}
 
       {graph.unmapped.length > 0 && (

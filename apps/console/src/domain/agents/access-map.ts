@@ -4,14 +4,16 @@ import type { AgentPolicy, Effect, RuleModel, What, When, WhichAgents, Who } fro
 
 export type Column = 'who' | 'agent' | 'what'
 
-export const COLUMN_X: Record<Column, number> = { who: 0, agent: 380, what: 760 }
+export const COLUMN_X: Record<Column, number> = { who: 0, agent: 460, what: 920 }
 export const ROW_GAP = 84
+export const GROUP_TOOLS_ABOVE = 3
 
 export type AccessNodeData = {
   label: string
   caption: string
   any: boolean
   destructive: boolean
+  members: string[]
 }
 
 export type AccessNode = {
@@ -50,7 +52,7 @@ function serverLabel(id: string): string {
 }
 
 function draft(id: string, type: Column, label: string, caption: string, any = false, destructive = false): Draft {
-  return { id, type, data: { label, caption, any, destructive } }
+  return { id, type, data: { label, caption, any, destructive, members: [] } }
 }
 
 function whoDrafts(who: Who): Draft[] {
@@ -91,6 +93,7 @@ function whatDrafts(what: What): Draft[] {
     case 'server':
       return [draft(`what:server:${what.server}`, 'what', serverLabel(what.server), 'whole server')]
     case 'tools':
+      if (what.tools.length > GROUP_TOOLS_ABOVE) return [toolGroupDraft(what.tools)]
       return what.tools.map((tool) =>
         draft(
           `what:tool:${tool}`,
@@ -102,6 +105,25 @@ function whatDrafts(what: What): Draft[] {
         ),
       )
   }
+}
+
+function preview(names: string[]): string {
+  const shown = names.slice(0, 2).join(', ')
+  return names.length > 2 ? `${shown} +${names.length - 2}` : shown
+}
+
+function toolGroupDraft(tools: string[]): Draft {
+  const sorted = [...tools].sort()
+  const destructive = sorted.every((tool) => findTool(tool)?.destructive ?? false)
+  const group = draft(
+    `what:tools:${sorted.join(',')}`,
+    'what',
+    `${sorted.length} ${destructive ? 'destructive tools' : 'tools'}`,
+    preview(sorted.map(nameOfTool)),
+    false,
+    destructive,
+  )
+  return { ...group, data: { ...group.data, members: sorted.map(nameOfTool) } }
 }
 
 export function conditionLabel(when: When | null): string | null {
@@ -217,6 +239,7 @@ function whatOfNode(id: string): What | null {
   if (id.startsWith('what:read-only:')) return { kind: 'read-only', server: id.slice('what:read-only:'.length) }
   if (id.startsWith('what:server:')) return { kind: 'server', server: id.slice('what:server:'.length) }
   if (id.startsWith('what:tool:')) return { kind: 'tools', tools: [id.slice('what:tool:'.length)] }
+  if (id.startsWith('what:tools:')) return { kind: 'tools', tools: id.slice('what:tools:'.length).split(',') }
   return null
 }
 

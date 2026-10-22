@@ -103,6 +103,28 @@ describe('buildAccessGraph', () => {
     expect(graph.nodes.find((n) => n.id === 'what:tool:ferriskey/get_user')?.data.destructive).toBe(false)
   })
 
+  it('groups a long tool list into one node', () => {
+    const tools = ['ferriskey/disable_user', 'ferriskey/unassign_role', 'autharie/delete_webhook', 'ferriskey/revoke_user_session']
+    const graph = buildAccessGraph([policy('p', { rule: rule({ what: { kind: 'tools', tools } }) })])
+    const whats = graph.nodes.filter((n) => n.type === 'what')
+    expect(whats).toHaveLength(1)
+    expect(whats[0].data.label).toBe('4 destructive tools')
+    expect(whats[0].data.destructive).toBe(true)
+    expect(whats[0].data.members).toEqual(['delete_webhook', 'disable_user', 'revoke_user_session', 'unassign_role'])
+    expect(graph.edges.filter((e) => e.data.tier === 2)).toHaveLength(1)
+  })
+
+  it('shares a tool group between policies listing the same tools', () => {
+    const tools = ['ferriskey/get_user', 'ferriskey/list_users', 'ferriskey/list_roles', 'ferriskey/get_client']
+    const graph = buildAccessGraph([
+      policy('a', { rule: rule({ what: { kind: 'tools', tools } }) }),
+      policy('b', { rule: rule({ what: { kind: 'tools', tools: [...tools].reverse() } }) }),
+    ])
+    const whats = graph.nodes.filter((n) => n.type === 'what')
+    expect(whats).toHaveLength(1)
+    expect(whats[0].data.label).toBe('4 tools')
+  })
+
   it('names servers and read-only scopes', () => {
     const graph = buildAccessGraph([
       policy('a', { rule: rule({ what: { kind: 'server', server: 'ferriskey' } }) }),
@@ -207,6 +229,9 @@ describe('ruleFromConnection', () => {
   })
 
   it('refuses connections that name no tool scope', () => {
+    expect(
+      compiles(ruleFromConnection('who:any', 'what:tools:ferriskey/get_user,ferriskey/list_users')).what,
+    ).toEqual({ kind: 'tools', tools: ['ferriskey/get_user', 'ferriskey/list_users'] })
     expect(ruleFromConnection('who:any', 'agent:any')).toBeNull()
     expect(ruleFromConnection('what:server:x', 'what:server:y')).toBeNull()
     expect(ruleFromConnection('who:any', 'what:bogus:x')).toBeNull()
