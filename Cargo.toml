@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "apps/control-plane",
     "apps/operator",
+    "apps/ferriskey-mcp",
 
     "libs/autharie-core",
     "libs/autharie-api",
