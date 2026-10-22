@@ -117,6 +117,7 @@ mod tests {
     #[tokio::test]
     async fn get_organisations_by_member_rejects_invalid_identity() {
         let identity = Identity::User(autharie_auth::User {
+            scopes: Vec::new(),
             id: "not-a-uuid".to_string(),
             username: "user".to_string(),
             email: None,

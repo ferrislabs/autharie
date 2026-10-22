@@ -414,6 +414,7 @@ impl Installation {
 
 fn user(sub: Uuid) -> Identity {
     Identity::User(User {
+        scopes: Vec::new(),
         id: sub.to_string(),
         username: "billing".to_string(),
         email: None,

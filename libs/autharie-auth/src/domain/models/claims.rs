@@ -53,6 +53,10 @@ impl Claims {
             .as_ref()
             .map_or(&[], |access| &access.roles)
     }
+
+    pub fn scopes(&self) -> Vec<String> {
+        self.scope.split_whitespace().map(str::to_string).collect()
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]

@@ -104,6 +104,8 @@ pub struct DatabaseConfig {
 #[derive(Clone, Debug)]
 pub struct AuthConfig {
     pub issuer: String,
+    pub token_issuers: Vec<String>,
+    pub audiences: Vec<String>,
 }
 
 #[derive(Debug, Error)]

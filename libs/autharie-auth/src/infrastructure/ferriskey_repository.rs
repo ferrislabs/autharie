@@ -22,6 +22,14 @@ pub struct Jwk {
     e: String,
 }
 
+/// The audience FerrisKey gives every access token of a realm, derived from an
+/// issuer shaped `<base>/realms/<realm>`.
+pub fn realm_audience(issuer: &str) -> Option<String> {
+    let realm = issuer.trim_end_matches('/').rsplit_once("/realms/")?.1;
+
+    (!realm.is_empty() && !realm.contains('/')).then(|| format!("{realm}-realm"))
+}
+
 /// How long a fetched key set is trusted before it is fetched again.
 ///
 /// Signing keys rotate on the order of days, so a minute is conservative. What
@@ -39,20 +47,50 @@ struct CachedJwks {
 pub struct FerrisKeyRepository {
     pub http: Arc<Client>,
     pub issuer: String,
-    pub audience: Option<String>,
+    /// Values of `iss` this API accepts. FerrisKey derives `iss` from the host a
+    /// token was requested on, so where the API reaches the realm and where
+    /// clients do can differ (a compose network name versus `localhost`); the
+    /// key set is fetched from `issuer`, tokens are matched against these.
+    pub token_issuers: Vec<String>,
+    /// Audiences this API accepts; a token must carry at least one.
+    pub audiences: Vec<String>,
     /// Shared across clones on purpose: the repository is cloned per request by
     /// the middleware, and a cache that is not shared is not a cache.
     jwks: Arc<RwLock<Option<CachedJwks>>>,
 }
 
 impl FerrisKeyRepository {
-    pub fn new(issuer: impl Into<String>, audience: Option<String>) -> Self {
+    /// An empty `audiences` falls back to the realm audience FerrisKey puts in
+    /// every access token it issues (`<realm>-realm`), which is what the
+    /// console, service accounts and the CLI carry when no resource indicator
+    /// narrows it.
+    pub fn new(issuer: impl Into<String>, audiences: Vec<String>) -> Self {
+        let issuer = issuer.into().trim_end_matches('/').to_string();
+        let audiences = if audiences.is_empty() {
+            realm_audience(&issuer).into_iter().collect()
+        } else {
+            audiences
+        };
+
         Self {
             http: Arc::new(Client::new()),
-            issuer: issuer.into(),
-            audience,
+            token_issuers: vec![issuer.clone()],
+            issuer,
+            audiences,
             jwks: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Accepts these `iss` values as well as the issuer the key set is
+    /// fetched from.
+    pub fn with_token_issuers(mut self, token_issuers: Vec<String>) -> Self {
+        for issuer in token_issuers {
+            let issuer = issuer.trim().trim_end_matches('/').to_string();
+            if !issuer.is_empty() && !self.token_issuers.contains(&issuer) {
+                self.token_issuers.push(issuer);
+            }
+        }
+        self
     }
 
     /// Returns the key set, fetching it only when there is no fresh copy.
@@ -174,7 +212,9 @@ impl AuthRepository for FerrisKeyRepository {
 
         let mut validation = Validation::new(Algorithm::RS256);
 
-        validation.validate_aud = false;
+        validation.set_issuer(&self.token_issuers);
+        validation.set_audience(&self.audiences);
+        validation.set_required_spec_claims(&["iss", "aud"]);
         validation.validate_exp = false;
 
         let data = decode::<Claims>(token, &decoding_key, &validation).map_err(|e| {
@@ -215,7 +255,7 @@ mod tests {
 
     use crate::{Audience, AuthError, Claims, Subject, domain::ports::AuthRepository};
 
-    use super::FerrisKeyRepository;
+    use super::{FerrisKeyRepository, realm_audience};
 
     const TEST_PRIVATE_KEY_PEM: &str = r#"-----BEGIN PRIVATE KEY-----
 MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDHF23PRKIxgKZC
@@ -325,7 +365,7 @@ HUim3t4M1KMtX1QmMKKCg4i4
     async fn a_second_validation_does_not_fetch_the_key_set_again() {
         let jwks = build_jwks_json(TEST_KID, "invalid-n", "AQAB");
         let (url, hits) = start_counting_jwks_server(&jwks);
-        let repository = FerrisKeyRepository::new(url, None);
+        let repository = FerrisKeyRepository::new(url, vec![]);
         let token = build_signed_token(Utc::now().timestamp() + 3600, None);
 
         // Both fail (the modulus is not a real key) -- irrelevant here. What
@@ -347,7 +387,7 @@ HUim3t4M1KMtX1QmMKKCg4i4
     async fn an_unknown_key_id_refetches_once_before_giving_up() {
         let jwks = build_jwks_json("some-other-kid", "invalid-n", "AQAB");
         let (url, hits) = start_counting_jwks_server(&jwks);
-        let repository = FerrisKeyRepository::new(url, None);
+        let repository = FerrisKeyRepository::new(url, vec![]);
         let token = build_signed_token(Utc::now().timestamp() + 3600, None);
 
         let error = repository
@@ -363,18 +403,54 @@ HUim3t4M1KMtX1QmMKKCg4i4
         );
     }
 
+    fn jwks_server() -> String {
+        start_counting_jwks_server(&build_jwks_json(TEST_KID, TEST_N, TEST_E)).0
+    }
+
+    fn repository_for(issuer: &str) -> FerrisKeyRepository {
+        FerrisKeyRepository::new(issuer, vec![TEST_AUDIENCE.to_string()])
+    }
+
+    fn token_from(iss: &str, aud: &str, client_id: Option<String>) -> String {
+        build_token(
+            iss,
+            aud,
+            Utc::now().timestamp() + 120,
+            client_id,
+            "openid profile email",
+        )
+    }
+
     fn build_jwks_json(kid: &str, n: &str, e: &str) -> String {
         format!(r#"{{"keys":[{{"kid":"{kid}","n":"{n}","e":"{e}"}}]}}"#)
     }
 
+    const TEST_AUDIENCE: &str = "autharie-realm";
+
     fn build_signed_token(exp: i64, client_id: Option<String>) -> String {
+        build_token(
+            "https://auth.ferriscord.com",
+            TEST_AUDIENCE,
+            exp,
+            client_id,
+            "openid profile email",
+        )
+    }
+
+    fn build_token(
+        iss: &str,
+        aud: &str,
+        exp: i64,
+        client_id: Option<String>,
+        scope: &str,
+    ) -> String {
         let mut header = Header::new(Algorithm::RS256);
         header.kid = Some(TEST_KID.to_string());
 
         let claims = Claims {
             sub: Subject("user-123".to_string()),
-            iss: "https://auth.ferriscord.com".to_string(),
-            aud: Some(Audience::Single("ferriscord-api".to_string())),
+            iss: iss.to_string(),
+            aud: Some(Audience::Single(aud.to_string())),
             exp: Some(exp),
             email: Some("john.doe@example.com".to_string()),
             email_verified: Some(true),
@@ -382,7 +458,7 @@ HUim3t4M1KMtX1QmMKKCg4i4
             preferred_username: Some("johndoe".to_string()),
             given_name: Some("John".to_string()),
             family_name: Some("Doe".to_string()),
-            scope: "openid profile email".to_string(),
+            scope: scope.to_string(),
             client_id,
             realm_access: None,
             extra: serde_json::Map::new(),
@@ -394,20 +470,34 @@ HUim3t4M1KMtX1QmMKKCg4i4
         encode(&header, &claims, &key).expect("failed to encode jwt")
     }
 
-    #[tokio::test]
-    async fn test_new_sets_issuer_and_audience() {
+    #[test]
+    fn new_keeps_explicit_audiences_and_trims_the_issuer() {
         let repo = FerrisKeyRepository::new(
-            "https://auth.ferriscord.com",
-            Some("ferriscord-api".to_string()),
+            "https://auth.ferriscord.com/realms/autharie/",
+            vec!["autharie-api".to_string(), "autharie-realm".to_string()],
         );
 
-        assert_eq!(repo.issuer, "https://auth.ferriscord.com");
-        assert_eq!(repo.audience, Some("ferriscord-api".to_string()));
+        assert_eq!(repo.issuer, "https://auth.ferriscord.com/realms/autharie");
+        assert_eq!(repo.audiences, ["autharie-api", "autharie-realm"]);
+    }
+
+    #[test]
+    fn new_defaults_the_audience_to_the_realm_audience() {
+        let repo = FerrisKeyRepository::new("https://id.example/realms/autharie", vec![]);
+
+        assert_eq!(repo.audiences, ["autharie-realm"]);
+    }
+
+    #[test]
+    fn no_audience_is_derived_from_an_issuer_that_names_no_realm() {
+        assert_eq!(realm_audience("https://id.example"), None);
+        assert_eq!(realm_audience("https://id.example/realms/"), None);
+        assert_eq!(realm_audience("https://id.example/realms/a/b"), None);
     }
 
     #[tokio::test]
     async fn test_validate_token_returns_invalid_token_for_bad_format() {
-        let repo = FerrisKeyRepository::new("http://localhost:65530", None);
+        let repo = FerrisKeyRepository::new("http://localhost:65530", vec![]);
 
         let err = repo
             .validate_token("not-a-jwt")
@@ -419,7 +509,7 @@ HUim3t4M1KMtX1QmMKKCg4i4
 
     #[tokio::test]
     async fn test_validate_token_returns_invalid_token_when_kid_is_missing() {
-        let repo = FerrisKeyRepository::new("http://localhost:65530", None);
+        let repo = FerrisKeyRepository::new("http://localhost:65530", vec![]);
         let token = build_token_with_header(r#"{"alg":"RS256","typ":"JWT"}"#);
 
         let err = repo
@@ -435,7 +525,7 @@ HUim3t4M1KMtX1QmMKKCg4i4
 
     #[tokio::test]
     async fn test_validate_token_returns_network_error_when_jwks_fails() {
-        let repo = FerrisKeyRepository::new("http://no-such-issuer.invalid", None);
+        let repo = FerrisKeyRepository::new("http://no-such-issuer.invalid", vec![]);
         let token = build_token_with_header(r#"{"alg":"RS256","typ":"JWT","kid":"test-kid"}"#);
 
         let err = repo
@@ -452,7 +542,7 @@ HUim3t4M1KMtX1QmMKKCg4i4
     #[tokio::test]
     async fn test_fetch_jwks_returns_network_error_for_http_status_error() {
         let issuer = start_server_with_response("500 Internal Server Error", r#"{"keys":[]}"#);
-        let repo = FerrisKeyRepository::new(issuer, None);
+        let repo = FerrisKeyRepository::new(issuer, vec![]);
 
         let err = repo.fetch_jwks().await.expect_err("expected network error");
 
@@ -467,7 +557,7 @@ HUim3t4M1KMtX1QmMKKCg4i4
     #[tokio::test]
     async fn test_fetch_jwks_returns_network_error_for_invalid_json() {
         let issuer = start_server_with_response("200 OK", "not-json");
-        let repo = FerrisKeyRepository::new(issuer, None);
+        let repo = FerrisKeyRepository::new(issuer, vec![]);
 
         let err = repo.fetch_jwks().await.expect_err("expected network error");
 
@@ -482,7 +572,7 @@ HUim3t4M1KMtX1QmMKKCg4i4
         // behaviour under test.
         let (issuer, _hits) =
             start_counting_jwks_server(&build_jwks_json("other-kid", TEST_N, TEST_E));
-        let repo = FerrisKeyRepository::new(issuer, None);
+        let repo = FerrisKeyRepository::new(issuer, vec![]);
         let token = build_token_with_header(r#"{"alg":"RS256","typ":"JWT","kid":"wanted-kid"}"#);
 
         let err = repo
@@ -500,7 +590,7 @@ HUim3t4M1KMtX1QmMKKCg4i4
     async fn test_validate_token_returns_internal_for_invalid_rsa_components() {
         let issuer =
             start_server_with_response("200 OK", &build_jwks_json(TEST_KID, "!!!", TEST_E));
-        let repo = FerrisKeyRepository::new(issuer, None);
+        let repo = FerrisKeyRepository::new(issuer, vec![]);
         let token = build_token_with_header(r#"{"alg":"RS256","typ":"JWT","kid":"test-kid"}"#);
 
         let err = repo
@@ -513,10 +603,15 @@ HUim3t4M1KMtX1QmMKKCg4i4
 
     #[tokio::test]
     async fn test_validate_token_returns_expired_for_past_exp() {
-        let issuer =
-            start_server_with_response("200 OK", &build_jwks_json(TEST_KID, TEST_N, TEST_E));
-        let repo = FerrisKeyRepository::new(issuer, None);
-        let token = build_signed_token(Utc::now().timestamp() - 120, None);
+        let issuer = jwks_server();
+        let repo = repository_for(&issuer);
+        let token = build_token(
+            &issuer,
+            TEST_AUDIENCE,
+            Utc::now().timestamp() - 120,
+            None,
+            "openid",
+        );
 
         let err = repo
             .validate_token(&token)
@@ -528,10 +623,9 @@ HUim3t4M1KMtX1QmMKKCg4i4
 
     #[tokio::test]
     async fn test_validate_token_returns_claims_for_valid_token() {
-        let issuer =
-            start_server_with_response("200 OK", &build_jwks_json(TEST_KID, TEST_N, TEST_E));
-        let repo = FerrisKeyRepository::new(issuer, None);
-        let token = build_signed_token(Utc::now().timestamp() + 120, None);
+        let issuer = jwks_server();
+        let repo = repository_for(&issuer);
+        let token = token_from(&issuer, TEST_AUDIENCE, None);
 
         let claims = repo
             .validate_token(&token)
@@ -544,18 +638,108 @@ HUim3t4M1KMtX1QmMKKCg4i4
 
     #[tokio::test]
     async fn test_identity_returns_identity_from_valid_token() {
-        let issuer =
-            start_server_with_response("200 OK", &build_jwks_json(TEST_KID, TEST_N, TEST_E));
-        let repo = FerrisKeyRepository::new(issuer, None);
-        let token = build_signed_token(
-            Utc::now().timestamp() + 120,
-            Some("ferriscord-bot".to_string()),
-        );
+        let issuer = jwks_server();
+        let repo = repository_for(&issuer);
+        let token = token_from(&issuer, TEST_AUDIENCE, Some("ferriscord-bot".to_string()));
 
         let identity = repo.identify(&token).await.expect("expected identity");
 
         assert!(identity.is_client());
         assert_eq!(identity.id(), "user-123");
         assert_eq!(identity.username(), "ferriscord-bot");
+    }
+
+    #[tokio::test]
+    async fn a_token_from_another_issuer_is_refused() {
+        let issuer = jwks_server();
+        let repo = repository_for(&issuer);
+        let token = token_from("https://id.example/realms/other", TEST_AUDIENCE, None);
+
+        let err = repo.validate_token(&token).await.expect_err("wrong iss");
+
+        assert!(matches!(err, AuthError::InvalidToken { .. }));
+    }
+
+    #[tokio::test]
+    async fn a_token_from_any_configured_token_issuer_is_accepted() {
+        let issuer = jwks_server();
+        let repo = repository_for(&issuer).with_token_issuers(vec![
+            "http://localhost:3334/realms/autharie/".to_string(),
+            "http://ferriskey-api:3333/realms/autharie".to_string(),
+        ]);
+
+        for iss in [
+            "http://localhost:3334/realms/autharie",
+            "http://ferriskey-api:3333/realms/autharie",
+        ] {
+            let token = token_from(iss, TEST_AUDIENCE, None);
+            repo.validate_token(&token).await.expect("configured iss");
+        }
+
+        let own = token_from(&issuer, TEST_AUDIENCE, None);
+        repo.validate_token(&own).await.expect("the issuer itself");
+
+        let stranger = token_from("http://elsewhere/realms/autharie", TEST_AUDIENCE, None);
+        assert!(repo.validate_token(&stranger).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_token_for_another_audience_is_refused() {
+        let issuer = jwks_server();
+        let repo = repository_for(&issuer);
+        let token = token_from(&issuer, "https://gateway.example/mcp", None);
+
+        let err = repo.validate_token(&token).await.expect_err("wrong aud");
+
+        assert!(matches!(err, AuthError::InvalidToken { .. }));
+    }
+
+    #[tokio::test]
+    async fn a_token_carrying_any_accepted_audience_is_accepted() {
+        let issuer = jwks_server();
+        let repo = FerrisKeyRepository::new(
+            &issuer,
+            vec!["autharie-api".to_string(), TEST_AUDIENCE.to_string()],
+        );
+        let token = token_from(&issuer, "autharie-api", None);
+
+        repo.validate_token(&token)
+            .await
+            .expect("accepted audience");
+    }
+
+    #[tokio::test]
+    async fn the_issuer_is_matched_whatever_trailing_slash_it_is_configured_with() {
+        let issuer = jwks_server();
+        let repo = FerrisKeyRepository::new(format!("{issuer}/"), vec![TEST_AUDIENCE.to_string()]);
+        let token = token_from(&issuer, TEST_AUDIENCE, None);
+
+        repo.validate_token(&token).await.expect("same issuer");
+    }
+
+    #[tokio::test]
+    async fn no_configured_audience_refuses_every_token() {
+        let issuer = jwks_server();
+        let repo = FerrisKeyRepository::new(&issuer, vec![]);
+        let token = token_from(&issuer, TEST_AUDIENCE, None);
+
+        assert!(repo.validate_token(&token).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn the_scope_claim_reaches_the_identity() {
+        let issuer = jwks_server();
+        let repo = repository_for(&issuer);
+        let token = build_token(
+            &issuer,
+            TEST_AUDIENCE,
+            Utc::now().timestamp() + 120,
+            None,
+            "openid  profile deployments:read",
+        );
+
+        let identity = repo.identify(&token).await.expect("identity");
+
+        assert_eq!(identity.scopes(), ["openid", "profile", "deployments:read"]);
     }
 }

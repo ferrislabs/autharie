@@ -1217,6 +1217,7 @@ mod tests {
     /// do is the policy's business, not this identity's.
     fn a_caller() -> Identity {
         Identity::User(autharie_auth::User {
+            scopes: Vec::new(),
             id: Uuid::from_u128(7).to_string(),
             username: "somebody".to_string(),
             email: None,

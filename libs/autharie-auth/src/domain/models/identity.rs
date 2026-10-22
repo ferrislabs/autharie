@@ -51,6 +51,13 @@ impl Identity {
         }
     }
 
+    pub fn scopes(&self) -> &[String] {
+        match self {
+            Identity::User(u) => &u.scopes,
+            Identity::Client(c) => &c.scopes,
+        }
+    }
+
     pub fn has_role(&self, role: &str) -> bool {
         self.roles().iter().any(|r| r == role)
     }
@@ -59,13 +66,14 @@ impl Identity {
 impl From<Claims> for Identity {
     fn from(claims: Claims) -> Self {
         let roles = claims.realm_roles().to_vec();
+        let scopes = claims.scopes();
 
         if let Some(client_id) = claims.client_id {
             Identity::Client(Client {
                 id: claims.sub.0,
                 client_id,
                 roles,
-                scopes: Vec::new(),
+                scopes,
             })
         } else {
             Identity::User(User {
@@ -73,6 +81,7 @@ impl From<Claims> for Identity {
                 email: claims.email,
                 name: claims.name,
                 roles,
+                scopes,
                 username: claims.preferred_username.unwrap_or(claims.sub.0),
             })
         }
@@ -183,6 +192,26 @@ mod tests {
             }),
             extra: serde_json::Map::new(),
         }
+    }
+
+    #[test]
+    fn the_scope_claim_is_parsed_into_the_identity() {
+        let user = Identity::from(create_user_claims());
+        let client = Identity::from(create_service_account_claims());
+
+        assert_eq!(user.scopes(), ["openid", "profile", "email"]);
+        assert_eq!(
+            client.scopes(),
+            ["admin:all", "read:users", "write:messages"]
+        );
+    }
+
+    #[test]
+    fn an_empty_scope_claim_yields_no_scopes() {
+        let mut claims = create_user_claims();
+        claims.scope = "  ".to_string();
+
+        assert!(Identity::from(claims).scopes().is_empty());
     }
 
     #[test]
