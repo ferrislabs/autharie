@@ -234,6 +234,7 @@ export namespace Schemas {
   export type CloudCredentialId = string
   export type Provider = 'scaleway'
   export type CloudCredentialResponse = {
+    application_name?: (string | null) | undefined
     created_at: string
     id: string
     label: string

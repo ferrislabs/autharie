@@ -11033,6 +11033,12 @@
           "created_at"
         ],
         "properties": {
+          "application_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"

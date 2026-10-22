@@ -80,6 +80,14 @@ async fn seed_credential(
     tx: &SharedTx<'_>,
     organisation_id: OrganisationId,
 ) -> Result<CloudCredentialId, CoreError> {
+    seed_named_credential(tx, organisation_id, None).await
+}
+
+async fn seed_named_credential(
+    tx: &SharedTx<'_>,
+    organisation_id: OrganisationId,
+    application_name: Option<&str>,
+) -> Result<CloudCredentialId, CoreError> {
     let id = CloudCredentialId(Uuid::new_v4());
 
     PostgresSealedSecretRepository::new(tx)
@@ -108,6 +116,7 @@ async fn seed_credential(
             label: "production".to_string(),
             scope_check: ScopeCheck {
                 checked_at: Utc::now(),
+                application_name: application_name.map(str::to_string),
             },
             created_at: Utc::now(),
         })
@@ -630,6 +639,39 @@ async fn a_credential_is_listed_for_its_organisation_only() {
     assert_eq!(listed[0].label, "production");
     assert_eq!(read.map(|found| found.id), Some(credential));
     assert!(absent.is_none());
+}
+
+#[tokio::test]
+async fn the_name_of_the_application_comes_back_with_the_credential() {
+    let Some(result) = run(async |tx| {
+        let (_, organisation) = seed_organisation(&tx).await?;
+        let named = seed_named_credential(&tx, organisation, Some("autharie")).await?;
+        let unnamed = seed_credential(&tx, organisation).await?;
+        let repository = PostgresCloudCredentialRepository::new(&tx);
+
+        let listed = repository.list_for_organisation(&organisation).await?;
+        let read = repository.get(&named).await?;
+
+        Ok((named, unnamed, listed, read))
+    })
+    .await
+    else {
+        return;
+    };
+
+    let (named, unnamed, listed, read) = result.expect("the transaction ran");
+    let name_of = |id| {
+        listed
+            .iter()
+            .find(|credential| credential.id == id)
+            .map(|credential| credential.scope_check.application_name.clone())
+    };
+    assert_eq!(name_of(named), Some(Some("autharie".to_string())));
+    assert_eq!(name_of(unnamed), Some(None));
+    assert_eq!(
+        read.and_then(|found| found.scope_check.application_name),
+        Some("autharie".to_string())
+    );
 }
 
 #[tokio::test]

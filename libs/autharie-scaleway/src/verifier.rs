@@ -10,7 +10,7 @@ use crate::{
     config::ScalewayConfig,
     error::{ApiError, ScalewayError},
     http::{Http, Session},
-    models::{ApiKey, PolicyList, Project, RuleList},
+    models::{ApiKey, Application, PolicyList, Project, RuleList},
 };
 
 pub const REQUIRED_PERMISSION_SETS: [&str; 4] = [
@@ -21,6 +21,11 @@ pub const REQUIRED_PERMISSION_SETS: [&str; 4] = [
 ];
 
 pub const INSPECTION_PERMISSION_SET: &str = "IAMReadOnly";
+
+struct Granted {
+    permission_sets: BTreeSet<String>,
+    application_name: Option<String>,
+}
 
 pub struct ScalewayVerifier {
     http: Http,
@@ -33,7 +38,16 @@ impl ScalewayVerifier {
         })
     }
 
-    async fn granted(&self, session: &Session<'_>) -> Result<Option<BTreeSet<String>>, ApiError> {
+    async fn application_name(&self, session: &Session<'_>, id: Option<&str>) -> Option<String> {
+        let application: Application = session
+            .get(&format!("/iam/v1alpha1/applications/{}", id?), &[])
+            .await
+            .ok()?;
+
+        Some(application.name.trim().to_string()).filter(|name| !name.is_empty())
+    }
+
+    async fn granted(&self, session: &Session<'_>) -> Result<Option<Granted>, ApiError> {
         let key: ApiKey = session
             .get(
                 &format!("/iam/v1alpha1/api-keys/{}", session.access_key),
@@ -52,10 +66,16 @@ impl ScalewayVerifier {
             return Ok(None);
         }
 
+        let application_id = key.application_id.clone();
         let (principal_filter, principal_id) = match (key.application_id, key.user_id) {
             (Some(application_id), _) => ("application_ids", application_id),
             (None, Some(user_id)) => ("user_ids", user_id),
-            (None, None) => return Ok(Some(BTreeSet::new())),
+            (None, None) => {
+                return Ok(Some(Granted {
+                    permission_sets: BTreeSet::new(),
+                    application_name: None,
+                }));
+            }
         };
 
         let policies: PolicyList = session
@@ -84,7 +104,12 @@ impl ScalewayVerifier {
                     .flat_map(|rule| rule.permission_set_names),
             );
         }
-        Ok(Some(granted))
+        Ok(Some(Granted {
+            permission_sets: granted,
+            application_name: self
+                .application_name(session, application_id.as_deref())
+                .await,
+        }))
     }
 }
 
@@ -110,7 +135,7 @@ impl CredentialVerifier for ScalewayVerifier {
 
         let missing: Vec<String> = REQUIRED_PERMISSION_SETS
             .iter()
-            .filter(|required| !granted.contains(**required))
+            .filter(|required| !granted.permission_sets.contains(**required))
             .map(|required| required.to_string())
             .collect();
         if !missing.is_empty() {
@@ -118,6 +143,7 @@ impl CredentialVerifier for ScalewayVerifier {
         }
 
         let extra: Vec<String> = granted
+            .permission_sets
             .iter()
             .filter(|name| {
                 name.as_str() != INSPECTION_PERMISSION_SET
@@ -131,6 +157,7 @@ impl CredentialVerifier for ScalewayVerifier {
 
         Ok(ScopeCheck {
             checked_at: Utc::now(),
+            application_name: granted.application_name,
         })
     }
 }
