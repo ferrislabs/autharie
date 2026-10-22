@@ -4,6 +4,7 @@
 //! share nothing beyond that; see each module's own doc comment.
 
 pub mod decisions;
+pub mod deliveries;
 pub mod logs;
 pub mod traces;
 

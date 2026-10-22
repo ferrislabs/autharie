@@ -1,5 +1,6 @@
 use autharie_core::{
-    CoreError, agents::AgentError, billing::BillingError, dataplane::credential::CredentialError,
+    CoreError, agents::AgentError, backups::keys::KeyError, billing::BillingError,
+    dataplane::credential::CredentialError, webhooks::WebhookError,
 };
 use axum::{Json, http::StatusCode, response::IntoResponse};
 use serde::Serialize;
@@ -431,6 +432,17 @@ impl From<CoreError> for ApiError {
             ) => ApiError::ServiceUnavailable {
                 reason: value.to_string(),
             },
+            CoreError::Webhook(WebhookError::Invalid { .. }) => ApiError::BadRequest {
+                reason: value.to_string(),
+            },
+            CoreError::Webhook(
+                WebhookError::NotFound { .. } | WebhookError::SecretNotReceived,
+            ) => ApiError::NotFound {
+                reason: value.to_string(),
+            },
+            CoreError::Webhook(WebhookError::UnsupportedKind) => ApiError::Conflict {
+                reason: value.to_string(),
+            },
             CoreError::Agent(AgentError::InvalidCedar { .. }) => ApiError::Unprocessable {
                 reason: value.to_string(),
             },
@@ -443,6 +455,13 @@ impl From<CoreError> for ApiError {
             CoreError::Agent(AgentError::UnsupportedKind | AgentError::TooManyPolicies { .. }) => {
                 ApiError::Conflict {
                     reason: value.to_string(),
+                }
+            }
+            CoreError::Key(KeyError::ProviderUnavailable { .. }) => {
+                tracing::error!(error = %value, "the key manager is not available");
+
+                ApiError::ServiceUnavailable {
+                    reason: "no key manager is available to protect this secret".to_string(),
                 }
             }
             // Everything else stays deliberately opaque to the caller: a

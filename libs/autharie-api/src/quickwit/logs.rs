@@ -192,6 +192,7 @@ fn level_clause(floor: LogLevel) -> String {
 fn build_query(filter: &LogSearchFilter) -> String {
     let mut clauses = vec![
         level_clause(filter.level_floor),
+        "NOT kind:webhook_delivery".to_string(),
         "NOT kind:agent_decision".to_string(),
     ];
 
@@ -537,6 +538,15 @@ mod tests {
             level_floor: LogLevel::Warn,
             text: None,
         }
+    }
+
+    #[test]
+    fn webhook_delivery_records_never_show_up_as_log_lines() {
+        assert!(build_query(&filter()).contains("AND NOT kind:webhook_delivery"));
+
+        let mut with_text = filter();
+        with_text.text = Some("pool".to_string());
+        assert!(build_query(&with_text).contains("NOT kind:webhook_delivery"));
     }
 
     #[test]

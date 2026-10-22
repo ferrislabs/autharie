@@ -476,6 +476,7 @@ export namespace Schemas {
   export type DataplaneUpgradesResponse = { data: Array<DataplaneUpgradeActions> }
   export type DeleteDeploymentResponse = { success: boolean }
   export type DeleteRoleResponse = { success: boolean }
+  export type DeliveryStatus = 'pending' | 'delivering' | 'succeeded' | 'failed'
   export type DowntimeInterval = {
     duration_seconds?: (number | null) | undefined
     ended_at?: (string | null) | undefined
@@ -593,6 +594,7 @@ export namespace Schemas {
   export type GetRoleResponse = { data: Role }
   export type GetUserOrganisationsResponse = { data: Array<Organisation> }
   export type GrantOperatorRequest = { rights: Array<string> }
+  export type HeaderName = string
   export type HeartbeatRequest = Partial<{
     certificate_fingerprint: string | null
     gateway_address: string | null
@@ -849,6 +851,19 @@ export namespace Schemas {
   }
   export type ReportDrillOutcomeResponseData = Record<string, unknown>
   export type ReportDrillOutcomeResponse = { data: ReportDrillOutcomeResponseData }
+  export type WebhookRequestReport = {
+    id: string
+    message?: (string | null) | undefined
+    phase: string
+  }
+  export type WebhookSecretReport = { id: string; secret: string; version: number }
+  export type WebhookStateReport = {
+    ferriskey_id?: (string | null) | undefined
+    id: string
+    message?: (string | null) | undefined
+    phase: string
+    secret_version?: number | undefined
+  }
   export type ReportOutcomeRequest = Partial<{
     deployment_id: string | null
     gateway_client_ready: boolean
@@ -858,9 +873,13 @@ export namespace Schemas {
     outcome: string
     phase: string | null
     policies: Array<AgentPolicyReport>
+    realms: Array<string>
     reason: string | null
+    requests: Array<WebhookRequestReport>
     revision: number | null
+    secrets: Array<WebhookSecretReport>
     version: string | null
+    webhooks: Array<WebhookStateReport>
   }>
   export type ReportOutcomeResponseData = { recorded: boolean }
   export type ReportOutcomeResponse = { data: ReportOutcomeResponseData }
@@ -868,6 +887,8 @@ export namespace Schemas {
   export type ReportUsageMetricsRequest = { points: Array<ReportedMetricPoint> }
   export type ReportUsageMetricsResponseData = { recorded: number }
   export type ReportUsageMetricsResponse = { data: ReportUsageMetricsResponseData }
+  export type RequestKind = 'rotate_secret' | 'retry_delivery'
+  export type RequestPhase = 'pending' | 'done' | 'failed'
   export type RequestedUpgradeItem = {
     action_id: ActionId
     already_requested: boolean
@@ -1008,6 +1029,70 @@ export namespace Schemas {
   export type UpgradeDeploymentResponse = { change: string; data: Deployment }
   export type UpgradeInFlightResponse = Partial<{ data: null | InFlightUpgrade }>
   export type UpgradeSettingsResponse = { data: Deployment }
+  export type WebhookEndpoint = string
+  export type WebhookEvent = string
+  export type WebhookId = string
+  export type WebhookName = string
+  export type WebhookRealm = string
+  export type WebhookState =
+    | { phase: 'Pending' }
+    | { ferriskey_id: string; phase: 'Active' }
+    | { phase: 'Failed'; reason: string }
+  export type Webhook = {
+    created_at: string
+    deployment_id: DeploymentId
+    description?: (string | null) | undefined
+    endpoint: WebhookEndpoint
+    events: Array<WebhookEvent>
+    headers: Array<HeaderName>
+    id: WebhookId
+    name: WebhookName
+    realm: WebhookRealm
+    secret_received_at?: (string | null) | undefined
+    secret_version?: (number | null) | undefined
+    state: WebhookState
+    updated_at: string
+  }
+  export type WebhookDelivery = {
+    attempt_count: number
+    created_at: string
+    delivery_id: string
+    event: string
+    last_error?: (string | null) | undefined
+    last_status_code?: (number | null) | undefined
+    status: DeliveryStatus
+    updated_at: string
+    webhook_id: WebhookId
+  }
+  export type WebhookDeliveriesResponse = { data: Array<WebhookDelivery> }
+  export type WebhookEventInfo = { group: string; name: string }
+  export type WebhookEventsResponse = { data: Array<WebhookEventInfo> }
+  export type WebhookHeaderRequest = { name: string; value?: (string | null) | undefined }
+  export type WebhookRealmsResponse = { data: Array<string> }
+  export type WebhookRequest = {
+    created_at: string
+    delivery_id?: (string | null) | undefined
+    id: string
+    kind: RequestKind
+    message?: (string | null) | undefined
+    phase: RequestPhase
+    updated_at: string
+    webhook_id: WebhookId
+  }
+  export type WebhookRequestBody = {
+    description?: (string | null) | undefined
+    endpoint: string
+    events: Array<string>
+    headers?: Array<WebhookHeaderRequest> | undefined
+    name: string
+    realm?: (string | null) | undefined
+  }
+  export type WebhookRequestResponse = { data: WebhookRequest }
+  export type WebhookView = Webhook & { requests: Array<WebhookRequest> }
+  export type WebhookResponse = { data: WebhookView }
+  export type WebhookSecretData = { secret: string; version: number }
+  export type WebhookSecretResponse = { data: WebhookSecretData }
+  export type WebhooksResponse = { data: Array<WebhookView> }
 
   // </Schemas>
 }
@@ -1697,6 +1782,106 @@ export namespace Endpoints {
     }
     response: Schemas.GetDeploymentUsageResponse
   }
+  export type get_List_webhook_realms_handler = {
+    method: 'GET'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/webhook-realms'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string }
+    }
+    response: Schemas.WebhookRealmsResponse
+  }
+  export type get_List_webhooks_handler = {
+    method: 'GET'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/webhooks'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string }
+    }
+    response: Schemas.WebhooksResponse
+  }
+  export type post_Create_webhook_handler = {
+    method: 'POST'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/webhooks'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string }
+
+      body: Schemas.WebhookRequestBody
+    }
+    response: Schemas.WebhookResponse
+  }
+  export type get_Get_webhook_handler = {
+    method: 'GET'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/webhooks/{webhook_id}'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string; webhook_id: string }
+    }
+    response: Schemas.WebhookResponse
+  }
+  export type put_Update_webhook_handler = {
+    method: 'PUT'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/webhooks/{webhook_id}'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string; webhook_id: string }
+
+      body: Schemas.WebhookRequestBody
+    }
+    response: Schemas.WebhookResponse
+  }
+  export type delete_Delete_webhook_handler = {
+    method: 'DELETE'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/webhooks/{webhook_id}'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string; webhook_id: string }
+    }
+    response: unknown
+  }
+  export type get_List_webhook_deliveries_handler = {
+    method: 'GET'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/webhooks/{webhook_id}/deliveries'
+    requestFormat: 'json'
+    parameters: {
+      query: Partial<{ status: string; from: string; until: string }>
+      path: { organisation_id: string; deployment_id: string; webhook_id: string }
+    }
+    response: Schemas.WebhookDeliveriesResponse
+  }
+  export type post_Retry_webhook_delivery_handler = {
+    method: 'POST'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/webhooks/{webhook_id}/deliveries/{delivery_id}/retry'
+    requestFormat: 'json'
+    parameters: {
+      path: {
+        organisation_id: string
+        deployment_id: string
+        webhook_id: string
+        delivery_id: string
+      }
+    }
+    response: Schemas.WebhookRequestResponse
+  }
+  export type get_Reveal_webhook_secret_handler = {
+    method: 'GET'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/webhooks/{webhook_id}/secret'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string; webhook_id: string }
+    }
+    response: Schemas.WebhookSecretResponse
+  }
+  export type post_Rotate_webhook_secret_handler = {
+    method: 'POST'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/webhooks/{webhook_id}/secret/rotate'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string; webhook_id: string }
+    }
+    response: Schemas.WebhookRequestResponse
+  }
   export type get_List_enabled_features_handler = {
     method: 'GET'
     path: '/organisations/{organisation_id}/feature-flags'
@@ -2179,6 +2364,13 @@ export namespace Endpoints {
     parameters: never
     response: Schemas.GetUserOrganisationsResponse
   }
+  export type get_List_webhook_events_handler = {
+    method: 'GET'
+    path: '/webhook-events'
+    requestFormat: 'json'
+    parameters: never
+    response: Schemas.WebhookEventsResponse
+  }
 
   // </Endpoints>
 }
@@ -2209,6 +2401,9 @@ export type EndpointByMethod = {
     '/organisations/{organisation_id}/deployments/{deployment_id}/backups/{backup_id}/restore': Endpoints.post_Restore_backup_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/cutover': Endpoints.post_Cutover_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/upgrade': Endpoints.post_Upgrade_deployment_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/webhooks': Endpoints.post_Create_webhook_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/webhooks/{webhook_id}/deliveries/{delivery_id}/retry': Endpoints.post_Retry_webhook_delivery_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/webhooks/{webhook_id}/secret/rotate': Endpoints.post_Rotate_webhook_secret_handler
     '/organisations/{organisation_id}/invitations': Endpoints.post_Invite_handler
     '/organisations/{organisation_id}/roles': Endpoints.post_Create_role_handler
     '/platform/dataplanes/upgrade': Endpoints.post_Upgrade_dataplanes_handler
@@ -2245,6 +2440,11 @@ export type EndpointByMethod = {
     '/organisations/{organisation_id}/deployments/{deployment_id}/subscription': Endpoints.get_Get_subscription_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/upgrade': Endpoints.get_Upgrade_in_flight_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/usage-metrics/{metric}': Endpoints.get_Get_deployment_usage_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/webhook-realms': Endpoints.get_List_webhook_realms_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/webhooks': Endpoints.get_List_webhooks_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/webhooks/{webhook_id}': Endpoints.get_Get_webhook_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/webhooks/{webhook_id}/deliveries': Endpoints.get_List_webhook_deliveries_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/webhooks/{webhook_id}/secret': Endpoints.get_Reveal_webhook_secret_handler
     '/organisations/{organisation_id}/feature-flags': Endpoints.get_List_enabled_features_handler
     '/organisations/{organisation_id}/invitations': Endpoints.get_List_invitations_handler
     '/organisations/{organisation_id}/logs/group': Endpoints.get_Group_logs_handler
@@ -2275,12 +2475,14 @@ export type EndpointByMethod = {
     '/releases/operator/{kind}/{version}/hold-backs': Endpoints.get_Release_hold_backs_handler
     '/releases/{kind}': Endpoints.get_List_releases_handler
     '/users/@me/organisations': Endpoints.get_Get_user_organisations_handler
+    '/webhook-events': Endpoints.get_List_webhook_events_handler
   }
   delete: {
     '/dataplanes/{dataplane_id}': Endpoints.delete_Delete_dataplane_handler
     '/organisations/{organisation_id}/cloud-credentials/{credential_id}': Endpoints.delete_Delete_cloud_credential_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}': Endpoints.delete_Delete_deployment_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/agents/policies/{policy_id}': Endpoints.delete_Delete_agent_policy_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/webhooks/{webhook_id}': Endpoints.delete_Delete_webhook_handler
     '/organisations/{organisation_id}/invitations/{invitation_id}': Endpoints.delete_Revoke_invitation_handler
     '/organisations/{organisation_id}/members/{user_id}': Endpoints.delete_Remove_member_handler
     '/organisations/{organisation_id}/roles/{role_id}': Endpoints.delete_Delete_role_handler
@@ -2297,6 +2499,7 @@ export type EndpointByMethod = {
     '/organisations/{organisation_id}/deployments/{deployment_id}/network-access': Endpoints.put_Set_network_access_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/subscription': Endpoints.put_Put_subscription_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/upgrade-settings': Endpoints.put_Set_upgrade_settings_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/webhooks/{webhook_id}': Endpoints.put_Update_webhook_handler
     '/organisations/{organisation_id}/members/{user_id}/roles': Endpoints.put_Set_member_roles_handler
     '/platform/features/{key}': Endpoints.put_Set_feature_default_handler
     '/platform/operators/{subject}': Endpoints.put_Grant_operator_handler
