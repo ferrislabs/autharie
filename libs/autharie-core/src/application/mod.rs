@@ -42,6 +42,7 @@ mod signals;
 mod traces;
 mod upgrade;
 mod user;
+pub mod webhooks;
 
 // Re-exported by name rather than as a module:  is already a
 // domain module, and two of them under the crate root is a glob collision

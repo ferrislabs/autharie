@@ -11,7 +11,8 @@ pub use domain::*;
 pub use infrastructure::herald_identity::{FerrisKeyHeraldIdentities, RealmAdmin};
 
 pub use infrastructure::credentials::{
-    CREDENTIALS_KEY, CloudProviders, EnvelopeCredentialStore, FixedCloudProvider, FixedVerdict,
+    CREDENTIALS_KEY, CloudProviders, EnvelopeCredentialStore, EnvelopeVault, FixedCloudProvider,
+    FixedVerdict,
 };
 
 pub use infrastructure::{
