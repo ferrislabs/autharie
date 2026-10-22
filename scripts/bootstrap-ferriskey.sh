@@ -148,6 +148,28 @@ admin_call "enabling token exchange for mcp-gateway" PATCH "/clients/${GATEWAY_U
 admin_call "creating the exchange policy" POST "/clients/${GATEWAY_UUID}/token-exchange-policies" \
     "$(jq -nc --arg a "${API_AUDIENCE}" '{target_audience: $a, allow_delegation: true, allow_impersonation: false}')" 409
 
+# The realm decides for the gateway, so its authorization is switched on. A
+# stored schema, even an empty one, is what makes FerrisKey validate policies
+# against its built-in types (User, Agent, Tool...).
+admin_call "switching the realm's authorization on" PUT "/authz/state" '{"enabled": true}'
+schema_status=$(curl -sS -o /dev/null -w '%{http_code}' "${FERRISKEY_URL}/realms/autharie/authz/schema" \
+    -H "Authorization: Bearer ${TOKEN}")
+if [ "${schema_status}" = "404" ]; then
+    admin_call "storing the authorization schema" PUT "/authz/schema" \
+        '{"namespace": "App", "source": "namespace App {}"}'
+fi
+
+# Without a policy every tool is denied. Members may call Autharie's tools; the
+# API still checks their membership and the organisation's MCP switch.
+members_policy=$(curl -sS "${FERRISKEY_URL}/realms/autharie/authz/policies?managed_by=autharie-bootstrap" \
+    -H "Authorization: Bearer ${TOKEN}" \
+    | jq -r '.[]? | select(.name == "members-use-autharie-tools") | .id' | head -1)
+if [ -z "${members_policy}" ]; then
+    admin_call "allowing members to call Autharie's tools" POST "/authz/policies?managed_by=autharie-bootstrap" \
+        "$(jq -nc --arg src 'permit (principal is FerrisKey::User, action == FerrisKey::Action::"call_tool", resource is FerrisKey::Tool) when { resource.server == "autharie" };' \
+            '{name: "members-use-autharie-tools", description: "Members may call the Autharie MCP tools", enabled: true, body: {type: "static", source: $src}}')"
+fi
+
 # The gateway's configuration, with its secret. Written beside the template and
 # kept out of git; the running gateway picks it up within seconds.
 MCP_GATEWAY_CONFIG_FILE="${REPO_ROOT}/deploy/local/mcp-gateway.toml"
