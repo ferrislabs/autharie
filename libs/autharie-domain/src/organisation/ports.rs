@@ -49,6 +49,28 @@ pub trait OrganisationService: Send + Sync {
     ) -> impl Future<Output = Result<Vec<Organisation>, CoreError>> + Send;
 }
 
+pub trait OrganisationSettings: Send + Sync {
+    fn get_organisation(
+        &self,
+        identity: Identity,
+        id: OrganisationId,
+    ) -> impl Future<Output = Result<Organisation, CoreError>> + Send;
+
+    fn change_organisation(
+        &self,
+        identity: Identity,
+        id: OrganisationId,
+        command: UpdateOrganisationCommand,
+    ) -> impl Future<Output = Result<Organisation, CoreError>> + Send;
+}
+
+pub trait OrganisationMcpSwitch: Send + Sync {
+    fn mcp_enabled(
+        &self,
+        id: OrganisationId,
+    ) -> impl Future<Output = Result<bool, CoreError>> + Send;
+}
+
 /// Repository trait for organisation persistence
 ///
 /// This trait defines the contract for persisting and retrieving organisations

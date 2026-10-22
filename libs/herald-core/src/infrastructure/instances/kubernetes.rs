@@ -82,7 +82,7 @@ fn observed(instance: &IdentityInstance) -> Option<(DeploymentId, InstanceState)
     Some((deployment_id, state))
 }
 
-fn deployment_id_of(name: &str) -> Option<DeploymentId> {
+pub(crate) fn deployment_id_of(name: &str) -> Option<DeploymentId> {
     let id = Uuid::parse_str(name.strip_prefix(DEPLOYMENT_INSTANCE_PREFIX)?).ok()?;
     Some(DeploymentId::new(id.to_string()))
 }

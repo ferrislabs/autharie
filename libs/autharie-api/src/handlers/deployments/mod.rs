@@ -4,6 +4,14 @@ use utoipa::OpenApi;
 
 use crate::{
     handlers::deployments::{
+        agents::{
+            __path_create_agent_policy_handler, __path_delete_agent_policy_handler,
+            __path_get_agents_handler, __path_list_agent_decisions_handler,
+            __path_list_agent_policies_handler, __path_put_agents_handler,
+            __path_update_agent_policy_handler, create_agent_policy_handler,
+            delete_agent_policy_handler, get_agents_handler, list_agent_decisions_handler,
+            list_agent_policies_handler, put_agents_handler, update_agent_policy_handler,
+        },
         availability::{
             __path_get_deployment_availability_handler, get_deployment_availability_handler,
         },
@@ -42,11 +50,23 @@ use crate::{
         upgrade_deployment::{__path_upgrade_deployment_handler, upgrade_deployment_handler},
         upgrade_in_flight::{__path_upgrade_in_flight_handler, upgrade_in_flight_handler},
         upgrade_settings::{__path_set_upgrade_settings_handler, set_upgrade_settings_handler},
+        webhooks::{
+            __path_create_webhook_handler, __path_delete_webhook_handler,
+            __path_get_webhook_handler, __path_list_webhook_deliveries_handler,
+            __path_list_webhook_realms_handler, __path_list_webhooks_handler,
+            __path_retry_webhook_delivery_handler, __path_reveal_webhook_secret_handler,
+            __path_rotate_webhook_secret_handler, __path_update_webhook_handler,
+            create_webhook_handler, delete_webhook_handler, get_webhook_handler,
+            list_webhook_deliveries_handler, list_webhook_events_handler,
+            list_webhook_realms_handler, list_webhooks_handler, retry_webhook_delivery_handler,
+            reveal_webhook_secret_handler, rotate_webhook_secret_handler, update_webhook_handler,
+        },
     },
     router::service_auth_middleware,
     state::AppState,
 };
 
+pub mod agents;
 pub mod availability;
 pub mod backups;
 pub mod create_deployment;
@@ -66,6 +86,7 @@ pub mod update_deployment;
 pub mod upgrade_deployment;
 pub mod upgrade_in_flight;
 pub mod upgrade_settings;
+pub mod webhooks;
 
 #[derive(OpenApi)]
 #[openapi(
@@ -96,6 +117,23 @@ pub mod upgrade_settings;
         get_subscription_handler,
         put_subscription_handler,
         get_deployment_features_handler,
+        list_webhooks_handler,
+        create_webhook_handler,
+        get_webhook_handler,
+        update_webhook_handler,
+        delete_webhook_handler,
+        rotate_webhook_secret_handler,
+        reveal_webhook_secret_handler,
+        list_webhook_deliveries_handler,
+        retry_webhook_delivery_handler,
+        list_webhook_realms_handler,
+        get_agents_handler,
+        put_agents_handler,
+        list_agent_policies_handler,
+        create_agent_policy_handler,
+        update_agent_policy_handler,
+        delete_agent_policy_handler,
+        list_agent_decisions_handler,
     ),
     tags(
         (name = "deployments", description = "Deployment management endpoints scoped to organisations.")
@@ -128,6 +166,24 @@ pub fn deployment_routes(app_state: AppState) -> Router<AppState> {
         .typed_get(get_subscription_handler)
         .typed_put(put_subscription_handler)
         .typed_get(get_deployment_features_handler)
+        .typed_get(list_webhooks_handler)
+        .typed_post(create_webhook_handler)
+        .typed_get(get_webhook_handler)
+        .typed_put(update_webhook_handler)
+        .typed_delete(delete_webhook_handler)
+        .typed_post(rotate_webhook_secret_handler)
+        .typed_get(reveal_webhook_secret_handler)
+        .typed_get(list_webhook_deliveries_handler)
+        .typed_post(retry_webhook_delivery_handler)
+        .typed_get(list_webhook_realms_handler)
+        .typed_get(list_webhook_events_handler)
+        .typed_get(get_agents_handler)
+        .typed_put(put_agents_handler)
+        .typed_get(list_agent_policies_handler)
+        .typed_post(create_agent_policy_handler)
+        .typed_put(update_agent_policy_handler)
+        .typed_delete(delete_agent_policy_handler)
+        .typed_get(list_agent_decisions_handler)
         .typed_get(get_deployment_handler)
         .typed_patch(update_deployment_handler)
         .typed_delete(delete_deployment_handler)

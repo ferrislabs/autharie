@@ -34,6 +34,10 @@ ISSUER=$(terraform -chdir="${TF_DIR}" output -raw issuer)
 HERALD_UUID=$(terraform -chdir="${TF_DIR}" output -raw herald_client_uuid)
 OPERATOR_UUID=$(terraform -chdir="${TF_DIR}" output -raw operator_client_uuid)
 OPERATOR_ROLE=$(terraform -chdir="${TF_DIR}" output -raw operator_role_id)
+GATEWAY_UUID=$(terraform -chdir="${TF_DIR}" output -raw mcp_gateway_client_uuid)
+GATEWAY_ROLE=$(terraform -chdir="${TF_DIR}" output -raw mcp_gateway_role_id)
+MCP_GATEWAY_RESOURCE="${MCP_GATEWAY_RESOURCE:-http://localhost:${MCP_GATEWAY_PORT:-9090}/mcp}"
+API_AUDIENCE="${API_AUDIENCE:-autharie-realm}"
 
 # The provider stores "***" for the secret at v0.1.0 -- the API masks it in the
 # client response and the provider records the mask. So the real one is read
@@ -87,6 +91,95 @@ curl -sS -o /dev/null -X POST \
     "${FERRISKEY_URL}/realms/autharie/users/${operator_user}/roles/${OPERATOR_ROLE}" \
     -H "Authorization: Bearer ${TOKEN}"
 
+# ------------------------------------------------------------- MCP gateway
+#
+# What the provider cannot declare at v0.1.0 (see main.tf), through the admin
+# API. Each call is a PUT or tolerates "already there", so this converges.
+
+# Checks the status like client_secret above: curl exits 0 on a 4xx.
+admin_call() {
+    local what="$1" method="$2" path="$3" body="${4:-}" tolerate="${5:-}" response status
+    response=$(curl -sS -X "${method}" "${FERRISKEY_URL}/realms/autharie${path}" \
+        -H "Authorization: Bearer ${TOKEN}" -H 'Content-Type: application/json' \
+        ${body:+-d "${body}"} -w $'\n%{http_code}')
+    status="${response##*$'\n'}"
+    if [ "${status#2}" != "${status}" ] || [ "${status}" = "${tolerate}" ]; then
+        return 0
+    fi
+    echo "❌ ${what} failed (HTTP ${status}): ${response%$'\n'*}" >&2
+    exit 1
+}
+
+GATEWAY_SECRET=$(client_secret "${GATEWAY_UUID}" mcp-gateway)
+
+gateway_user=$(curl -sS "${FERRISKEY_URL}/realms/autharie/users" \
+    -H "Authorization: Bearer ${TOKEN}" \
+    | jq -r '.data[]? | select(.username == "service-account-mcp-gateway") | .id' \
+    | head -1)
+if [ -z "${gateway_user}" ]; then
+    echo "❌ the mcp-gateway service account is missing" >&2
+    exit 1
+fi
+
+# Lets the gateway ask the realm's decision point (EvaluateAuthorization).
+# Asked first: assigning a role the account already holds is an error here.
+gateway_holds=$(curl -sS "${FERRISKEY_URL}/realms/autharie/users/${gateway_user}/roles" \
+    -H "Authorization: Bearer ${TOKEN}" \
+    | jq -r '[.data[]?.name] | index("mcp-gateway") // empty')
+if [ -z "${gateway_holds}" ]; then
+    admin_call "granting the mcp-gateway role" POST "/users/${gateway_user}/roles/${GATEWAY_ROLE}"
+fi
+
+# Agents name the endpoint they call in the `resource` parameter and the realm
+# puts it in the token's audience, but only for a resource it was told about.
+# CIMD is how an agent registers itself without a pre-shared client.
+admin_call "enabling CIMD and the allowed resource" PUT "/settings" \
+    "$(jq -nc --arg r "${MCP_GATEWAY_RESOURCE}" '{cimd_enabled: true, allowed_resources: [$r]}')"
+
+# A token for that audience is only exchangeable by its owner.
+admin_call "registering the resource owner" PUT "/resource-owners" \
+    "$(jq -nc --arg r "${MCP_GATEWAY_RESOURCE}" --arg c "${GATEWAY_UUID}" '{owners: [{uri: $r, client_id: $c}]}')"
+
+# Exchanging a caller's token for one issued to the API, the agent in `act`:
+# delegation only, never impersonation. The target is the realm's own client for
+# the API, whose id is the audience the API accepts.
+admin_call "enabling token exchange for mcp-gateway" PATCH "/clients/${GATEWAY_UUID}" \
+    '{"token_exchange_enabled": true}'
+admin_call "creating the exchange policy" POST "/clients/${GATEWAY_UUID}/token-exchange-policies" \
+    "$(jq -nc --arg a "${API_AUDIENCE}" '{target_audience: $a, allow_delegation: true, allow_impersonation: false}')" 409
+
+# The realm decides for the gateway, so its authorization is switched on. A
+# stored schema, even an empty one, is what makes FerrisKey validate policies
+# against its built-in types (User, Agent, Tool...).
+admin_call "switching the realm's authorization on" PUT "/authz/state" '{"enabled": true}'
+schema_status=$(curl -sS -o /dev/null -w '%{http_code}' "${FERRISKEY_URL}/realms/autharie/authz/schema" \
+    -H "Authorization: Bearer ${TOKEN}")
+if [ "${schema_status}" = "404" ]; then
+    admin_call "storing the authorization schema" PUT "/authz/schema" \
+        '{"namespace": "App", "source": "namespace App {}"}'
+fi
+
+# Without a policy every tool is denied. Members may call Autharie's tools; the
+# API still checks their membership and the organisation's MCP switch.
+members_policy=$(curl -sS "${FERRISKEY_URL}/realms/autharie/authz/policies?managed_by=autharie-bootstrap" \
+    -H "Authorization: Bearer ${TOKEN}" \
+    | jq -r '.[]? | select(.name == "members-use-autharie-tools") | .id' | head -1)
+if [ -z "${members_policy}" ]; then
+    admin_call "allowing members to call Autharie's tools" POST "/authz/policies?managed_by=autharie-bootstrap" \
+        "$(jq -nc --arg src 'permit (principal is FerrisKey::User, action == FerrisKey::Action::"call_tool", resource is FerrisKey::Tool) when { resource.server == "autharie" };' \
+            '{name: "members-use-autharie-tools", description: "Members may call the Autharie MCP tools", enabled: true, body: {type: "static", source: $src}}')"
+fi
+
+# The gateway's configuration, with its secret. Written beside the template and
+# kept out of git; the running gateway picks it up within seconds.
+MCP_GATEWAY_CONFIG_FILE="${REPO_ROOT}/deploy/local/mcp-gateway.toml"
+CLIENT_SECRET="${GATEWAY_SECRET}" awk '{
+    while ((i = index($0, "@CLIENT_SECRET@")) > 0)
+        $0 = substr($0, 1, i - 1) ENVIRON["CLIENT_SECRET"] substr($0, i + 15)
+    print
+}' "${REPO_ROOT}/deploy/local/mcp-gateway.toml.tmpl" > "${MCP_GATEWAY_CONFIG_FILE}.new"
+mv "${MCP_GATEWAY_CONFIG_FILE}.new" "${MCP_GATEWAY_CONFIG_FILE}"
+
 # Anybody carrying the operator realm role, so whoever calls this can hand
 # them the platform rights that role used to imply. Resolved here because
 # listing a realm's users needs the admin token, which lives in this script and
@@ -123,6 +216,10 @@ cat <<SUMMARY
      OPERATOR_CLIENT_SECRET=${OPERATOR_SECRET}
      OPERATOR_SUBJECT=${operator_user}
      OPERATOR_PEOPLE=${OPERATOR_PEOPLE}
+
+   MCP gateway (agents), written to deploy/local/mcp-gateway.toml:
+     endpoint ${MCP_GATEWAY_RESOURCE}
+     client mcp-gateway, exchanges for ${API_AUDIENCE}
 
    Console (apps/console/.env):
      VITE_OIDC_ISSUER_URL=${ISSUER}

@@ -2,10 +2,9 @@ use autharie_iggy::iggy::prelude::{
     Consumer, ConsumerOffsetClient, Identifier, IggyClient, MessageClient, PollingStrategy,
 };
 use autharie_iggy::{OUTCOMES_TOPIC, PARTITION, STREAM, bounded, named};
-use serde_json::from_slice;
 use tracing::{info, warn};
 
-use crate::domain::entities::outcome::DeploymentOutcomeReport;
+use crate::domain::entities::outcome::InboundOutcome;
 use crate::domain::error::HeraldError;
 use crate::domain::ports::OutcomeInboxRepository;
 
@@ -96,7 +95,7 @@ impl IggyOutcomeInbox {
 }
 
 impl OutcomeInboxRepository for IggyOutcomeInbox {
-    async fn drain(&self, limit: usize) -> Result<Vec<DeploymentOutcomeReport>, HeraldError> {
+    async fn drain(&self, limit: usize) -> Result<Vec<InboundOutcome>, HeraldError> {
         let count = u32::try_from(limit).unwrap_or(u32::MAX);
         if count == 0 {
             return Ok(Vec::new());
@@ -127,8 +126,8 @@ impl OutcomeInboxRepository for IggyOutcomeInbox {
         let mut reports = Vec::with_capacity(polled.messages.len());
 
         for message in polled.messages {
-            match from_slice::<DeploymentOutcomeReport>(&message.payload) {
-                Ok(report) => reports.push(report),
+            match InboundOutcome::parse(&message.payload) {
+                Ok(outcome) => reports.push(outcome),
                 // Skipped, not retried: a message this Herald cannot parse
                 // will not parse on the next attempt either.
                 Err(err) => warn!(

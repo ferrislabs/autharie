@@ -1,0 +1,97 @@
+namespace FerrisKey {
+  entity Role = {
+    name: String,
+  };
+
+  entity Organization = {
+    alias: String,
+    name: String,
+  };
+
+  entity Group in [Group, Organization] = {
+    name: String,
+  };
+
+  entity User in [Role, Group, Organization] = {
+    username: String,
+    email?: String,
+    email_verified: Bool,
+    enabled: Bool,
+    roles?: Set<String>,
+    organisation?: String,
+  } tags String;
+
+  entity Client in [Role] = {
+    client_id: String,
+  };
+
+  entity Agent in [Role] = {
+    client_id: String,
+  };
+
+  entity McpServer = {
+    name: String,
+  };
+
+  entity Tool in [McpServer] = {
+    server: String,
+    tool: String,
+    annotations?: {
+      readOnlyHint?: Bool,
+      destructiveHint?: Bool,
+      idempotentHint?: Bool,
+      openWorldHint?: Bool,
+    },
+  };
+
+  entity Resource in [McpServer] = {
+    server: String,
+    uri: String,
+  };
+
+  entity Prompt in [McpServer] = {
+    server: String,
+    name: String,
+  };
+
+  type AgentContext = {
+    agent: String,
+    delegated: Bool,
+    act?: {
+      sub?: String,
+      client_id?: String,
+      act?: {
+        sub?: String,
+        client_id?: String,
+        act?: {
+          sub?: String,
+          client_id?: String,
+        },
+      },
+    },
+    time: {
+      weekday: Long,
+      hour: Long,
+      iso: String,
+    },
+  };
+
+  action call_tool appliesTo {
+    principal: [User, Agent, Client],
+    resource: [Tool],
+    context: AgentContext,
+  };
+
+  action read_resource appliesTo {
+    principal: [User, Agent, Client],
+    resource: [Resource],
+    context: AgentContext,
+  };
+
+  action get_prompt appliesTo {
+    principal: [User, Agent, Client],
+    resource: [Prompt],
+    context: AgentContext,
+  };
+}
+

@@ -1,0 +1,76 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT deployment_id, enabled, realm, revision, applied_revision, phase,\n                   gateway_client_ready, mcp_url, message, updated_at\n            FROM deployment_agents\n            WHERE deployment_id = $1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "deployment_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 2,
+        "name": "realm",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "revision",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "applied_revision",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "phase",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "gateway_client_ready",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 7,
+        "name": "mcp_url",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "message",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "305b67eb1a3ab7a502ad4b65a13c2ae40aea85a4f9b7e7019a031f37628fb728"
+}

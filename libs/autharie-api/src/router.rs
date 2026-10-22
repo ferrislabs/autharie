@@ -42,6 +42,7 @@ async fn service_auth<T, F, Fut>(State(state): State<T>, req: Request, next: F) 
 where
     T: autharie_core::auth::ports::AuthService
         + autharie_core::user::ports::UserService
+        + autharie_core::organisation::ports::OrganisationMcpSwitch
         + Clone
         + Send
         + Sync
@@ -189,6 +190,15 @@ mod tests {
         fail: bool,
     }
 
+    impl autharie_core::organisation::ports::OrganisationMcpSwitch for FakeAuthService {
+        fn mcp_enabled(
+            &self,
+            _id: autharie_core::organisation::OrganisationId,
+        ) -> impl Future<Output = Result<bool, CoreError>> + Send {
+            Box::pin(async move { Ok(true) })
+        }
+    }
+
     impl AuthService for FakeAuthService {
         fn get_identity(
             &self,
@@ -200,6 +210,8 @@ mod tests {
                     Err(CoreError::InvalidIdentity)
                 } else {
                     Ok(Identity::User(User {
+                        scopes: Vec::new(),
+                        act: None,
                         id: "user-1".to_string(),
                         username: "user".to_string(),
                         email: None,

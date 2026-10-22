@@ -1,3 +1,4 @@
+pub mod agent_decisions;
 pub mod archives;
 pub mod certificate;
 pub mod control_plane;
@@ -8,3 +9,4 @@ pub mod logs;
 pub mod message_bus;
 pub mod traces;
 pub mod usage;
+pub mod webhooks;

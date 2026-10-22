@@ -113,3 +113,44 @@ resource "ferriskey_role" "operator" {
   description = "Operates the installation: data planes, placement, capacity."
   permissions = []
 }
+
+# The MCP gateway's identity. One client does both of the gateway's jobs: it asks
+# the realm's decision point whether a tool call is allowed, and it exchanges the
+# caller's token for one issued to the API.
+#
+# What the provider cannot declare at v0.1.0 -- the exchange flag and policy,
+# the realm's allowed resources and CIMD switch, the resource owner -- is applied
+# by scripts/bootstrap-ferriskey.sh.
+resource "ferriskey_client" "mcp_gateway" {
+  realm       = ferriskey_realm.autharie.name
+  client_id   = "mcp-gateway"
+  name        = "Autharie MCP gateway"
+  client_type = "confidential"
+
+  public_client                = false
+  service_account_enabled      = true
+  direct_access_grants_enabled = false
+}
+
+# Asking for a decision grants no right to change the policies. Viewing them is
+# what makes FerrisKey name the policies behind a decision, which the gateway records.
+resource "ferriskey_role" "mcp_gateway" {
+  realm       = ferriskey_realm.autharie.name
+  name        = "mcp-gateway"
+  description = "Asks the realm's decision point whether an agent may call a tool."
+  permissions = ["evaluate_authorization", "view_authorization"]
+}
+
+# The API as a resource. A token exchange needs its target to be a client of
+# the realm, and the API accepts tokens whose audience is `<realm>-realm`, so
+# that is the client id. Nothing signs in as it.
+resource "ferriskey_client" "api" {
+  realm       = ferriskey_realm.autharie.name
+  client_id   = "${var.realm}-realm"
+  name        = "Autharie API"
+  client_type = "confidential"
+
+  public_client                = false
+  service_account_enabled      = false
+  direct_access_grants_enabled = false
+}

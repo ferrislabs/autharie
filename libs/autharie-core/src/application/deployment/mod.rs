@@ -693,6 +693,8 @@ impl DeploymentPowerService for AutharieService {
 mod tests {
     fn caller() -> Identity {
         Identity::User(autharie_auth::User {
+            scopes: Vec::new(),
+            act: None,
             id: uuid::Uuid::from_u128(9).to_string(),
             username: "somebody".to_string(),
             email: None,

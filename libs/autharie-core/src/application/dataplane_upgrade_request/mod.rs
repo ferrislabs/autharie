@@ -144,7 +144,7 @@ impl From<VersionError> for DataplaneUpgradeError {
 
 enum Step {
     Create(DataPlaneId, DataplaneUpgradePayload),
-    Reuse(DataPlaneId, Action),
+    Reuse(DataPlaneId, Box<Action>),
 }
 
 pub struct DataplaneUpgradeRequestService<A, D, P>
@@ -204,7 +204,7 @@ where
         for (plane, payload) in targets.iter().zip(payloads) {
             match self.open_upgrade(plane.id).await? {
                 Some(open) if target_of(&open) == Some(target.as_str()) => {
-                    steps.push(Step::Reuse(plane.id, open));
+                    steps.push(Step::Reuse(plane.id, Box::new(open)));
                 }
                 Some(open) => {
                     return Err(DataplaneUpgradeError::AlreadyUpgrading {
@@ -225,7 +225,7 @@ where
             requested.push(match step {
                 Step::Reuse(dataplane_id, action) => RequestedUpgrade {
                     dataplane_id,
-                    action,
+                    action: *action,
                     already_requested: true,
                 },
                 Step::Create(dataplane_id, payload) => {
@@ -625,6 +625,8 @@ mod tests {
 
     fn identity() -> Identity {
         Identity::User(User {
+            scopes: Vec::new(),
+            act: None,
             id: "operator-1".to_string(),
             username: "operator".to_string(),
             email: None,

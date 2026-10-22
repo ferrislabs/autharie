@@ -434,6 +434,7 @@ mod tests {
             client_id: "somebody".to_string(),
             roles: vec![],
             scopes: vec![],
+            act: None,
         })
     }
 

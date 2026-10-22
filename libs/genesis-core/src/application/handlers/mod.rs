@@ -1,3 +1,4 @@
+pub mod agents;
 pub mod backup;
 pub mod dataplane_upgrade;
 pub mod deployment;
