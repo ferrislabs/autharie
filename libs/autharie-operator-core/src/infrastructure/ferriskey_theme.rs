@@ -1,7 +1,4 @@
-use std::time::Duration;
-
-use k8s_openapi::api::core::v1::Secret;
-use kube::{Api, Client};
+use kube::Client;
 use reqwest::header::CONTENT_TYPE;
 use serde_json::{Value, json};
 
@@ -9,21 +6,10 @@ use crate::domain::identity_instance::theme::ThemeError;
 use crate::domain::ports::InstanceThemePort;
 use autharie_crds::v1alpha::identity_instance::IdentityInstance;
 
-use super::identity_instance::{
-    FERRISKEY_API_PORT, FERRISKEY_API_ROOT_PATH, ferriskey_api_admin_secret_name,
-    ferriskey_api_name,
+use super::ferriskey_admin::{
+    ADMIN_REALM, AdminCredentials, api_base_url, error_message, http_client, name_and_namespace,
+    read_credentials, request_token, unreachable_message,
 };
-
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
-
-/// The realm every instance is created with, and the only one the operator can
-/// name: the spec carries no realm, and the admin account lives here.
-const THEME_REALM: &str = "master";
-
-pub struct AdminCredentials<'a> {
-    pub username: &'a str,
-    pub password: &'a str,
-}
 
 pub struct FerriskeyThemeClient {
     http: reqwest::Client,
@@ -37,11 +23,9 @@ impl Default for FerriskeyThemeClient {
 
 impl FerriskeyThemeClient {
     pub fn new() -> Self {
-        let http = reqwest::Client::builder()
-            .timeout(REQUEST_TIMEOUT)
-            .build()
-            .unwrap_or_default();
-        Self { http }
+        Self {
+            http: http_client(),
+        }
     }
 
     pub async fn put_theme(
@@ -50,18 +34,22 @@ impl FerriskeyThemeClient {
         credentials: &AdminCredentials<'_>,
         config: &Value,
     ) -> Result<(), ThemeError> {
-        let token = self.token(base_url, credentials).await?;
+        let token = request_token(&self.http, base_url, credentials)
+            .await
+            .map_err(|message| ThemeError::Retry { message })?;
         let body = json!({ "config": config }).to_string();
 
         let response = self
             .http
-            .put(format!("{base_url}/realms/{THEME_REALM}/portal/theme"))
-            .bearer_auth(token)
+            .put(format!("{base_url}/realms/{ADMIN_REALM}/portal/theme"))
+            .bearer_auth(token.value)
             .header(CONTENT_TYPE, "application/json")
             .body(body)
             .send()
             .await
-            .map_err(unreachable_error)?;
+            .map_err(|error| ThemeError::Retry {
+                message: unreachable_message(&error),
+            })?;
 
         let status = response.status();
         if status.is_success() {
@@ -75,61 +63,6 @@ impl FerriskeyThemeClient {
             Err(ThemeError::Rejected { message })
         }
     }
-
-    async fn token(
-        &self,
-        base_url: &str,
-        credentials: &AdminCredentials<'_>,
-    ) -> Result<String, ThemeError> {
-        let response = self
-            .http
-            .post(format!(
-                "{base_url}/realms/{THEME_REALM}/protocol/openid-connect/token"
-            ))
-            .form(&[
-                ("grant_type", "password"),
-                ("client_id", "admin-cli"),
-                ("username", credentials.username),
-                ("password", credentials.password),
-            ])
-            .send()
-            .await
-            .map_err(unreachable_error)?;
-
-        let status = response.status();
-        let text = response.text().await.unwrap_or_default();
-        if !status.is_success() {
-            return Err(ThemeError::Retry {
-                message: format!("FerrisKey refused an admin token (status {status})"),
-            });
-        }
-
-        serde_json::from_str::<Value>(&text)
-            .ok()
-            .and_then(|value| value["access_token"].as_str().map(ToOwned::to_owned))
-            .ok_or_else(|| ThemeError::Retry {
-                message: "FerrisKey answered the token request without a token".to_string(),
-            })
-    }
-}
-
-fn unreachable_error(error: reqwest::Error) -> ThemeError {
-    let reason = if error.is_timeout() {
-        "timed out"
-    } else {
-        "unreachable"
-    };
-    ThemeError::Retry {
-        message: format!("FerrisKey is {reason}"),
-    }
-}
-
-fn error_message(status: u16, body: &str) -> String {
-    serde_json::from_str::<Value>(body)
-        .ok()
-        .and_then(|value| value["message"].as_str().map(ToOwned::to_owned))
-        .map(|message| format!("FerrisKey answered {status}: {message}"))
-        .unwrap_or_else(|| format!("FerrisKey answered {status}"))
 }
 
 pub struct KubeInstanceTheme {
@@ -144,42 +77,6 @@ impl KubeInstanceTheme {
             admin: FerriskeyThemeClient::new(),
         }
     }
-
-    async fn credentials(
-        &self,
-        name: &str,
-        namespace: &str,
-    ) -> Result<(String, String), ThemeError> {
-        let secrets: Api<Secret> = Api::namespaced(self.client.clone(), namespace);
-        let secret = secrets
-            .get_opt(&ferriskey_api_admin_secret_name(name))
-            .await
-            .map_err(|_| ThemeError::Retry {
-                message: "the admin credentials could not be read".to_string(),
-            })?;
-
-        let read = |key: &str| {
-            secret
-                .as_ref()
-                .and_then(|secret| secret.data.as_ref())
-                .and_then(|data| data.get(key))
-                .and_then(|value| String::from_utf8(value.0.clone()).ok())
-        };
-
-        match (read("username"), read("password")) {
-            (Some(username), Some(password)) => Ok((username, password)),
-            _ => Err(ThemeError::Retry {
-                message: "the admin credentials are not there yet".to_string(),
-            }),
-        }
-    }
-}
-
-fn api_base_url(name: &str, namespace: &str) -> String {
-    format!(
-        "http://{}.{namespace}.svc:{FERRISKEY_API_PORT}{FERRISKEY_API_ROOT_PATH}",
-        ferriskey_api_name(name)
-    )
 }
 
 impl InstanceThemePort for KubeInstanceTheme {
@@ -188,16 +85,15 @@ impl InstanceThemePort for KubeInstanceTheme {
         instance: &IdentityInstance,
         config: &Value,
     ) -> Result<(), ThemeError> {
-        let (Some(name), Some(namespace)) = (
-            instance.metadata.name.as_deref(),
-            instance.metadata.namespace.as_deref(),
-        ) else {
+        let Some((name, namespace)) = name_and_namespace(instance) else {
             return Err(ThemeError::Retry {
                 message: "the instance has no name or namespace yet".to_string(),
             });
         };
 
-        let (username, password) = self.credentials(name, namespace).await?;
+        let (username, password) = read_credentials(&self.client, name, namespace)
+            .await
+            .map_err(|message| ThemeError::Retry { message })?;
         self.admin
             .put_theme(
                 &api_base_url(name, namespace),
@@ -213,62 +109,10 @@ impl InstanceThemePort for KubeInstanceTheme {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{Read, Write};
     use std::net::TcpListener;
-    use std::thread::{self, JoinHandle};
 
     use super::*;
-
-    struct Recorded {
-        head: String,
-        body: String,
-    }
-
-    fn serve(script: Vec<(u16, &'static str)>) -> (String, JoinHandle<Vec<Recorded>>) {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
-        let handle = thread::spawn(move || {
-            let mut seen = Vec::new();
-            for (status, body) in script {
-                let (mut stream, _) = listener.accept().unwrap();
-                let mut raw = Vec::new();
-                let mut buf = [0u8; 1024];
-                let split = loop {
-                    let read = stream.read(&mut buf).unwrap();
-                    raw.extend_from_slice(&buf[..read]);
-                    if let Some(at) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
-                        break at + 4;
-                    }
-                    assert!(read > 0, "connection closed before the headers ended");
-                };
-                let head = String::from_utf8_lossy(&raw[..split]).to_string();
-                let length = head
-                    .lines()
-                    .find_map(|line| {
-                        line.to_ascii_lowercase()
-                            .strip_prefix("content-length:")
-                            .map(|value| value.trim().parse::<usize>().unwrap())
-                    })
-                    .unwrap_or(0);
-                while raw.len() < split + length {
-                    let read = stream.read(&mut buf).unwrap();
-                    raw.extend_from_slice(&buf[..read]);
-                }
-                let request_body = String::from_utf8_lossy(&raw[split..split + length]).to_string();
-                let response = format!(
-                    "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                );
-                stream.write_all(response.as_bytes()).unwrap();
-                seen.push(Recorded {
-                    head,
-                    body: request_body,
-                });
-            }
-            seen
-        });
-        (url, handle)
-    }
+    use crate::infrastructure::test_support::serve;
 
     const TOKEN_OK: (u16, &str) = (200, r#"{"access_token":"fake-token"}"#);
 

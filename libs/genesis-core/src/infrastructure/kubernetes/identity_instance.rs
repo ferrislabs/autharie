@@ -480,6 +480,9 @@ fn to_identity_instance(desired: &DesiredIdentityInstance) -> IdentityInstance {
         });
 
     let spec = IdentityInstanceSpec {
+        webhooks: Vec::new(),
+        webhooks_revision: 0,
+        webhook_requests: Vec::new(),
         // Carried whole from the action. Both paths are the source's, computed
         // by the control plane because it owns the archive layout -- rebuilding
         // either here would be a second implementation of the prefix rule, and

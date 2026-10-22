@@ -322,6 +322,79 @@ spec:
                 type: boolean
               version:
                 type: string
+              webhookRequests:
+                description: |-
+                  One-off asks (rotate a secret, retry a delivery). Each id is executed
+                  once and its result recorded in `status.webhookRequests`.
+                items:
+                  properties:
+                    deliveryId:
+                      description: Only for `retryDelivery`.
+                      nullable: true
+                      type: string
+                    id:
+                      type: string
+                    kind:
+                      enum:
+                      - rotateSecret
+                      - retryDelivery
+                      type: string
+                    webhookId:
+                      type: string
+                  required:
+                  - id
+                  - kind
+                  - webhookId
+                  type: object
+                type: array
+              webhooks:
+                description: |-
+                  The webhooks this deployment should have, whole. FerrisKey only.
+
+                  The operator makes FerrisKey match this list for the webhooks it
+                  manages and leaves every other webhook alone. Header values are not
+                  here: they live in the `<instance>-webhook-headers` Secret.
+                items:
+                  properties:
+                    description:
+                      nullable: true
+                      type: string
+                    endpoint:
+                      type: string
+                    events:
+                      default: []
+                      description: FerrisKey's dotted event names.
+                      items:
+                        type: string
+                      type: array
+                    headerNames:
+                      description: |-
+                        Names of the custom headers; the values are in the headers Secret under
+                        `<webhook id>.<header name>`.
+                      items:
+                        type: string
+                      type: array
+                    id:
+                      description: Autharie's id for the webhook (a UUID). FerrisKey has its own.
+                      type: string
+                    name:
+                      type: string
+                    realm:
+                      type: string
+                  required:
+                  - endpoint
+                  - id
+                  - name
+                  - realm
+                  type: object
+                type: array
+              webhooksRevision:
+                description: |-
+                  Which version of the desired set this is, so a reader can tell an old
+                  list from a new one. The operator does not act on it.
+                format: uint64
+                minimum: 0.0
+                type: integer
             required:
             - database
             - hostname
@@ -422,6 +495,60 @@ spec:
                 default: false
                 description: Is the instance ready to serve traffic
                 type: boolean
+              realms:
+                description: The realms FerrisKey lists, so a console can offer them.
+                items:
+                  type: string
+                type: array
+              webhookRequests:
+                description: The requests already executed, so a restart does not run them twice.
+                items:
+                  properties:
+                    id:
+                      type: string
+                    message:
+                      nullable: true
+                      type: string
+                    phase:
+                      enum:
+                      - Done
+                      - Failed
+                      type: string
+                  required:
+                  - id
+                  - phase
+                  type: object
+                type: array
+              webhooks:
+                description: What became of each of `spec.webhooks`, in the same order.
+                items:
+                  properties:
+                    ferriskeyId:
+                      description: FerrisKey's own id, once the webhook exists there.
+                      nullable: true
+                      type: string
+                    id:
+                      type: string
+                    message:
+                      nullable: true
+                      type: string
+                    phase:
+                      enum:
+                      - Pending
+                      - Active
+                      - Failed
+                      type: string
+                    secretVersion:
+                      default: 0
+                      description: Counts the signing secrets issued; 0 until the first one is stored.
+                      format: uint64
+                      minimum: 0.0
+                      type: integer
+                  required:
+                  - id
+                  - phase
+                  type: object
+                type: array
             type: object
         required:
         - spec
