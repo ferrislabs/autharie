@@ -7,6 +7,8 @@ image:
   # version nobody can state.
   controlPlaneTag: ""
   consoleTag: ""
+  mcpGatewayTag: ""
+  mcpTag: ""
   # Empty picks per tag: Always for `latest`, which moves under the same name,
   # and IfNotPresent for a pinned tag. Set it to force one policy everywhere.
   pullPolicy: ""
@@ -245,3 +247,48 @@ gatewayApi:
     enabled: false
     hostname: ""
     parentRefs: []
+
+# Agents reach the Autharie API through MCP at https://<gatewayApi.hostname>/mcp.
+# The MCP gateway authenticates them against the realm, asks the realm's
+# FerrisKey whether each call is allowed (AuthZEN) and exchanges their token for
+# one issued to the API; autharie-mcp is the tool server behind it. Off by
+# default: the realm needs its own setup first (scripts/bootstrap-ferriskey.sh
+# does it for a local stack).
+agents:
+  enabled: false
+  # The realm's issuer as agents see it. Empty means `auth.issuer`.
+  issuer: ""
+  # Where the gateway itself reaches the realm (JWKS, token endpoint, AuthZEN),
+  # when the public issuer does not resolve from inside the cluster. Empty
+  # means the issuer.
+  internalIssuer: ""
+  # What the exchanged token is issued for: the audience the API accepts.
+  # Empty means `<realm.name>-realm`, the one FerrisKey puts in its tokens.
+  audience: ""
+  scopesSupported: []
+  gateway:
+    replicaCount: 1
+    # The realm client the gateway authenticates as, both to ask the PDP and to
+    # exchange tokens. It needs the EvaluateAuthorization permission and a
+    # token-exchange policy towards `audience`.
+    clientId: mcp-gateway
+    # A Secret holding that client's secret. Required when agents.enabled.
+    existingSecret: ""
+    existingSecretClientSecretKey: client-secret
+    # Renders the configuration file from the secret before the gateway starts.
+    initImage: busybox:1.37
+    resources:
+      requests:
+        cpu: 25m
+        memory: 32Mi
+      limits:
+        memory: 128Mi
+  mcp:
+    replicaCount: 1
+    port: 8081
+    resources:
+      requests:
+        cpu: 25m
+        memory: 32Mi
+      limits:
+        memory: 128Mi

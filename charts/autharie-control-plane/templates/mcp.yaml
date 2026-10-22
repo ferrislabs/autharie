@@ -1,0 +1,61 @@
+{{- if .Values.agents.enabled }}
+{{- $name := printf "%s-mcp" (include "autharie-control-plane.fullname" .) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "autharie-control-plane.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mcp
+spec:
+  replicas: {{ .Values.agents.mcp.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "autharie-control-plane.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: mcp
+  template:
+    metadata:
+      labels:
+        {{- include "autharie-control-plane.labels" . | nindent 8 }}
+        app.kubernetes.io/component: mcp
+    spec:
+      containers:
+        - name: mcp
+          image: {{ include "autharie-control-plane.image" (dict "root" . "component" "mcp" "tag" .Values.image.mcpTag) }}
+          imagePullPolicy: {{ include "autharie-control-plane.pullPolicy" (dict "root" . "tag" .Values.image.mcpTag) }}
+          env:
+            - name: AUTHARIE_MCP_LISTEN
+              value: {{ printf "0.0.0.0:%v" .Values.agents.mcp.port | quote }}
+            - name: AUTHARIE_MCP_API_URL
+              value: {{ printf "http://%s:%v" (include "autharie-control-plane.fullname" .) .Values.controlPlane.server.port | quote }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.agents.mcp.port }}
+          livenessProbe:
+            tcpSocket:
+              port: http
+          readinessProbe:
+            tcpSocket:
+              port: http
+          resources:
+            {{- toYaml .Values.agents.mcp.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "autharie-control-plane.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mcp
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: {{ include "autharie-control-plane.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: mcp
+  ports:
+    - name: http
+      port: {{ .Values.agents.mcp.port }}
+      targetPort: http
+{{- end }}
