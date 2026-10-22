@@ -21,16 +21,19 @@ import {
 import {
   RANGES,
   decisionBadge,
+  decisionKey,
   emptyFilters,
   hasFilters,
+  policyLabel,
   subjectLabel,
   type DecisionFilters,
   type DecisionRange,
 } from '../../decisions'
-import type { AgentDecision } from '../../types'
+import type { AgentDecision, AgentPolicy } from '../../types'
 
 interface Props {
   decisions: AgentDecision[]
+  policies: AgentPolicy[]
   isLoading: boolean
   error?: string
   filters: DecisionFilters
@@ -42,11 +45,18 @@ function formatTime(iso: string): string {
   return Number.isNaN(date.getTime()) ? iso : date.toISOString().replace('T', ' ').slice(0, 19)
 }
 
-export function DecisionLog({ decisions, isLoading, error, filters, onFilters }: Props) {
+export function DecisionLog({ decisions, policies, isLoading, error, filters, onFilters }: Props) {
   const filtered = hasFilters(filters)
 
   return (
-    <Section title='Decision log' aside={<span className='text-xs text-muted-foreground'>Refreshes every 5 seconds · times in UTC</span>}>
+    <Section
+      title='Decision log'
+      aside={
+        <span className='text-xs text-muted-foreground'>
+          Refreshes every 5 seconds · times in UTC
+        </span>
+      }
+    >
       <div className='flex flex-wrap items-center gap-2'>
         <Select
           value={filters.decision}
@@ -131,23 +141,27 @@ export function DecisionLog({ decisions, isLoading, error, filters, onFilters }:
               </TableRow>
             </TableHeader>
             <TableBody>
-              {decisions.map((decision) => {
+              {decisions.map((decision, index) => {
                 const badge = decisionBadge(decision.decision)
 
                 return (
-                  <TableRow key={decision.request_id}>
+                  <TableRow key={decisionKey(decision, index)}>
                     <TableCell className='whitespace-nowrap font-mono text-xs'>
                       {formatTime(decision.time)}
                     </TableCell>
                     <TableCell>
                       <StatusBadge tone={badge.tone}>{badge.label}</StatusBadge>
                     </TableCell>
-                    <TableCell className='font-mono text-xs'>{decision.tool ?? decision.method}</TableCell>
+                    <TableCell className='font-mono text-xs'>
+                      {decision.tool ?? decision.method}
+                    </TableCell>
                     <TableCell className='font-mono text-xs'>{subjectLabel(decision)}</TableCell>
                     <TableCell className='font-mono text-xs'>{decision.agent}</TableCell>
                     <TableCell>{decision.delegated ? 'Yes' : 'No'}</TableCell>
                     <TableCell className='font-mono text-xs'>
-                      {decision.policies.length === 0 ? 'None' : decision.policies.join(', ')}
+                      {decision.policies.length === 0
+                        ? 'None'
+                        : decision.policies.map((name) => policyLabel(name, policies)).join(', ')}
                     </TableCell>
                     <TableCell className='max-w-xs whitespace-normal text-xs text-muted-foreground'>
                       {decision.reason ?? ''}

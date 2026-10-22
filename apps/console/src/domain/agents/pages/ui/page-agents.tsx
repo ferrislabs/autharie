@@ -81,6 +81,7 @@ export function PageAgents(props: Props) {
 
           <DecisionLog
             decisions={props.decisions}
+            policies={props.policies}
             isLoading={props.decisionsLoading}
             error={props.decisionsError}
             filters={props.filters}

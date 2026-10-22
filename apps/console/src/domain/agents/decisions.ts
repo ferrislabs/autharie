@@ -1,5 +1,5 @@
 import type { Tone } from '@/components/ui/status-badge'
-import type { AgentDecision, DecisionQuery } from './types'
+import type { AgentDecision, AgentPolicy, DecisionQuery } from './types'
 
 export const DECISIONS_LIMIT = 100
 export const DECISIONS_REFRESH_MS = 5000
@@ -48,11 +48,24 @@ export function isAllow(decision: AgentDecision['decision']): boolean {
 }
 
 export function decisionBadge(decision: AgentDecision['decision']): { tone: Tone; label: string } {
-  return isAllow(decision)
-    ? { tone: 'success', label: 'Allow' }
-    : { tone: 'danger', label: 'Deny' }
+  return isAllow(decision) ? { tone: 'success', label: 'Allow' } : { tone: 'danger', label: 'Deny' }
 }
 
 export function subjectLabel(decision: AgentDecision): string {
   return `${decision.subject_type} ${decision.subject_id}`
+}
+
+// FerrisKey knows a policy written through Autharie as `autharie:<policy id>`.
+const MANAGED_PREFIX = 'autharie:'
+
+export function policyLabel(name: string, policies: AgentPolicy[]): string {
+  if (!name.startsWith(MANAGED_PREFIX)) return name
+  const id = name.slice(MANAGED_PREFIX.length)
+
+  return policies.find((policy) => policy.id === id)?.name ?? name
+}
+
+// A tool list is one request decided tool by tool, so the request id repeats.
+export function decisionKey(decision: AgentDecision, index: number): string {
+  return `${decision.request_id}:${decision.tool ?? decision.method}:${index}`
 }

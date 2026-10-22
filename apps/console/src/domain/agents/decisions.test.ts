@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   DECISIONS_LIMIT,
+  decisionKey,
+  policyLabel,
   buildDecisionQuery,
   decisionBadge,
   emptyFilters,
@@ -8,7 +10,7 @@ import {
   isAllow,
   subjectLabel,
 } from './decisions'
-import type { AgentDecision } from './types'
+import type { AgentDecision, AgentPolicy } from './types'
 
 const NOW = new Date('2026-10-22T12:00:00.000Z')
 
@@ -26,11 +28,16 @@ describe('the decision query', () => {
   })
 
   it('leaves the decision out for all', () => {
-    expect(buildDecisionQuery({ ...emptyFilters(), decision: 'all' }, NOW)).not.toHaveProperty('decision')
+    expect(buildDecisionQuery({ ...emptyFilters(), decision: 'all' }, NOW)).not.toHaveProperty(
+      'decision'
+    )
   })
 
   it('trims tool and subject', () => {
-    const query = buildDecisionQuery({ ...emptyFilters(), tool: ' autharie/list_backups ', subject: ' u-1 ' }, NOW)
+    const query = buildDecisionQuery(
+      { ...emptyFilters(), tool: ' autharie/list_backups ', subject: ' u-1 ' },
+      NOW
+    )
     expect(query.tool).toBe('autharie/list_backups')
     expect(query.subject).toBe('u-1')
   })
@@ -93,5 +100,25 @@ describe('naming the subject', () => {
 
   it('says Client for a client', () => {
     expect(subjectLabel({ ...base, subject_type: 'Client', subject_id: 'bot' })).toBe('Client bot')
+  })
+})
+
+describe('naming the policies behind a decision', () => {
+  const policies = [{ id: 'p-1', name: 'Read-only tools' }] as AgentPolicy[]
+
+  it('shows the name of a policy written through Autharie', () => {
+    expect(policyLabel('autharie:p-1', policies)).toBe('Read-only tools')
+  })
+
+  it('keeps a name it does not know', () => {
+    expect(policyLabel('autharie:p-2', policies)).toBe('autharie:p-2')
+    expect(policyLabel('members-use-tools', policies)).toBe('members-use-tools')
+  })
+})
+
+describe('keying decisions', () => {
+  it('tells apart the tools of one list request', () => {
+    const base = { request_id: 'r-1', method: 'tools/list' } as AgentDecision
+    expect(decisionKey({ ...base, tool: 'a' }, 0)).not.toBe(decisionKey({ ...base, tool: 'b' }, 1))
   })
 })
