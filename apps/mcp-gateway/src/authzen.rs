@@ -3,6 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use chrono::{DateTime, Datelike, SecondsFormat, Timelike, Utc};
 use futures_util::future::join_all;
 use reqwest::{Client, StatusCode};
 use serde::Deserialize;
@@ -59,19 +60,32 @@ pub fn resource(operation: Operation, server: &str, name: &str, annotations: &Va
     }
 }
 
-pub fn context(principal: &Principal, arguments: &Map<String, Value>, time: &str) -> Value {
+pub fn context(
+    principal: &Principal,
+    arguments: &Map<String, Value>,
+    time: DateTime<Utc>,
+) -> Value {
     let primitives: Map<String, Value> = arguments
         .iter()
         .filter(|(_, v)| matches!(v, Value::String(_) | Value::Number(_) | Value::Bool(_)))
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
-    json!({
+    // Cedar has no date arithmetic, so the weekday and hour a policy can test are
+    // computed here; Cedar also refuses null, so a missing `act` is left out.
+    let mut context = json!({
         "agent": principal.client_id,
         "delegated": principal.delegated,
-        "act": principal.act,
         "arguments": primitives,
-        "time": time,
-    })
+        "time": {
+            "weekday": time.weekday().number_from_monday(),
+            "hour": time.hour(),
+            "iso": time.to_rfc3339_opts(SecondsFormat::Secs, true),
+        },
+    });
+    if let Some(act) = &principal.act {
+        context["act"] = act.clone();
+    }
+    context
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -324,6 +338,7 @@ fn classify(error: reqwest::Error) -> PdpError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
 
     fn principal(delegated: bool) -> Principal {
         Principal {
@@ -405,7 +420,7 @@ mod tests {
         let context = context(
             &principal(true),
             arguments.as_object().unwrap(),
-            "2026-10-22T10:00:00Z",
+            Utc.with_ymd_and_hms(2026, 10, 22, 10, 0, 0).unwrap(),
         );
         assert_eq!(
             context,
@@ -414,17 +429,17 @@ mod tests {
                 "delegated": true,
                 "act": {"sub": "gw"},
                 "arguments": {"s": "x", "n": 3, "b": true},
-                "time": "2026-10-22T10:00:00Z",
+                "time": {"weekday": 4, "hour": 10, "iso": "2026-10-22T10:00:00Z"},
             })
         );
     }
 
     #[test]
-    fn a_token_without_act_maps_to_a_null_act() {
+    fn a_token_without_act_leaves_act_out_of_the_context() {
         let mut p = principal(false);
         p.act = None;
-        let c = context(&p, &Map::new(), "t");
-        assert_eq!(c["act"], Value::Null);
+        let c = context(&p, &Map::new(), Utc::now());
+        assert!(c.get("act").is_none());
         assert_eq!(c["delegated"], json!(false));
     }
 

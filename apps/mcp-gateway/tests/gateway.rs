@@ -614,7 +614,10 @@ async fn spec_ag_2_an_allowed_call_reaches_the_upstream_with_an_exchanged_token(
         request["context"]["arguments"],
         json!({"organisation": "acme", "limit": 5})
     );
-    assert!(request["context"]["time"].as_str().unwrap().ends_with('Z'));
+    let time = &request["context"]["time"];
+    assert!(time["iso"].as_str().unwrap().ends_with('Z'));
+    assert!((1..=7).contains(&time["weekday"].as_u64().unwrap()));
+    assert!(time["hour"].as_u64().unwrap() < 24);
 }
 
 #[tokio::test]

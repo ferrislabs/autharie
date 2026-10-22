@@ -197,7 +197,7 @@ impl<S: DecisionSink> Call<'_, S> {
                     &target.name,
                     &annotations,
                 ),
-                &authzen::context(self.principal, &target.arguments, &now()),
+                &authzen::context(self.principal, &target.arguments, Utc::now()),
             )
             .await;
         let tool = matches!(target.operation, Operation::CallTool).then_some(target.name.as_str());
@@ -243,7 +243,7 @@ impl<S: DecisionSink> Call<'_, S> {
                 &authzen::subject(self.principal),
                 Operation::CallTool.action(),
                 &resources,
-                &authzen::context(self.principal, &serde_json::Map::new(), &now()),
+                &authzen::context(self.principal, &serde_json::Map::new(), Utc::now()),
             )
             .await;
         match decisions {
