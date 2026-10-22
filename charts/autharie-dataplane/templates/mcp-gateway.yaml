@@ -1,4 +1,25 @@
 {{- if .Values.agents.enabled }}
+{{- $configSecret := .Values.agents.gateway.configSecret }}
+{{- if not (lookup "v1" "Secret" .Release.Namespace $configSecret) }}
+# Created here, once, so the gateway's volume exists from its first start: a
+# Secret volume marked optional that is missing at pod start stays empty even
+# after the Secret appears. The operator owns the content from then on, so it is
+# never rendered again and `keep` stops an upgrade from deleting it.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $configSecret }}
+  labels:
+    {{- include "autharie-dataplane.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mcp-gateway
+  annotations:
+    helm.sh/resource-policy: keep
+type: Opaque
+stringData:
+  config.toml: |
+    upstreams = []
+---
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
