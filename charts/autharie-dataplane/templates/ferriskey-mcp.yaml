@@ -1,0 +1,66 @@
+{{- if .Values.agents.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ferriskey-mcp
+  labels:
+    {{- include "autharie-dataplane.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ferriskey-mcp
+spec:
+  replicas: {{ .Values.agents.ferriskeyMcp.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "autharie-dataplane.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: ferriskey-mcp
+  template:
+    metadata:
+      labels:
+        {{- include "autharie-dataplane.labels" . | nindent 8 }}
+        app.kubernetes.io/component: ferriskey-mcp
+    spec:
+      containers:
+        - name: ferriskey-mcp
+          image: {{ include "autharie-dataplane.image" (dict "root" . "component" "ferriskey-mcp") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: FERRISKEY_MCP_LISTEN
+              value: 0.0.0.0:8080
+            {{- with .Values.agents.ferriskeyMcp.apiUrlTemplate }}
+            - name: FERRISKEY_MCP_API_URL_TEMPLATE
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.agents.ferriskeyMcp.rootPath }}
+            - name: FERRISKEY_MCP_ROOT_PATH
+              value: {{ . | quote }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8080
+          livenessProbe:
+            tcpSocket:
+              port: http
+          readinessProbe:
+            tcpSocket:
+              port: http
+          resources:
+            {{- toYaml .Values.agents.ferriskeyMcp.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ferriskey-mcp
+  labels:
+    {{- include "autharie-dataplane.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ferriskey-mcp
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: {{ include "autharie-dataplane.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: ferriskey-mcp
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+{{- end }}

@@ -1,4 +1,5 @@
 {{- include "autharie-control-plane.validate" . -}}
+{{- include "autharie-control-plane.agentsValidate" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
