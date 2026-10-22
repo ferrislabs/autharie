@@ -103,8 +103,10 @@ describe('the credential form', () => {
     expect(form()).toMatch(/<button[^>]*type="submit"[^>]*disabled=""/)
   })
 
-  it('goes back to the providers', () => {
-    expect(form()).toContain('Back')
+  it('has one Back button, above the title and beside the close button', () => {
+    const html = form()
+    expect(html.match(/>Back</g)).toHaveLength(1)
+    expect(html.indexOf('Back')).toBeLessThan(html.indexOf('Connect Scaleway'))
   })
 
   it('shows a refusal inline', () => {
