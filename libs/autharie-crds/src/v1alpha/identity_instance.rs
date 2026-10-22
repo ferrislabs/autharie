@@ -84,6 +84,74 @@ pub struct IdentityInstanceSpec {
     /// whole value each time, so what is not named here is not set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub iam: Option<IamConfig>,
+
+    /// The webhooks this deployment should have, whole. FerrisKey only.
+    ///
+    /// The operator makes FerrisKey match this list for the webhooks it
+    /// manages and leaves every other webhook alone. Header values are not
+    /// here: they live in the `<instance>-webhook-headers` Secret.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub webhooks: Vec<WebhookSpec>,
+
+    /// Which version of the desired set this is, so a reader can tell an old
+    /// list from a new one. The operator does not act on it.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub webhooks_revision: u64,
+
+    /// One-off asks (rotate a secret, retry a delivery). Each id is executed
+    /// once and its result recorded in `status.webhookRequests`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub webhook_requests: Vec<WebhookRequest>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct WebhookSpec {
+    /// Autharie's id for the webhook (a UUID). FerrisKey has its own.
+    pub id: String,
+
+    pub realm: String,
+
+    pub name: String,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+
+    pub endpoint: String,
+
+    /// FerrisKey's dotted event names.
+    #[serde(default)]
+    pub events: Vec<String>,
+
+    /// Names of the custom headers; the values are in the headers Secret under
+    /// `<webhook id>.<header name>`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub header_names: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum WebhookRequestKind {
+    RotateSecret,
+    RetryDelivery,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct WebhookRequest {
+    pub id: String,
+
+    pub kind: WebhookRequestKind,
+
+    pub webhook_id: String,
+
+    /// Only for `retryDelivery`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery_id: Option<String>,
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -238,6 +306,61 @@ pub struct IdentityInstanceStatus {
     /// What became of `spec.iam`. Absent until the operator has had something to do.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub iam: Option<IamStatus>,
+
+    /// What became of each of `spec.webhooks`, in the same order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub webhooks: Vec<WebhookStatus>,
+
+    /// The realms FerrisKey lists, so a console can offer them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub realms: Vec<String>,
+
+    /// The requests already executed, so a restart does not run them twice.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub webhook_requests: Vec<WebhookRequestStatus>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum WebhookPhase {
+    Pending,
+    Active,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct WebhookStatus {
+    pub id: String,
+
+    /// FerrisKey's own id, once the webhook exists there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ferriskey_id: Option<String>,
+
+    pub phase: WebhookPhase,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+
+    /// Counts the signing secrets issued; 0 until the first one is stored.
+    #[serde(default)]
+    pub secret_version: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum WebhookRequestPhase {
+    Done,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct WebhookRequestStatus {
+    pub id: String,
+
+    pub phase: WebhookRequestPhase,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -440,8 +563,9 @@ mod tests {
 
     use crate::common::types::{Phase, ResourceList, ResourceRequirements};
     use crate::v1alpha::identity_instance::{
-        DatabaseConfig, DatabaseMode, IdentityInstance, IdentityInstanceSpec, IdentityProvider,
-        ManagedClusterConfig, ManagedClusterStorage,
+        DatabaseConfig, DatabaseMode, IdentityInstance, IdentityInstanceSpec,
+        IdentityInstanceStatus, IdentityProvider, ManagedClusterConfig, ManagedClusterStorage,
+        WebhookPhase, WebhookRequestKind, WebhookRequestPhase, WebhookSpec,
     };
     use kube::core::ObjectMeta;
 
@@ -481,6 +605,9 @@ mod tests {
             ingress: None,
             allowed_cidrs: None,
             backup: None,
+            webhooks: Vec::new(),
+            webhooks_revision: 0,
+            webhook_requests: Vec::new(),
         };
 
         assert_eq!(spec.provider, IdentityProvider::Keycloak);
@@ -530,6 +657,101 @@ mod tests {
             Some("#101010")
         );
         assert_eq!(serde_json::to_value(&spec).unwrap()["iam"], value["iam"]);
+    }
+
+    #[test]
+    fn a_spec_without_webhooks_stays_valid_and_serialises_without_them() {
+        let spec: IdentityInstanceSpec = serde_json::from_value(spec_json()).unwrap();
+
+        assert!(spec.webhooks.is_empty());
+        assert_eq!(spec.webhooks_revision, 0);
+        assert!(spec.webhook_requests.is_empty());
+        let value = serde_json::to_value(&spec).unwrap();
+        for key in ["webhooks", "webhooksRevision", "webhookRequests"] {
+            assert!(value.get(key).is_none(), "{key}");
+        }
+    }
+
+    #[test]
+    fn webhooks_and_requests_round_trip_in_the_frozen_shape() {
+        let mut value = spec_json();
+        value["webhooks"] = json!([{
+            "id": "0b9ad3c4-4a5f-4c3b-8d57-0b2d6d9e1a11",
+            "realm": "master",
+            "name": "Audit",
+            "description": "to the SIEM",
+            "endpoint": "https://example.com/hook",
+            "events": ["user.created", "user.deleted"],
+            "headerNames": ["Authorization"]
+        }]);
+        value["webhooksRevision"] = json!(7);
+        value["webhookRequests"] = json!([
+            { "id": "r1", "kind": "rotateSecret", "webhookId": "w1" },
+            { "id": "r2", "kind": "retryDelivery", "webhookId": "w1", "deliveryId": "d1" }
+        ]);
+
+        let spec: IdentityInstanceSpec = serde_json::from_value(value.clone()).unwrap();
+
+        assert_eq!(spec.webhooks[0].header_names, vec!["Authorization"]);
+        assert_eq!(spec.webhooks_revision, 7);
+        assert_eq!(
+            spec.webhook_requests[0].kind,
+            WebhookRequestKind::RotateSecret
+        );
+        assert_eq!(spec.webhook_requests[1].delivery_id.as_deref(), Some("d1"));
+        let back = serde_json::to_value(&spec).unwrap();
+        assert_eq!(back["webhooks"], value["webhooks"]);
+        assert_eq!(back["webhooksRevision"], value["webhooksRevision"]);
+        assert_eq!(back["webhookRequests"], value["webhookRequests"]);
+    }
+
+    #[test]
+    fn a_webhook_without_header_names_or_description_is_valid() {
+        let webhook: WebhookSpec = serde_json::from_value(json!({
+            "id": "w", "realm": "master", "name": "n",
+            "endpoint": "https://example.com", "events": []
+        }))
+        .unwrap();
+
+        assert!(webhook.header_names.is_empty());
+        assert_eq!(webhook.description, None);
+    }
+
+    #[test]
+    fn webhook_status_round_trips_in_the_frozen_shape() {
+        let status: IdentityInstanceStatus = serde_json::from_value(json!({
+            "webhooks": [
+                { "id": "w1", "ferriskeyId": "f1", "phase": "Active", "secretVersion": 2 },
+                { "id": "w2", "phase": "Failed", "message": "no", "secretVersion": 0 }
+            ],
+            "realms": ["master", "acme"],
+            "webhookRequests": [
+                { "id": "r1", "phase": "Done" },
+                { "id": "r2", "phase": "Failed", "message": "gone" }
+            ]
+        }))
+        .unwrap();
+
+        assert_eq!(status.webhooks[0].phase, WebhookPhase::Active);
+        assert_eq!(status.webhooks[0].ferriskey_id.as_deref(), Some("f1"));
+        assert_eq!(status.webhooks[1].ferriskey_id, None);
+        assert_eq!(status.realms, vec!["master", "acme"]);
+        assert_eq!(
+            status.webhook_requests[1].phase,
+            WebhookRequestPhase::Failed
+        );
+        let back = serde_json::to_value(&status).unwrap();
+        assert_eq!(back["webhooks"][0]["secretVersion"], json!(2));
+        assert!(back["webhooks"][1].get("ferriskeyId").is_none());
+    }
+
+    #[test]
+    fn a_status_without_webhooks_stays_valid() {
+        let status: IdentityInstanceStatus = serde_json::from_value(json!({})).unwrap();
+
+        assert!(status.webhooks.is_empty());
+        assert!(status.realms.is_empty());
+        assert!(status.webhook_requests.is_empty());
     }
 
     #[test]
@@ -695,6 +917,9 @@ mod tests {
                 ..Default::default()
             },
             spec: IdentityInstanceSpec {
+                webhooks: Vec::new(),
+                webhooks_revision: 0,
+                webhook_requests: Vec::new(),
                 restore: None,
                 iam: None,
                 organisation_id: "org-123".to_string(),
@@ -724,6 +949,9 @@ mod tests {
                 backup: None,
             },
             status: Some(super::IdentityInstanceStatus {
+                webhooks: Vec::new(),
+                realms: Vec::new(),
+                webhook_requests: Vec::new(),
                 phase: Some(Phase::Running),
                 ready: true,
                 endpoint: Some("https://auth.acme.com".to_string()),
@@ -749,6 +977,9 @@ mod tests {
         let instance = IdentityInstance {
             metadata: ObjectMeta::default(),
             spec: IdentityInstanceSpec {
+                webhooks: Vec::new(),
+                webhooks_revision: 0,
+                webhook_requests: Vec::new(),
                 restore: None,
                 iam: None,
                 organisation_id: "org-123".to_string(),
