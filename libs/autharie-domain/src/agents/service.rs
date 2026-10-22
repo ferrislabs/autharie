@@ -250,14 +250,17 @@ where
             .ok_or_else(|| AgentError::PolicyNotFound { id: policy_id.0 }.into())
     }
 
+    /// The data plane reports the URL its gateway actually serves, port
+    /// included; the deployment's host is only a guess until it has.
     fn mcp_url(&self, deployment: &Deployment, settings: &AgentSettings) -> Option<String> {
-        match &self.domain {
-            Some(zone) => Some(format!(
-                "https://{}/mcp",
-                crate::dns::hostname_for(&deployment.name.0, zone)
-            )),
-            None => settings.mcp_url.clone(),
-        }
+        settings.mcp_url.clone().or_else(|| {
+            self.domain.as_ref().map(|zone| {
+                format!(
+                    "https://{}/mcp",
+                    crate::dns::hostname_for(&deployment.name.0, zone)
+                )
+            })
+        })
     }
 
     async fn view(

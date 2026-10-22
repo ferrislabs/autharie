@@ -622,6 +622,27 @@ async fn the_mcp_url_comes_from_the_deployment_host() {
 }
 
 #[tokio::test]
+async fn the_mcp_url_the_data_plane_reports_wins_over_the_guess() {
+    let world = world(DeploymentKind::Ferriskey, true, true, Some("autharie.fr"));
+    enable(&world).await;
+    ingest_on(&world.memory, DATAPLANE)
+        .report_agents_outcome(caller(), dep(), outcome(1, "Ready", vec![]))
+        .await
+        .unwrap();
+
+    let view = world
+        .service
+        .get_agents(caller(), org(), dep())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        view.mcp_url.as_deref(),
+        Some("https://reported.example/mcp")
+    );
+}
+
+#[tokio::test]
 async fn an_outcome_sets_the_status_and_each_policys_phase() {
     let world = ferriskey(true);
     enable(&world).await;
