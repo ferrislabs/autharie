@@ -81,14 +81,14 @@ impl FerrisKeyRepository {
         }
     }
 
-    /// Replaces the accepted `iss` values; an empty list keeps the default of
-    /// the issuer the key set is fetched from.
+    /// Accepts these `iss` values as well as the issuer the key set is
+    /// fetched from.
     pub fn with_token_issuers(mut self, token_issuers: Vec<String>) -> Self {
-        if !token_issuers.is_empty() {
-            self.token_issuers = token_issuers
-                .into_iter()
-                .map(|issuer| issuer.trim_end_matches('/').to_string())
-                .collect();
+        for issuer in token_issuers {
+            let issuer = issuer.trim().trim_end_matches('/').to_string();
+            if !issuer.is_empty() && !self.token_issuers.contains(&issuer) {
+                self.token_issuers.push(issuer);
+            }
         }
         self
     }
@@ -677,7 +677,10 @@ HUim3t4M1KMtX1QmMKKCg4i4
         }
 
         let own = token_from(&issuer, TEST_AUDIENCE, None);
-        assert!(repo.validate_token(&own).await.is_err());
+        repo.validate_token(&own).await.expect("the issuer itself");
+
+        let stranger = token_from("http://elsewhere/realms/autharie", TEST_AUDIENCE, None);
+        assert!(repo.validate_token(&stranger).await.is_err());
     }
 
     #[tokio::test]

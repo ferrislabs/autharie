@@ -404,7 +404,9 @@ impl From<Args> for AutharieConfig {
     fn from(value: Args) -> Self {
         Self {
             database: value.db.into(),
-            auth: value.auth.into(),
+            auth: value
+                .auth
+                .config_accepting(non_blank(value.customer_cloud.herald_issuer.as_deref())),
             dataplane: value.dataplane.into(),
             // Reads the same arguments the bucket provisioning does, so an
             // installation cannot end up creating one bucket and telling its
@@ -859,7 +861,7 @@ pub struct AuthArgs {
         env = "AUTH_TOKEN_ISSUER",
         name = "AUTH_TOKEN_ISSUER",
         value_delimiter = ',',
-        long_help = "Comma-separated values of `iss` the API accepts. Defaults to --auth-issuer. \
+        long_help = "Comma-separated values of `iss` the API accepts besides --auth-issuer (and the Herald issuer). \
                      Set it when tokens carry another host than the one the API reaches the \
                      realm on, since FerrisKey derives `iss` from the host a token is requested on"
     )]
@@ -874,6 +876,17 @@ pub struct AuthArgs {
                      `<realm>-realm`, derived from --auth-issuer"
     )]
     pub audiences: Vec<String>,
+}
+
+impl AuthArgs {
+    /// Heralds get their tokens from the issuer the bootstrapper installs them
+    /// with, and FerrisKey puts the host a token was requested on into `iss`,
+    /// so that host has to be accepted alongside `--auth-issuer`.
+    fn config_accepting(self, herald_issuer: Option<String>) -> AuthConfig {
+        let mut config = AuthConfig::from(self);
+        config.token_issuers.extend(herald_issuer);
+        config
+    }
 }
 
 impl From<AuthArgs> for AuthConfig {
@@ -1131,6 +1144,38 @@ mod tests {
             ["http://a.test/realms/r", "http://b.test/realms/r"]
         );
         assert_eq!(parsed.auth.audiences, ["autharie-realm", "autharie-api"]);
+    }
+
+    #[test]
+    fn the_herald_issuer_is_accepted_as_a_token_issuer() {
+        let mut args = Args::try_parse_from([
+            "autharie",
+            "--auth-issuer",
+            "http://ferriskey-api:3333/realms/autharie",
+            "--auth-token-issuer",
+            "http://localhost:3334/realms/autharie",
+        ])
+        .expect("arguments parse");
+
+        let without = AutharieConfig::from(args.clone());
+        assert_eq!(
+            without.auth.token_issuers,
+            ["http://localhost:3334/realms/autharie"]
+        );
+
+        args.customer_cloud.herald_issuer = Some(" http://herald.test/realms/autharie ".into());
+        let with = AutharieConfig::from(args);
+        assert_eq!(
+            with.auth.token_issuers,
+            [
+                "http://localhost:3334/realms/autharie",
+                "http://herald.test/realms/autharie"
+            ]
+        );
+        assert_eq!(
+            with.auth.issuer,
+            "http://ferriskey-api:3333/realms/autharie"
+        );
     }
 
     #[test]

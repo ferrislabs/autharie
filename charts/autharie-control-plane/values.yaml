@@ -62,7 +62,7 @@ auth:
   issuer: ""
   # Values of `iss` the API accepts, when tokens carry another host than the
   # one `issuer` points at (FerrisKey derives `iss` from the request host).
-  # Empty means `issuer`.
+  # Accepted in addition to `issuer`.
   tokenIssuers: []
   # Audiences the API accepts; a token needs one of them. Empty means the realm
   # audience FerrisKey puts in every access token, `<realm>-realm`, taken from
