@@ -1,8 +1,8 @@
-use std::{net::SocketAddr, path::PathBuf};
+use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
 use clap::Parser;
 use mcp_gateway::{
-    app::router, build_state, config::GatewayConfig, decision::TracingSink, logging,
+    app::router, build_state, config::GatewayConfig, decision::TracingSink, logging, reload,
 };
 use tokio::signal::unix::{SignalKind, signal};
 
@@ -17,6 +17,9 @@ struct Args {
 
     #[arg(long, env = "MCP_GATEWAY_LISTEN")]
     listen: Option<SocketAddr>,
+
+    #[arg(long, env = "MCP_GATEWAY_RELOAD_SECS", default_value_t = 5)]
+    reload_interval_secs: u64,
 }
 
 async fn shutdown() {
@@ -33,15 +36,23 @@ async fn shutdown() {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     logging::init();
     let args = Args::parse();
-    let source = match (&args.config_toml, &args.config) {
-        (Some(inline), _) => inline.clone(),
-        (None, Some(path)) => std::fs::read_to_string(path)?,
+    let (config, digest) = match (&args.config_toml, &args.config) {
+        (Some(inline), _) => (GatewayConfig::from_toml(inline)?, None),
+        (None, Some(path)) => reload::initial(path)?,
         (None, None) => return Err("set MCP_GATEWAY_CONFIG or MCP_GATEWAY_CONFIG_TOML".into()),
     };
-    let config = GatewayConfig::from_toml(&source)?;
     let listen = args.listen.unwrap_or(config.listen);
     let upstreams = config.upstreams.len();
-    let app = router(build_state(config, TracingSink)?);
+    let state = build_state(config, TracingSink)?;
+    if let (None, Some(path)) = (&args.config_toml, args.config) {
+        tokio::spawn(reload::watch(
+            state.clone(),
+            path,
+            digest,
+            Duration::from_secs(args.reload_interval_secs.max(1)),
+        ));
+    }
+    let app = router(state);
     let listener = tokio::net::TcpListener::bind(listen).await?;
     tracing::info!(%listen, upstreams, "mcp gateway started");
     axum::serve(listener, app)
