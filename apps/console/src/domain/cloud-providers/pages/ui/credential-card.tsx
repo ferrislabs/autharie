@@ -31,6 +31,12 @@ export function CredentialCard({ credential, disabled, onDelete }: Props) {
       <div className='space-y-1'>
         <p className='font-medium'>{credential.label}</p>
         <p className='text-xs font-medium text-muted-foreground'>{definition.label}</p>
+        {credential.application_name && (
+          <p className='text-xs text-muted-foreground'>
+            Application{' '}
+            <span className='font-mono text-foreground'>{credential.application_name}</span>
+          </p>
+        )}
         <p className='text-sm text-muted-foreground'>{definition.description}</p>
       </div>
       <p className='mt-auto text-xs text-muted-foreground'>

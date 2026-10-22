@@ -5,11 +5,16 @@ import { PageCloudCredentials } from './page-cloud-credentials'
 
 const noop = () => {}
 
-function credential(label: string, id = label): CloudCredential {
+function credential(
+  label: string,
+  id = label,
+  application_name?: string | null,
+): CloudCredential {
   return {
     id,
     label,
     provider: 'scaleway',
+    application_name,
     created_at: '2026-10-01T00:00:00Z',
   } as CloudCredential
 }
@@ -60,6 +65,17 @@ describe('the connected providers', () => {
     expect(html).toContain('>Scaleway</p>')
     expect(html).toContain('Run your clusters in your own Scaleway project.')
     expect(html).toContain('aria-label="Delete Scaleway production"')
+  })
+
+  it('name the application the key belongs to in Scaleway, to tell accounts apart', () => {
+    const html = page([credential('Scaleway production', 'a', 'autharie')])
+    expect(html).toContain('Application')
+    expect(html).toContain('>autharie</span>')
+  })
+
+  it('say nothing about an application when the platform did not name one', () => {
+    expect(page([credential('x', 'a', null)])).not.toContain('Application')
+    expect(page([credential('x', 'b')])).not.toContain('Application')
   })
 
   it('give each credential its own card, sorted by label', () => {
