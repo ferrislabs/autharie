@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { Schemas } from '@/api/api.client'
+import { FEATURES, PLAN_ORDER } from '../../../pricing/plans'
 import { PlanPicker } from './plan-picker'
 import { PriceSummary } from './price-summary'
 import { TierPicker } from './tier-picker'
@@ -65,6 +66,49 @@ describe('the plan cards', () => {
       <PlanPicker selection={selection} onSelect={noop} movedNotice='moved' />,
     )
     expect(html).toContain('moved')
+  })
+})
+
+describe('the plan comparison', () => {
+  const selection = { hosting: 'managed', engine: 'ferriskey', plan: 'business', volume: 10000 } as const
+
+  it.each(['managed', 'byoc'] as const)(
+    'gives every %s plan a cell on every feature row',
+    (hosting) => {
+      const html = renderToStaticMarkup(
+        <PlanPicker selection={{ ...selection, hosting }} onSelect={noop} />,
+      )
+      const rows = FEATURES[hosting].length
+      expect(html.match(/<th scope="row"/g)).toHaveLength(rows)
+      expect(html.match(/<td /g)).toHaveLength(rows * PLAN_ORDER.length)
+    },
+  )
+
+  it('lines the plans up, one column each, with the plan cards as headers', () => {
+    const html = renderToStaticMarkup(<PlanPicker selection={selection} onSelect={noop} />)
+    expect(html.match(/<th scope="col"/g)).toHaveLength(PLAN_ORDER.length + 1)
+    expect(html).toContain('Availability')
+    expect(html).toContain('99.9%, multi-AZ, high availability')
+  })
+
+  it('says when a plan does not have a feature', () => {
+    const html = renderToStaticMarkup(<PlanPicker selection={selection} onSelect={noop} />)
+    expect(html).toContain('Not included')
+    expect(html).toContain('Included')
+  })
+
+  it('says a FerrisKey-only feature is not available with another engine', () => {
+    const keycloak = renderToStaticMarkup(
+      <PlanPicker selection={{ ...selection, engine: 'keycloak' }} onSelect={noop} />,
+    )
+    const ferriskey = renderToStaticMarkup(<PlanPicker selection={selection} onSelect={noop} />)
+    expect(keycloak).toContain('Not available with this engine')
+    expect(ferriskey).not.toContain('Not available with this engine')
+  })
+
+  it('tints the column of the selected plan only', () => {
+    const html = renderToStaticMarkup(<PlanPicker selection={selection} onSelect={noop} />)
+    expect(html.match(/bg-primary\/5/g)).toHaveLength(FEATURES.managed.length + 1)
   })
 })
 

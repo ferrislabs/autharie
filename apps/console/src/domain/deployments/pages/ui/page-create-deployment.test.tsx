@@ -171,3 +171,47 @@ describe('the create action', () => {
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Create deployment<\/button>/)
   })
 })
+
+describe('the layout', () => {
+  const variants = {
+    'with plans and volume': () => page([]),
+    'with a tier': () => page([tier()]),
+    'on the free offer only': () => page([], { offers: [entry('free', true)] }),
+  }
+
+  it.each(Object.entries(variants))('puts the summary and the actions beside the form %s', (_, render) => {
+    const html = render()
+    expect(html).toContain('lg:grid-cols-[minmax(0,1fr)_18rem]')
+    expect(html).not.toContain('max-w-3xl')
+    const aside = html.slice(html.indexOf('<aside'), html.indexOf('</aside>'))
+    expect(aside).toContain('Monthly price')
+    expect(aside).toContain('Create deployment')
+    expect(aside).toContain('Cancel')
+    expect(html.indexOf('Details')).toBeLessThan(html.indexOf('<aside'))
+  })
+
+  it('asks for the details, the volume, then the plan', () => {
+    const html = page([])
+    const at = (title: string) => html.indexOf(`<h2 class="text-base font-semibold">${title}</h2>`)
+    expect(at('Details')).toBeGreaterThanOrEqual(0)
+    expect(at('Details')).toBeLessThan(at('Expected volume'))
+    expect(at('Expected volume')).toBeLessThan(at('Plan'))
+  })
+})
+
+describe('the details', () => {
+  it('suggests a name', () => {
+    expect(page([])).toContain('placeholder="My deployment"')
+  })
+
+  it('offers each environment as a card with a description, not a select', () => {
+    const html = page([])
+    expect(html).not.toContain('role="combobox"')
+    for (const label of ['Development', 'Staging', 'Production']) {
+      expect(html).toContain(label)
+    }
+    expect(html).toContain('To build and test an integration.')
+    expect(html).toContain('To check a change before it reaches production.')
+    expect(html).toContain('For the users of your product.')
+  })
+})
