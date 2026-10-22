@@ -73,6 +73,13 @@ describe('the connected providers', () => {
     expect(html).toContain('>autharie</span>')
   })
 
+  it('show the application as a badge', () => {
+    const html = page([credential('Scaleway production', 'a', 'autharie')])
+    expect(html).toMatch(
+      /<span class="rounded-md border bg-muted\/50 px-1\.5 py-0\.5 font-mono text-foreground">autharie<\/span>/,
+    )
+  })
+
   it('say nothing about an application when the platform did not name one', () => {
     expect(page([credential('x', 'a', null)])).not.toContain('Application')
     expect(page([credential('x', 'b')])).not.toContain('Application')
