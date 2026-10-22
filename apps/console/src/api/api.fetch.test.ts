@@ -1,5 +1,9 @@
-import { describe, expect, it } from 'vitest'
-import { ApiRequestError } from './api.fetch'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { ApiRequestError, fetcher } from './api.fetch'
+
+vi.mock('@/lib/auth/access-token', () => ({
+  currentAccessToken: async () => 'renewed-token',
+}))
 
 describe('ApiRequestError', () => {
   /**
@@ -48,5 +52,28 @@ describe('ApiRequestError', () => {
 
     expect(refused.status).toBe(502)
     expect(refused.message).toContain('502')
+  })
+})
+
+describe('fetcher', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  /**
+   * The symptom this exists for: a request that left with a token the
+   * platform had already expired, because the renewal planned ahead of time
+   * had not run, and was told the person was not who they said.
+   */
+  it('sends the token as renewed for this request, not the one that was stored', async () => {
+    const sent = vi.fn<(url: URL, init: RequestInit) => Promise<Response>>(
+      async () => new Response('{}', { status: 200 })
+    )
+    vi.stubGlobal('fetch', sent)
+
+    await fetcher('get', 'http://api.test/organisations', {} as never)
+
+    const headers = sent.mock.calls[0][1].headers as Headers
+    expect(headers.get('Authorization')).toBe('Bearer renewed-token')
   })
 })
