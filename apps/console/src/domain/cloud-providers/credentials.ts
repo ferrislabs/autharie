@@ -50,6 +50,10 @@ export function deletionRefusal(error: unknown): string | undefined {
   return error instanceof Error ? error.message : undefined
 }
 
+export function isCustomerCloudOff(error: unknown): error is ApiRequestError {
+  return error instanceof ApiRequestError && error.status === 503
+}
+
 export function byLabel(credentials: CloudCredential[]): CloudCredential[] {
   return [...credentials].sort((a, b) => a.label.localeCompare(b.label))
 }

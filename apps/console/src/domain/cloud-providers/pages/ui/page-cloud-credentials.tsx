@@ -1,31 +1,23 @@
 import { useState } from 'react'
-import { Cloud, Trash2 } from 'lucide-react'
-import { formatDistanceToNow } from 'date-fns'
+import { Cloud, Plus } from 'lucide-react'
 import { EmptyState, Page, PageTitle } from '@/components/layout/page'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
 import { byLabel } from '../../credentials'
 import type { CloudCredential } from '../../types/cloud-provider'
 import type { Schemas } from '@/api/api.client'
-import type { Provider } from '../../types/cloud-provider'
-import { CreateCredentialDialog } from './create-credential-dialog'
-import { NewCredentialMenu } from './new-credential-menu'
+import { ConnectProviderDialog } from './connect-provider-dialog'
+import type { ConnectStep } from './connect-step'
+import { CredentialCard } from './credential-card'
 
 interface Props {
   credentials: CloudCredential[]
   isLoading: boolean
   isSaving: boolean
   registerRefusal?: string
+  unavailable?: string
   deleteRefusal?: string
-  onRegister: (request: Schemas.RegisterCloudCredentialRequest, onRegistered: () => void) => void
+  onRegister: (request: Schemas.RegisterCloudCredentialRequest, onDone: () => void) => void
   onDelete: (credential: CloudCredential) => void
   onDialogClosed: () => void
 }
@@ -35,12 +27,13 @@ export function PageCloudCredentials({
   isLoading,
   isSaving,
   registerRefusal,
+  unavailable,
   deleteRefusal,
   onRegister,
   onDelete,
   onDialogClosed,
 }: Props) {
-  const [adding, setAdding] = useState<Provider | null>(null)
+  const [step, setStep] = useState<ConnectStep | null>(null)
 
   if (isLoading) {
     return (
@@ -50,7 +43,12 @@ export function PageCloudCredentials({
     )
   }
 
-  const add = <NewCredentialMenu disabled={isSaving} onSelect={setAdding} />
+  const add = (
+    <Button size='sm' disabled={isSaving} onClick={() => setStep({ provider: null })}>
+      <Plus className='h-4 w-4' />
+      Connect provider
+    </Button>
+  )
 
   return (
     <Page>
@@ -60,6 +58,15 @@ export function PageCloudCredentials({
         The cloud provider accounts your clusters are created in. The infrastructure is billed to
         you by the provider.
       </p>
+
+      {unavailable && (
+        <p
+          role='alert'
+          className='mt-4 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive'
+        >
+          {unavailable}
+        </p>
+      )}
 
       {deleteRefusal && (
         <p
@@ -79,56 +86,32 @@ export function PageCloudCredentials({
             action={add}
           />
         ) : (
-          <div className='overflow-x-auto rounded-lg border'>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Label</TableHead>
-                  <TableHead>Provider</TableHead>
-                  <TableHead>Added</TableHead>
-                  <TableHead className='text-right'>
-                    <span className='sr-only'>Actions</span>
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {byLabel(credentials).map((credential) => (
-                  <TableRow key={credential.id}>
-                    <TableCell className='font-medium'>{credential.label}</TableCell>
-                    <TableCell className='capitalize text-muted-foreground'>
-                      {credential.provider}
-                    </TableCell>
-                    <TableCell className='text-xs text-muted-foreground'>
-                      {formatDistanceToNow(new Date(credential.created_at))} ago
-                    </TableCell>
-                    <TableCell className='text-right'>
-                      <Button
-                        variant='ghost'
-                        size='sm'
-                        disabled={isSaving}
-                        aria-label={`Delete ${credential.label}`}
-                        onClick={() => onDelete(credential)}
-                      >
-                        <Trash2 className='h-4 w-4' />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+          <div className='grid gap-4 sm:grid-cols-2 lg:grid-cols-3'>
+            {byLabel(credentials).map((credential) => (
+              <CredentialCard
+                key={credential.id}
+                credential={credential}
+                disabled={isSaving}
+                onDelete={onDelete}
+              />
+            ))}
           </div>
         )}
       </div>
 
-      <CreateCredentialDialog
-        provider={adding}
+      <ConnectProviderDialog
+        step={step}
+        onStep={(next) => {
+          if (next.provider === null) onDialogClosed()
+          setStep(next)
+        }}
         onClose={() => {
-          setAdding(null)
+          setStep(null)
           onDialogClosed()
         }}
         isSaving={isSaving}
         refusal={registerRefusal}
-        onSubmit={(request) => onRegister(request, () => setAdding(null))}
+        onSubmit={(request) => onRegister(request, () => setStep(null))}
       />
     </Page>
   )

@@ -6,6 +6,7 @@ import {
   canRegister,
   deletionRefusal,
   emptyDraft,
+  isCustomerCloudOff,
   toRegisterRequest,
 } from './credentials'
 import { PROVIDERS, providerById } from './providers'
@@ -82,5 +83,22 @@ describe('deleting an account', () => {
 
   it('shows nothing when nothing failed', () => {
     expect(deletionRefusal(null)).toBeUndefined()
+  })
+})
+
+describe('the refusal because customer cloud is off', () => {
+  it('is a 503 from the platform', () => {
+    expect(
+      isCustomerCloudOff(
+        new ApiRequestError(503, 'customer cloud is not enabled on this installation'),
+      ),
+    ).toBe(true)
+  })
+
+  it('is not any other refusal, nor a failure that is not the platform', () => {
+    expect(isCustomerCloudOff(new ApiRequestError(422, 'Excess permissions: X'))).toBe(false)
+    expect(isCustomerCloudOff(new ApiRequestError(500, 'the credential store failed'))).toBe(false)
+    expect(isCustomerCloudOff(new Error('network'))).toBe(false)
+    expect(isCustomerCloudOff(undefined)).toBe(false)
   })
 })
