@@ -81,6 +81,7 @@ impl Person {
     fn identity(&self) -> Identity {
         Identity::User(User {
             scopes: Vec::new(),
+            act: None,
             id: self.id.to_string(),
             username: "flags".to_string(),
             email: None,

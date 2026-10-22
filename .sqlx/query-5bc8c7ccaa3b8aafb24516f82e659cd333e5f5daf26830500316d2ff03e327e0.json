@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT o.id,\n                   o.name,\n                   o.slug,\n                   o.owner_id,\n                   o.status,\n                   o.plan,\n                   o.max_instances,\n                   o.max_users,\n                   o.max_storage_gb,\n                   o.created_at,\n                   o.updated_at,\n                   o.deleted_at,\n                   -- Subqueries rather than two joins and a GROUP BY: joining\n                   -- both would multiply the rows together, and an\n                   -- organisation with three deployments and four members\n                   -- would report twelve of each.\n                   (SELECT COUNT(*) FROM deployments d\n                     WHERE d.organisation_id = o.id\n                       AND d.status <> 'deleted') AS \"deployments!\",\n                   (SELECT COUNT(*) FROM members m\n                     WHERE m.organisation_id = o.id) AS \"members!\"\n            FROM organisations o\n            WHERE ($1::TEXT IS NULL OR o.status = $1)\n              AND ($2::UUID IS NULL OR (o.created_at, o.id) < (\n                    SELECT c.created_at, c.id FROM organisations c WHERE c.id = $2\n              ))\n            ORDER BY o.created_at DESC, o.id DESC\n            LIMIT $3\n            ",
+  "query": "\n            SELECT o.id,\n                   o.name,\n                   o.slug,\n                   o.owner_id,\n                   o.status,\n                   o.plan,\n                   o.max_instances,\n                   o.max_users,\n                   o.max_storage_gb,\n                   o.mcp_enabled,\n                   o.created_at,\n                   o.updated_at,\n                   o.deleted_at,\n                   -- The same two subqueries the listing uses, for the same\n                   -- reason: joined, they multiply, and three deployments\n                   -- beside two members would report six of each.\n                   (SELECT COUNT(*) FROM deployments d\n                     WHERE d.organisation_id = o.id\n                       AND d.status <> 'deleted') AS \"deployments!\",\n                   (SELECT COUNT(*) FROM members m\n                     WHERE m.organisation_id = o.id) AS \"members!\"\n            FROM organisations o\n            WHERE o.id = $1\n            ",
   "describe": {
     "columns": [
       {
@@ -50,38 +50,42 @@
       },
       {
         "ordinal": 9,
+        "name": "mcp_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 10,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 10,
+        "ordinal": 11,
         "name": "updated_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 11,
+        "ordinal": 12,
         "name": "deleted_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 12,
+        "ordinal": 13,
         "name": "deployments!",
         "type_info": "Int8"
       },
       {
-        "ordinal": 13,
+        "ordinal": 14,
         "name": "members!",
         "type_info": "Int8"
       }
     ],
     "parameters": {
       "Left": [
-        "Text",
-        "Uuid",
-        "Int8"
+        "Uuid"
       ]
     },
     "nullable": [
+      false,
       false,
       false,
       false,
@@ -98,5 +102,5 @@
       null
     ]
   },
-  "hash": "851769ff2a3ad5afa0157903ce4fa2cb859d4930b4defba0ea0741087106f909"
+  "hash": "5bc8c7ccaa3b8aafb24516f82e659cd333e5f5daf26830500316d2ff03e327e0"
 }

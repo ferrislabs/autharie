@@ -91,6 +91,7 @@ mod tests {
     fn a_caller() -> Identity {
         Identity::User(autharie_auth::User {
             scopes: Vec::new(),
+            act: None,
             id: Uuid::nil().to_string(),
             username: "somebody".to_string(),
             email: None,

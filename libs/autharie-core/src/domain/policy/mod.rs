@@ -468,6 +468,7 @@ mod tests {
         });
         let identity = Identity::User(autharie_auth::User {
             scopes: Vec::new(),
+            act: None,
             id: "user-1".to_string(),
             username: "user".to_string(),
             email: None,
@@ -489,6 +490,7 @@ mod tests {
         });
         let identity = Identity::User(autharie_auth::User {
             scopes: Vec::new(),
+            act: None,
             id: "user-1".to_string(),
             username: "user".to_string(),
             email: None,
@@ -510,6 +512,7 @@ mod tests {
         });
         let identity = Identity::User(autharie_auth::User {
             scopes: Vec::new(),
+            act: None,
             id: "user-1".to_string(),
             username: "user".to_string(),
             email: None,
@@ -531,6 +534,7 @@ mod tests {
         });
         let identity = Identity::User(autharie_auth::User {
             scopes: Vec::new(),
+            act: None,
             id: "user-1".to_string(),
             username: "user".to_string(),
             email: None,
@@ -548,6 +552,7 @@ mod tests {
     fn test_identity() -> Identity {
         Identity::User(autharie_auth::User {
             scopes: Vec::new(),
+            act: None,
             id: "user-1".to_string(),
             username: "user".to_string(),
             email: None,

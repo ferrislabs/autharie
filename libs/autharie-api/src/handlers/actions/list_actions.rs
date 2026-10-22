@@ -98,6 +98,7 @@ mod tests {
             client_id: "herald-service".to_string(),
             roles: vec![],
             scopes: vec![],
+            act: None,
         });
 
         let result = list_actions_handler(

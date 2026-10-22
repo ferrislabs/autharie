@@ -365,6 +365,7 @@ export namespace Schemas {
     deleted_at?: (string | null) | undefined
     id: OrganisationId
     limits: OrganisationLimits
+    mcp_enabled: boolean
     name: OrganisationName
     owner_id: UserId
     plan: Plan
@@ -736,6 +737,7 @@ export namespace Schemas {
   }
   export type OperatorResponse = { data: PlatformOperator }
   export type OperatorsResponse = { data: Array<PlatformOperator> }
+  export type OrganisationResponse = { data: Organisation }
   export type PaymentMethodSessionResponse = { url: string }
   export type ProviderEventsResponse = { received: boolean }
   export type ProviderOffers = {
@@ -917,6 +919,7 @@ export namespace Schemas {
     name: string | null
   }>
   export type UpdateDeploymentResponse = { data: Deployment }
+  export type UpdateOrganisationRequest = Partial<{ mcp_enabled: boolean | null }>
   export type UpdateRoleRequest = Partial<{
     color: string | null
     name: string | null
@@ -1131,6 +1134,26 @@ export namespace Endpoints {
       body: Schemas.CreateOrganisationRequest
     }
     response: Schemas.CreateOrganisationResponse
+  }
+  export type get_Get_organisation_handler = {
+    method: 'GET'
+    path: '/organisations/{organisation_id}'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string }
+    }
+    response: Schemas.OrganisationResponse
+  }
+  export type patch_Update_organisation_handler = {
+    method: 'PATCH'
+    path: '/organisations/{organisation_id}'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string }
+
+      body: Schemas.UpdateOrganisationRequest
+    }
+    response: Schemas.OrganisationResponse
   }
   export type get_List_audit_log_handler = {
     method: 'GET'
@@ -2047,6 +2070,7 @@ export type EndpointByMethod = {
     '/dataplanes': Endpoints.get_List_dataplanes_handler
     '/dataplanes/{dataplane_id}': Endpoints.get_Get_dataplane_handler
     '/dataplanes/{dataplane_id}/deployments': Endpoints.get_List_deployments_for_dataplane_handler
+    '/organisations/{organisation_id}': Endpoints.get_Get_organisation_handler
     '/organisations/{organisation_id}/audit-log': Endpoints.get_List_audit_log_handler
     '/organisations/{organisation_id}/billing/account': Endpoints.get_Get_billing_account_handler
     '/organisations/{organisation_id}/billing/statements': Endpoints.get_List_statements_handler
@@ -2127,6 +2151,7 @@ export type EndpointByMethod = {
     '/releases/operator/{kind}/{version}/status': Endpoints.put_Move_release_handler
   }
   patch: {
+    '/organisations/{organisation_id}': Endpoints.patch_Update_organisation_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}': Endpoints.patch_Update_deployment_handler
     '/organisations/{organisation_id}/roles/{role_id}': Endpoints.patch_Update_role_handler
     '/releases/operator/{kind}/{version}': Endpoints.patch_Revise_release_handler
