@@ -323,6 +323,8 @@ impl From<CoreError> for ApiError {
             CoreError::DeploymentNotUpgradable { .. }
             | CoreError::DeploymentBusy { .. }
             | CoreError::DeploymentStopped { .. }
+            | CoreError::DeploymentNotStoppable { .. }
+            | CoreError::DeploymentNotStopped { .. }
             | CoreError::ReleaseNotInstallable { .. } => ApiError::Conflict {
                 reason: value.to_string(),
             },
@@ -999,6 +1001,27 @@ mod tests {
             panic!("expected a conflict, got {taken:?}");
         };
         assert_eq!(reason, "this name is already used by another deployment");
+    }
+
+    #[test]
+    fn stopping_or_starting_what_is_in_the_wrong_state_is_a_conflict_that_names_the_state() {
+        let id = uuid::Uuid::nil();
+        let stop = ApiError::from(CoreError::DeploymentNotStoppable {
+            deployment: id,
+            status: "pending".to_string(),
+        });
+        let start = ApiError::from(CoreError::DeploymentNotStopped {
+            deployment: id,
+            status: "successful".to_string(),
+        });
+
+        let (ApiError::Conflict { reason: stop }, ApiError::Conflict { reason: start }) =
+            (&stop, &start)
+        else {
+            panic!("expected two conflicts, got {stop:?} and {start:?}");
+        };
+        assert!(stop.contains("pending"));
+        assert!(start.contains("successful"));
     }
 
     #[test]

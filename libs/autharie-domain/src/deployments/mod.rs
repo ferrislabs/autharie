@@ -2,6 +2,7 @@ pub mod cutover;
 pub mod environment;
 pub mod network;
 pub mod network_service;
+pub mod power;
 pub mod reachability_history;
 use std::{fmt, str::FromStr};
 
@@ -477,7 +478,7 @@ pub(crate) mod tests {
         assert!(deployment(DeploymentStatus::Failed).deserves_a_dns_record());
     }
 
-    fn deployment(status: DeploymentStatus) -> Deployment {
+    pub(crate) fn deployment(status: DeploymentStatus) -> Deployment {
         let at = Utc::now();
         Deployment {
             topology: Default::default(),

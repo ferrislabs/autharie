@@ -27,6 +27,7 @@ use crate::{
         commands::{CreateDeploymentCommand, UpdateDeploymentCommand},
         distribution::Distribution,
         ports::{DeploymentPolicy, DeploymentRepository, DeploymentService},
+        power::{DeploymentPower, DeploymentPowerService},
         provisioning::Provisioning,
         service::DeploymentServiceImpl,
     },
@@ -34,7 +35,11 @@ use crate::{
     infrastructure::provisioner::LocalClusterProvisioner,
     organisation::OrganisationId,
 };
-use crate::{infrastructure::role::permissions_in, policy::AuthariePolicy};
+use crate::{
+    application::billing::announce::Announcer, infrastructure::role::permissions_in,
+    policy::AuthariePolicy,
+};
+use autharie_domain::user::ports::UserRepository;
 
 /// Where the instance's database runs, always sent.
 ///
@@ -601,6 +606,86 @@ impl DeploymentService for AutharieService {
         }
 
         Ok(updated)
+    }
+}
+
+/// Who the data plane is told asked: the row of the person, not the subject
+/// their token carries, for the reason a backup records it that way -- an
+/// action keeps it as a foreign key into `users`.
+async fn asker<U: UserRepository>(
+    users: &U,
+    identity: &Identity,
+) -> Result<ActionSource, CoreError> {
+    match identity {
+        Identity::User(user) => {
+            let row = users
+                .find_by_sub(&user.id)
+                .await?
+                .ok_or(CoreError::InvalidIdentity)?;
+
+            Ok(ActionSource::User { user_id: row.id.0 })
+        }
+        Identity::Client(client) => Ok(ActionSource::Api {
+            client_id: client.id.clone(),
+        }),
+    }
+}
+
+impl DeploymentPowerService for AutharieService {
+    #[transactional(deployment, billing_suspension, backup_schedule, action, user)]
+    async fn stop_deployment(
+        &self,
+        identity: Identity,
+        organisation_id: OrganisationId,
+        deployment_id: DeploymentId,
+    ) -> Result<Deployment, CoreError> {
+        let source = asker(&user_repository, &identity).await?;
+        let deployment = DeploymentPower::new(
+            deployment_repository,
+            billing_suspension_repository,
+            AuthariePolicy::new(permissions_in(&tx)),
+        )
+        .stop(identity, organisation_id, deployment_id, chrono::Utc::now())
+        .await?;
+
+        Announcer::new(
+            backup_schedule_repository,
+            action_repository,
+            self.archive_config(),
+            self.deployment_domain(),
+        )
+        .announce_as(&deployment, "deployment.stop", source)
+        .await?;
+
+        Ok(deployment)
+    }
+
+    #[transactional(deployment, billing_suspension, backup_schedule, action, user)]
+    async fn start_deployment(
+        &self,
+        identity: Identity,
+        organisation_id: OrganisationId,
+        deployment_id: DeploymentId,
+    ) -> Result<Deployment, CoreError> {
+        let source = asker(&user_repository, &identity).await?;
+        let deployment = DeploymentPower::new(
+            deployment_repository,
+            billing_suspension_repository,
+            AuthariePolicy::new(permissions_in(&tx)),
+        )
+        .start(identity, organisation_id, deployment_id, chrono::Utc::now())
+        .await?;
+
+        Announcer::new(
+            backup_schedule_repository,
+            action_repository,
+            self.archive_config(),
+            self.deployment_domain(),
+        )
+        .announce_as(&deployment, "deployment.start", source)
+        .await?;
+
+        Ok(deployment)
     }
 }
 

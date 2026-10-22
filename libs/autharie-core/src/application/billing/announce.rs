@@ -46,6 +46,16 @@ where
         deployment: &Deployment,
         action: &str,
     ) -> Result<(), CoreError> {
+        self.announce_as(deployment, action, ActionSource::System)
+            .await
+    }
+
+    pub(crate) async fn announce_as(
+        &self,
+        deployment: &Deployment,
+        action: &str,
+        source: ActionSource,
+    ) -> Result<(), CoreError> {
         // Genesis applies the whole desired state: a payload without the
         // hostname resets it, one without the archive drops the backups.
         let hostname = deployment_hostname(self.domain, deployment);
@@ -64,7 +74,7 @@ where
                     data: deployment_payload(deployment, archive, hostname),
                 },
                 ActionVersion(1),
-                ActionSource::System,
+                source,
             ))
             .await?;
 

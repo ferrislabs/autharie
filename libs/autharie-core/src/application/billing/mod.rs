@@ -28,7 +28,7 @@ use tracing::error;
 
 use crate::{AutharieService, infrastructure::role::permissions_in, policy::AuthariePolicy};
 
-mod announce;
+pub(crate) mod announce;
 mod power;
 mod resize;
 

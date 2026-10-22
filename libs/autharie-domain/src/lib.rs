@@ -236,6 +236,14 @@ pub enum CoreError {
     #[error("deployment {deployment} is stopped and cannot be {operation}")]
     DeploymentStopped { deployment: Uuid, operation: String },
 
+    /// Only a deployment that has started, and is not on its way out or being
+    /// rewritten, has something to stop.
+    #[error("deployment {deployment} is {status} and cannot be stopped")]
+    DeploymentNotStoppable { deployment: Uuid, status: String },
+
+    #[error("deployment {deployment} is {status}, not stopped, so there is nothing to start")]
+    DeploymentNotStopped { deployment: Uuid, status: String },
+
     /// Upgrading a deployment that is not settled would put two operations on
     /// one instance, and the second would win by accident.
     #[error("deployment {deployment} is {status} and cannot be upgraded")]
