@@ -23,8 +23,8 @@ import { formatDistanceToNow } from 'date-fns'
 import { Boxes, MoreHorizontal, Plus, RefreshCw, Search, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import type { Deployment } from '../../types/deployment'
-import { KIND_LABELS } from '../../types/deployment'
 import { formatCpu, formatMemory } from '../../types/resources'
+import { DeploymentKindLabel } from './components/deployment-kind'
 import { DeploymentStatusBadge } from './components/deployment-status'
 
 interface Props {
@@ -123,7 +123,7 @@ export const PageDeploymentsOverview = ({ deployments, isLoading, onDelete, onRe
                       </Link>
                     </TableCell>
                     <TableCell className='text-muted-foreground'>
-                      {KIND_LABELS[deployment.kind]}
+                      <DeploymentKindLabel kind={deployment.kind} />
                     </TableCell>
                     <TableCell>
                       <DeploymentStatusBadge status={deployment.status} />
