@@ -83,7 +83,7 @@ Workstreams
   Wave 1 (parallel):
     F1 FerrisKey: authz management routes + validate/simulate + batch evaluations + Cedar agent types + PKCE plain refusal. FerrisKey repo.
     F2 FerrisKey: MCP server crate over admin services. FerrisKey repo.
-    A1 Autharie: apps/mcp-gateway (PEP) + libs it needs, with a fake PDP and fake upstream in tests.
+    A1 Autharie: apps/mcp-gateway (PEP) + libs it needs, with a fake PDP and fake upstream in tests. Starts from Mestier's `apps/mcp-gateway` (Mestier ADR 0004: same PEP, AuthZEN and exchange design, built to serve other ferrislabs products), extended with several upstreams, the batch filter of `tools/list`, the `Mcp-Name` check and decision records.
     A2 Autharie: apps/autharie-mcp (rmcp) over the API.
   Wave 2 (parallel, after the contracts are proven):
     A3 Data plane: operator/genesis/herald plumbing (enable authz, gateway service account, allowed_resources, CIMD, agent policies desired state, decision records shipping), data plane chart (gateway deployment + routes).
