@@ -7,6 +7,7 @@ pub struct DecisionRecord {
     pub kind: &'static str,
     pub time: String,
     pub server: String,
+    pub resource: String,
     pub method: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool: Option<String>,
@@ -47,6 +48,7 @@ mod tests {
             kind: KIND,
             time: "2026-10-22T10:00:00Z".into(),
             server: "autharie".into(),
+            resource: "https://app.autharie.fr/mcp".into(),
             method: "tools/call".into(),
             tool: Some("list_deployments".into()),
             subject_type: "User",
@@ -69,6 +71,7 @@ mod tests {
                 "kind": "agent_decision",
                 "time": "2026-10-22T10:00:00Z",
                 "server": "autharie",
+                "resource": "https://app.autharie.fr/mcp",
                 "method": "tools/call",
                 "tool": "list_deployments",
                 "subject_type": "User",

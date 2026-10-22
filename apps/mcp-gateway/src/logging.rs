@@ -105,6 +105,7 @@ mod tests {
                 kind: KIND,
                 time: "t".into(),
                 server: "s".into(),
+                resource: "https://h/mcp".into(),
                 method: "tools/call".into(),
                 tool: Some("x".into()),
                 subject_type: "Client",
