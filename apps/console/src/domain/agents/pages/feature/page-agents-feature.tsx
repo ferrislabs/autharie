@@ -17,6 +17,8 @@ import {
 } from '../../hooks/use-agents'
 import type { PolicyTemplateDraft } from '../../policy-templates'
 import type { AgentPolicy } from '../../types'
+import { describeRule } from '../../summary'
+import { AccessMap } from '../ui/access-map'
 import { DeletePolicyDialog } from '../ui/delete-policy-dialog'
 import { PageAgents } from '../ui/page-agents'
 import { PolicySheet } from '../ui/policy-sheet'
@@ -46,6 +48,12 @@ function AgentsTab() {
   const current = settings.data
   const realm = realmDraft ?? current?.realm ?? ''
   const list = policies.data ?? []
+  const canManage = can(CAN.manageInstances)
+
+  const openEditor = (next: NonNullable<Editing>) => {
+    savePolicy.reset()
+    setEditing(next)
+  }
 
   return (
     <>
@@ -55,7 +63,7 @@ function AgentsTab() {
         error={settings.error?.message}
         realms={realms.data ?? null}
         realm={realm}
-        canManage={can(CAN.manageInstances)}
+        canManage={canManage}
         isSaving={updateSettings.isPending}
         saveError={updateSettings.error?.message}
         policies={list}
@@ -81,14 +89,19 @@ function AgentsTab() {
           )
         }
         onOpenOrganisationSettings={() => void navigate({ to: organisationPath('/settings') })}
-        onCreatePolicy={(initial) => {
-          savePolicy.reset()
-          setEditing({ policy: null, initial })
-        }}
-        onEditPolicy={(policy) => {
-          savePolicy.reset()
-          setEditing({ policy })
-        }}
+        accessMap={
+          <AccessMap
+            policies={list}
+            canManage={canManage}
+            onEditPolicy={(policy) => openEditor({ policy })}
+            onCreatePolicy={() => openEditor({ policy: null })}
+            onCreateRule={(rule) =>
+              openEditor({ policy: null, initial: { name: describeRule(rule), description: '', rule } })
+            }
+          />
+        }
+        onCreatePolicy={(initial) => openEditor({ policy: null, initial })}
+        onEditPolicy={(policy) => openEditor({ policy })}
         onDeletePolicy={(policy) => {
           deletePolicy.reset()
           setDeleting(policy)
