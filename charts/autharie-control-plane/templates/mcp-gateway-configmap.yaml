@@ -1,0 +1,32 @@
+{{- if .Values.agents.enabled }}
+{{- $realm := include "autharie-control-plane.agentsRealmUrl" . }}
+{{- $name := printf "%s-mcp-gateway" (include "autharie-control-plane.fullname" .) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "autharie-control-plane.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mcp-gateway
+data:
+  config.toml.tmpl: |
+    [[upstreams]]
+    canonical_uri = {{ printf "https://%s/mcp" .Values.gatewayApi.hostname | quote }}
+    issuer = {{ include "autharie-control-plane.agentsIssuer" . | quote }}
+    jwks_uri = {{ printf "%s/protocol/openid-connect/certs" $realm | quote }}
+    upstream_url = {{ printf "http://%s-mcp:%v/mcp" (include "autharie-control-plane.fullname" .) .Values.agents.mcp.port | quote }}
+    server_name = "autharie"
+    scopes_supported = {{ .Values.agents.scopesSupported | toJson }}
+
+    [upstreams.pdp]
+    evaluation_url = {{ printf "%s/authzen/access/v1/evaluation" $realm | quote }}
+    evaluations_url = {{ printf "%s/authzen/access/v1/evaluations" $realm | quote }}
+    client_id = {{ .Values.agents.gateway.clientId | quote }}
+    client_secret = "@CLIENT_SECRET@"
+
+    [upstreams.exchange]
+    token_url = {{ printf "%s/protocol/openid-connect/token" $realm | quote }}
+    client_id = {{ .Values.agents.gateway.clientId | quote }}
+    client_secret = "@CLIENT_SECRET@"
+    audience = {{ include "autharie-control-plane.agentsAudience" . | quote }}
+{{- end }}

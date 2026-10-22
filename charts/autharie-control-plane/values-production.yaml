@@ -20,6 +20,8 @@ image:
   # state.
   controlPlaneTag: latest
   consoleTag: latest
+  mcpGatewayTag: latest
+  mcpTag: latest
 
 controlPlane:
   server:
@@ -99,6 +101,16 @@ realm:
   # this namespace once -- see the runbook. Ferriskey cannot hand them out
   # cross-namespace on its own.
   existingSecret: autharie-realm-admin
+
+# https://app.autharie.fr/mcp, behind the MCP gateway. Switch it on after the
+# realm is set up (client `mcp-gateway` with the EvaluateAuthorization permission
+# and a token-exchange policy towards autharie-realm, app.autharie.fr/mcp in the
+# realm's allowed resources, CIMD on) and the Secret below exists, created
+# directly on the cluster: client-secret.
+agents:
+  enabled: false
+  gateway:
+    existingSecret: autharie-mcp-gateway
 
 platform:
   # nathaelb, the only account in the autharie realm -- id.autharie.fr's
