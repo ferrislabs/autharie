@@ -77,7 +77,7 @@ function uid(type: string, id: string) {
 function entities(scenario: Scenario) {
   const server = serverOfTool(scenario.tool)
   const list: unknown[] = [
-    { uid: uid('McpServer', server), attrs: {}, parents: [] },
+    { uid: uid('McpServer', server), attrs: { name: server }, parents: [] },
     {
       uid: uid('Tool', scenario.tool),
       attrs: {
@@ -91,14 +91,25 @@ function entities(scenario: Scenario) {
 
   if (scenario.subject.kind === 'user') {
     const groups = [...new Set(scenario.subject.groups)]
-    for (const group of groups) list.push({ uid: uid('Group', group), attrs: {}, parents: [] })
+    for (const group of groups) {
+      list.push({ uid: uid('Group', group), attrs: { name: group }, parents: [] })
+    }
     list.push({
       uid: uid('User', scenario.subject.id),
-      attrs: { roles: [...new Set(scenario.subject.roles)], groups },
+      attrs: {
+        username: scenario.subject.id,
+        email_verified: true,
+        enabled: true,
+        roles: [...new Set(scenario.subject.roles)],
+      },
       parents: groups.map((group) => uid('Group', group)),
     })
   } else {
-    list.push({ uid: uid('Agent', scenario.subject.clientId), attrs: {}, parents: [] })
+    list.push({
+      uid: uid('Agent', scenario.subject.clientId),
+      attrs: { client_id: scenario.subject.clientId },
+      parents: [],
+    })
   }
 
   return list
@@ -124,8 +135,7 @@ export function simulate(api: CedarApi, policies: NamedPolicy[], scenario: Scena
     context: {
       agent: subject.kind === 'user' ? subject.agent : subject.clientId,
       delegated: subject.kind === 'user',
-      arguments: {},
-      time: contextTime(scenario.time),
+      time: { ...contextTime(scenario.time), iso: scenario.time.toISOString() },
     },
     schema: AGENT_SCHEMA,
     validateRequest: true,

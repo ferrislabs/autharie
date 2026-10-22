@@ -63,6 +63,22 @@ describe('validating against the schema', () => {
     }
   })
 
+  it('rejects an unguarded access to an optional attribute', () => {
+    const validation = validatePolicy(
+      cedar,
+      'permit (principal, action, resource is FerrisKey::Tool) when { resource.annotations.readOnlyHint };',
+    )
+    expect(isValid(validation)).toBe(false)
+  })
+
+  it('rejects the arguments context FerrisKey does not provide', () => {
+    const validation = validatePolicy(
+      cedar,
+      'permit (principal, action == FerrisKey::Action::"call_tool", resource) when { context.arguments.x };',
+    )
+    expect(isValid(validation)).toBe(false)
+  })
+
   it('reports a syntax error', () => {
     const validation = validatePolicy(cedar, 'permit (principal, action, resource')
     expect(validation.syntax.length).toBeGreaterThan(0)

@@ -126,11 +126,11 @@ function principalParts(who: Who): Pick<Parts, 'principal' | 'conditions'> {
         conditions: [anyOf(groups.map((group) => `principal in ${entity('Group', group)}`))],
       }
     }
-    case 'roles':
-      return {
-        principal: `principal is ${user}`,
-        conditions: [anyOf(clean(who.roles).map((role) => `principal.roles.contains(${quote(role)})`))],
-      }
+    case 'roles': {
+      const tests = clean(who.roles).map((role) => `principal.roles.contains(${quote(role)})`)
+      const test = tests.length === 1 ? tests[0] : `(${anyOf(tests)})`
+      return { principal: `principal is ${user}`, conditions: [`principal has roles && ${test}`] }
+    }
     case 'users': {
       const users = clean(who.users)
       if (users.length === 1) {
@@ -182,7 +182,7 @@ function resourceParts(what: What): Pick<Parts, 'resource' | 'conditions'> {
     case 'read-only': {
       const conditions =
         what.server === null ? [] : [`resource.server == ${quote(what.server.trim())}`]
-      conditions.push('resource.annotations has readOnlyHint && resource.annotations.readOnlyHint')
+      conditions.push('resource has annotations && resource.annotations has readOnlyHint && resource.annotations.readOnlyHint')
       return { resource: `resource is ${tool}`, conditions }
     }
   }

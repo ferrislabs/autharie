@@ -29,7 +29,7 @@ describe('the head of a policy', () => {
         '  action == FerrisKey::Action::"call_tool",',
         '  resource is FerrisKey::Tool',
         ')',
-        'when { resource.annotations has readOnlyHint && resource.annotations.readOnlyHint };',
+        'when { resource has annotations && resource.annotations has readOnlyHint && resource.annotations.readOnlyHint };',
       ].join('\n'),
     )
   })
@@ -55,13 +55,13 @@ describe('who', () => {
 
   it('tests roles on the user', () => {
     const out = cedar({ who: { kind: 'roles', roles: ['admin'] } })
-    expect(out).toContain('when { principal.roles.contains("admin") }')
+    expect(out).toContain('when { principal has roles && principal.roles.contains("admin") }')
   })
 
   it('accepts any of several roles', () => {
     const out = cedar({ who: { kind: 'roles', roles: ['admin', 'ops'] } })
     expect(out).toContain(
-      'when { principal.roles.contains("admin") || principal.roles.contains("ops") }',
+      'when { principal has roles && (principal.roles.contains("admin") || principal.roles.contains("ops")) }',
     )
   })
 
@@ -185,7 +185,7 @@ describe('the whole spec example', () => {
         '  resource is FerrisKey::Tool',
         ')',
         'when { context.agent == "agent-x" }',
-        'when { resource.annotations has readOnlyHint && resource.annotations.readOnlyHint }',
+        'when { resource has annotations && resource.annotations has readOnlyHint && resource.annotations.readOnlyHint }',
         'when { [1, 2, 3, 4, 5].contains(context.time.weekday) }',
         'when { context.time.hour >= 8 && context.time.hour < 18 };',
       ].join('\n'),
@@ -242,6 +242,6 @@ describe('refusing what cannot compile', () => {
 
   it('drops duplicates', () => {
     const out = cedar({ who: { kind: 'roles', roles: ['a', 'a'] } })
-    expect(out).toContain('when { principal.roles.contains("a") }')
+    expect(out).toContain('when { principal has roles && principal.roles.contains("a") }')
   })
 })
