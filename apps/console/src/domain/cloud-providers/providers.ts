@@ -30,14 +30,20 @@ export interface PermissionGroup {
   sets: PermissionSet[]
 }
 
+export interface PermissionInstruction {
+  text: string
+  permissionGroup: number
+}
+
+export type GuideInstruction = string | PermissionInstruction
+
 export interface GuideStep {
   title: string
   heading: string
   intro: string
-  instructions: string[]
+  instructions: GuideInstruction[]
   link?: GuideLink
   tip?: string
-  permissions?: boolean
 }
 
 export interface ConnectStepCopy {
@@ -91,17 +97,22 @@ export const PROVIDERS: ProviderDefinition[] = [
         title: 'Permissions',
         heading: 'Grant the permissions',
         intro:
-          'A policy gives the application the permission sets Autharie needs. Create one policy with two rules, one for each group below.',
+          'A policy gives the application the permission sets Autharie needs. Create one policy with two rules.',
         instructions: [
           'In IAM, open the **Policies** tab and click **Create policy**.',
           'Enter a name and select your application as the **principal**.',
-          'For the first rule, select the permission sets of rule 1 under **Resource management**. For the scope, select **Specific projects** and choose the project your clusters are created in.',
-          'Click **Add new rule**, then select the permission sets of rule 2 under **Organization management**.',
+          {
+            text: 'Add a first rule. Under **Resource management**, select these permission sets. For the scope, select **Specific projects** and choose the project your clusters are created in.',
+            permissionGroup: 0,
+          },
+          {
+            text: 'Click **Add new rule**. Under **Organization management**, select these permission sets.',
+            permissionGroup: 1,
+          },
           'Click **Create policy**.',
         ],
         link: SCALEWAY_IAM,
         tip: 'Do not grant any other permission: Autharie refuses a key that holds more than needed.',
-        permissions: true,
       },
       {
         title: 'API key',
@@ -219,4 +230,12 @@ export function providerById(id: Provider): ProviderDefinition {
 
 export function permissionSetsOf(provider: ProviderDefinition): PermissionSet[] {
   return provider.permissionGroups.flatMap((group) => group.sets)
+}
+
+export function instructionText(instruction: GuideInstruction): string {
+  return typeof instruction === 'string' ? instruction : instruction.text
+}
+
+export function instructionGroup(instruction: GuideInstruction): number | undefined {
+  return typeof instruction === 'string' ? undefined : instruction.permissionGroup
 }

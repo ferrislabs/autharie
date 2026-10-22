@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { PROVIDERS, permissionSetsOf, providerById } from './providers'
+import { PROVIDERS, instructionGroup, permissionSetsOf, providerById } from './providers'
 
 describe('the providers a credential can be created for', () => {
   it('offers Scaleway, drawn with its own logo', () => {
@@ -57,8 +57,15 @@ describe('the guide to connect a Scaleway account', () => {
     }
   })
 
-  it('shows the permission cards on one step only', () => {
-    expect(scaleway.guide.filter((step) => step.permissions)).toHaveLength(1)
+  it('attaches each rule to the instruction that asks for it, once', () => {
+    const attached = scaleway.guide.flatMap((step) =>
+      step.instructions.flatMap((instruction) => {
+        const group = instructionGroup(instruction)
+        return group === undefined ? [] : [group]
+      }),
+    )
+    expect(attached).toEqual([0, 1])
+    expect(attached.length).toBe(scaleway.permissionGroups.length)
   })
 
   it('only links to the Scaleway console', () => {
