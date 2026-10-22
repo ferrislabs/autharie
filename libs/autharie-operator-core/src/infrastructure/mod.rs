@@ -6,11 +6,15 @@ pub mod dumps;
 pub mod edge;
 pub mod ferriskey_admin;
 pub mod ferriskey_theme;
+pub mod ferriskey_webhooks;
 pub mod identity_instance;
 pub mod identity_instance_backup;
 pub mod identity_instance_upgrade;
+pub mod kube_webhooks;
 pub mod manifest_store;
 pub mod shared_database;
+#[cfg(test)]
+pub(crate) mod test_support;
 
 use futures::try_join;
 
