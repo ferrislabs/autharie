@@ -149,6 +149,7 @@ impl<S: DecisionSink> Call<'_, S> {
             kind: KIND,
             time: now(),
             server: self.upstream.server_name.clone(),
+            resource: self.upstream.canonical_uri.to_string(),
             method: method.to_owned(),
             tool: tool.map(str::to_owned),
             subject_type,
