@@ -987,6 +987,7 @@ mod tests {
                 ..Default::default()
             },
             spec: IdentityInstanceSpec {
+                agents: None,
                 restore: None,
                 iam: None,
                 organisation_id: "org".to_string(),

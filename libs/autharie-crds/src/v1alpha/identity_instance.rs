@@ -102,6 +102,34 @@ pub struct IdentityInstanceSpec {
     /// once and its result recorded in `status.webhookRequests`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub webhook_requests: Vec<WebhookRequest>,
+
+    /// The agent settings this deployment should have, whole. FerrisKey only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agents: Option<AgentsSpec>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentsSpec {
+    pub enabled: bool,
+
+    pub realm: String,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub policies: Vec<AgentPolicySpec>,
+
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub policies_revision: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentPolicySpec {
+    pub id: String,
+
+    pub name: String,
+
+    pub cedar: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -318,6 +346,56 @@ pub struct IdentityInstanceStatus {
     /// The requests already executed, so a restart does not run them twice.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub webhook_requests: Vec<WebhookRequestStatus>,
+
+    /// What became of `spec.agents`. Absent until the operator has had something to do.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agents: Option<AgentsStatus>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum AgentsPhase {
+    Applying,
+    Ready,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum AgentPolicyPhase {
+    Applied,
+    Invalid,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentsStatus {
+    pub phase: AgentsPhase,
+
+    #[serde(default)]
+    pub gateway_client_ready: bool,
+
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub observed_revision: u64,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_url: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub policies: Vec<AgentPolicyStatus>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentPolicyStatus {
+    pub id: String,
+
+    pub phase: AgentPolicyPhase,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -561,6 +639,7 @@ impl IdentityInstance {
 mod tests {
     use serde_json::json;
 
+    use super::{AgentPolicyPhase, AgentsPhase, AgentsSpec};
     use crate::common::types::{Phase, ResourceList, ResourceRequirements};
     use crate::v1alpha::identity_instance::{
         DatabaseConfig, DatabaseMode, IdentityInstance, IdentityInstanceSpec,
@@ -608,6 +687,7 @@ mod tests {
             webhooks: Vec::new(),
             webhooks_revision: 0,
             webhook_requests: Vec::new(),
+            agents: None,
         };
 
         assert_eq!(spec.provider, IdentityProvider::Keycloak);
@@ -752,6 +832,105 @@ mod tests {
         assert!(status.webhooks.is_empty());
         assert!(status.realms.is_empty());
         assert!(status.webhook_requests.is_empty());
+    }
+
+    #[test]
+    fn a_spec_without_agents_stays_valid_and_serialises_without_them() {
+        let spec: IdentityInstanceSpec = serde_json::from_value(spec_json()).unwrap();
+
+        assert_eq!(spec.agents, None);
+        assert!(serde_json::to_value(&spec).unwrap().get("agents").is_none());
+    }
+
+    #[test]
+    fn agents_round_trip_in_the_frozen_shape() {
+        let mut value = spec_json();
+        value["agents"] = json!({
+            "enabled": true,
+            "realm": "master",
+            "policies": [
+                { "id": "0b9ad3c4-4a5f-4c3b-8d57-0b2d6d9e1a11", "name": "Read only", "cedar": "permit (principal, action, resource);" }
+            ],
+            "policiesRevision": 4
+        });
+
+        let spec: IdentityInstanceSpec = serde_json::from_value(value.clone()).unwrap();
+
+        let agents = spec.agents.as_ref().unwrap();
+        assert!(agents.enabled);
+        assert_eq!(agents.realm, "master");
+        assert_eq!(agents.policies[0].name, "Read only");
+        assert_eq!(agents.policies_revision, 4);
+        assert_eq!(
+            serde_json::to_value(&spec).unwrap()["agents"],
+            value["agents"]
+        );
+    }
+
+    #[test]
+    fn disabled_agents_without_policies_serialise_minimally() {
+        let agents: AgentsSpec =
+            serde_json::from_value(json!({ "enabled": false, "realm": "master" })).unwrap();
+
+        assert!(agents.policies.is_empty());
+        assert_eq!(agents.policies_revision, 0);
+        assert_eq!(
+            serde_json::to_value(&agents).unwrap(),
+            json!({ "enabled": false, "realm": "master" })
+        );
+    }
+
+    #[test]
+    fn agents_status_round_trips_in_the_frozen_shape() {
+        let status: IdentityInstanceStatus = serde_json::from_value(json!({
+            "agents": {
+                "phase": "Ready",
+                "gatewayClientReady": true,
+                "observedRevision": 4,
+                "mcpUrl": "https://auth.example.com/mcp",
+                "policies": [
+                    { "id": "p1", "phase": "Applied" },
+                    { "id": "p2", "phase": "Invalid", "message": "unexpected token" },
+                    { "id": "p3", "phase": "Failed", "message": "unreachable" }
+                ]
+            }
+        }))
+        .unwrap();
+
+        let agents = status.agents.as_ref().unwrap();
+        assert_eq!(agents.phase, AgentsPhase::Ready);
+        assert!(agents.gateway_client_ready);
+        assert_eq!(agents.observed_revision, 4);
+        assert_eq!(agents.policies[1].phase, AgentPolicyPhase::Invalid);
+        assert_eq!(agents.policies[2].phase, AgentPolicyPhase::Failed);
+        let back = serde_json::to_value(&status).unwrap();
+        assert_eq!(back["agents"]["policies"][1]["message"], "unexpected token");
+        assert!(back["agents"].get("message").is_none());
+    }
+
+    #[test]
+    fn a_status_without_agents_stays_valid() {
+        let status: IdentityInstanceStatus = serde_json::from_value(json!({})).unwrap();
+
+        assert_eq!(status.agents, None);
+    }
+
+    #[test]
+    fn the_schema_names_the_agent_fields() {
+        use kube::CustomResourceExt;
+        let schema = serde_json::to_value(IdentityInstance::crd()).unwrap();
+        let text = schema.to_string();
+
+        for key in [
+            "policiesRevision",
+            "gatewayClientReady",
+            "observedRevision",
+            "mcpUrl",
+            "Applying",
+            "Invalid",
+        ] {
+            assert!(text.contains(key), "{key}");
+        }
     }
 
     #[test]
@@ -920,6 +1099,7 @@ mod tests {
                 webhooks: Vec::new(),
                 webhooks_revision: 0,
                 webhook_requests: Vec::new(),
+                agents: None,
                 restore: None,
                 iam: None,
                 organisation_id: "org-123".to_string(),
@@ -952,6 +1132,7 @@ mod tests {
                 webhooks: Vec::new(),
                 realms: Vec::new(),
                 webhook_requests: Vec::new(),
+                agents: None,
                 phase: Some(Phase::Running),
                 ready: true,
                 endpoint: Some("https://auth.acme.com".to_string()),
@@ -980,6 +1161,7 @@ mod tests {
                 webhooks: Vec::new(),
                 webhooks_revision: 0,
                 webhook_requests: Vec::new(),
+                agents: None,
                 restore: None,
                 iam: None,
                 organisation_id: "org-123".to_string(),

@@ -4,7 +4,9 @@ use crate::domain::entities::certificate::ReceivedCertificate;
 use crate::domain::entities::dataplane::DataPlaneId;
 use crate::domain::entities::deployment::{Deployment, DeploymentId};
 use crate::domain::entities::logs::{Ending, LogLine, LogStreamRequest, OrganisationId};
-use crate::domain::entities::outcome::{DeploymentOutcomeReport, InboundOutcome, WebhooksOutcome};
+use crate::domain::entities::outcome::{
+    AgentsOutcome, DeploymentOutcomeReport, InboundOutcome, WebhooksOutcome,
+};
 use crate::domain::entities::usage::{CounterSample, UsagePoint, UsageTarget};
 use crate::domain::error::HeraldError;
 use crate::domain::log_index::LogIndexDocument;
@@ -104,6 +106,12 @@ pub trait ControlPlaneRepository: Send + Sync {
         &self,
         dp_id: &DataPlaneId,
         outcome: &WebhooksOutcome,
+    ) -> impl Future<Output = Result<(), HeraldError>> + Send;
+
+    fn report_agents_outcome(
+        &self,
+        dp_id: &DataPlaneId,
+        outcome: &AgentsOutcome,
     ) -> impl Future<Output = Result<(), HeraldError>> + Send;
 
     /// Carries what a drill (#185) proved, or did not.

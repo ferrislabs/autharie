@@ -7,7 +7,7 @@ use crate::domain::{
         dataplane::DataPlaneId,
         deployment::{Deployment, DeploymentId},
         logs::{Ending, LogLine, LogStreamRequest},
-        outcome::{DeploymentOutcomeReport, WebhooksOutcome},
+        outcome::{AgentsOutcome, DeploymentOutcomeReport, WebhooksOutcome},
         usage::UsagePoint,
     },
     error::HeraldError,
@@ -387,6 +387,27 @@ impl ControlPlaneRepository for HttpControlPlaneRepository {
         Ok(())
     }
 
+    async fn report_agents_outcome(
+        &self,
+        dp_id: &DataPlaneId,
+        outcome: &AgentsOutcome,
+    ) -> Result<(), HeraldError> {
+        let response = self
+            .client
+            .post(self.outcome_url(dp_id, &outcome.deployment_id()))
+            .bearer_auth(self.auth.bearer().await?)
+            .json(outcome.body())
+            .send()
+            .await
+            .map_err(|e| HeraldError::ControlPlane {
+                message: format!("report_agents_outcome request failed: {e}"),
+            })?;
+
+        Self::ensure_success(response, "report_agents_outcome").await?;
+
+        Ok(())
+    }
+
     async fn report_drill_outcome(
         &self,
         dp_id: &DataPlaneId,
@@ -610,6 +631,41 @@ mod tests {
             .report_webhooks_outcome(&dataplane_id, &outcome)
             .await
             .expect("report_webhooks_outcome succeeds");
+
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn an_agents_outcome_is_posted_verbatim_to_the_outcome_endpoint() {
+        let server = MockServer::start();
+        let dataplane_id = DataPlaneId::new("dp-1");
+        let payload = json!({
+            "deployment_id": "44444444-4444-4444-4444-444444444444",
+            "kind": "deployment.agents",
+            "revision": 7,
+            "phase": "Ready",
+            "gateway_client_ready": true,
+            "policies": [{ "id": "p1", "phase": "Applied" }],
+            "unknown_future_field": true
+        });
+        let outcome = match InboundOutcome::parse(payload.to_string().as_bytes()) {
+            Ok(InboundOutcome::Agents(outcome)) => outcome,
+            _ => panic!("expected an agents outcome"),
+        };
+
+        let mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/dataplanes/dp-1/deployments/44444444-4444-4444-4444-444444444444/outcome")
+                .header("authorization", "Bearer herald-service-token")
+                .json_body(payload.clone());
+            then.status(200)
+                .json_body(json!({ "data": { "recorded": true } }));
+        });
+
+        repo(&server)
+            .report_agents_outcome(&dataplane_id, &outcome)
+            .await
+            .expect("report_agents_outcome succeeds");
 
         mock.assert();
     }

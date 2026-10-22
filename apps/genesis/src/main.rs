@@ -1,5 +1,6 @@
 use clap::Parser;
 use genesis_core::application::dispatcher::EventDispatcher;
+use genesis_core::application::handlers::agents::AgentsEventHandler;
 use genesis_core::application::handlers::backup::BackupEventHandler;
 use genesis_core::application::handlers::dataplane_upgrade::DataplaneUpgradeEventHandler;
 use genesis_core::application::handlers::deployment::DeploymentEventHandler;
@@ -14,6 +15,7 @@ use genesis_core::domain::ports::{
     DatabaseProbe, DataplaneUpgradePort, EventConsumer, EventHandler, IdentityInstancePort,
     IdentityInstanceUpgradePort, OutcomePublisher,
 };
+use genesis_core::infrastructure::kubernetes::agents::KubeAgentsPort;
 use genesis_core::infrastructure::kubernetes::dataplane_upgrade::KubeDataplaneUpgradePort;
 use genesis_core::infrastructure::kubernetes::identity_instance::KubeIdentityInstancePort;
 use genesis_core::infrastructure::kubernetes::identity_instance_upgrade::KubeIdentityInstanceUpgradePort;
@@ -81,6 +83,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let publisher = Arc::new(IggyOutcomePublisher::connect(&iggy_url).await?);
     let outcomes: Arc<dyn OutcomePublisher> = publisher.clone();
     let webhook_port = Arc::new(KubeWebhookPort::new(kube.clone()));
+    let agents_port = Arc::new(KubeAgentsPort::new(kube.clone()));
     let database: Arc<dyn DatabaseProbe> = Arc::new(SqlxDatabaseProbe);
 
     let handlers: Vec<Arc<dyn EventHandler>> = vec![
@@ -105,6 +108,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             webhook_port.clone(),
         )),
         Arc::new(WebhookRequestEventHandler::retry_delivery(webhook_port)),
+        Arc::new(AgentsEventHandler::new(agents_port)),
         Arc::new(BackupEventHandler::new(identity_instances.clone())),
         Arc::new(DrillEventHandler::new(
             identity_instances.clone(),

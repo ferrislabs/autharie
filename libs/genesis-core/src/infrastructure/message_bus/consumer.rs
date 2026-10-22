@@ -395,6 +395,11 @@ mod tests {
     }
 
     #[test]
+    fn the_agents_action_is_bound() {
+        assert!(is_bound("deployment.agents"));
+    }
+
+    #[test]
     fn the_webhook_actions_are_bound() {
         assert!(is_bound("deployment.webhooks"));
         assert!(is_bound("deployment.webhook.rotate_secret"));
