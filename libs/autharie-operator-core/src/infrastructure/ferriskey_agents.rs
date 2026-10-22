@@ -22,7 +22,9 @@ use super::ferriskey_webhooks::{
 };
 
 const EVALUATOR_ROLE: &str = "authz-evaluator";
-const EVALUATE_PERMISSION: &str = "evaluate_authorization";
+// FerrisKey only names the policies behind a decision to a caller that may
+// view the realm's authorization, and the gateway records those names.
+const EVALUATOR_PERMISSIONS: [&str; 2] = ["evaluate_authorization", "view_authorization"];
 const MINIMAL_SCHEMA: &str = "namespace App {}";
 
 trait Caller: Send + Sync {
@@ -409,15 +411,16 @@ async fn ensure_evaluator_role<C: Caller>(
     match existing {
         Some(role) => {
             let id = id_of(role, "a role")?;
-            let permitted = role["permissions"]
+            let mut permissions: Vec<&str> = role["permissions"]
                 .as_array()
-                .is_some_and(|list| list.iter().any(|p| p.as_str() == Some(EVALUATE_PERMISSION)));
-            if !permitted {
-                let mut permissions: Vec<&str> = role["permissions"]
-                    .as_array()
-                    .map(|list| list.iter().filter_map(Value::as_str).collect())
-                    .unwrap_or_default();
-                permissions.push(EVALUATE_PERMISSION);
+                .map(|list| list.iter().filter_map(Value::as_str).collect())
+                .unwrap_or_default();
+            let missing: Vec<&str> = EVALUATOR_PERMISSIONS
+                .into_iter()
+                .filter(|wanted| !permissions.contains(wanted))
+                .collect();
+            if !missing.is_empty() {
+                permissions.extend(missing);
                 send(
                     caller,
                     ApiRequest::new(
@@ -440,7 +443,7 @@ async fn ensure_evaluator_role<C: Caller>(
                 ApiRequest::new(Method::POST, roles_path).body(json!({
                     "name": EVALUATOR_ROLE,
                     "description": "Lets the MCP gateway ask this realm for authorization decisions",
-                    "permissions": [EVALUATE_PERMISSION],
+                    "permissions": EVALUATOR_PERMISSIONS,
                 })),
             )
             .await?;
@@ -988,7 +991,7 @@ mod tests {
                 "/realms/acme/clients/c1/roles",
                 json!({ "data": [{
                     "id": "r1", "name": "authz-evaluator",
-                    "permissions": ["evaluate_authorization"]
+                    "permissions": ["evaluate_authorization", "view_authorization"]
                 }] }),
             ),
             (
@@ -1037,7 +1040,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_service_account_gets_the_evaluate_authorization_permission() {
+    async fn the_service_account_may_evaluate_and_see_why() {
         let world = fresh_realm();
 
         ensure_gateway_client(&world, "acme", CANONICAL)
@@ -1047,7 +1050,10 @@ mod tests {
         let role = world
             .wrote(Method::POST, "/realms/acme/clients/c1/roles")
             .expect("a role was created");
-        assert_eq!(role["permissions"], json!(["evaluate_authorization"]));
+        assert_eq!(
+            role["permissions"],
+            json!(["evaluate_authorization", "view_authorization"])
+        );
         assert!(
             world
                 .wrote(Method::POST, "/realms/acme/users/u1/roles/r1")
@@ -1162,7 +1168,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_role_missing_the_permission_is_given_it() {
+    async fn a_role_missing_the_permissions_is_given_them() {
         let world = World::new(vec![
             (
                 Method::GET,
@@ -1188,7 +1194,7 @@ mod tests {
         assert_eq!(role, "r1");
         assert_eq!(
             world.wrote(Method::PATCH, "/realms/acme/roles/r1/permissions"),
-            Some(json!({ "permissions": ["evaluate_authorization"] }))
+            Some(json!({ "permissions": ["evaluate_authorization", "view_authorization"] }))
         );
     }
 
@@ -1208,7 +1214,7 @@ mod tests {
             (
                 Method::GET,
                 "/realms/acme/clients/c1/roles",
-                json!({ "data": [{ "id": "r1", "name": "authz-evaluator", "permissions": ["evaluate_authorization"] }] }),
+                json!({ "data": [{ "id": "r1", "name": "authz-evaluator", "permissions": ["evaluate_authorization", "view_authorization"] }] }),
             ),
             (Method::GET, "/realms/acme/users", json!({ "data": [] })),
             (Method::PATCH, "/realms/acme/clients/c1", json!({})),
