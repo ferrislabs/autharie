@@ -219,3 +219,12 @@ describe('the settings pages that became tabs', () => {
     expect((thrown as { options: { to: string } }).options.to).toBe(`${DEPLOYMENT}${to}`)
   })
 })
+
+describe('the agents route', () => {
+  it('puts /agents inside the deployment shell and its tab frame', () => {
+    const shells = shellsFor(`${DEPLOYMENT}/agents`)
+    expect(shells).toContain('DeploymentLayout')
+    expect(shells).toContain('DeploymentTabLayout')
+    expect(shells).toContain('PageAgentsFeature')
+  })
+})
