@@ -54,6 +54,9 @@ pub mod upgrades;
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod user;
 
+#[cfg_attr(coverage_nightly, coverage(off))]
+pub mod webhooks;
+
 /// Turns an sqlx failure into the domain's error.
 ///
 /// It lives here because this is the only crate that knows both types: the
@@ -109,6 +112,7 @@ pub mod registry {
         pub struct User;
         pub struct ReachabilityCheck;
         pub struct SealedSecret;
+        pub struct Webhook;
     }
 
     pub mod backend {
@@ -169,6 +173,7 @@ mod registry_completeness {
         assert_registered::<domain::ClusterClaims>();
         assert_registered::<domain::ClusterInventory>();
         assert_registered::<domain::SealedSecret>();
+        assert_registered::<domain::Webhook>();
         assert_registered::<domain::Tier>();
         assert_registered::<domain::Subscription>();
         assert_registered::<domain::BillingAccount>();

@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE deployment_webhooks\n            SET state = $2, ferriskey_id = $3, failure_reason = $4, updated_at = $5\n            WHERE id = $1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "02735fbb254e5d56178128efe3e3938364d4a5f0469fd48e6cbcb52054c69056"
+}

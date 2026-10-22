@@ -26,6 +26,7 @@ pub mod traces;
 pub mod upgrades;
 pub mod user;
 pub mod version;
+pub mod webhooks;
 
 #[derive(Clone, Debug)]
 pub struct AutharieConfig {
@@ -252,6 +253,9 @@ pub enum CoreError {
 
     #[error(transparent)]
     Billing(#[from] crate::billing::BillingError),
+
+    #[error(transparent)]
+    Webhook(#[from] crate::webhooks::WebhookError),
 
     #[error(transparent)]
     Profile(#[from] crate::dataplane::cluster_profile::ProfileError),

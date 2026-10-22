@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT revision, applied_revision, realms\n            FROM deployment_webhook_sync\n            WHERE deployment_id = $1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "revision",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "applied_revision",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "realms",
+        "type_info": "TextArray"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "c953bc4c96067bf9e9d6d6744d7f55628b8dc91b002e291df26fb44c8cb869c5"
+}
