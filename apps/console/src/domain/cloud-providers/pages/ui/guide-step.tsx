@@ -2,7 +2,13 @@ import { useState } from 'react'
 import { Check, Copy, ExternalLink, Info } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import type { GuideLink, GuideStep, PermissionGroup } from '../../providers'
+import {
+  instructionGroup,
+  instructionText,
+  type GuideLink,
+  type GuideStep,
+  type PermissionGroup,
+} from '../../providers'
 import { emphasised } from './emphasis'
 
 export function ExternalLinkButton({ link }: { link: GuideLink }) {
@@ -74,27 +80,27 @@ export function GuideStepView({ step, groups }: Props) {
 
       {step.link && <ExternalLinkButton link={step.link} />}
 
-      <ol className='space-y-2'>
-        {step.instructions.map((instruction, index) => (
-          <li key={instruction} className='flex gap-3 text-sm'>
-            <span
-              aria-hidden='true'
-              className='flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium'
-            >
-              {index + 1}
-            </span>
-            <span className='text-muted-foreground'>{emphasised(instruction)}</span>
-          </li>
-        ))}
-      </ol>
+      <ol className='space-y-3'>
+        {step.instructions.map((instruction, index) => {
+          const text = instructionText(instruction)
+          const group = groups[instructionGroup(instruction) ?? -1]
 
-      {step.permissions && (
-        <div className='space-y-4'>
-          {groups.map((group) => (
-            <PermissionGroupView key={group.title} group={group} />
-          ))}
-        </div>
-      )}
+          return (
+            <li key={text} className='flex gap-3 text-sm'>
+              <span
+                aria-hidden='true'
+                className='flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium'
+              >
+                {index + 1}
+              </span>
+              <div className='min-w-0 flex-1 space-y-3'>
+                <p className='text-muted-foreground'>{emphasised(text)}</p>
+                {group && <PermissionGroupView group={group} />}
+              </div>
+            </li>
+          )
+        })}
+      </ol>
 
       {step.tip && (
         <p className='flex gap-2 rounded-md border bg-muted/40 p-3 text-sm'>
