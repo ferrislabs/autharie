@@ -100,6 +100,14 @@ COPY --from=builder /usr/local/src/autharie/target/release/herald /usr/local/bin
 
 ENTRYPOINT [ "herald" ]
 
+FROM runtime AS mcp-gateway
+
+COPY --from=builder /usr/local/src/autharie/target/release/mcp-gateway /usr/local/bin/
+
+EXPOSE 8080
+
+ENTRYPOINT [ "mcp-gateway" ]
+
 FROM runtime AS genesis
 
 COPY --from=builder /usr/local/src/autharie/target/release/genesis /usr/local/bin/

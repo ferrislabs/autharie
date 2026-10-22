@@ -368,6 +368,7 @@ jobs:
           - console
           - genesis
           - herald
+          - mcp-gateway
           - operator
     steps:
       - name: checkout
@@ -447,6 +448,7 @@ jobs:
           - console
           - genesis
           - herald
+          - mcp-gateway
           - operator
     steps:
       - name: set up builx
