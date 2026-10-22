@@ -194,6 +194,7 @@ mod tests {
             fingerprint: crate::domain::log_index::fingerprint(message),
             message: message.to_string(),
             delivery: None,
+            agent_decision: None,
         }
     }
 

@@ -142,7 +142,7 @@ fn since_for(
 /// retrying. A stream that errors mid-read reconnects instead -- see
 /// `RECONNECT_DELAY`'s own comment on why that is the common case, not the
 /// exceptional one.
-async fn follow_container(
+pub(crate) async fn follow_container(
     pods: Api<Pod>,
     pod: String,
     container: String,

@@ -65,6 +65,7 @@ impl LogIndexDocument {
             .to_string(),
             fingerprint: fingerprint(&message),
             message,
+            agent_decision: None,
             delivery: Some(WebhookDeliveryFields {
                 kind: WEBHOOK_DELIVERY_KIND,
                 webhook_id: delivery.webhook_id.clone(),

@@ -1,3 +1,4 @@
+pub mod agent_decisions;
 pub mod archive_reporter;
 pub mod deployment_registry;
 pub mod entities;

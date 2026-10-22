@@ -1,3 +1,4 @@
+use crate::domain::agent_decisions::Tenant;
 use crate::domain::entities::action::{AckFailure, AckOutcome, Action, ActionEvent, ActionId};
 use crate::domain::entities::archive::Archive;
 use crate::domain::entities::certificate::ReceivedCertificate;
@@ -345,4 +346,14 @@ pub trait OutcomeInboxRepository: Send + Sync {
 #[cfg_attr(test, mockall::automock)]
 pub trait MessageBusRepository: Send + Sync {
     fn publish(&self, event: ActionEvent) -> impl Future<Output = Result<(), HeraldError>> + Send;
+}
+
+#[cfg_attr(test, mockall::automock)]
+pub trait GatewayLogSource: Send + Sync {
+    fn follow(&self) -> impl Future<Output = Result<Receiver<LogLine>, HeraldError>> + Send;
+}
+
+#[cfg_attr(test, mockall::automock)]
+pub trait TenantSource: Send + Sync {
+    fn tenants(&self) -> impl Future<Output = Result<Vec<(String, Tenant)>, HeraldError>> + Send;
 }

@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use clap::Parser;
+use herald_core::domain::agent_decisions::run_decision_shipping;
 use herald_core::domain::archive_reporter::ArchiveReporter;
 use herald_core::domain::entities::dataplane::DataPlaneId;
 use herald_core::domain::entities::shard::ShardConfig;
@@ -14,6 +15,9 @@ use herald_core::domain::ports::TraceIndexSink;
 use herald_core::domain::ports::WebhookDeliverySource;
 use herald_core::domain::ports::{ArchiveSource, ControlPlaneRepository, HeraldService};
 use herald_core::domain::services::HeraldServiceImpl;
+use herald_core::infrastructure::agent_decisions::kubernetes::{
+    KubeGatewayLogSource, KubeTenantSource,
+};
 use herald_core::infrastructure::archives::kubernetes::KubeArchiveSource;
 use herald_core::infrastructure::certificate::KubeGatewayCertificateSink;
 use herald_core::infrastructure::control_plane::auth::ControlPlaneAuth;
@@ -220,6 +224,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             None
         };
+
+    if let (Some(_), Some(namespace)) = (
+        args.log_index.quickwit_url.as_ref(),
+        args.log_index.mcp_gateway_namespace.as_ref(),
+    ) && let Some(sink) = log_index.clone()
+    {
+        tokio::spawn(run_decision_shipping(
+            Arc::new(KubeGatewayLogSource::from_env(namespace.clone()).await?),
+            Arc::new(KubeTenantSource::from_env().await?),
+            sink,
+            shard_config,
+        ));
+    }
 
     let service = HeraldServiceImpl::new(
         control_plane,
