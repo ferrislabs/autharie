@@ -35,17 +35,28 @@ const CARD_BRANDS: ReadonlyMap<string, string> = new Map([
   ['unknown', 'Card'],
 ])
 
-function brandLabel(brand: string): string {
+export function brandLabel(brand: string): string {
   const known = CARD_BRANDS.get(brand)
   if (known) return known
   const words = brand.replace(/_/g, ' ')
   return words.charAt(0).toUpperCase() + words.slice(1)
 }
 
-export function describeCard(card: Schemas.CardResponse): string {
+export function formatExpiry(card: Schemas.CardResponse): string {
   const month = String(card.exp_month).padStart(2, '0')
   const year = String(card.exp_year % 100).padStart(2, '0')
-  return `${brandLabel(card.brand)} •••• ${card.last4} · exp. ${month}/${year}`
+  return `${month}/${year}`
+}
+
+export function maskedNumber(card: Schemas.CardResponse): string {
+  switch (card.brand) {
+    case 'amex':
+      return `**** ****** *${card.last4}`
+    case 'diners':
+      return `**** ****** ${card.last4}`
+    default:
+      return `**** **** **** ${card.last4}`
+  }
 }
 
 export function formatMinor(minor: number): string {

@@ -4,7 +4,12 @@ import type { Schemas } from '@/api/api.client'
 import { NEEDS_BILLING_DETAILS, formatMinor } from '@/domain/billing/billing'
 import { BillingAccountForm, NEEDS_MANAGE_TO_EDIT } from './billing-account-form'
 import { MonthToDate } from './month-to-date'
-import { NEEDS_MANAGE_TO_ADD, PaymentMethodPanel } from './payment-method-panel'
+import {
+  NEEDS_MANAGE_TO_ADD,
+  NO_CARD_DETAILS,
+  NO_PAYMENT_METHOD,
+  PaymentMethodPanel,
+} from './payment-method-panel'
 import { StatementsTable } from './statements-table'
 
 const noop = () => {}
@@ -162,7 +167,7 @@ describe('the payment method', () => {
     expect(html).toContain('Failing')
   })
 
-  it('says which card is on file', () => {
+  it('shows the card on file as a bank card, the number masked and the expiry shown', () => {
     const html = renderToStaticMarkup(
       <PaymentMethodPanel
         status='valid'
@@ -173,14 +178,44 @@ describe('the payment method', () => {
         onAdd={noop}
       />,
     )
-    expect(html).toContain('Visa •••• 4242 · exp. 04/27')
+    expect(html).toContain('role="img"')
+    expect(html).toContain('aria-label="Visa card ending in 4242, expires 04/27"')
+    expect(html).toContain('**** **** **** 4242')
+    expect(html).toContain('04/27')
+    expect(html).toContain('aspect-[85.6/53.98]')
+    expect(html).not.toContain('••••')
   })
 
-  it('says nothing about a card when none is known', () => {
+  it('keeps the status and the add button beside the card', () => {
+    const html = renderToStaticMarkup(
+      <PaymentMethodPanel
+        status='failing'
+        card={{ brand: 'visa', last4: '4242', exp_month: 4, exp_year: 2027 }}
+        hasAccount
+        canManage
+        isOpening={false}
+        onAdd={noop}
+      />,
+    )
+    expect(html).toContain('Failing')
+    expect(html).toContain('Add a payment method')
+  })
+
+  it('shows a placeholder, not a card, when none is known', () => {
     const html = renderToStaticMarkup(
       <PaymentMethodPanel status='valid' card={null} hasAccount canManage isOpening={false} onAdd={noop} />,
     )
-    expect(html).not.toContain('••••')
+    expect(html).not.toContain('****')
+    expect(html).not.toContain('role="img"')
+    expect(html).toContain(NO_CARD_DETAILS)
+  })
+
+  it('says there is no payment method yet when it is missing', () => {
+    const html = renderToStaticMarkup(
+      <PaymentMethodPanel status='missing' hasAccount canManage isOpening={false} onAdd={noop} />,
+    )
+    expect(html).toContain(NO_PAYMENT_METHOD)
+    expect(html).not.toContain('role="img"')
   })
 
   it('shows what the platform refused', () => {
