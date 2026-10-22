@@ -10,6 +10,12 @@ export interface CredentialField {
   wide?: boolean
 }
 
+export interface PermissionSet {
+  name: string
+  description: string
+  note: string
+}
+
 export interface ProviderDefinition {
   id: Provider
   label: string
@@ -17,7 +23,7 @@ export interface ProviderDefinition {
   icon: ComponentType<SVGProps<SVGSVGElement>>
   fields: CredentialField[]
   secretKeys: string[]
-  permissionSets: string[]
+  permissionSets: PermissionSet[]
 }
 
 export const PROVIDERS: ProviderDefinition[] = [
@@ -35,11 +41,36 @@ export const PROVIDERS: ProviderDefinition[] = [
     ],
     secretKeys: ['access_key', 'secret_key', 'project_id', 'organization_id'],
     permissionSets: [
-      'KubernetesFullAccess',
-      'InstancesReadOnly',
-      'PrivateNetworksFullAccess',
-      'ProjectReadOnly',
-      'IAMReadOnly',
+      {
+        name: 'KubernetesFullAccess',
+        description:
+          'Autharie creates the Kubernetes cluster and its node pool in your project, resizes them, and deletes them.',
+        note: 'Full access: read and write on Kubernetes.',
+      },
+      {
+        name: 'InstancesReadOnly',
+        description:
+          'Autharie reads the catalogue of server types, to offer node sizes and to estimate the cost of your cluster.',
+        note: 'Read only: nothing is created or changed with it.',
+      },
+      {
+        name: 'PrivateNetworksFullAccess',
+        description:
+          'Autharie creates a private network for the cluster, and deletes it with the cluster.',
+        note: 'Full access: read and write on private networks.',
+      },
+      {
+        name: 'ProjectReadOnly',
+        description:
+          'Autharie reads your project, to check that it belongs to the organization id you give.',
+        note: 'Read only: nothing is created or changed with it.',
+      },
+      {
+        name: 'IAMReadOnly',
+        description:
+          "Autharie reads the key's policies, to check that it holds the permissions above and nothing more.",
+        note: 'Read only, and only used for that check.',
+      },
     ],
   },
 ]

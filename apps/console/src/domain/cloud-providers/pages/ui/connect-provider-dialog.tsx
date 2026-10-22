@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { ArrowLeft, Check, Copy } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
 import {
   Dialog,
   DialogContent,
@@ -15,7 +16,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { cn } from '@/lib/utils'
 import type { Schemas } from '@/api/api.client'
 import { afterSubmit, canRegister, emptyDraft, toRegisterRequest } from '../../credentials'
-import { PROVIDERS, providerById } from '../../providers'
+import { PROVIDERS, providerById, type PermissionSet } from '../../providers'
 import type { Provider } from '../../types/cloud-provider'
 import { AnimatedHeight } from './animated-height'
 import { stepWidth, type ConnectStep } from './connect-step'
@@ -29,33 +30,39 @@ interface FormProps {
   onSubmit: (request: Schemas.RegisterCloudCredentialRequest) => void
 }
 
-function PermissionList({ names }: { names: string[] }) {
+function PermissionList({ sets }: { sets: PermissionSet[] }) {
   const [copied, setCopied] = useState(false)
 
   return (
-    <div className='flex items-start justify-between gap-2 rounded-md border bg-muted/40 p-3'>
-      <ul className='flex flex-wrap gap-1.5'>
-        {names.map((name) => (
-          <li
-            key={name}
-            className='rounded-md border bg-background px-2 py-0.5 font-mono text-xs'
-          >
-            {name}
+    <div className='space-y-2'>
+      <div className='flex justify-end'>
+        <Button
+          type='button'
+          variant='ghost'
+          size='sm'
+          onClick={() => {
+            void navigator.clipboard
+              .writeText(sets.map((set) => set.name).join('\n'))
+              .then(() => setCopied(true))
+          }}
+        >
+          {copied ? <Check className='h-4 w-4' /> : <Copy className='h-4 w-4' />}
+          Copy names
+        </Button>
+      </div>
+      <ul className='grid gap-2 sm:grid-cols-2'>
+        {sets.map((set) => (
+          <li key={set.name} className='flex'>
+            <Card className='flex w-full flex-col gap-1.5 p-3 shadow-none'>
+              <span className='font-mono text-xs font-semibold'>{set.name}</span>
+              <span className='text-sm text-muted-foreground'>{set.description}</span>
+              <span className='mt-auto border-t pt-1.5 text-xs text-muted-foreground'>
+                {set.note}
+              </span>
+            </Card>
           </li>
         ))}
       </ul>
-      <Button
-        type='button'
-        variant='ghost'
-        size='sm'
-        className='-my-1 shrink-0'
-        aria-label='Copy the permission sets'
-        onClick={() => {
-          void navigator.clipboard.writeText(names.join('\n')).then(() => setCopied(true))
-        }}
-      >
-        {copied ? <Check className='h-4 w-4' /> : <Copy className='h-4 w-4' />}
-      </Button>
     </div>
   )
 }
@@ -129,10 +136,9 @@ export function CredentialForm({ provider, isSaving, refusal, onBack, onSubmit }
             In the {definition.label} console, create an API key for the project your clusters
             should be created in. Give its IAM application or user these permission sets:
           </p>
-          <PermissionList names={definition.permissionSets} />
+          <PermissionList sets={definition.permissionSets} />
           <p className='text-xs text-muted-foreground'>
-            IAMReadOnly is only needed so Autharie can check the key&apos;s permissions. Do not
-            grant any other permission: Autharie refuses a key that holds more than needed.
+            Do not grant any other permission: Autharie refuses a key that holds more than needed.
           </p>
         </Step>
 
