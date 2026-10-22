@@ -436,6 +436,8 @@ export namespace Schemas {
   export type DeploymentFeature = { feature: IamFeature; open: boolean }
   export type TierCode = string
   export type DeploymentFeaturesResponse = { features: Array<DeploymentFeature>; tier: TierCode }
+  export type DeploymentView = Deployment & Partial<{ hostname: string | null }>
+  export type DeploymentPowerResponse = { data: DeploymentView }
   export type UptimeWindow = {
     covers_full_window: boolean
     uptime_percent?: (number | null) | undefined
@@ -447,7 +449,6 @@ export namespace Schemas {
     uptime_7d: UptimeWindow
   }
   export type DeploymentUptimeResponse = { data: DeploymentUptime }
-  export type DeploymentView = Deployment & Partial<{ hostname: string | null }>
   export type Feature = 'customer_cloud'
   export type EnabledFeaturesResponse = { enabled: Array<Feature> }
   export type Ending = 'finished' | 'unreadable'
@@ -1474,6 +1475,24 @@ export namespace Endpoints {
     }
     response: Schemas.SetNetworkAccessResponse
   }
+  export type post_Start_deployment_handler = {
+    method: 'POST'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/start'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string }
+    }
+    response: Schemas.DeploymentPowerResponse
+  }
+  export type post_Stop_deployment_handler = {
+    method: 'POST'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/stop'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string }
+    }
+    response: Schemas.DeploymentPowerResponse
+  }
   export type get_Get_subscription_handler = {
     method: 'GET'
     path: '/organisations/{organisation_id}/deployments/{deployment_id}/subscription'
@@ -2045,6 +2064,8 @@ export type EndpointByMethod = {
     '/organisations/{organisation_id}/deployments/{deployment_id}/backups': Endpoints.post_Ask_for_backup_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/backups/{backup_id}/restore': Endpoints.post_Restore_backup_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/cutover': Endpoints.post_Cutover_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/start': Endpoints.post_Start_deployment_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/stop': Endpoints.post_Stop_deployment_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/upgrade': Endpoints.post_Upgrade_deployment_handler
     '/organisations/{organisation_id}/invitations': Endpoints.post_Invite_handler
     '/organisations/{organisation_id}/roles': Endpoints.post_Create_role_handler

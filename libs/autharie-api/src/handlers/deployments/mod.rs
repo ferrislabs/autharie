@@ -28,6 +28,10 @@ use crate::{
             __path_get_network_access_handler, __path_set_network_access_handler,
             get_network_access_handler, set_network_access_handler,
         },
+        power::{
+            __path_start_deployment_handler, __path_stop_deployment_handler,
+            start_deployment_handler, stop_deployment_handler,
+        },
         read_logs::{__path_read_logs_handler, read_logs_handler},
         resize_cluster::{__path_resize_cluster_handler, resize_cluster_handler},
         subscription::{
@@ -54,6 +58,7 @@ pub mod get_deployment;
 pub mod iam_settings;
 pub mod list_deployments;
 pub mod network_access;
+pub mod power;
 pub mod read_logs;
 pub mod resize_cluster;
 pub mod subscription;
@@ -70,6 +75,8 @@ pub mod upgrade_settings;
         get_deployment_handler,
         update_deployment_handler,
         delete_deployment_handler,
+        stop_deployment_handler,
+        start_deployment_handler,
         upgrade_deployment_handler,
         upgrade_in_flight_handler,
         read_logs_handler,
@@ -101,6 +108,8 @@ pub fn deployment_routes(app_state: AppState) -> Router<AppState> {
         .typed_get(list_deployments_handler)
         .typed_post(create_deployment_handler)
         .typed_post(upgrade_deployment_handler)
+        .typed_post(stop_deployment_handler)
+        .typed_post(start_deployment_handler)
         .typed_get(upgrade_in_flight_handler)
         .typed_get(read_logs_handler)
         .typed_put(set_upgrade_settings_handler)
