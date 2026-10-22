@@ -5,6 +5,7 @@ import { DeploymentStatusBadge } from '../pages/ui/components/deployment-status'
 import type { DeploymentStatus } from '../types/deployment'
 import { ActivityFeed, type ActivityEntry } from './activity-feed'
 import { AvailabilityHistory, type AvailabilityDay } from './availability-history'
+import { DeploymentActions, type DeploymentPower } from './deployment-actions'
 import { InstanceSummary, type InstanceFacts } from './instance-summary'
 import { TrafficPanel, type TrafficMetric, type TrafficRange, type TrafficSeries } from './traffic-panel'
 
@@ -30,6 +31,7 @@ export interface PageDeploymentOverviewProps {
   activity: ActivityEntry[]
   activityLoading: boolean
   clusterPanel?: React.ReactNode
+  power?: DeploymentPower
 }
 
 const FRAME = 'mx-auto w-full max-w-6xl space-y-6 px-6 py-8'
@@ -80,6 +82,14 @@ export function PageDeploymentOverview(props: PageDeploymentOverviewProps) {
           </div>
         </div>
         <div className='flex shrink-0 items-center gap-2'>
+          {props.power && (
+            <DeploymentActions
+              status={props.power.status}
+              busy={props.power.busy}
+              onStop={props.power.onStop}
+              onStart={props.power.onStart}
+            />
+          )}
           {facts.issuer && (
             <Button
               variant='outline'
@@ -100,6 +110,15 @@ export function PageDeploymentOverview(props: PageDeploymentOverviewProps) {
           )}
         </div>
       </header>
+
+      {props.power?.refusal && (
+        <p
+          role='alert'
+          className='rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive'
+        >
+          {props.power.refusal}
+        </p>
+      )}
 
       <div className='grid gap-6 lg:grid-cols-3'>
         <div className='lg:col-span-2'>

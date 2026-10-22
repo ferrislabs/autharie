@@ -1,6 +1,11 @@
 import { useMemo, useState } from 'react'
 import { useParams } from '@tanstack/react-router'
-import { useGetDeployment, useGetDeploymentActions } from '@/api/deployment.api'
+import {
+  useGetDeployment,
+  useGetDeploymentActions,
+  useStartDeployment,
+  useStopDeployment,
+} from '@/api/deployment.api'
 import { useGetDeploymentAvailability } from '@/api/deployment-availability.api'
 import { useGetDeploymentUsage } from '@/api/metrics.api'
 import { useGetReleaseAvailability } from '@/api/upgrade.api'
@@ -13,7 +18,9 @@ import {
   currentProfile,
   isResizable,
 } from '@/domain/cloud-providers/resize'
+import { useMyPermissions } from '@/domain/organisations/hooks/use-my-permissions'
 import { useResolvedOrganisationId } from '@/domain/organisations/hooks/use-resolved-organisation-id'
+import { CAN } from '@/domain/organisations/permissions'
 import type { MetricKey } from '@/domain/usage/series'
 import { toActivity } from '../../overview/activity'
 import { toAvailabilityDays, unobservedDays } from '../../overview/availability'
@@ -58,6 +65,10 @@ export default function PageDeploymentOverviewFeature() {
   const [metric, setMetric] = useState<TrafficMetric>('requests')
   const [range, setRange] = useState<TrafficRange>('24h')
   const [span, setSpan] = useState(() => windowFor('24h', Date.now()))
+
+  const { can } = useMyPermissions()
+  const stop = useStopDeployment()
+  const start = useStartDeployment()
 
   const deployment = useGetDeployment(id)
   const actions = useGetDeploymentActions(id)
@@ -127,6 +138,25 @@ export default function PageDeploymentOverviewFeature() {
       status={subject.status}
       adminUrl={adminUrlOf(endpoint, subject.kind)}
       banner={notice && <ProvisioningNoticeBanner notice={notice} />}
+      power={
+        can(CAN.manageInstances)
+          ? {
+              status: subject.status,
+              busy: stop.isPending || start.isPending,
+              refusal: stop.error?.message ?? start.error?.message,
+              onStop: () => {
+                if (!organisationId) return
+                start.reset()
+                stop.mutate({ path: { organisation_id: organisationId, deployment_id: subject.id } })
+              },
+              onStart: () => {
+                if (!organisationId) return
+                stop.reset()
+                start.mutate({ path: { organisation_id: organisationId, deployment_id: subject.id } })
+              },
+            }
+          : undefined
+      }
       facts={{
         kind: subject.kind,
         endpoint,
