@@ -40,3 +40,13 @@ output "operator_client_uuid" {
   description = "Needed to read the secret from the client-secret endpoint."
   value       = ferriskey_client.operator_cli.client_uuid
 }
+
+output "mcp_gateway_client_uuid" {
+  description = "Needed to read the secret and to set the exchange policy."
+  value       = ferriskey_client.mcp_gateway.client_uuid
+}
+
+output "mcp_gateway_role_id" {
+  description = "Granted to the gateway's service account by bootstrap-ferriskey.sh."
+  value       = ferriskey_role.mcp_gateway.role_uuid
+}

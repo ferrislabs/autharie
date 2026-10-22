@@ -3,10 +3,13 @@ use autharie_iggy::{OUTCOMES_TOPIC, PARTITION, STREAM, bounded, named};
 use serde_json::to_vec;
 use tracing::info;
 
+use crate::domain::entities::agents_outcome::AgentsOutcomeReport;
 use crate::domain::entities::outcome::DeploymentOutcomeReport;
 use crate::domain::entities::webhooks_outcome::WebhooksOutcomeReport;
 use crate::domain::error::GenesisError;
-use crate::domain::ports::{BoxFuture, OutcomePublisher, WebhookOutcomePublisher};
+use crate::domain::ports::{
+    AgentsOutcomePublisher, BoxFuture, OutcomePublisher, WebhookOutcomePublisher,
+};
 
 /// Publishes outcomes to the outcomes topic, where every Herald reads them.
 ///
@@ -102,6 +105,27 @@ impl WebhookOutcomePublisher for IggyOutcomePublisher {
             secrets = report.secrets.len(),
             requests = report.requests.len(),
             "reporting webhooks outcome"
+        );
+
+        self.send(payload).await
+    }
+}
+
+impl AgentsOutcomePublisher for IggyOutcomePublisher {
+    async fn publish_agents<'a>(
+        &'a self,
+        report: &'a AgentsOutcomeReport,
+    ) -> Result<(), GenesisError> {
+        let payload = to_vec(report).map_err(|e| GenesisError::MessageBus {
+            message: format!("failed to serialise outcome: {e}"),
+        })?;
+
+        info!(
+            deployment_id = %report.deployment_id,
+            revision = report.revision,
+            phase = %report.phase,
+            policies = report.policies.len(),
+            "reporting agents outcome"
         );
 
         self.send(payload).await

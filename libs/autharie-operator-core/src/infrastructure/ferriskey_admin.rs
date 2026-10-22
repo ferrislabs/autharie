@@ -88,11 +88,42 @@ pub fn unreachable_message(error: &reqwest::Error) -> String {
 }
 
 pub fn error_message(status: u16, body: &str) -> String {
-    serde_json::from_str::<Value>(body)
-        .ok()
-        .and_then(|value| value["message"].as_str().map(ToOwned::to_owned))
-        .map(|message| format!("FerrisKey answered {status}: {message}"))
-        .unwrap_or_else(|| format!("FerrisKey answered {status}"))
+    let value = serde_json::from_str::<Value>(body).ok();
+    let message = value
+        .as_ref()
+        .and_then(|value| value["message"].as_str())
+        .map(ToOwned::to_owned);
+    let issues = value.as_ref().map(issue_lines).unwrap_or_default();
+
+    match (message, issues.is_empty()) {
+        (Some(message), true) => format!("FerrisKey answered {status}: {message}"),
+        (Some(message), false) => format!("FerrisKey answered {status}: {message} ({issues})"),
+        (None, false) => format!("FerrisKey answered {status}: {issues}"),
+        (None, true) => format!("FerrisKey answered {status}"),
+    }
+}
+
+fn issue_lines(body: &Value) -> String {
+    ["issues", "errors"]
+        .iter()
+        .filter_map(|key| body[*key].as_array())
+        .flatten()
+        .filter_map(|issue| match issue {
+            Value::String(text) => Some(text.clone()),
+            Value::Object(_) => {
+                let text = issue["message"].as_str()?;
+                match (issue["line"].as_u64(), issue["column"].as_u64()) {
+                    (Some(line), Some(column)) => {
+                        Some(format!("line {line}, column {column}: {text}"))
+                    }
+                    (Some(line), None) => Some(format!("line {line}: {text}")),
+                    _ => Some(text.to_string()),
+                }
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 pub fn api_base_url(name: &str, namespace: &str) -> String {
@@ -131,5 +162,44 @@ pub async fn read_credentials(
     match (read("username"), read("password")) {
         (Some(username), Some(password)) => Ok((username, password)),
         _ => Err("the admin credentials are not there yet".to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_plain_message_is_quoted_with_the_status() {
+        assert_eq!(
+            error_message(400, r#"{"message":"bad realm"}"#),
+            "FerrisKey answered 400: bad realm"
+        );
+    }
+
+    #[test]
+    fn a_body_without_a_message_names_only_the_status() {
+        assert_eq!(error_message(502, "<html>"), "FerrisKey answered 502");
+    }
+
+    #[test]
+    fn validation_issues_are_listed_with_their_position() {
+        let body = r#"{"message":"invalid authorization policy","issues":[
+            {"policy":"a","message":"unexpected token `)`","line":2,"column":7},
+            {"message":"unknown action"}
+        ]}"#;
+
+        assert_eq!(
+            error_message(422, body),
+            "FerrisKey answered 422: invalid authorization policy (line 2, column 7: unexpected token `)`; unknown action)"
+        );
+    }
+
+    #[test]
+    fn issues_alone_are_enough() {
+        assert_eq!(
+            error_message(422, r#"{"errors":["no such entity type"]}"#),
+            "FerrisKey answered 422: no such entity type"
+        );
     }
 }

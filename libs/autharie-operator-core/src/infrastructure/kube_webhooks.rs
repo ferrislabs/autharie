@@ -381,7 +381,10 @@ mod tests {
             }],
         });
 
-        let keys: Vec<_> = patch["status"].as_object().unwrap().keys().collect();
+        // Sorted: whether serde_json keeps insertion order depends on which
+        // crates in the workspace turn on its `preserve_order` feature.
+        let mut keys: Vec<_> = patch["status"].as_object().unwrap().keys().collect();
+        keys.sort();
         assert_eq!(keys, vec!["realms", "webhookRequests", "webhooks"]);
         assert_eq!(patch["status"]["webhooks"][0]["ferriskeyId"], "f1");
         assert_eq!(patch["status"]["webhooks"][0]["secretVersion"], 2);

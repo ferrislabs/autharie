@@ -1,0 +1,99 @@
+{{- if .Values.agents.enabled }}
+{{- $configSecret := .Values.agents.gateway.configSecret }}
+{{- if not (lookup "v1" "Secret" .Release.Namespace $configSecret) }}
+# Created here, once, so the gateway's volume exists from its first start: a
+# Secret volume marked optional that is missing at pod start stays empty even
+# after the Secret appears. The operator owns the content from then on, so it is
+# never rendered again and `keep` stops an upgrade from deleting it.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $configSecret }}
+  labels:
+    {{- include "autharie-dataplane.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mcp-gateway
+  annotations:
+    helm.sh/resource-policy: keep
+type: Opaque
+stringData:
+  config.toml: |
+    upstreams = []
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-gateway
+  labels:
+    {{- include "autharie-dataplane.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mcp-gateway
+spec:
+  replicas: {{ .Values.agents.gateway.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "autharie-dataplane.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: mcp-gateway
+  template:
+    metadata:
+      labels:
+        {{- include "autharie-dataplane.labels" . | nindent 8 }}
+        app.kubernetes.io/component: mcp-gateway
+    spec:
+      containers:
+        - name: mcp-gateway
+          image: {{ include "autharie-dataplane.image" (dict "root" . "component" "mcp-gateway") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: MCP_GATEWAY_CONFIG
+              value: /etc/mcp-gateway/config.toml
+            - name: MCP_GATEWAY_LISTEN
+              value: 0.0.0.0:8080
+            - name: MCP_GATEWAY_RELOAD_SECS
+              value: {{ .Values.agents.gateway.reloadSeconds | quote }}
+          ports:
+            - name: http
+              containerPort: 8080
+          volumeMounts:
+            # The directory, not the file: a Secret volume is updated by
+            # swapping a symlink, which a subPath mount never sees.
+            - name: config
+              mountPath: /etc/mcp-gateway
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          resources:
+            {{- toYaml .Values.agents.gateway.resources | nindent 12 }}
+      volumes:
+        - name: config
+          secret:
+            secretName: {{ .Values.agents.gateway.configSecret }}
+            # The operator writes it once a deployment has agents enabled. The
+            # gateway starts without it, serves no upstream, and loads the file
+            # when it appears.
+            optional: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-gateway
+  labels:
+    {{- include "autharie-dataplane.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mcp-gateway
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: {{ include "autharie-dataplane.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: mcp-gateway
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+{{- end }}

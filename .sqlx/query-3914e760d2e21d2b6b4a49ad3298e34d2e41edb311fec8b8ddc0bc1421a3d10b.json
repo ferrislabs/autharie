@@ -1,0 +1,148 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT w.id, w.deployment_id, w.realm, w.name, w.description, w.endpoint,\n                   w.events, w.header_names,\n                   w.headers_ciphertext, w.headers_nonce, w.headers_wrapped_dek,\n                   w.headers_key_provider, w.headers_key_name, w.headers_key_version,\n                   w.state, w.ferriskey_id, w.failure_reason, w.desired_revision,\n                   w.created_at, w.updated_at,\n                   s.version AS \"secret_version?\",\n                   s.received_at AS \"secret_received_at?\"\n            FROM deployment_webhooks w\n            LEFT JOIN deployment_webhook_secrets s ON s.webhook_id = w.id\n            WHERE w.deployment_id = $1\n            ORDER BY w.created_at, w.id\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "deployment_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "realm",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "endpoint",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "events",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 7,
+        "name": "header_names",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 8,
+        "name": "headers_ciphertext",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 9,
+        "name": "headers_nonce",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 10,
+        "name": "headers_wrapped_dek",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "headers_key_provider",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "headers_key_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 13,
+        "name": "headers_key_version",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 14,
+        "name": "state",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 15,
+        "name": "ferriskey_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 16,
+        "name": "failure_reason",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 17,
+        "name": "desired_revision",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 18,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 19,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 20,
+        "name": "secret_version?",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 21,
+        "name": "secret_received_at?",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "3914e760d2e21d2b6b4a49ad3298e34d2e41edb311fec8b8ddc0bc1421a3d10b"
+}

@@ -3,6 +3,8 @@ resolver = "2"
 members = [
     "apps/control-plane",
     "apps/operator",
+    "apps/ferriskey-mcp",
+    "apps/autharie-mcp",
 
     "libs/autharie-core",
     "libs/autharie-api",
@@ -18,6 +20,7 @@ members = [
     "libs/autharie-stripe",
     "libs/autharie-scaleway",
     "libs/autharie-e2e",
+    "apps/mcp-gateway",
 ]
 
 [workspace.package]

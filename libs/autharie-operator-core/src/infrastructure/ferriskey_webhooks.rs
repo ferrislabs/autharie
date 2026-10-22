@@ -18,8 +18,8 @@ use super::ferriskey_admin::{
     read_credentials, request_token, unreachable_message,
 };
 
-const PAGE_LIMIT: u32 = 100;
-const MAX_PAGES: u32 = 100;
+pub(crate) const PAGE_LIMIT: u32 = 100;
+pub(crate) const MAX_PAGES: u32 = 100;
 
 /// Pages of deliveries read per webhook: the instance keeps 200 in all, so a
 /// single webhook never needs more than two pages of 100.
@@ -39,7 +39,7 @@ pub struct ApiRequest {
 }
 
 impl ApiRequest {
-    fn new(method: Method, path: String) -> Self {
+    pub(crate) fn new(method: Method, path: String) -> Self {
         Self {
             method,
             path,
@@ -48,12 +48,12 @@ impl ApiRequest {
         }
     }
 
-    fn query(mut self, key: &'static str, value: impl ToString) -> Self {
+    pub(crate) fn query(mut self, key: &'static str, value: impl ToString) -> Self {
         self.query.push((key, value.to_string()));
         self
     }
 
-    fn body(mut self, body: Value) -> Self {
+    pub(crate) fn body(mut self, body: Value) -> Self {
         self.body = Some(body);
         self
     }
@@ -157,24 +157,24 @@ impl FerriskeyWebhookApi {
 }
 
 #[derive(Default)]
-struct TokenCache {
+pub(crate) struct TokenCache {
     entries: HashMap<String, (String, Instant)>,
 }
 
 impl TokenCache {
-    fn get(&self, key: &str, now: Instant) -> Option<String> {
+    pub(crate) fn get(&self, key: &str, now: Instant) -> Option<String> {
         self.entries
             .get(key)
             .filter(|(_, expires)| *expires > now)
             .map(|(token, _)| token.clone())
     }
 
-    fn put(&mut self, key: &str, token: String, lifetime: Duration, now: Instant) {
+    pub(crate) fn put(&mut self, key: &str, token: String, lifetime: Duration, now: Instant) {
         let usable = lifetime.saturating_sub(TOKEN_MARGIN);
         self.entries.insert(key.to_string(), (token, now + usable));
     }
 
-    fn forget(&mut self, key: &str) {
+    pub(crate) fn forget(&mut self, key: &str) {
         self.entries.remove(key);
     }
 }
@@ -313,7 +313,7 @@ fn parse_names(body: &Value) -> Result<(Vec<String>, Option<u32>), WebhookError>
     Ok((names, next_page(body)))
 }
 
-fn next_page(body: &Value) -> Option<u32> {
+pub(crate) fn next_page(body: &Value) -> Option<u32> {
     body["metadata"]["next_page"]
         .as_u64()
         .and_then(|page| u32::try_from(page).ok())

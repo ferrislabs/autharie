@@ -92,3 +92,33 @@ request, which looks like a bug rather than a missing value.
 {{- fail "objectStore.endpoint is required when rustfs.enabled is false" -}}
 {{- end -}}
 {{- end }}
+
+{{/*
+The realm as the agents' clients see it, and as the gateway reaches it. They
+differ when the gateway runs where the public issuer URL does not resolve.
+*/}}
+{{- define "autharie-control-plane.agentsIssuer" -}}
+{{- .Values.agents.issuer | default .Values.auth.issuer -}}
+{{- end }}
+
+{{- define "autharie-control-plane.agentsRealmUrl" -}}
+{{- .Values.agents.internalIssuer | default (include "autharie-control-plane.agentsIssuer" .) | trimSuffix "/" -}}
+{{- end }}
+
+{{- define "autharie-control-plane.agentsAudience" -}}
+{{- .Values.agents.audience | default (printf "%s-realm" .Values.realm.name) -}}
+{{- end }}
+
+{{- define "autharie-control-plane.agentsValidate" -}}
+{{- if .Values.agents.enabled -}}
+{{- if not (include "autharie-control-plane.agentsIssuer" .) -}}
+{{- fail "agents.issuer or auth.issuer is required when agents.enabled is true" -}}
+{{- end -}}
+{{- if not .Values.gatewayApi.hostname -}}
+{{- fail "gatewayApi.hostname is required when agents.enabled is true: it is the canonical host of the MCP endpoint" -}}
+{{- end -}}
+{{- if not .Values.agents.gateway.existingSecret -}}
+{{- fail "agents.gateway.existingSecret is required when agents.enabled is true: it holds the mcp-gateway client secret" -}}
+{{- end -}}
+{{- end -}}
+{{- end }}

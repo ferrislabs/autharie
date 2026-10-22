@@ -10,7 +10,7 @@ use autharie_crds::v1alpha::identity_instance::{
 };
 use autharie_crds::v1alpha::identity_instance_upgrade::IdentityInstanceUpgrade;
 use futures::StreamExt;
-use k8s_openapi::api::apps::v1::{Deployment, DeploymentSpec};
+use k8s_openapi::api::apps::v1::{Deployment, DeploymentSpec, DeploymentStrategy};
 use k8s_openapi::api::batch::v1::{CronJob, Job, JobSpec};
 use k8s_openapi::api::core::v1::{
     Affinity, Container, ContainerPort, EnvVar, EnvVarSource, HTTPGetAction, PodAffinityTerm,
@@ -29,6 +29,10 @@ use serde_json::{Value, json};
 use tracing::{error, info, warn};
 
 use crate::application::OperatorApplication;
+use crate::domain::agents::authz_required;
+use crate::domain::agents::config::AgentsEnvironment;
+use crate::domain::agents::ports::{AgentsOutcome, IdentityInstanceAgents};
+use crate::domain::agents::service::AgentsReconciler;
 use crate::domain::ports::{
     IdentityInstanceDeployer, IdentityInstanceRepository, IdentityInstanceService,
 };
@@ -44,8 +48,13 @@ use crate::infrastructure::edge::{
     Backend, Edge, allowed_ranges, build_route, build_security_policy, exposed,
     httproute_api_resource, route_is_ready, security_policy_api_resource,
 };
+use crate::infrastructure::ferriskey_agents::KubeFerriskeyAgents;
 use crate::infrastructure::ferriskey_theme::KubeInstanceTheme;
 use crate::infrastructure::ferriskey_webhooks::KubeFerriskeyWebhooks;
+use crate::infrastructure::kube_agents::{
+    GatewayService, KubeAgentInstances, KubeAgentsEdge, KubeAgentsSecrets, KubeAgentsStatus,
+    KubeGatewayConfig,
+};
 use crate::infrastructure::kube_webhooks::{
     KubeWebhookDeliveries, KubeWebhookSecrets, KubeWebhookStatus,
 };
@@ -1363,6 +1372,9 @@ impl FerriskeyProviderHandler {
         let services: Api<Service> = Api::namespaced(self.client.clone(), namespace);
         let params = kube::api::PatchParams::apply("autharie-operator").force();
 
+        if is_recreated(&api_deployment) {
+            clear_rolling_update(&deployments, &api_name).await?;
+        }
         deployments
             .patch(
                 &api_name,
@@ -1895,14 +1907,16 @@ impl IdentityProviderHandler for FerriskeyProviderHandler {
 }
 
 #[derive(Clone)]
-struct OperatorContext<S, D, W> {
+struct OperatorContext<S, D, W, A> {
     service: Arc<S>,
     deployer: Arc<D>,
     webhooks: Arc<W>,
+    agents: Arc<A>,
     client: Client,
 }
 
 const WEBHOOK_RETRY_SECONDS: u64 = 15;
+const AGENTS_RETRY_SECONDS: u64 = 15;
 
 /// A webhook that failed or is waiting brings the next look forward; it never
 /// turns the instance's own reconcile into a failure.
@@ -1916,14 +1930,25 @@ fn with_webhook_outcome(outcome: ReconcileOutcome, webhooks: WebhookOutcome) -> 
     }
 }
 
-async fn reconcile<S, D, W>(
+fn with_agents_outcome(outcome: ReconcileOutcome, agents: AgentsOutcome) -> ReconcileOutcome {
+    match agents {
+        AgentsOutcome::Settled => outcome,
+        AgentsOutcome::Retry => {
+            let soon = Duration::from_secs(AGENTS_RETRY_SECONDS);
+            ReconcileOutcome::requeue_after(outcome.requeue_after.map_or(soon, |at| at.min(soon)))
+        }
+    }
+}
+
+async fn reconcile<S, D, W, A>(
     instance: Arc<IdentityInstance>,
-    context: Arc<OperatorContext<S, D, W>>,
+    context: Arc<OperatorContext<S, D, W, A>>,
 ) -> Result<Action, OperatorError>
 where
     S: IdentityInstanceService,
     D: IdentityInstanceDeployer,
     W: IdentityInstanceWebhooks,
+    A: IdentityInstanceAgents,
 {
     if instance.metadata.deletion_timestamp.is_some() {
         return handle_deletion(instance, context).await;
@@ -1940,13 +1965,17 @@ where
 
     let outcome = context.service.reconcile((*instance).clone()).await?;
     let webhooks = context.webhooks.reconcile(&instance).await;
-    Ok(outcome_to_action(with_webhook_outcome(outcome, webhooks)))
+    let agents = context.agents.reconcile(&instance).await;
+    Ok(outcome_to_action(with_agents_outcome(
+        with_webhook_outcome(outcome, webhooks),
+        agents,
+    )))
 }
 
-fn error_policy<S, D, W>(
+fn error_policy<S, D, W, A>(
     _instance: Arc<IdentityInstance>,
     error: &OperatorError,
-    _context: Arc<OperatorContext<S, D, W>>,
+    _context: Arc<OperatorContext<S, D, W, A>>,
 ) -> Action {
     error!(error = %error, "Reconcile error");
     error_requeue_action()
@@ -2022,6 +2051,22 @@ pub async fn run() -> Result<(), OperatorError> {
         Arc::new(KubeWebhookSecrets::new(client.clone())),
         Arc::new(KubeWebhookDeliveries::new(client.clone())),
     ));
+    let agents = Arc::new(AgentsReconciler::new(
+        Arc::new(KubeFerriskeyAgents::new(client.clone())),
+        Arc::new(KubeAgentsSecrets::new(client.clone())),
+        Arc::new(KubeAgentsStatus::new(client.clone())),
+        Arc::new(KubeAgentInstances::new(client.clone())),
+        Arc::new(KubeGatewayConfig::new(
+            client.clone(),
+            edge.gateway_namespace.clone(),
+        )),
+        Arc::new(KubeAgentsEdge::new(
+            client.clone(),
+            edge.clone(),
+            GatewayService::from_env(),
+        )),
+        AgentsEnvironment::new(edge.gateway_namespace.clone(), public_https_port),
+    ));
     let deployer = Arc::new(KubeIdentityInstanceDeployer::new(
         client.clone(),
         edge,
@@ -2043,6 +2088,7 @@ pub async fn run() -> Result<(), OperatorError> {
         service,
         deployer,
         webhooks,
+        agents,
         client: client.clone(),
     });
 
@@ -2063,6 +2109,14 @@ pub async fn run() -> Result<(), OperatorError> {
                     KubeWebhookSecrets,
                     KubeWebhookDeliveries,
                 >,
+                AgentsReconciler<
+                    KubeFerriskeyAgents,
+                    KubeAgentsSecrets,
+                    KubeAgentsStatus,
+                    KubeAgentInstances,
+                    KubeGatewayConfig,
+                    KubeAgentsEdge,
+                >,
             >,
             error_policy::<
                 OperatorApplication<
@@ -2076,6 +2130,14 @@ pub async fn run() -> Result<(), OperatorError> {
                     KubeFerriskeyWebhooks,
                     KubeWebhookSecrets,
                     KubeWebhookDeliveries,
+                >,
+                AgentsReconciler<
+                    KubeFerriskeyAgents,
+                    KubeAgentsSecrets,
+                    KubeAgentsStatus,
+                    KubeAgentInstances,
+                    KubeGatewayConfig,
+                    KubeAgentsEdge,
                 >,
             >,
             context,
@@ -2123,16 +2185,19 @@ async fn ensure_finalizer(
     Ok(())
 }
 
-async fn handle_deletion<S, D, W>(
+async fn handle_deletion<S, D, W, A>(
     instance: Arc<IdentityInstance>,
-    context: Arc<OperatorContext<S, D, W>>,
+    context: Arc<OperatorContext<S, D, W, A>>,
 ) -> Result<Action, OperatorError>
 where
     S: IdentityInstanceService,
     D: IdentityInstanceDeployer,
+    A: IdentityInstanceAgents,
 {
     let name = instance.metadata.name.clone().unwrap_or_default();
     let namespace = instance.metadata.namespace.clone().unwrap_or_default();
+
+    context.agents.cleanup(&instance).await;
 
     context
         .deployer
@@ -2283,7 +2348,7 @@ fn ferriskey_webapp_image(instance: &IdentityInstance) -> String {
 /// really 443 -- see [`KubeIdentityInstanceDeployer::new`]'s comment on
 /// `public_https_port` for why that is a real, local-only case rather than
 /// a hedge against one that cannot happen.
-fn public_origin(hostname: &str, public_https_port: Option<u16>) -> String {
+pub(crate) fn public_origin(hostname: &str, public_https_port: Option<u16>) -> String {
     match public_https_port {
         Some(port) => format!("https://{hostname}:{port}"),
         None => format!("https://{hostname}"),
@@ -2333,6 +2398,56 @@ fn webapp_allowed_hosts(hostname: &str) -> String {
 
 const DATABASE_NAME_ENV: &str = "DATABASE_NAME";
 
+fn is_recreated(deployment: &Deployment) -> bool {
+    deployment
+        .spec
+        .as_ref()
+        .and_then(|spec| spec.strategy.as_ref())
+        .and_then(|strategy| strategy.type_.as_deref())
+        == Some("Recreate")
+}
+
+/// The API server fills in `rollingUpdate` on every Deployment, and a
+/// server-side apply that switches to `Recreate` leaves it there, which the API
+/// server then refuses. It is removed with a merge patch first. A Deployment
+/// not created yet has nothing to clear.
+async fn clear_rolling_update(
+    deployments: &Api<Deployment>,
+    name: &str,
+) -> Result<(), OperatorError> {
+    let patch = serde_json::json!({
+        "spec": { "strategy": { "type": "Recreate", "rollingUpdate": null } }
+    });
+    match deployments
+        .patch(
+            name,
+            &kube::api::PatchParams::default(),
+            &kube::api::Patch::Merge(&patch),
+        )
+        .await
+    {
+        Ok(_) => Ok(()),
+        Err(kube::Error::Api(response)) if response.code == 404 => Ok(()),
+        Err(error) => Err(OperatorError::Kube {
+            message: error.to_string(),
+        }),
+    }
+}
+
+/// On the shared cluster a tenant's role may hold `ROLE_CONNECTION_LIMIT`
+/// connections, and FerrisKey keeps 5 open from start. A rolling update runs
+/// the new pod beside the old one, which already holds most of them, so the new
+/// one times out on its pool and the rollout never completes. A Free instance
+/// has one replica either way, so it is replaced instead.
+fn replace_rather_than_roll(api: &mut Deployment) {
+    if let Some(spec) = api.spec.as_mut() {
+        spec.strategy = Some(DeploymentStrategy {
+            type_: Some("Recreate".to_string()),
+            rolling_update: None,
+        });
+    }
+}
+
 fn use_database_name(api: &mut Deployment, database: &str) {
     let containers = api
         .spec
@@ -2349,6 +2464,24 @@ fn use_database_name(api: &mut Deployment, database: &str) {
         {
             var.value = Some(database.to_string());
         }
+    }
+}
+
+const AUTHZ_ENABLED_ENV: &str = "AUTHZ_ENABLED";
+
+fn enable_authorization(api: &mut Deployment) {
+    let containers = api
+        .spec
+        .iter_mut()
+        .filter_map(|spec| spec.template.spec.as_mut())
+        .flat_map(|pod| pod.containers.iter_mut());
+
+    for container in containers {
+        container.env.get_or_insert_with(Vec::new).push(EnvVar {
+            name: AUTHZ_ENABLED_ENV.to_string(),
+            value: Some("true".to_string()),
+            ..Default::default()
+        });
     }
 }
 
@@ -2376,7 +2509,10 @@ fn derive_webapp_url_from_request(api: &mut Deployment, hostname: &str) {
     }
 }
 
-fn ferriskey_api_base_url(instance: &IdentityInstance, public_https_port: Option<u16>) -> String {
+pub(crate) fn ferriskey_api_base_url(
+    instance: &IdentityInstance,
+    public_https_port: Option<u16>,
+) -> String {
     if is_pooled_cell(instance) {
         return POOLED_CELL_API_BASE_URL.to_string();
     }
@@ -3281,9 +3417,13 @@ fn build_ferriskey_runtime(
     if is_pooled_cell(instance) {
         derive_webapp_url_from_request(&mut api, &instance.spec.hostname);
     }
+    if authz_required(instance) {
+        enable_authorization(&mut api);
+    }
     if shared.is_some() {
         let database = SharedDatabaseName::for_instance_name(&name)?;
         use_database_name(&mut api, database.as_str());
+        replace_rather_than_roll(&mut api);
     }
     let api_service = build_ferriskey_service(
         &api_name,
@@ -3850,6 +3990,102 @@ mod tests {
     }
 
     #[test]
+    fn a_settled_agents_pass_leaves_the_requeue_alone() {
+        let steady = ReconcileOutcome::requeue_after(Duration::from_secs(60));
+
+        let outcome = with_agents_outcome(steady, AgentsOutcome::Settled);
+
+        assert_eq!(outcome.requeue_after, Some(Duration::from_secs(60)));
+    }
+
+    #[test]
+    fn an_agents_retry_brings_the_next_pass_forward_but_never_pushes_it_back() {
+        let steady = ReconcileOutcome::requeue_after(Duration::from_secs(60));
+        let soon = ReconcileOutcome::requeue_after(Duration::from_secs(5));
+
+        assert_eq!(
+            with_agents_outcome(steady, AgentsOutcome::Retry).requeue_after,
+            Some(Duration::from_secs(AGENTS_RETRY_SECONDS))
+        );
+        assert_eq!(
+            with_agents_outcome(soon, AgentsOutcome::Retry).requeue_after,
+            Some(Duration::from_secs(5))
+        );
+        assert_eq!(
+            with_agents_outcome(ReconcileOutcome::default(), AgentsOutcome::Retry).requeue_after,
+            Some(Duration::from_secs(AGENTS_RETRY_SECONDS))
+        );
+    }
+
+    fn agents_instance(enabled: bool) -> IdentityInstance {
+        let mut instance = stopped(IdentityProvider::Ferriskey);
+        instance.spec.stopped = false;
+        instance.spec.agents = Some(autharie_crds::v1alpha::identity_instance::AgentsSpec {
+            enabled,
+            realm: "master".to_string(),
+            policies: Vec::new(),
+            policies_revision: 0,
+        });
+        instance
+    }
+
+    #[test]
+    fn a_ferriskey_instance_with_agents_runs_with_authorization_enabled() {
+        let runtime =
+            build_ferriskey_runtime(&agents_instance(true), "default", None, None, None, None)
+                .unwrap();
+
+        assert!(
+            env_of(&runtime.api)
+                .contains(&(AUTHZ_ENABLED_ENV.to_string(), Some("true".to_string())))
+        );
+    }
+
+    #[test]
+    fn a_ferriskey_instance_without_agents_does_not_get_authorization() {
+        let mut without = agents_instance(false);
+        without.spec.agents = None;
+
+        for instance in [agents_instance(false), without] {
+            let runtime =
+                build_ferriskey_runtime(&instance, "default", None, None, None, None).unwrap();
+
+            assert!(
+                !env_of(&runtime.api)
+                    .iter()
+                    .any(|(name, _)| name == AUTHZ_ENABLED_ENV)
+            );
+        }
+    }
+
+    #[test]
+    fn authorization_stays_on_while_agents_are_being_cleaned_up() {
+        let mut instance = agents_instance(false);
+        instance.status = Some(
+            autharie_crds::v1alpha::identity_instance::IdentityInstanceStatus {
+                agents: Some(autharie_crds::v1alpha::identity_instance::AgentsStatus {
+                    phase: autharie_crds::v1alpha::identity_instance::AgentsPhase::Ready,
+                    gateway_client_ready: true,
+                    observed_revision: 0,
+                    mcp_url: None,
+                    message: None,
+                    policies: Vec::new(),
+                }),
+                ..Default::default()
+            },
+        );
+
+        let runtime =
+            build_ferriskey_runtime(&instance, "default", None, None, None, None).unwrap();
+
+        assert!(
+            env_of(&runtime.api)
+                .iter()
+                .any(|(name, _)| name == AUTHZ_ENABLED_ENV)
+        );
+    }
+
+    #[test]
     fn a_status_without_iam_adds_no_iam_key() {
         let patch = status_merge_patch(&Default::default());
 
@@ -3875,6 +4111,7 @@ mod tests {
                 webhooks: Vec::new(),
                 webhooks_revision: 0,
                 webhook_requests: Vec::new(),
+                agents: None,
                 restore: None,
                 organisation_id: "org-1".to_string(),
                 provider: IdentityProvider::Keycloak,
@@ -4699,6 +4936,27 @@ mod tests {
             env_value(&pod_spec.containers[0], "DATABASE_NAME")
                 .and_then(|var| var.value.as_deref()),
             Some("free_abc")
+        );
+    }
+
+    #[test]
+    fn a_shared_instance_is_replaced_rather_than_rolled() {
+        let instance = stopped(IdentityProvider::Ferriskey);
+        let dedicated =
+            build_ferriskey_runtime(&instance, "default", None, None, None, None).unwrap();
+        assert!(dedicated.api.spec.as_ref().unwrap().strategy.is_none());
+
+        let mut api = dedicated.api;
+        assert!(!is_recreated(&api));
+        replace_rather_than_roll(&mut api);
+        assert!(is_recreated(&api));
+        assert_eq!(
+            api.spec
+                .unwrap()
+                .strategy
+                .and_then(|strategy| strategy.type_)
+                .as_deref(),
+            Some("Recreate")
         );
     }
 

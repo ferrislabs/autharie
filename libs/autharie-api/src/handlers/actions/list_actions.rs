@@ -3,6 +3,7 @@ use autharie_core::{
     action::{Action, ActionCursor, commands::FetchActionsCommand},
     deployments::ports::DeploymentService,
     organisation::OrganisationId,
+    webhooks::redacted,
 };
 use axum::{
     Extension,
@@ -75,7 +76,7 @@ pub async fn list_actions_handler(
     let batch = state.service.fetch_actions(command).await?;
 
     Ok(Response::OK(ListActionsResponse {
-        data: batch.actions,
+        data: batch.actions.into_iter().map(redacted).collect(),
         next_cursor: batch.next_cursor.map(|cursor| cursor.0),
     }))
 }
@@ -98,6 +99,7 @@ mod tests {
             client_id: "herald-service".to_string(),
             roles: vec![],
             scopes: vec![],
+            act: None,
         });
 
         let result = list_actions_handler(
