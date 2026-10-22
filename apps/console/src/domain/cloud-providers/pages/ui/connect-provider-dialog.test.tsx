@@ -153,6 +153,22 @@ describe('the permissions step', () => {
     expect(page.match(/<li class="flex"><div class="rounded-lg border bg-card/g)).toHaveLength(5)
   })
 
+  it('tells to browse to the product, not to search the permission set name', () => {
+    const page = html()
+    expect(page).toContain('browse to the product of each permission set below')
+    expect(page).toContain('Do not search for the permission set name')
+    expect(page).toContain('Product · Kubernetes')
+    expect(page).toContain('Product · CPU &amp; GPU Instances')
+    expect(page).toContain('Product · VPC')
+    expect(page.match(/Product · /g)).toHaveLength(3)
+  })
+
+  it('walks through the scope and the confirmation of each rule', () => {
+    const page = html()
+    expect(page).toContain('<strong class="font-medium text-foreground">Confirm rule</strong>')
+    expect(page).toContain('<strong class="font-medium text-foreground">Next</strong>')
+  })
+
   it('puts three cards on a line, two on a narrow screen', () => {
     expect(html().match(/<ul class="grid gap-2 sm:grid-cols-2 md:grid-cols-3">/g)).toHaveLength(2)
   })
