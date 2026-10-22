@@ -37,14 +37,17 @@ pub struct StartDeploymentRoute {
     tag = "deployments",
     description = "Powers a deployment down, its data kept. It stays billed while stopped. Needs \
                    the right to manage deployments. A deployment that has not started, is being \
-                   upgraded, or is on its way out has nothing to stop.",
+                   upgraded, or is on its way out has nothing to stop. One order at a time: it is \
+                   refused while an earlier stop or start has not reached its data plane, and \
+                   for as long as the deployment is in progress, whether it is being created or \
+                   started.",
     params(StopDeploymentRoute),
     responses(
         (status = 200, description = "The deployment, stopped", body = DeploymentPowerResponse),
         (status = 401, description = "Unauthorized", body = ApiError),
         (status = 403, description = "The caller may not manage deployments here", body = ApiError),
         (status = 404, description = "Deployment not found", body = ApiError),
-        (status = 409, description = "The deployment is not in a state that can be stopped", body = ApiError),
+        (status = 409, description = "The deployment cannot be stopped in its state, or an earlier order is unfinished", body = ApiError),
         (status = 500, description = "Internal Server Error", body = ApiError)
     ),
     security(
@@ -78,14 +81,15 @@ pub async fn stop_deployment_handler(
                    once its data plane says so. Needs the right to manage deployments. Refused \
                    for as long as billing has the organisation suspended, since that is when \
                    billing stops deployments and it starts them again itself once the invoice is \
-                   paid.",
+                   paid. One order at a time: it is refused while an earlier stop or start has \
+                   not reached its data plane.",
     params(StartDeploymentRoute),
     responses(
         (status = 200, description = "The deployment, starting", body = DeploymentPowerResponse),
         (status = 401, description = "Unauthorized", body = ApiError),
         (status = 403, description = "The caller may not manage deployments here", body = ApiError),
         (status = 404, description = "Deployment not found", body = ApiError),
-        (status = 409, description = "The deployment is not stopped, or billing has the organisation suspended", body = ApiError),
+        (status = 409, description = "The deployment is not stopped, billing has the organisation suspended, or an earlier order is unfinished", body = ApiError),
         (status = 500, description = "Internal Server Error", body = ApiError)
     ),
     security(

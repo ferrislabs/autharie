@@ -27,7 +27,7 @@ use crate::{
         commands::{CreateDeploymentCommand, UpdateDeploymentCommand},
         distribution::Distribution,
         ports::{DeploymentPolicy, DeploymentRepository, DeploymentService},
-        power::{DeploymentPower, DeploymentPowerService},
+        power::{DeploymentPower, DeploymentPowerService, START, STOP},
         provisioning::Provisioning,
         service::DeploymentServiceImpl,
     },
@@ -643,6 +643,7 @@ impl DeploymentPowerService for AutharieService {
         let deployment = DeploymentPower::new(
             deployment_repository,
             billing_suspension_repository,
+            autharie_postgres::action::PostgresActionRepository::new(&tx),
             AuthariePolicy::new(permissions_in(&tx)),
         )
         .stop(identity, organisation_id, deployment_id, chrono::Utc::now())
@@ -654,7 +655,7 @@ impl DeploymentPowerService for AutharieService {
             self.archive_config(),
             self.deployment_domain(),
         )
-        .announce_as(&deployment, "deployment.stop", source)
+        .announce_as(&deployment, STOP, source)
         .await?;
 
         Ok(deployment)
@@ -671,6 +672,7 @@ impl DeploymentPowerService for AutharieService {
         let deployment = DeploymentPower::new(
             deployment_repository,
             billing_suspension_repository,
+            autharie_postgres::action::PostgresActionRepository::new(&tx),
             AuthariePolicy::new(permissions_in(&tx)),
         )
         .start(identity, organisation_id, deployment_id, chrono::Utc::now())
@@ -682,7 +684,7 @@ impl DeploymentPowerService for AutharieService {
             self.archive_config(),
             self.deployment_domain(),
         )
-        .announce_as(&deployment, "deployment.start", source)
+        .announce_as(&deployment, START, source)
         .await?;
 
         Ok(deployment)

@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT EXISTS (\n                SELECT 1\n                FROM actions\n                WHERE deployment_id = $1\n                  AND action_type = ANY($2)\n                  AND status IN ('pending', 'leased', 'pulled')\n            ) AS \"undelivered!\"\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "undelivered!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "88d5210abaf4cd49d224d4c8233ba7aadf4f84b3f856497cfda0d2d0f7d03d97"
+}

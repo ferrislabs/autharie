@@ -244,6 +244,12 @@ pub enum CoreError {
     #[error("deployment {deployment} is {status}, not stopped, so there is nothing to start")]
     DeploymentNotStopped { deployment: Uuid, status: String },
 
+    /// An order to stop or start arrived while an earlier one had not finished.
+    /// Refused rather than queued: the data plane applies what it is given, and
+    /// two orders in flight at once are two answers to one question.
+    #[error("deployment {deployment} cannot take another order yet: {reason}")]
+    DeploymentOrderInFlight { deployment: Uuid, reason: String },
+
     /// Upgrading a deployment that is not settled would put two operations on
     /// one instance, and the second would win by accident.
     #[error("deployment {deployment} is {status} and cannot be upgraded")]

@@ -325,6 +325,7 @@ impl From<CoreError> for ApiError {
             | CoreError::DeploymentStopped { .. }
             | CoreError::DeploymentNotStoppable { .. }
             | CoreError::DeploymentNotStopped { .. }
+            | CoreError::DeploymentOrderInFlight { .. }
             | CoreError::ReleaseNotInstallable { .. } => ApiError::Conflict {
                 reason: value.to_string(),
             },
@@ -1022,6 +1023,19 @@ mod tests {
         };
         assert!(stop.contains("pending"));
         assert!(start.contains("successful"));
+    }
+
+    #[test]
+    fn an_order_while_another_is_unfinished_is_a_conflict_that_says_why() {
+        let refused = ApiError::from(CoreError::DeploymentOrderInFlight {
+            deployment: uuid::Uuid::nil(),
+            reason: "an earlier order has not reached its data plane".to_string(),
+        });
+
+        let ApiError::Conflict { reason } = &refused else {
+            panic!("expected a conflict, got {refused:?}");
+        };
+        assert!(reason.contains("has not reached its data plane"));
     }
 
     #[test]

@@ -156,6 +156,19 @@ async fn lift_billing_suspension(pool: &PgPool, fixture: &Fixture) {
         .expect("a lifted suspension");
 }
 
+/// What Herald does: takes what is pending and hands it to the data plane.
+/// There is none in this test, so an order stays on its way until this runs.
+async fn deliver(pool: &PgPool, fixture: &Fixture) {
+    sqlx::query(
+        "UPDATE actions SET status = 'published', status_at = now(), leased_until = NULL \
+         WHERE deployment_id = $1 AND status IN ('pending', 'leased', 'pulled')",
+    )
+    .bind(fixture.deployment)
+    .execute(pool)
+    .await
+    .expect("delivered orders");
+}
+
 async fn forget(pool: &PgPool, fixture: &Fixture) {
     for (statement, id) in [
         (
@@ -259,6 +272,7 @@ async fn an_owner_stops_a_running_deployment_and_starts_it_again() {
 
     let (stopped, stop_body) = post(&app, &fixture.uri("stop")).await;
     let after_stop = status_of(&pool, &fixture).await;
+    deliver(&pool, &fixture).await;
     let (started, start_body) = post(&app, &fixture.uri("start")).await;
     let after_start = status_of(&pool, &fixture).await;
     let actions = recorded(&pool, &fixture).await;
@@ -291,8 +305,10 @@ async fn stopping_twice_and_starting_what_runs_are_conflicts_that_name_the_state
     let app = app(pool.clone(), fixture.owner);
 
     let (_, _) = post(&app, &fixture.uri("stop")).await;
+    deliver(&pool, &fixture).await;
     let (stop_again, stop_again_body) = post(&app, &fixture.uri("stop")).await;
     let (_, _) = post(&app, &fixture.uri("start")).await;
+    deliver(&pool, &fixture).await;
     let (start_again, start_again_body) = post(&app, &fixture.uri("start")).await;
     let actions = recorded(&pool, &fixture).await;
     forget(&pool, &fixture).await;
@@ -357,6 +373,7 @@ async fn starting_waits_while_billing_has_the_organisation_suspended_and_stoppin
     let app = app(pool.clone(), fixture.owner);
 
     let (stopped, _) = post(&app, &fixture.uri("stop")).await;
+    deliver(&pool, &fixture).await;
     let (refused, refusal) = post(&app, &fixture.uri("start")).await;
     let while_suspended = status_of(&pool, &fixture).await;
     lift_billing_suspension(&pool, &fixture).await;
@@ -373,4 +390,119 @@ async fn starting_waits_while_billing_has_the_organisation_suspended_and_stoppin
     );
     assert_eq!(while_suspended, "stopped");
     assert_eq!(started, StatusCode::OK, "{started_body}");
+}
+
+#[tokio::test]
+async fn a_second_order_is_refused_until_the_first_has_reached_the_data_plane() {
+    let Some(pool) = pool().await else { return };
+    let fixture = Fixture::new();
+    seed(&pool, &fixture, "successful").await;
+    let app = app(pool.clone(), fixture.owner);
+
+    let (stop, _) = post(&app, &fixture.uri("stop")).await;
+    let (start, refusal) = post(&app, &fixture.uri("start")).await;
+    let held = status_of(&pool, &fixture).await;
+    let held_actions = recorded(&pool, &fixture).await;
+    deliver(&pool, &fixture).await;
+    let (allowed, allowed_body) = post(&app, &fixture.uri("start")).await;
+    forget(&pool, &fixture).await;
+
+    assert_eq!(stop, StatusCode::OK);
+    assert_eq!(start, StatusCode::CONFLICT, "{refusal}");
+    assert!(
+        refusal["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("has not reached its data plane")),
+        "{refusal}"
+    );
+    assert_eq!(held, "stopped", "a refused order changes nothing");
+    assert_eq!(held_actions.len(), 1, "a refused order records nothing");
+    assert_eq!(allowed, StatusCode::OK, "{allowed_body}");
+}
+
+#[tokio::test]
+async fn clicking_stop_and_start_in_a_row_takes_the_first_order_and_refuses_the_rest() {
+    let Some(pool) = pool().await else { return };
+    let fixture = Fixture::new();
+    seed(&pool, &fixture, "successful").await;
+    let app = app(pool.clone(), fixture.owner);
+
+    let mut answers = Vec::new();
+    for verb in ["stop", "start", "stop", "start", "stop", "start"] {
+        answers.push(post(&app, &fixture.uri(verb)).await.0);
+    }
+    let actions = recorded(&pool, &fixture).await;
+    let status = status_of(&pool, &fixture).await;
+    forget(&pool, &fixture).await;
+
+    assert_eq!(
+        answers,
+        [
+            StatusCode::OK,
+            StatusCode::CONFLICT,
+            StatusCode::CONFLICT,
+            StatusCode::CONFLICT,
+            StatusCode::CONFLICT,
+            StatusCode::CONFLICT
+        ]
+    );
+    assert_eq!(
+        actions
+            .iter()
+            .map(|(kind, _, _)| kind.as_str())
+            .collect::<Vec<_>>(),
+        ["deployment.stop"]
+    );
+    assert_eq!(status, "stopped");
+}
+
+async fn settle(pool: &PgPool, fixture: &Fixture) {
+    sqlx::query("UPDATE deployments SET status = 'successful' WHERE id = $1")
+        .bind(fixture.deployment)
+        .execute(pool)
+        .await
+        .expect("a settled deployment");
+}
+
+#[tokio::test]
+async fn a_stop_waits_until_the_deployment_has_finished_coming_up() {
+    let Some(pool) = pool().await else { return };
+    let fixture = Fixture::new();
+    seed(&pool, &fixture, "successful").await;
+    let app = app(pool.clone(), fixture.owner);
+
+    let (_, _) = post(&app, &fixture.uri("stop")).await;
+    deliver(&pool, &fixture).await;
+    let (_, _) = post(&app, &fixture.uri("start")).await;
+    deliver(&pool, &fixture).await;
+    let (while_coming_up, refusal) = post(&app, &fixture.uri("stop")).await;
+    let still = status_of(&pool, &fixture).await;
+    settle(&pool, &fixture).await;
+    let (once_settled, settled_body) = post(&app, &fixture.uri("stop")).await;
+    forget(&pool, &fixture).await;
+
+    assert_eq!(while_coming_up, StatusCode::CONFLICT, "{refusal}");
+    assert!(
+        refusal["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("not finished coming up")),
+        "{refusal}"
+    );
+    assert_eq!(still, "in_progress");
+    assert_eq!(once_settled, StatusCode::OK, "{settled_body}");
+}
+
+#[tokio::test]
+async fn a_deployment_that_is_still_being_created_cannot_be_stopped_either() {
+    let Some(pool) = pool().await else { return };
+    let fixture = Fixture::new();
+    seed(&pool, &fixture, "in_progress").await;
+    let app = app(pool.clone(), fixture.owner);
+
+    let (status, body) = post(&app, &fixture.uri("stop")).await;
+    let actions = recorded(&pool, &fixture).await;
+    forget(&pool, &fixture).await;
+
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(actions.is_empty());
 }

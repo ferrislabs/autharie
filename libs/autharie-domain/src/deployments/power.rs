@@ -1,12 +1,20 @@
 use autharie_auth::Identity;
 use chrono::{DateTime, Utc};
 
-use crate::{CoreError, billing::ports::BillingSuspensionRepository, organisation::OrganisationId};
+use crate::{
+    CoreError,
+    action::{ActionType, ports::ActionRepository},
+    billing::ports::BillingSuspensionRepository,
+    organisation::OrganisationId,
+};
 
 use super::{
-    Deployment, DeploymentId,
+    Deployment, DeploymentId, DeploymentStatus,
     ports::{DeploymentPolicy, DeploymentRepository},
 };
+
+pub const STOP: &str = "deployment.stop";
+pub const START: &str = "deployment.start";
 
 /// What an installation offers somebody who runs a deployment: powering it
 /// down without deleting it, and up again.
@@ -39,22 +47,32 @@ const SUSPENDED_BY_BILLING: &str =
 ///
 /// Billing itself is untouched: a stopped deployment keeps its open
 /// subscription, so it is billed while stopped, as one stopped by billing is.
-pub struct DeploymentPower<D, S, P> {
+///
+/// One order at a time. The data plane applies what it is given, and each of
+/// these orders carries the whole desired state, so two in flight at once are
+/// two answers to one question. An order is refused while an earlier stop or
+/// start has not reached its data plane, and a stop is refused for as long as
+/// the deployment is `in_progress`: coming up, whether it was created or
+/// started, is a task it has not finished.
+pub struct DeploymentPower<D, S, A, P> {
     deployments: D,
     suspensions: S,
+    actions: A,
     policy: P,
 }
 
-impl<D, S, P> DeploymentPower<D, S, P>
+impl<D, S, A, P> DeploymentPower<D, S, A, P>
 where
     D: DeploymentRepository,
     S: BillingSuspensionRepository,
+    A: ActionRepository,
     P: DeploymentPolicy,
 {
-    pub fn new(deployments: D, suspensions: S, policy: P) -> Self {
+    pub fn new(deployments: D, suspensions: S, actions: A, policy: P) -> Self {
         Self {
             deployments,
             suspensions,
+            actions,
             policy,
         }
     }
@@ -67,6 +85,9 @@ where
         at: DateTime<Utc>,
     ) -> Result<Deployment, CoreError> {
         let mut deployment = self.owned(identity, organisation_id, deployment_id).await?;
+
+        self.one_order_at_a_time(&deployment).await?;
+        refuse_while_in_progress(&deployment)?;
 
         if !deployment.stop(at) {
             return Err(CoreError::DeploymentNotStoppable {
@@ -89,6 +110,8 @@ where
     ) -> Result<Deployment, CoreError> {
         let mut deployment = self.owned(identity, organisation_id, deployment_id).await?;
 
+        self.one_order_at_a_time(&deployment).await?;
+
         if !deployment.start(at) {
             return Err(CoreError::DeploymentNotStopped {
                 deployment: deployment.id.0,
@@ -110,6 +133,19 @@ where
         self.deployments.update(deployment.clone()).await?;
 
         Ok(deployment)
+    }
+
+    async fn one_order_at_a_time(&self, deployment: &Deployment) -> Result<(), CoreError> {
+        let orders = [ActionType(STOP.to_string()), ActionType(START.to_string())];
+
+        if self.actions.has_undelivered(deployment.id, &orders).await? {
+            return Err(CoreError::DeploymentOrderInFlight {
+                deployment: deployment.id.0,
+                reason: "an earlier stop or start has not reached its data plane yet".to_string(),
+            });
+        }
+
+        Ok(())
     }
 
     /// Checked before the read, so somebody who may not manage deployments
@@ -135,12 +171,24 @@ where
     }
 }
 
+fn refuse_while_in_progress(deployment: &Deployment) -> Result<(), CoreError> {
+    if deployment.status == DeploymentStatus::InProgress {
+        return Err(CoreError::DeploymentOrderInFlight {
+            deployment: deployment.id.0,
+            reason: "it has not finished coming up".to_string(),
+        });
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use autharie_auth::User;
     use uuid::Uuid;
 
     use super::*;
+    use crate::action::ports::MockActionRepository;
     use crate::{
         billing::{
             ports::MockBillingSuspensionRepository,
@@ -276,6 +324,19 @@ mod tests {
         suspensions
     }
 
+    /// No order in flight.
+    fn quiet() -> MockActionRepository {
+        orders(false)
+    }
+
+    fn orders(undelivered: bool) -> MockActionRepository {
+        let mut actions = MockActionRepository::new();
+        actions
+            .expect_has_undelivered()
+            .returning(move |_, _| Box::pin(async move { Ok(undelivered) }));
+        actions
+    }
+
     fn organisation() -> OrganisationId {
         OrganisationId(Uuid::new_v4())
     }
@@ -287,6 +348,7 @@ mod tests {
         let power = DeploymentPower::new(
             holding(&running, 1),
             billing_open(organisation, false),
+            quiet(),
             Allowed,
         );
 
@@ -305,6 +367,7 @@ mod tests {
         let power = DeploymentPower::new(
             holding(&stopped, 1),
             billing_open(organisation, false),
+            quiet(),
             Allowed,
         );
 
@@ -329,6 +392,7 @@ mod tests {
             let power = DeploymentPower::new(
                 holding(&held, 0),
                 billing_open(organisation, false),
+                quiet(),
                 Allowed,
             );
 
@@ -351,6 +415,7 @@ mod tests {
         let power = DeploymentPower::new(
             holding(&running, 0),
             billing_open(organisation, false),
+            quiet(),
             Allowed,
         );
 
@@ -369,6 +434,7 @@ mod tests {
         let power = DeploymentPower::new(
             holding(&stopped, 0),
             billing_open(organisation, true),
+            quiet(),
             Allowed,
         );
 
@@ -387,6 +453,7 @@ mod tests {
         let power = DeploymentPower::new(
             holding(&running, 1),
             billing_open(organisation, true),
+            quiet(),
             Allowed,
         );
 
@@ -402,7 +469,12 @@ mod tests {
         let mut deployments = MockDeploymentRepository::new();
         deployments.expect_get_by_id().times(0);
         deployments.expect_update().times(0);
-        let power = DeploymentPower::new(deployments, billing_open(organisation, false), Refused);
+        let power = DeploymentPower::new(
+            deployments,
+            billing_open(organisation, false),
+            quiet(),
+            Refused,
+        );
 
         let stop = power
             .stop(caller(), organisation, DeploymentId(Uuid::new_v4()), at())
@@ -421,7 +493,12 @@ mod tests {
     async fn a_deployment_of_another_organisation_is_not_found() {
         let mine = organisation();
         let theirs = deployment_in(organisation(), DeploymentStatus::Successful);
-        let power = DeploymentPower::new(holding(&theirs, 0), billing_open(mine, false), Allowed);
+        let power = DeploymentPower::new(
+            holding(&theirs, 0),
+            billing_open(mine, false),
+            quiet(),
+            Allowed,
+        );
 
         let refused = power
             .stop(caller(), mine, theirs.id, at())
@@ -429,5 +506,88 @@ mod tests {
             .expect_err("not found");
 
         assert!(matches!(refused, CoreError::DeploymentNotFound { .. }));
+    }
+
+    mod one_order_at_a_time {
+        use super::*;
+
+        #[tokio::test]
+        async fn a_stop_is_refused_while_an_earlier_order_has_not_reached_the_data_plane() {
+            let organisation = organisation();
+            let running = deployment_in(organisation, DeploymentStatus::Successful);
+            let power = DeploymentPower::new(
+                holding(&running, 0),
+                billing_open(organisation, false),
+                orders(true),
+                Allowed,
+            );
+
+            let refused = power
+                .stop(caller(), organisation, running.id, at())
+                .await
+                .expect_err("refused");
+
+            assert!(matches!(refused, CoreError::DeploymentOrderInFlight { .. }));
+        }
+
+        #[tokio::test]
+        async fn a_start_is_refused_while_an_earlier_order_has_not_reached_the_data_plane() {
+            let organisation = organisation();
+            let stopped = deployment_in(organisation, DeploymentStatus::Stopped);
+            let power = DeploymentPower::new(
+                holding(&stopped, 0),
+                billing_open(organisation, false),
+                orders(true),
+                Allowed,
+            );
+
+            let refused = power
+                .start(caller(), organisation, stopped.id, at())
+                .await
+                .expect_err("refused");
+
+            assert!(matches!(refused, CoreError::DeploymentOrderInFlight { .. }));
+        }
+
+        #[tokio::test]
+        async fn the_order_in_flight_is_named_before_the_state_it_would_have_been_refused_for() {
+            let organisation = organisation();
+            let running = deployment_in(organisation, DeploymentStatus::Successful);
+            let power = DeploymentPower::new(
+                holding(&running, 0),
+                billing_open(organisation, false),
+                orders(true),
+                Allowed,
+            );
+
+            let refused = power
+                .start(caller(), organisation, running.id, at())
+                .await
+                .expect_err("refused");
+
+            assert!(matches!(refused, CoreError::DeploymentOrderInFlight { .. }));
+        }
+
+        #[tokio::test]
+        async fn a_stop_is_refused_for_as_long_as_the_deployment_has_not_finished_coming_up() {
+            let organisation = organisation();
+            let starting = deployment_in(organisation, DeploymentStatus::InProgress);
+            let power = DeploymentPower::new(
+                holding(&starting, 0),
+                billing_open(organisation, false),
+                quiet(),
+                Allowed,
+            );
+
+            let refused = power
+                .stop(caller(), organisation, starting.id, at())
+                .await
+                .expect_err("refused");
+
+            assert!(
+                matches!(&refused, CoreError::DeploymentOrderInFlight { reason, .. } if reason.contains("not finished coming up")),
+                "{refused:?}"
+            );
+        }
     }
 }
