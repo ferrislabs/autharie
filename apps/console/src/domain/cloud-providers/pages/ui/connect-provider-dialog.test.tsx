@@ -41,6 +41,16 @@ describe('the provider picker', () => {
     expect(html).toContain(scaleway.description)
   })
 
+  it('puts the name to the right of its logo, the description under both', () => {
+    const html = picker()
+    const logo = html.indexOf('aria-label="Scaleway"')
+    const name = html.indexOf('>Scaleway</span>')
+    const description = html.indexOf(providerById('scaleway').description)
+    expect(logo).toBeLessThan(name)
+    expect(name).toBeLessThan(description)
+    expect(html).toContain('<span class="flex items-center gap-3">')
+  })
+
   it('does not show the form', () => {
     expect(picker()).not.toContain('Fill these information')
   })

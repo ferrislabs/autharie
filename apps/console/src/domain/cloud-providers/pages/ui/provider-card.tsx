@@ -25,11 +25,11 @@ export function ProviderCard({ provider, onSelect }: Props) {
       onClick={() => onSelect(provider)}
       className='flex flex-col items-start gap-3 rounded-lg border p-4 text-left transition-colors hover:border-primary/50 hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
     >
-      <ProviderLogoTile provider={provider} />
-      <span className='space-y-1'>
-        <span className='block font-medium'>{definition.label}</span>
-        <span className='block text-sm text-muted-foreground'>{definition.description}</span>
+      <span className='flex items-center gap-3'>
+        <ProviderLogoTile provider={provider} />
+        <span className='font-medium'>{definition.label}</span>
       </span>
+      <span className='text-sm text-muted-foreground'>{definition.description}</span>
     </button>
   )
 }
