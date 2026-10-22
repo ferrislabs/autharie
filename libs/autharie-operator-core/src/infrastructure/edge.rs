@@ -136,6 +136,48 @@ pub fn build_route(
     })
 }
 
+/// A route that is not an instance's own: it lives beside the Gateway, names
+/// its hostnames itself and has no owner, because an owner reference cannot
+/// cross a namespace.
+pub fn build_hostname_route(
+    name: &str,
+    namespace: &str,
+    labels: &BTreeMap<String, String>,
+    edge: &Edge,
+    hostnames: &[String],
+    backends: &[Backend],
+) -> Value {
+    let rules: Vec<Value> = backends
+        .iter()
+        .map(|backend| {
+            json!({
+                "matches": [{ "path": { "type": "PathPrefix", "value": backend.prefix } }],
+                "backendRefs": [{ "name": backend.service, "port": backend.port }],
+            })
+        })
+        .collect();
+
+    json!({
+        "apiVersion": format!("{GROUP}/{VERSION}"),
+        "kind": "HTTPRoute",
+        "metadata": {
+            "name": name,
+            "namespace": namespace,
+            "labels": labels,
+        },
+        "spec": {
+            "parentRefs": [{
+                "group": GROUP,
+                "kind": "Gateway",
+                "name": edge.gateway_name,
+                "namespace": edge.gateway_namespace,
+            }],
+            "hostnames": hostnames,
+            "rules": rules,
+        }
+    })
+}
+
 /// Whether the edge is actually serving this instance.
 ///
 /// Both conditions are needed and they fail for different reasons. `Accepted`
