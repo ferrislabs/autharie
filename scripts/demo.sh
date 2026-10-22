@@ -20,6 +20,9 @@ export AUTHARIE_POSTGRES_PORT="${AUTHARIE_POSTGRES_PORT:-55435}"
 export AUTHARIE_API_PORT="${AUTHARIE_API_PORT:-7777}"
 export FERRISKEY_API_PORT="${FERRISKEY_API_PORT:-3334}"
 export FERRISKEY_WEBAPP_PORT="${FERRISKEY_WEBAPP_PORT:-5556}"
+# The MCP gateway in front of the Autharie MCP server. The realm's allowed
+# resource is derived from it (bootstrap-ferriskey.sh), so the two must agree.
+export MCP_GATEWAY_PORT="${MCP_GATEWAY_PORT:-9090}"
 # The published port, because the data plane reaches RustFS from outside the
 # compose network. The control plane uses the container port on the inside; the
 # two are the same store and the endpoints are deliberately not.
@@ -301,13 +304,13 @@ step "building the data plane images"
 # path of getting the thing running on a laptop.
 #
 # The layers are shared with the control-plane build above, so this is much
-# cheaper than three Rust builds after the first run.
+# cheaper than five Rust builds after the first run.
 IMAGE_REGISTRY="autharie.local"
 IMAGE_REPO="demo"
 IMAGE_TAG="dev"
 
 BUILD_LOG="$(mktemp -t autharie-demo-build)"
-for component in herald genesis operator; do
+for component in herald genesis operator mcp-gateway ferriskey-mcp; do
     image="${IMAGE_REGISTRY}/${IMAGE_REPO}/autharie-${component}:${IMAGE_TAG}"
     note "building ${component}"
     # BuildKit writes its progress to stderr, so `>/dev/null` alone leaves a
@@ -322,7 +325,7 @@ for component in herald genesis operator; do
         || die "could not import ${image} into ${CLUSTER}"
 done
 rm -f "${BUILD_LOG}"
-note "three images imported into ${CLUSTER}"
+note "five images imported into ${CLUSTER}"
 
 # Kubernetes restarts a pod when its *spec* changes, and the tag does not move
 # between runs. So a second run rebuilt three images, imported them, and left
@@ -446,6 +449,7 @@ helm upgrade --install "${RELEASE}" charts/autharie-dataplane \
     --set "herald.otlp.enabled=true" \
     --set "gateway.tls.secretName=autharie-gateway-tls" \
     --set "gateway.publicHttpsPort=${AUTHARIE_HTTPS_PORT}" \
+    --set "agents.enabled=true" \
     --wait --timeout 5m 2>&1 | tail -4 || die "helm install failed"
 
 # ------------------------------------------------------------------- new images
@@ -546,6 +550,12 @@ $( [ "${status}" = "active" ] && printf '\033[1;32m✅ ready\033[0m' || printf '
      curl -X PUT ${CONTROL_PLANE}/releases/operator/ferriskey/<v>/status \\
        -H 'Authorization: Bearer <the operator cli token>' \\
        -H 'Content-Type: application/json' -d '{"status":"available"}'
+
+   Agents (MCP): the Autharie MCP endpoint is http://localhost:${MCP_GATEWAY_PORT}/mcp.
+   Without a token it answers 401 and names its metadata; with one issued by
+   ${ISSUER} for that resource, the tools the realm's policies allow. The
+   data plane runs a gateway and a FerrisKey MCP server of its own
+   (agents.enabled=true); the operator wires a deployment to them.
 
    Tear down:  ./scripts/demo.sh down
 
