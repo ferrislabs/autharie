@@ -1,7 +1,6 @@
 import { useState } from 'react'
-import { ArrowLeft, Check, Copy } from 'lucide-react'
+import { ArrowLeft, ArrowRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Card } from '@/components/ui/card'
 import {
   Dialog,
   DialogContent,
@@ -16,104 +15,58 @@ import { Spinner } from '@/components/ui/spinner'
 import { cn } from '@/lib/utils'
 import type { Schemas } from '@/api/api.client'
 import { afterSubmit, canRegister, emptyDraft, toRegisterRequest } from '../../credentials'
-import { PROVIDERS, providerById, type PermissionSet } from '../../providers'
+import { PROVIDERS, providerById } from '../../providers'
 import type { Provider } from '../../types/cloud-provider'
 import { AnimatedHeight } from './animated-height'
+import { ConnectStepper } from './connect-stepper'
 import { stepWidth, type ConnectStep } from './connect-step'
+import { emphasised } from './emphasis'
+import { ExternalLinkButton, GuideStepView } from './guide-step'
 import { ProviderCard, ProviderLogoTile } from './provider-card'
+import { nextStep, previousStep } from './wizard'
 
 interface FormProps {
   provider: Provider
   isSaving: boolean
   refusal?: string
+  initialStep?: number
   onBack: () => void
   onSubmit: (request: Schemas.RegisterCloudCredentialRequest) => void
 }
 
-function PermissionList({ sets }: { sets: PermissionSet[] }) {
-  const [copied, setCopied] = useState(false)
-
-  return (
-    <div className='space-y-2'>
-      <div className='flex justify-end'>
-        <Button
-          type='button'
-          variant='ghost'
-          size='sm'
-          onClick={() => {
-            void navigator.clipboard
-              .writeText(sets.map((set) => set.name).join('\n'))
-              .then(() => setCopied(true))
-          }}
-        >
-          {copied ? <Check className='h-4 w-4' /> : <Copy className='h-4 w-4' />}
-          Copy names
-        </Button>
-      </div>
-      <ul className='grid gap-2 sm:grid-cols-2 md:grid-cols-3'>
-        {sets.map((set) => (
-          <li key={set.name} className='flex'>
-            <Card className='flex w-full flex-col gap-1.5 p-3 shadow-none'>
-              <span className='font-mono text-xs font-semibold'>{set.name}</span>
-              <span className='text-sm text-muted-foreground'>{set.description}</span>
-              <span className='mt-auto border-t pt-1.5 text-xs text-muted-foreground'>
-                {set.note}
-              </span>
-            </Card>
-          </li>
-        ))}
-      </ul>
-    </div>
-  )
-}
-
-function Step({
-  number,
-  title,
-  last = false,
-  children,
-}: {
-  number: number
-  title: string
-  last?: boolean
-  children: React.ReactNode
-}) {
-  return (
-    <li className='relative flex gap-4'>
-      {!last && <span aria-hidden='true' className='absolute bottom-[-1.5rem] left-3.5 top-8 w-px bg-border' />}
-      <span
-        aria-hidden='true'
-        className='flex size-7 shrink-0 items-center justify-center rounded-full border bg-background text-xs font-semibold'
-      >
-        {number}
-      </span>
-      <div className='min-w-0 flex-1 space-y-3'>
-        <h3 className='pt-1 text-sm font-semibold'>
-          <span className='sr-only'>{number}. </span>
-          {title}
-        </h3>
-        {children}
-      </div>
-    </li>
-  )
-}
-
-export function CredentialForm({ provider, isSaving, refusal, onBack, onSubmit }: FormProps) {
+export function CredentialForm({
+  provider,
+  isSaving,
+  refusal,
+  initialStep = 0,
+  onBack,
+  onSubmit,
+}: FormProps) {
   const definition = providerById(provider)
   const [draft, setDraft] = useState(emptyDraft(provider))
+  const [current, setCurrent] = useState(initialStep)
+  const labels = [...definition.guide.map((step) => step.title), definition.connect.title]
+  const last = labels.length - 1
+  const guide = definition.guide[current]
 
   return (
     <form
       className='space-y-6'
       onSubmit={(event) => {
         event.preventDefault()
-        if (!canRegister(draft) || isSaving) return
+        if (current !== last || !canRegister(draft) || isSaving) return
         const request = toRegisterRequest(draft)
         setDraft(afterSubmit(draft))
         onSubmit(request)
       }}
     >
-      <Button type='button' variant='ghost' size='sm' className='-ml-2' onClick={onBack}>
+      <Button
+        type='button'
+        variant='ghost'
+        size='sm'
+        className='-ml-2'
+        onClick={() => (current === 0 ? onBack() : setCurrent(previousStep(current)))}
+      >
         <ArrowLeft className='h-4 w-4' />
         Back
       </Button>
@@ -130,19 +83,16 @@ export function CredentialForm({ provider, isSaving, refusal, onBack, onSubmit }
         </div>
       </DialogHeader>
 
-      <ol className='space-y-6'>
-        <Step number={1} title='Create an API key'>
-          <p className='text-sm text-muted-foreground'>
-            In the {definition.label} console, create an API key for the project your clusters
-            should be created in. Give its IAM application or user these permission sets:
-          </p>
-          <PermissionList sets={definition.permissionSets} />
-          <p className='text-xs text-muted-foreground'>
-            Do not grant any other permission: Autharie refuses a key that holds more than needed.
-          </p>
-        </Step>
+      <ConnectStepper labels={labels} current={current} onGo={setCurrent} />
 
-        <Step number={2} title='Fill these information' last>
+      {guide ? (
+        <GuideStepView step={guide} groups={definition.permissionGroups} />
+      ) : (
+        <section className='space-y-4'>
+          <div className='space-y-1'>
+            <h3 className='text-base font-semibold'>{definition.connect.heading}</h3>
+            <p className='text-sm text-muted-foreground'>{definition.connect.intro}</p>
+          </div>
           <div className='grid gap-4 sm:grid-cols-2'>
             {definition.fields.map((field) => (
               <div key={field.id} className={cn('space-y-2', field.wide && 'sm:col-span-2')}>
@@ -162,23 +112,34 @@ export function CredentialForm({ provider, isSaving, refusal, onBack, onSubmit }
                   spellCheck={false}
                   required
                 />
+                {field.hint && (
+                  <p className='text-xs text-muted-foreground'>{emphasised(field.hint)}</p>
+                )}
+                {field.link && <ExternalLinkButton link={field.link} />}
               </div>
             ))}
           </div>
-        </Step>
-      </ol>
+        </section>
+      )}
 
-      {refusal && (
+      {refusal && current === last && (
         <p role='alert' className='text-sm text-destructive'>
           {refusal}
         </p>
       )}
 
       <DialogFooter>
-        <Button type='submit' disabled={!canRegister(draft) || isSaving}>
-          {isSaving && <Spinner />}
-          Connect
-        </Button>
+        {current === last ? (
+          <Button key='connect' type='submit' disabled={!canRegister(draft) || isSaving}>
+            {isSaving && <Spinner />}
+            Connect
+          </Button>
+        ) : (
+          <Button key='next' type='button' onClick={() => setCurrent(nextStep(current, last))}>
+            Next
+            <ArrowRight className='h-4 w-4' />
+          </Button>
+        )}
       </DialogFooter>
     </form>
   )
