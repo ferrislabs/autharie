@@ -101,7 +101,10 @@ export function PageCloudCredentials({
 
       <ConnectProviderDialog
         step={step}
-        onStep={setStep}
+        onStep={(next) => {
+          if (next.provider === null) onDialogClosed()
+          setStep(next)
+        }}
         onClose={() => {
           setStep(null)
           onDialogClosed()

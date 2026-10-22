@@ -102,6 +102,11 @@ export function CredentialForm({ provider, isSaving, refusal, onBack, onSubmit }
         onSubmit(request)
       }}
     >
+      <Button type='button' variant='ghost' size='sm' className='-mb-2 -ml-2' onClick={onBack}>
+        <ArrowLeft className='h-4 w-4' />
+        Back
+      </Button>
+
       <DialogHeader>
         <div className='flex items-center gap-3'>
           <ProviderLogoTile provider={provider} />
@@ -160,10 +165,6 @@ export function CredentialForm({ provider, isSaving, refusal, onBack, onSubmit }
       )}
 
       <DialogFooter>
-        <Button type='button' variant='ghost' onClick={onBack}>
-          <ArrowLeft className='h-4 w-4' />
-          Back
-        </Button>
         <Button type='submit' disabled={!canRegister(draft) || isSaving}>
           {isSaving && <Spinner />}
           Connect
