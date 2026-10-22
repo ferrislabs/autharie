@@ -1,3 +1,4 @@
+pub mod agent_decisions;
 pub mod archives;
 pub mod certificate;
 pub mod control_plane;
