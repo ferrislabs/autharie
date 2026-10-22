@@ -160,6 +160,7 @@ fn app_in_zone(pool: PgPool, owner: Uuid, zone: &str) -> Router {
         .typed_get(list_deployments_handler)
         .typed_patch(update_deployment_handler)
         .layer(Extension(Identity::User(User {
+            scopes: Vec::new(),
             id: owner.to_string(),
             username: "owner".to_string(),
             email: None,

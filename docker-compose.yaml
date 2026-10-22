@@ -63,6 +63,10 @@ services:
       # the wrong one meant the control plane could not fetch the JWKS -- so
       # every authenticated request failed with what looked like a bad token.
       AUTH_ISSUER: http://ferriskey-api:3333/realms/autharie
+      # FerrisKey puts the host a token was requested on into `iss`, and the
+      # console and CLI reach it as localhost, not as ferriskey-api. The API
+      # refuses any other issuer, so both spellings are listed.
+      AUTH_TOKEN_ISSUER: http://localhost:${FERRISKEY_API_PORT:-3334}/realms/autharie,http://ferriskey-api:3333/realms/autharie
       # Without this the CORS layer allows no origin at all, and the console
       # cannot call the API. It has been required since the origins became
       # configurable rather than hardcoded to localhost:5173.

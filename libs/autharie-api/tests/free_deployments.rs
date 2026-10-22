@@ -262,6 +262,7 @@ impl Installation {
 
 fn user(sub: Uuid) -> Identity {
     Identity::User(User {
+        scopes: Vec::new(),
         id: sub.to_string(),
         username: "free".to_string(),
         email: None,

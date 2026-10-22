@@ -104,6 +104,7 @@ fn far_first_period() -> BillingPeriod {
 
 fn identity(sub: Uuid) -> Identity {
     Identity::User(User {
+        scopes: Vec::new(),
         id: sub.to_string(),
         username: "billing-api".to_string(),
         email: None,

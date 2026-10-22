@@ -59,6 +59,7 @@ impl autharie_domain::upgrades::ports::UpgradePolicy for AlwaysAllowed {
 
 fn caller() -> autharie_auth::Identity {
     autharie_auth::Identity::User(autharie_auth::User {
+        scopes: Vec::new(),
         id: "tester".to_string(),
         username: "tester".to_string(),
         email: None,

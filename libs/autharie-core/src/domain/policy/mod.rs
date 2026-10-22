@@ -467,6 +467,7 @@ mod tests {
             permissions: Permissions::VIEW_ROLES,
         });
         let identity = Identity::User(autharie_auth::User {
+            scopes: Vec::new(),
             id: "user-1".to_string(),
             username: "user".to_string(),
             email: None,
@@ -487,6 +488,7 @@ mod tests {
             permissions: Permissions::MANAGE_ROLES,
         });
         let identity = Identity::User(autharie_auth::User {
+            scopes: Vec::new(),
             id: "user-1".to_string(),
             username: "user".to_string(),
             email: None,
@@ -507,6 +509,7 @@ mod tests {
             permissions: Permissions::MANAGE_ROLES,
         });
         let identity = Identity::User(autharie_auth::User {
+            scopes: Vec::new(),
             id: "user-1".to_string(),
             username: "user".to_string(),
             email: None,
@@ -527,6 +530,7 @@ mod tests {
             permissions: Permissions::VIEW_ROLES,
         });
         let identity = Identity::User(autharie_auth::User {
+            scopes: Vec::new(),
             id: "user-1".to_string(),
             username: "user".to_string(),
             email: None,
@@ -543,6 +547,7 @@ mod tests {
 
     fn test_identity() -> Identity {
         Identity::User(autharie_auth::User {
+            scopes: Vec::new(),
             id: "user-1".to_string(),
             username: "user".to_string(),
             email: None,

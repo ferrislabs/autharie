@@ -838,6 +838,8 @@ impl Default for AuthArgs {
     fn default() -> Self {
         Self {
             issuer: "http://localhost:8888/realms/autharie".to_string(),
+            token_issuers: Vec::new(),
+            audiences: Vec::new(),
         }
     }
 }
@@ -852,12 +854,34 @@ pub struct AuthArgs {
         long_help = "The issuer URL to use for authentication"
     )]
     pub issuer: String,
+    #[arg(
+        long = "auth-token-issuer",
+        env = "AUTH_TOKEN_ISSUER",
+        name = "AUTH_TOKEN_ISSUER",
+        value_delimiter = ',',
+        long_help = "Comma-separated values of `iss` the API accepts. Defaults to --auth-issuer. \
+                     Set it when tokens carry another host than the one the API reaches the \
+                     realm on, since FerrisKey derives `iss` from the host a token is requested on"
+    )]
+    pub token_issuers: Vec<String>,
+    #[arg(
+        long = "auth-audience",
+        env = "AUTH_AUDIENCE",
+        name = "AUTH_AUDIENCE",
+        value_delimiter = ',',
+        long_help = "Comma-separated audiences the API accepts; a token must carry at least one. \
+                     Defaults to the realm audience FerrisKey puts in its access tokens, \
+                     `<realm>-realm`, derived from --auth-issuer"
+    )]
+    pub audiences: Vec<String>,
 }
 
 impl From<AuthArgs> for AuthConfig {
     fn from(value: AuthArgs) -> Self {
         Self {
             issuer: value.issuer,
+            token_issuers: value.token_issuers,
+            audiences: value.audiences,
         }
     }
 }
@@ -1084,6 +1108,32 @@ mod tests {
     }
 
     #[test]
+    fn the_token_checks_default_to_the_issuer_and_the_realm_audience() {
+        let parsed = Args::try_parse_from(["autharie"]).expect("no arguments parse");
+
+        assert!(parsed.auth.token_issuers.is_empty());
+        assert!(parsed.auth.audiences.is_empty());
+    }
+
+    #[test]
+    fn token_issuers_and_audiences_are_comma_separated() {
+        let parsed = Args::try_parse_from([
+            "autharie",
+            "--auth-token-issuer",
+            "http://a.test/realms/r,http://b.test/realms/r",
+            "--auth-audience",
+            "autharie-realm,autharie-api",
+        ])
+        .expect("arguments parse");
+
+        assert_eq!(
+            parsed.auth.token_issuers,
+            ["http://a.test/realms/r", "http://b.test/realms/r"]
+        );
+        assert_eq!(parsed.auth.audiences, ["autharie-realm", "autharie-api"]);
+    }
+
+    #[test]
     fn the_herald_issuer_defaults_to_the_auth_issuer() {
         let args = CustomerCloudArgs {
             control_plane_url: " https://autharie.example ".to_string(),
@@ -1091,6 +1141,8 @@ mod tests {
         };
         let auth = AuthArgs {
             issuer: "http://issuer.test".to_string(),
+            token_issuers: Vec::new(),
+            audiences: Vec::new(),
         };
 
         let config = args.helm_config(&auth);
@@ -1114,6 +1166,8 @@ mod tests {
     fn the_image_registry_and_tag_reach_the_chart_and_blank_means_unset() {
         let auth = AuthArgs {
             issuer: "http://issuer.test".to_string(),
+            token_issuers: Vec::new(),
+            audiences: Vec::new(),
         };
         let unset = CustomerCloudArgs::default().helm_config(&auth);
         assert_eq!(unset.image_registry, None);
@@ -1180,6 +1234,8 @@ mod tests {
         let args = Args {
             auth: AuthArgs {
                 issuer: "http://issuer.test".to_string(),
+                token_issuers: Vec::new(),
+                audiences: Vec::new(),
             },
             ..Args::default()
         };

@@ -198,6 +198,7 @@ mod tests {
                     Err(CoreError::InvalidIdentity)
                 } else {
                     Ok(Identity::User(User {
+                        scopes: Vec::new(),
                         id: "user-1".to_string(),
                         username: "user".to_string(),
                         email: None,
