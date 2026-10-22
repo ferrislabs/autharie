@@ -161,6 +161,22 @@ describe('the permissions step', () => {
     expect(html().match(/Copy names/g)).toHaveLength(2)
   })
 
+  it('puts each rule under the instruction that asks for it', () => {
+    const page = html()
+    const firstRule = page.indexOf('Add a first rule')
+    const rule1 = page.indexOf('Rule 1')
+    const secondRule = page.indexOf('Add new rule</strong>')
+    const rule2 = page.indexOf('Rule 2')
+    const createPolicy = page.lastIndexOf('Create policy</strong>')
+    expect(firstRule).toBeGreaterThan(0)
+    expect(firstRule).toBeLessThan(rule1)
+    expect(rule1).toBeLessThan(page.indexOf('>KubernetesFullAccess</span>'))
+    expect(page.indexOf('>PrivateNetworksFullAccess</span>')).toBeLessThan(secondRule)
+    expect(secondRule).toBeLessThan(rule2)
+    expect(rule2).toBeLessThan(page.indexOf('>ProjectReadOnly</span>'))
+    expect(page.indexOf('>IAMReadOnly</span>')).toBeLessThan(createPolicy)
+  })
+
   it('warns not to grant more', () => {
     expect(html()).toContain('Autharie refuses a key that holds more than needed.')
   })
