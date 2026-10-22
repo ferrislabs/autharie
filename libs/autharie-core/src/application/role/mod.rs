@@ -126,6 +126,7 @@ mod tests {
     fn identity() -> Identity {
         Identity::User(User {
             scopes: Vec::new(),
+            act: None,
             id: "user-1".to_string(),
             username: "user".to_string(),
             email: None,
@@ -147,6 +148,7 @@ mod tests {
     async fn list_roles_rejects_permission() {
         let identity = Identity::User(User {
             scopes: Vec::new(),
+            act: None,
             id: "user-1".to_string(),
             username: "user".to_string(),
             email: None,
@@ -168,6 +170,7 @@ mod tests {
     async fn get_role_rejects_permission() {
         let identity = Identity::User(User {
             scopes: Vec::new(),
+            act: None,
             id: "user-1".to_string(),
             username: "user".to_string(),
             email: None,
@@ -193,6 +196,7 @@ mod tests {
     async fn delete_role_rejects_permission() {
         let identity = Identity::User(User {
             scopes: Vec::new(),
+            act: None,
             id: "user-1".to_string(),
             username: "user".to_string(),
             email: None,
@@ -215,6 +219,7 @@ mod tests {
     async fn update_role_rejects_permission() {
         let identity = Identity::User(User {
             scopes: Vec::new(),
+            act: None,
             id: "user-1".to_string(),
             username: "user".to_string(),
             email: None,

@@ -461,6 +461,7 @@ HUim3t4M1KMtX1QmMKKCg4i4
             scope: scope.to_string(),
             client_id,
             realm_access: None,
+            act: None,
             extra: serde_json::Map::new(),
         };
 

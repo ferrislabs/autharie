@@ -342,6 +342,7 @@ mod tests {
     fn caller(sub: Uuid, roles: Vec<String>) -> Identity {
         Identity::User(autharie_auth::User {
             scopes: Vec::new(),
+            act: None,
             id: sub.to_string(),
             username: "someone".to_string(),
             email: None,
@@ -527,6 +528,7 @@ mod tests {
             client_id: "herald-service".to_string(),
             roles: vec![],
             scopes: vec![],
+            act: None,
         });
 
         let permissions = permissions_of(&provider, identity).await;

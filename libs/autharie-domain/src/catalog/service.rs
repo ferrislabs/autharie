@@ -559,6 +559,7 @@ mod tests {
     fn operator() -> Identity {
         Identity::User(autharie_auth::User {
             scopes: Vec::new(),
+            act: None,
             id: "operator".to_string(),
             username: "operator".to_string(),
             email: None,
@@ -570,6 +571,7 @@ mod tests {
     fn customer() -> Identity {
         Identity::User(autharie_auth::User {
             scopes: Vec::new(),
+            act: None,
             id: "customer".to_string(),
             username: "customer".to_string(),
             email: None,

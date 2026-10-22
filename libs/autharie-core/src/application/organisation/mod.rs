@@ -11,9 +11,12 @@ use crate::{
         commands::{CreateOrganisationCommand, UpdateOrganisationCommand},
         ports::OrganisationRepository,
         ports::OrganisationService,
+        ports::{OrganisationMcpSwitch, OrganisationSettings},
     },
-    policy::AuthariePolicy,
+    policy::{AuthariePolicy, PolicyContext},
 };
+use autharie_domain::role::ports::PermissionProvider;
+use autharie_permission::Permissions;
 
 impl OrganisationService for AutharieService {
     #[transactional(organisation, user)]
@@ -52,6 +55,55 @@ impl OrganisationService for AutharieService {
         OrganisationServiceImpl::new(organisation_repository, user_repository)
             .get_organisations_by_member(identity)
             .await
+    }
+}
+
+impl OrganisationSettings for AutharieService {
+    #[transactional(organisation)]
+    async fn get_organisation(
+        &self,
+        identity: Identity,
+        id: OrganisationId,
+    ) -> Result<Organisation, CoreError> {
+        let granted = permissions_in(&tx)
+            .permissions_for_organisation(identity, id)
+            .await?;
+        PolicyContext::new(granted).require_any(&[
+            Permissions::VIEW_ORGANISATION,
+            Permissions::MANAGE_ORGANISATION,
+        ])?;
+
+        organisation_repository
+            .find_by_id(&id)
+            .await?
+            .ok_or(CoreError::OrganisationNotFound { id: id.0 })
+    }
+
+    #[transactional(organisation, user)]
+    async fn change_organisation(
+        &self,
+        identity: Identity,
+        id: OrganisationId,
+        command: UpdateOrganisationCommand,
+    ) -> Result<Organisation, CoreError> {
+        let granted = permissions_in(&tx)
+            .permissions_for_organisation(identity, id)
+            .await?;
+        PolicyContext::new(granted).require_permission(Permissions::MANAGE_ORGANISATION)?;
+
+        OrganisationServiceImpl::new(organisation_repository, user_repository)
+            .update_organisation(id, command)
+            .await
+    }
+}
+
+impl OrganisationMcpSwitch for AutharieService {
+    #[transactional(organisation)]
+    async fn mcp_enabled(&self, id: OrganisationId) -> Result<bool, CoreError> {
+        Ok(organisation_repository
+            .find_by_id(&id)
+            .await?
+            .is_some_and(|organisation| organisation.is_active() && organisation.mcp_enabled))
     }
 }
 
@@ -118,6 +170,7 @@ mod tests {
     async fn get_organisations_by_member_rejects_invalid_identity() {
         let identity = Identity::User(autharie_auth::User {
             scopes: Vec::new(),
+            act: None,
             id: "not-a-uuid".to_string(),
             username: "user".to_string(),
             email: None,
@@ -126,6 +179,52 @@ mod tests {
         });
 
         let result = service().get_organisations_by_member(identity).await;
+        assert!(matches!(result, Err(CoreError::DatabaseError { .. })));
+    }
+
+    #[tokio::test]
+    async fn get_organisation_maps_pool_error() {
+        let identity = Identity::User(autharie_auth::User {
+            scopes: Vec::new(),
+            act: None,
+            id: "user-1".to_string(),
+            username: "user".to_string(),
+            email: None,
+            name: None,
+            roles: vec![],
+        });
+
+        let result = service()
+            .get_organisation(identity, OrganisationId(Uuid::new_v4()))
+            .await;
+        assert!(matches!(result, Err(CoreError::DatabaseError { .. })));
+    }
+
+    #[tokio::test]
+    async fn change_organisation_maps_pool_error() {
+        let identity = Identity::User(autharie_auth::User {
+            scopes: Vec::new(),
+            act: None,
+            id: "user-1".to_string(),
+            username: "user".to_string(),
+            email: None,
+            name: None,
+            roles: vec![],
+        });
+
+        let result = service()
+            .change_organisation(
+                identity,
+                OrganisationId(Uuid::new_v4()),
+                UpdateOrganisationCommand::new().with_mcp_enabled(true),
+            )
+            .await;
+        assert!(matches!(result, Err(CoreError::DatabaseError { .. })));
+    }
+
+    #[tokio::test]
+    async fn mcp_enabled_maps_pool_error() {
+        let result = service().mcp_enabled(OrganisationId(Uuid::new_v4())).await;
         assert!(matches!(result, Err(CoreError::DatabaseError { .. })));
     }
 
