@@ -72,6 +72,19 @@ where
             );
         }
 
+        // In the order they were asked for. The claim is an `UPDATE ...
+        // RETURNING`, which returns its rows in no order at all, and the data
+        // plane applies what it is given in the order it is given. Each
+        // `deployment.*` action carries the whole desired state, so a stop and
+        // a start claimed together and applied the other way round leave the
+        // deployment in the state of whichever was asked first.
+        actions.sort_by(|a, b| {
+            a.metadata
+                .created_at
+                .cmp(&b.metadata.created_at)
+                .then(a.id.0.cmp(&b.id.0))
+        });
+
         Ok(actions)
     }
 
@@ -342,6 +355,103 @@ mod tests {
 
         let result = service.ack_actions(a_data_plane(), command).await;
         assert_eq!(result.unwrap(), 1);
+    }
+
+    fn action_asked_at(action_type: &str, at: chrono::DateTime<Utc>) -> Action {
+        Action {
+            id: ActionId(Uuid::new_v4()),
+            deployment_id: Some(DeploymentId(Uuid::nil())),
+            dataplane_id: DataPlaneId(Uuid::nil()),
+            action_type: crate::action::ActionType(action_type.to_string()),
+            target: crate::action::ActionTarget {
+                kind: crate::action::TargetKind::Deployment,
+                id: Uuid::nil(),
+            },
+            payload: crate::action::ActionPayload {
+                data: serde_json::json!({}),
+            },
+            version: crate::action::ActionVersion(1),
+            status: ActionStatus::Leased {
+                until: at + Duration::seconds(60),
+            },
+            metadata: ActionMetadata {
+                source: crate::action::ActionSource::System,
+                created_at: at,
+                constraints: Default::default(),
+            },
+            leased_until: None,
+        }
+    }
+
+    /// The case that was found by spamming Stop and Start: both claimed in one
+    /// batch, returned by the database start first, applied that way, and the
+    /// instance left stopped while the control plane said it was starting.
+    #[tokio::test]
+    async fn actions_claimed_together_come_back_in_the_order_they_were_asked_for() {
+        let at = Utc::now();
+        let stop = action_asked_at("deployment.stop", at);
+        let start = action_asked_at("deployment.start", at + Duration::seconds(5));
+        let stop_again = action_asked_at("deployment.stop", at + Duration::seconds(8));
+        let asked_in_order = vec![stop.id, start.id, stop_again.id];
+
+        let mut repo = MockActionRepository::new();
+        let returned = vec![start, stop_again, stop];
+        repo.expect_claim_pending().returning(move |_, _, _, _, _| {
+            let returned = returned.clone();
+            Box::pin(async move { Ok(returned) })
+        });
+        let command = ClaimActionsCommand {
+            dataplane_id: DataPlaneId(Uuid::nil()),
+            deployment_ids: vec![DeploymentId(Uuid::nil())],
+            max: 10,
+            lease_seconds: 60,
+            include_dataplane_actions: false,
+        };
+
+        let claimed = ActionServiceImpl::new(repo)
+            .claim_actions(a_data_plane(), command)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            claimed.iter().map(|action| action.id).collect::<Vec<_>>(),
+            asked_in_order
+        );
+    }
+
+    #[tokio::test]
+    async fn actions_asked_at_the_same_instant_keep_a_stable_order() {
+        let at = Utc::now();
+        let mut first = action_asked_at("deployment.stop", at);
+        let mut second = action_asked_at("deployment.start", at);
+        if first.id.0 > second.id.0 {
+            std::mem::swap(&mut first, &mut second);
+        }
+        let expected = vec![first.id, second.id];
+
+        let mut repo = MockActionRepository::new();
+        let returned = vec![second, first];
+        repo.expect_claim_pending().returning(move |_, _, _, _, _| {
+            let returned = returned.clone();
+            Box::pin(async move { Ok(returned) })
+        });
+        let command = ClaimActionsCommand {
+            dataplane_id: DataPlaneId(Uuid::nil()),
+            deployment_ids: vec![DeploymentId(Uuid::nil())],
+            max: 10,
+            lease_seconds: 60,
+            include_dataplane_actions: false,
+        };
+
+        let claimed = ActionServiceImpl::new(repo)
+            .claim_actions(a_data_plane(), command)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            claimed.iter().map(|action| action.id).collect::<Vec<_>>(),
+            expected
+        );
     }
 
     #[tokio::test]
