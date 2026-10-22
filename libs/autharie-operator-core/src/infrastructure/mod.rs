@@ -4,6 +4,7 @@ pub mod dataplane_upgrade;
 pub mod dataplane_upgrade_controller;
 pub mod dumps;
 pub mod edge;
+pub mod ferriskey_admin;
 pub mod ferriskey_theme;
 pub mod identity_instance;
 pub mod identity_instance_backup;
