@@ -229,6 +229,8 @@ mod tests {
             email: None,
             name: None,
             roles: vec![],
+            scopes: vec![],
+            act: None,
         })
     }
 

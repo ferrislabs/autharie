@@ -206,6 +206,8 @@ fn app(pool: PgPool, caller: Uuid) -> Router {
             email: None,
             name: None,
             roles: vec![],
+            scopes: vec![],
+            act: None,
         })))
         .with_state(state)
 }
