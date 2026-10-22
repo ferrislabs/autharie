@@ -9,6 +9,9 @@ extern crate self as autharie_postgres;
 pub mod action;
 
 #[cfg_attr(coverage_nightly, coverage(off))]
+pub mod agents;
+
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub mod audit;
 
 #[cfg_attr(coverage_nightly, coverage(off))]
@@ -82,6 +85,7 @@ pub mod registry {
     /// They carry no data and exist only to key the `RepoFor` lookup.
     pub mod domain {
         pub struct Action;
+        pub struct Agent;
         pub struct Audit;
         pub struct Backup;
         pub struct BackupSchedule;
@@ -150,6 +154,7 @@ mod registry_completeness {
     #[test]
     fn every_domain_has_a_postgres_repository() {
         assert_registered::<domain::Action>();
+        assert_registered::<domain::Agent>();
         assert_registered::<domain::Audit>();
         assert_registered::<domain::Backup>();
         assert_registered::<domain::BackupSchedule>();

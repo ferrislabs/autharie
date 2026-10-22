@@ -247,6 +247,28 @@ mod tests {
     }
 
     #[test]
+    fn an_agent_cannot_reach_the_agent_routes_so_it_cannot_edit_its_own_policies() {
+        let paths = [
+            format!("/organisations/{ORG}/deployments/{DEP}/agents"),
+            format!("/organisations/{ORG}/deployments/{DEP}/agents/policies"),
+            format!("/organisations/{ORG}/deployments/{DEP}/agents/policies/{DEP}"),
+            format!("/organisations/{ORG}/deployments/{DEP}/agents/decisions"),
+        ];
+
+        for path in paths {
+            for method in [
+                Method::GET,
+                Method::POST,
+                Method::PUT,
+                Method::PATCH,
+                Method::DELETE,
+            ] {
+                assert_eq!(classify(&method, &path), None, "{method} {path}");
+            }
+        }
+    }
+
+    #[test]
     fn the_method_must_match() {
         assert_eq!(
             classify(

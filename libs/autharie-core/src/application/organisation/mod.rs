@@ -15,6 +15,7 @@ use crate::{
     },
     policy::{AuthariePolicy, PolicyContext},
 };
+use autharie_domain::agents::service::AgentPublisher;
 use autharie_domain::role::ports::PermissionProvider;
 use autharie_permission::Permissions;
 
@@ -79,7 +80,7 @@ impl OrganisationSettings for AutharieService {
             .ok_or(CoreError::OrganisationNotFound { id: id.0 })
     }
 
-    #[transactional(organisation, user)]
+    #[transactional(organisation, user, deployment, agent, action)]
     async fn change_organisation(
         &self,
         identity: Identity,
@@ -91,9 +92,22 @@ impl OrganisationSettings for AutharieService {
             .await?;
         PolicyContext::new(granted).require_permission(Permissions::MANAGE_ORGANISATION)?;
 
-        OrganisationServiceImpl::new(organisation_repository, user_repository)
+        let before = organisation_repository
+            .find_by_id(&id)
+            .await?
+            .map(|organisation| organisation.mcp_enabled);
+
+        let updated = OrganisationServiceImpl::new(organisation_repository, user_repository)
             .update_organisation(id, command)
-            .await
+            .await?;
+
+        if before.is_some_and(|before| before != updated.mcp_enabled) {
+            AgentPublisher::new(deployment_repository, agent_repository, action_repository)
+                .republish_organisation(id, updated.mcp_enabled)
+                .await?;
+        }
+
+        Ok(updated)
     }
 }
 
