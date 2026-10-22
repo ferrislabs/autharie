@@ -284,6 +284,44 @@ gateway:
     limits:
       memory: 512Mi
 
+# Agents: MCP access to the deployments of this data plane, decided by each
+# deployment's own FerrisKey (ADR 0008, 0009, 0010).
+#
+# Off by default: it exposes a deployment's admin API to agents, so a data plane
+# opts in. The gateway and the FerrisKey MCP server are one each per data plane.
+# The routes and the gateway's configuration are the operator's: it rebuilds the
+# Secret named by `gateway.configSecret` from every deployment with agents
+# enabled, and the gateway reloads the file when the Secret changes.
+agents:
+  enabled: false
+  gateway:
+    replicaCount: 1
+    # Must match the Secret the operator writes (key config.toml). It does not
+    # need to exist yet: the gateway starts with no upstream and picks it up.
+    configSecret: mcp-gateway-config
+    # How often the gateway looks at its configuration file for a change.
+    reloadSeconds: 5
+    resources:
+      requests:
+        cpu: 25m
+        memory: 32Mi
+      limits:
+        memory: 128Mi
+  ferriskeyMcp:
+    replicaCount: 1
+    # Where an instance's API answers, {namespace} and {name} being the
+    # instance's. Empty keeps the server's own default
+    # (http://{name}-api.{namespace}.svc:3333).
+    apiUrlTemplate: ""
+    # Path the instance's routes are mounted under. Empty keeps the default.
+    rootPath: ""
+    resources:
+      requests:
+        cpu: 25m
+        memory: 32Mi
+      limits:
+        memory: 128Mi
+
 nameOverride: ""
 fullnameOverride: ""
 
