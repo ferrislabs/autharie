@@ -3,6 +3,8 @@ use std::{collections::HashSet, fmt, net::SocketAddr};
 use serde::Deserialize;
 use url::Url;
 
+use crate::access::AccessConfig;
+
 #[derive(Clone, Deserialize, PartialEq, Eq)]
 #[serde(transparent)]
 pub struct Secret(String);
@@ -51,6 +53,8 @@ pub struct UpstreamConfig {
     pub server_name: String,
     #[serde(default)]
     pub scopes_supported: Vec<String>,
+    #[serde(default)]
+    pub access: AccessConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]

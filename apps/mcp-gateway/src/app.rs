@@ -460,6 +460,21 @@ where
                 return rejection_response(&rejection);
             }
         };
+        if let Err(refusal) = upstream.access.check(&principal.client_id) {
+            let tool = message
+                .target
+                .as_ref()
+                .filter(|t| t.operation == Operation::CallTool)
+                .map(|t| t.name.as_str());
+            call.record(
+                &message.method,
+                tool,
+                false,
+                Vec::new(),
+                Some(refusal.reason()),
+            );
+            return rejection_response(&Rejection::agent_refused(message.id));
+        }
         if let Err(rejection) = rpc::check_headers(&parts.headers, &message) {
             let tool = message
                 .target
@@ -483,6 +498,9 @@ where
         }
         Some(message)
     } else {
+        if upstream.access.check(&principal.client_id).is_err() {
+            return generic(StatusCode::FORBIDDEN, "agent not allowed");
+        }
         None
     };
 
