@@ -220,6 +220,21 @@ describe('the settings pages that became tabs', () => {
   })
 })
 
+describe('the webhooks routes', () => {
+  it.each(['/webhooks', '/webhooks/new', '/webhooks/w-1', '/webhooks/w-1/edit'])(
+    'puts %s inside the deployment shell and its tab frame',
+    (path) => {
+      const shells = shellsFor(`${DEPLOYMENT}${path}`)
+      expect(shells).toContain('DeploymentLayout')
+      expect(shells).toContain('DeploymentTabLayout')
+    },
+  )
+
+  it('resolves /webhooks/new to the form rather than to a webhook called new', () => {
+    expect(shellsFor(`${DEPLOYMENT}/webhooks/new`)).toContain('PageWebhookFormFeature')
+  })
+})
+
 describe('the agents route', () => {
   it('puts /agents inside the deployment shell and its tab frame', () => {
     const shells = shellsFor(`${DEPLOYMENT}/agents`)
