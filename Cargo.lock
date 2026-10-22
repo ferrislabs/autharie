@@ -681,6 +681,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "autharie-egress"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "bytes",
+ "reqwest 0.12.28",
+ "thiserror 2.0.20",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "autharie-iggy"
 version = "0.1.0"
 dependencies = [
