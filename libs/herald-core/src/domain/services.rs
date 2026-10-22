@@ -4,6 +4,7 @@ use crate::domain::entities::certificate::ReceivedCertificate;
 use crate::domain::entities::dataplane::DataPlaneId;
 use crate::domain::entities::deployment::{Deployment, DeploymentId};
 use crate::domain::entities::logs::{LOG_ACTION_TYPE, LogSessionId, LogStreamRequest};
+use crate::domain::entities::outcome::{AGENTS_KIND, InboundOutcome};
 use crate::domain::entities::shard::ShardConfig;
 use crate::domain::error::HeraldError;
 use crate::domain::log_session::run_log_session;
@@ -219,7 +220,32 @@ where
             }
         };
 
-        for report in reports {
+        for outcome in reports {
+            let report = match outcome {
+                InboundOutcome::Report(report) => report,
+                InboundOutcome::Agents(outcome) => {
+                    match self
+                        .control_plane
+                        .report_agents_outcome(&self.dataplane_id, &outcome)
+                        .await
+                    {
+                        Ok(()) => info!(
+                            deployment_id = %outcome.deployment_id(),
+                            kind = AGENTS_KIND,
+                            policies = outcome.policy_count(),
+                            "relayed an agents outcome"
+                        ),
+                        Err(err) => warn!(
+                            %err,
+                            deployment_id = %outcome.deployment_id(),
+                            kind = AGENTS_KIND,
+                            "failed to report an agents outcome"
+                        ),
+                    }
+                    continue;
+                }
+            };
+
             // A drill's result (#185) is never mistaken for a deployment
             // lifecycle transition: it goes to its own endpoint, which is
             // the control plane's guarantee that a drill can never move a
@@ -848,13 +874,16 @@ mod tests {
         let mut outcomes = MockOutcomeInboxRepository::new();
         outcomes.expect_drain().times(1).returning(move |_| {
             Box::pin(async move {
-                Ok(vec![DeploymentOutcomeReport {
-                    version: None,
-                    deployment_id,
-                    outcome: "deleted".to_string(),
-                    duration_seconds: None,
-                    reason: None,
-                }])
+                Ok(vec![
+                    DeploymentOutcomeReport {
+                        version: None,
+                        deployment_id,
+                        outcome: "deleted".to_string(),
+                        duration_seconds: None,
+                        reason: None,
+                    }
+                    .into(),
+                ])
             })
         });
 
@@ -904,13 +933,16 @@ mod tests {
         let mut outcomes = MockOutcomeInboxRepository::new();
         outcomes.expect_drain().times(1).returning(move |_| {
             Box::pin(async move {
-                Ok(vec![DeploymentOutcomeReport {
-                    version: None,
-                    deployment_id,
-                    outcome: "drill_succeeded".to_string(),
-                    duration_seconds: Some(212),
-                    reason: None,
-                }])
+                Ok(vec![
+                    DeploymentOutcomeReport {
+                        version: None,
+                        deployment_id,
+                        outcome: "drill_succeeded".to_string(),
+                        duration_seconds: Some(212),
+                        reason: None,
+                    }
+                    .into(),
+                ])
             })
         });
 
@@ -952,6 +984,118 @@ mod tests {
             .expect("cycle succeeds");
     }
 
+    #[tokio::test]
+    async fn an_agents_outcome_is_carried_whole_and_never_as_a_lifecycle_report() {
+        let dataplane_id = DataPlaneId::new(Uuid::new_v4());
+        let deployment_id = Uuid::new_v4();
+        let payload = serde_json::json!({
+            "deployment_id": deployment_id,
+            "kind": "deployment.agents",
+            "revision": 2,
+            "phase": "Ready",
+            "gateway_client_ready": true,
+            "policies": [{ "id": "p1", "phase": "Applied" }],
+        });
+        let relayed = payload.clone();
+
+        let mut outcomes = MockOutcomeInboxRepository::new();
+        outcomes.expect_drain().times(1).returning(move |_| {
+            let outcome = InboundOutcome::parse(payload.to_string().as_bytes()).expect("parses");
+            Box::pin(async move { Ok(vec![outcome]) })
+        });
+
+        let mut control_plane = MockControlPlaneRepository::new();
+        control_plane
+            .expect_send_heartbeat()
+            .returning(|_, _| Box::pin(async { Ok(HeartbeatOutcome::default()) }));
+        control_plane.expect_report_outcome().never();
+        control_plane.expect_report_drill_outcome().never();
+        control_plane
+            .expect_report_agents_outcome()
+            .times(1)
+            .withf(move |_, outcome| {
+                outcome.deployment_id() == deployment_id && outcome.body() == &relayed
+            })
+            .returning(|_, _| Box::pin(async { Ok(()) }));
+        control_plane
+            .expect_list_deployments()
+            .returning(|_| Box::pin(async { Ok(Vec::new()) }));
+        control_plane
+            .expect_claim_actions()
+            .withf(|_, ids| ids.is_empty())
+            .times(1)
+            .returning(|_, _| Box::pin(async { Ok(Vec::new()) }));
+
+        let service = HeraldServiceImpl::new(
+            Arc::new(control_plane),
+            Arc::new(MockMessageBusRepository::new()),
+            Arc::new(outcomes),
+            unused_usage_source(),
+            unused_pod_logs(),
+            unused_instances(),
+            dataplane_id,
+            ShardConfig::new(0, 1),
+        );
+
+        service
+            .sync_all_deployments()
+            .await
+            .expect("cycle succeeds");
+    }
+
+    #[tokio::test]
+    async fn a_failed_agents_relay_does_not_fail_the_cycle() {
+        let dataplane_id = DataPlaneId::new(Uuid::new_v4());
+        let deployment_id = Uuid::new_v4();
+
+        let mut outcomes = MockOutcomeInboxRepository::new();
+        outcomes.expect_drain().times(1).returning(move |_| {
+            let payload = serde_json::json!({
+                "deployment_id": deployment_id,
+                "kind": "deployment.agents",
+            });
+            let outcome = InboundOutcome::parse(payload.to_string().as_bytes()).expect("parses");
+            Box::pin(async move { Ok(vec![outcome]) })
+        });
+
+        let mut control_plane = MockControlPlaneRepository::new();
+        control_plane
+            .expect_send_heartbeat()
+            .returning(|_, _| Box::pin(async { Ok(HeartbeatOutcome::default()) }));
+        control_plane
+            .expect_report_agents_outcome()
+            .times(1)
+            .returning(|_, _| {
+                Box::pin(async {
+                    Err(HeraldError::ControlPlane {
+                        message: "down".to_string(),
+                    })
+                })
+            });
+        control_plane
+            .expect_list_deployments()
+            .returning(|_| Box::pin(async { Ok(Vec::new()) }));
+        control_plane
+            .expect_claim_actions()
+            .returning(|_, _| Box::pin(async { Ok(Vec::new()) }));
+
+        let service = HeraldServiceImpl::new(
+            Arc::new(control_plane),
+            Arc::new(MockMessageBusRepository::new()),
+            Arc::new(outcomes),
+            unused_usage_source(),
+            unused_pod_logs(),
+            unused_instances(),
+            dataplane_id,
+            ShardConfig::new(0, 1),
+        );
+
+        service
+            .sync_all_deployments()
+            .await
+            .expect("cycle succeeds");
+    }
+
     fn deleting_since_eleven_minutes(deployment_id: Uuid) -> Deployment {
         let mut deployment = create_test_deployment(&deployment_id.to_string(), "acme-prod");
         deployment.transition = Some(Transition::Departing);
@@ -966,10 +1110,8 @@ mod tests {
         let recorded: Arc<std::sync::Mutex<Vec<DeploymentOutcomeReport>>> = Arc::default();
 
         let mut outcomes = MockOutcomeInboxRepository::new();
-        let mut queued = Some(vec![DeploymentOutcomeReport::observed(
-            deployment_id,
-            "deleted",
-            None,
+        let mut queued = Some(vec![InboundOutcome::from(
+            DeploymentOutcomeReport::observed(deployment_id, "deleted", None),
         )]);
         outcomes.expect_drain().returning(move |_| {
             let drained = queued.take().unwrap_or_default();
@@ -1284,13 +1426,16 @@ mod tests {
         let mut outcomes = MockOutcomeInboxRepository::new();
         outcomes.expect_drain().returning(|_| {
             Box::pin(async {
-                Ok(vec![DeploymentOutcomeReport {
-                    version: None,
-                    deployment_id: Uuid::new_v4(),
-                    outcome: "deleted".to_string(),
-                    duration_seconds: None,
-                    reason: None,
-                }])
+                Ok(vec![
+                    DeploymentOutcomeReport {
+                        version: None,
+                        deployment_id: Uuid::new_v4(),
+                        outcome: "deleted".to_string(),
+                        duration_seconds: None,
+                        reason: None,
+                    }
+                    .into(),
+                ])
             })
         });
 

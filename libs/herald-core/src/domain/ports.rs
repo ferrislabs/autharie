@@ -4,7 +4,7 @@ use crate::domain::entities::certificate::ReceivedCertificate;
 use crate::domain::entities::dataplane::DataPlaneId;
 use crate::domain::entities::deployment::{Deployment, DeploymentId};
 use crate::domain::entities::logs::{Ending, LogLine, LogStreamRequest, OrganisationId};
-use crate::domain::entities::outcome::DeploymentOutcomeReport;
+use crate::domain::entities::outcome::{AgentsOutcome, DeploymentOutcomeReport, InboundOutcome};
 use crate::domain::entities::usage::{CounterSample, UsagePoint, UsageTarget};
 use crate::domain::error::HeraldError;
 use crate::domain::log_index::LogIndexDocument;
@@ -98,6 +98,12 @@ pub trait ControlPlaneRepository: Send + Sync {
         &self,
         dp_id: &DataPlaneId,
         report: &DeploymentOutcomeReport,
+    ) -> impl Future<Output = Result<(), HeraldError>> + Send;
+
+    fn report_agents_outcome(
+        &self,
+        dp_id: &DataPlaneId,
+        outcome: &AgentsOutcome,
     ) -> impl Future<Output = Result<(), HeraldError>> + Send;
 
     /// Carries what a drill (#185) proved, or did not.
@@ -316,7 +322,7 @@ pub trait OutcomeInboxRepository: Send + Sync {
     fn drain(
         &self,
         limit: usize,
-    ) -> impl Future<Output = Result<Vec<DeploymentOutcomeReport>, HeraldError>> + Send;
+    ) -> impl Future<Output = Result<Vec<InboundOutcome>, HeraldError>> + Send;
 }
 
 #[cfg_attr(test, mockall::automock)]
