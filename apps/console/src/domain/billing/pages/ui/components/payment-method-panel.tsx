@@ -3,9 +3,12 @@ import type { Schemas } from '@/api/api.client'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { StatusBadge, type Tone } from '@/components/ui/status-badge'
-import { NEEDS_BILLING_DETAILS, describeCard } from '@/domain/billing/billing'
+import { NEEDS_BILLING_DETAILS } from '@/domain/billing/billing'
+import { BankCard, BankCardPlaceholder } from './bank-card'
 
 export const NEEDS_MANAGE_TO_ADD = 'Adding a payment method needs the Manage billing permission.'
+export const NO_PAYMENT_METHOD = 'No payment method yet'
+export const NO_CARD_DETAILS = 'No card details to show'
 
 const STATUSES: Record<Schemas.PaymentMethodStatus, { label: string; tone: Tone }> = {
   missing: { label: 'Missing', tone: 'warning' },
@@ -42,12 +45,11 @@ export function PaymentMethodPanel({
   const current = STATUSES[status ?? 'missing']
 
   return (
-    <div className='space-y-3 rounded-lg border bg-card p-5'>
+    <div className='space-y-4 rounded-lg border bg-card p-5'>
       <div className='flex items-center justify-between gap-4'>
         <div className='flex items-center gap-2 text-sm'>
           <span className='text-muted-foreground'>Payment method</span>
           <StatusBadge tone={current.tone}>{current.label}</StatusBadge>
-          {card && <span className='text-muted-foreground'>{describeCard(card)}</span>}
         </div>
         <Button
           size='sm'
@@ -60,6 +62,13 @@ export function PaymentMethodPanel({
           Add a payment method
         </Button>
       </div>
+      {card ? (
+        <BankCard card={card} />
+      ) : (
+        <BankCardPlaceholder
+          message={status === 'missing' || !status ? NO_PAYMENT_METHOD : NO_CARD_DETAILS}
+        />
+      )}
       {block && <p className='text-xs text-muted-foreground'>{block}</p>}
       {refusal && (
         <p role='alert' className='text-sm text-destructive'>
