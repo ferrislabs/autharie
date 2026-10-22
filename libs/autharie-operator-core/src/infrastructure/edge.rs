@@ -260,6 +260,7 @@ mod tests {
                 webhooks: Vec::new(),
                 webhooks_revision: 0,
                 webhook_requests: Vec::new(),
+                agents: None,
                 restore: None,
                 organisation_id: "org".to_string(),
                 provider: IdentityProvider::Ferriskey,
