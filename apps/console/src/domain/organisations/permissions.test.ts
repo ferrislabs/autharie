@@ -264,6 +264,8 @@ describe('can', () => {
    */
   it('names the bits the platform declares', () => {
     expect(CAN).toEqual({
+      viewOrganisation: 0,
+      manageOrganisation: 1,
       viewInstances: 2,
       createInstances: 3,
       manageInstances: 4,

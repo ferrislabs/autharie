@@ -1,4 +1,5 @@
 {{- include "autharie-control-plane.validate" . -}}
+{{- include "autharie-control-plane.agentsValidate" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -40,6 +41,14 @@ spec:
               value: {{ .Values.log.json | quote }}
             - name: AUTH_ISSUER
               value: {{ .Values.auth.issuer | quote }}
+            {{- with .Values.auth.tokenIssuers }}
+            - name: AUTH_TOKEN_ISSUER
+              value: {{ join "," . | quote }}
+            {{- end }}
+            {{- with .Values.auth.audiences }}
+            - name: AUTH_AUDIENCE
+              value: {{ join "," . | quote }}
+            {{- end }}
             # Database
             - name: DATABASE_HOST
               value: {{ include "autharie-control-plane.postgresqlHost" . | quote }}

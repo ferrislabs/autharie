@@ -65,7 +65,7 @@ async fn a_new_inbox_starts_at_the_end_of_the_topic() {
         .await
         .unwrap()
         .into_iter()
-        .map(|report| report.deployment_id)
+        .map(|report| report.deployment_id())
         .collect();
 
     assert!(
@@ -94,13 +94,16 @@ async fn every_shard_sees_each_outcome_once() {
 
     for inbox in [&first, &second] {
         let seen = inbox.drain(1000).await.unwrap();
-        assert!(seen.iter().any(|report| report.deployment_id == deployment));
+        assert!(
+            seen.iter()
+                .any(|report| report.deployment_id() == deployment)
+        );
 
         let again = inbox.drain(1000).await.unwrap();
         assert!(
             !again
                 .iter()
-                .any(|report| report.deployment_id == deployment)
+                .any(|report| report.deployment_id() == deployment)
         );
     }
 }

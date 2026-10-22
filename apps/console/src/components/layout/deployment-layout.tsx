@@ -1,5 +1,6 @@
 import { Outlet, useParams } from '@tanstack/react-router'
 import {
+  Bot,
   Boxes,
   DatabaseBackup,
   LayoutGrid,
@@ -7,6 +8,7 @@ import {
   Radar,
   Settings,
   ShieldCheck,
+  Webhook,
 } from 'lucide-react'
 import { useGetDeployment } from '@/api/deployment.api'
 import { useDeploymentPath } from '@/domain/deployments/hooks/use-deployment-path'
@@ -44,6 +46,12 @@ export function DeploymentLayout() {
       : []),
     { label: 'Security', to: deploymentPath('/security'), icon: ShieldCheck },
     { label: 'Customization', to: deploymentPath('/customization'), icon: Palette },
+    ...(deployment.data?.data.kind === 'ferriskey'
+      ? [{ label: 'Webhooks', to: deploymentPath('/webhooks'), icon: Webhook }]
+      : []),
+    ...(deployment.data?.data.kind === 'ferriskey' && can(CAN.manageInstances)
+      ? [{ label: 'Agents', to: deploymentPath('/agents'), icon: Bot }]
+      : []),
     { label: 'Settings', to: deploymentPath('/settings'), icon: Settings },
   ]
 

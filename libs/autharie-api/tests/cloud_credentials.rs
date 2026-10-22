@@ -215,6 +215,8 @@ async fn forget(pool: &PgPool, tenant: &Tenant) {
 
 fn identity(sub: Uuid) -> Identity {
     Identity::User(User {
+        scopes: Vec::new(),
+        act: None,
         id: sub.to_string(),
         username: "owner".to_string(),
         email: None,

@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE agent_policies\n            SET name = $3,\n                description = $4,\n                enabled = $5,\n                rule = $6,\n                cedar = $7,\n                phase = $8,\n                message = $9,\n                desired_revision = $10,\n                updated_at = $11\n            WHERE deployment_id = $1 AND id = $2\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Text",
+        "Bool",
+        "Jsonb",
+        "Text",
+        "Text",
+        "Text",
+        "Int8",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b9f900de28b227cbbc98efbd21208cee85cb981e8c9bf5ec2ea77e4004c4db1e"
+}

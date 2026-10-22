@@ -33,6 +33,21 @@ spec:
       backendRefs:
         - name: {{ include "autharie-control-plane.fullname" . }}
           port: {{ .Values.controlPlane.server.port }}
+    {{- if .Values.agents.enabled }}
+    # The MCP endpoint and its protected resource metadata are the gateway's:
+    # it answers the 401 challenge, the metadata, and forwards what policy
+    # allows to autharie-mcp.
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /mcp
+        - path:
+            type: Exact
+            value: /.well-known/oauth-protected-resource/mcp
+      backendRefs:
+        - name: {{ include "autharie-control-plane.fullname" . }}-mcp-gateway
+          port: 8080
+    {{- end }}
     - matches:
         - path:
             type: PathPrefix

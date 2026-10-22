@@ -206,6 +206,13 @@ impl Plan {
         }
     }
 
+    pub fn max_webhooks(&self) -> usize {
+        match self {
+            Self::Free => 5,
+            Self::Starter | Self::Business | Self::Enterprise => 25,
+        }
+    }
+
     pub fn max_users(&self) -> usize {
         match self {
             Self::Free => 2,
@@ -281,6 +288,14 @@ impl OrganisationLimits {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_free_plan_holds_five_webhooks_and_every_paid_plan_twenty_five() {
+        assert_eq!(Plan::Free.max_webhooks(), 5);
+        for paid in [Plan::Starter, Plan::Business, Plan::Enterprise] {
+            assert_eq!(paid.max_webhooks(), 25);
+        }
+    }
 
     #[test]
     fn test_organisation_name_validation() {

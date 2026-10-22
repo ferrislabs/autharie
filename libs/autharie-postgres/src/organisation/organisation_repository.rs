@@ -35,6 +35,7 @@ struct OrganisationRow {
     max_instances: i32,
     max_users: i32,
     max_storage_gb: i32,
+    mcp_enabled: bool,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
     deleted_at: Option<DateTime<Utc>>,
@@ -55,6 +56,7 @@ impl OrganisationRow {
                 self.max_users as usize,
                 self.max_storage_gb as usize,
             ),
+            mcp_enabled: self.mcp_enabled,
             created_at: self.created_at,
             updated_at: self.updated_at,
             deleted_at: self.deleted_at,
@@ -165,6 +167,7 @@ impl OrganisationRepository for PostgresOrganisationRepository<'_> {
             status,
             plan: data.plan,
             limits: data.limits,
+            mcp_enabled: false,
             created_at: now,
             updated_at: now,
             deleted_at: None,
@@ -426,7 +429,7 @@ impl OrganisationRepository for PostgresOrganisationRepository<'_> {
                 OrganisationRow,
                 r#"
             SELECT id, name, slug, owner_id, status, plan,
-                   max_instances, max_users, max_storage_gb,
+                   max_instances, max_users, max_storage_gb, mcp_enabled,
                    created_at, updated_at, deleted_at
             FROM organisations
             WHERE id = $1
@@ -453,7 +456,7 @@ impl OrganisationRepository for PostgresOrganisationRepository<'_> {
                 OrganisationRow,
                 r#"
             SELECT id, name, slug, owner_id, status, plan,
-                   max_instances, max_users, max_storage_gb,
+                   max_instances, max_users, max_storage_gb, mcp_enabled,
                    created_at, updated_at, deleted_at
             FROM organisations
             WHERE slug = $1
@@ -477,7 +480,7 @@ impl OrganisationRepository for PostgresOrganisationRepository<'_> {
                 OrganisationRow,
                 r#"
             SELECT id, name, slug, owner_id, status, plan,
-                   max_instances, max_users, max_storage_gb,
+                   max_instances, max_users, max_storage_gb, mcp_enabled,
                    created_at, updated_at, deleted_at
             FROM organisations
             WHERE owner_id = $1
@@ -519,7 +522,7 @@ impl OrganisationRepository for PostgresOrganisationRepository<'_> {
                 OrganisationRow,
                 r#"
             SELECT o.id, o.name, o.slug, o.owner_id, o.status, o.plan,
-                   o.max_instances, o.max_users, o.max_storage_gb,
+                   o.max_instances, o.max_users, o.max_storage_gb, o.mcp_enabled,
                    o.created_at, o.updated_at, o.deleted_at
             FROM organisations o
             INNER JOIN members m ON o.id = m.organisation_id
@@ -557,7 +560,7 @@ impl OrganisationRepository for PostgresOrganisationRepository<'_> {
                 OrganisationRow,
                 r#"
             SELECT id, name, slug, owner_id, status, plan,
-                   max_instances, max_users, max_storage_gb,
+                   max_instances, max_users, max_storage_gb, mcp_enabled,
                    created_at, updated_at, deleted_at
             FROM organisations
             WHERE ($1::text IS NULL OR status = $1)
@@ -594,7 +597,8 @@ impl OrganisationRepository for PostgresOrganisationRepository<'_> {
                 max_users = $7,
                 max_storage_gb = $8,
                 updated_at = $9,
-                deleted_at = $10
+                deleted_at = $10,
+                mcp_enabled = $11
             WHERE id = $1
             "#,
                 organisation.id.0,
@@ -607,6 +611,7 @@ impl OrganisationRepository for PostgresOrganisationRepository<'_> {
                 organisation.limits.max_storage_gb as i32,
                 now,
                 organisation.deleted_at,
+                organisation.mcp_enabled,
             )
             .execute(&mut ***tx)
             .await
@@ -953,6 +958,7 @@ mod tests {
             max_instances: 5,
             max_users: 10,
             max_storage_gb: 20,
+            mcp_enabled: true,
             created_at: sample_time(),
             updated_at: sample_time(),
             deleted_at: None,
@@ -979,6 +985,7 @@ mod tests {
         assert_eq!(organisation.limits.max_instances, 5);
         assert_eq!(organisation.limits.max_users, 10);
         assert_eq!(organisation.limits.max_storage_gb, 20);
+        assert!(organisation.mcp_enabled);
         assert_eq!(organisation.created_at, sample_time());
         assert_eq!(organisation.updated_at, sample_time());
         assert!(organisation.deleted_at.is_none());
