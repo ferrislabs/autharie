@@ -588,6 +588,7 @@ export namespace Schemas {
     next_cursor?: (string | null) | undefined
   }
   export type ListBackupsResponse = { data: Array<Backup> }
+  export type ListCloudProvidersResponse = { data: Array<Provider> }
   export type ListDataplanesResponse = { data: Array<DataPlane> }
   export type ListDeploymentsForDataPlaneResponse = { data: Array<Deployment> }
   export type ListDeploymentsResponse = { data: Array<DeploymentView> }
@@ -950,6 +951,13 @@ export namespace Endpoints {
       body: string
     }
     response: Schemas.ProviderEventsResponse
+  }
+  export type get_List_cloud_providers_handler = {
+    method: 'GET'
+    path: '/cloud-providers'
+    requestFormat: 'json'
+    parameters: never
+    response: Schemas.ListCloudProvidersResponse
   }
   export type get_List_dataplanes_handler = {
     method: 'GET'
@@ -2044,6 +2052,7 @@ export type EndpointByMethod = {
     '/releases/operator/{kind}/{version}/rollout/preview': Endpoints.post_Preview_rollout_coverage_handler
   }
   get: {
+    '/cloud-providers': Endpoints.get_List_cloud_providers_handler
     '/dataplanes': Endpoints.get_List_dataplanes_handler
     '/dataplanes/{dataplane_id}': Endpoints.get_Get_dataplane_handler
     '/dataplanes/{dataplane_id}/deployments': Endpoints.get_List_deployments_for_dataplane_handler

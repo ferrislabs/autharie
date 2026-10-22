@@ -64,6 +64,19 @@ impl CloudProviders {
             verifier: Arc::new(ScalewayVerifier::new(config)?),
         }))
     }
+
+    /// The providers an organisation can register a credential for here.
+    ///
+    /// Empty when nothing is configured -- which is also what an installation
+    /// that asked for customer cloud and could not run it ends up with, so
+    /// this answers what the control plane can do, not what its environment
+    /// said.
+    pub fn providers(&self) -> Vec<Provider> {
+        match self {
+            Self::Unconfigured => Vec::new(),
+            Self::Fixed(_) | Self::Scaleway(_) => vec![Provider::Scaleway],
+        }
+    }
 }
 
 const UNCONFIGURED: &str = "no cloud provider is configured on this installation";
@@ -124,6 +137,19 @@ mod tests {
             offers: ProviderOffers::default(),
             verdict,
         })
+    }
+
+    #[test]
+    fn an_installation_without_a_provider_offers_none() {
+        assert!(CloudProviders::Unconfigured.providers().is_empty());
+    }
+
+    #[test]
+    fn an_installation_with_a_provider_offers_scaleway() {
+        assert_eq!(
+            fixed(FixedVerdict::Accept).providers(),
+            vec![Provider::Scaleway]
+        );
     }
 
     #[tokio::test]
