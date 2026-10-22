@@ -11,6 +11,7 @@ use herald_core::domain::ports::DeploymentResolver;
 use herald_core::domain::ports::GatewayCertificateSink;
 use herald_core::domain::ports::LogIndexSink;
 use herald_core::domain::ports::TraceIndexSink;
+use herald_core::domain::ports::WebhookDeliverySource;
 use herald_core::domain::ports::{ArchiveSource, ControlPlaneRepository, HeraldService};
 use herald_core::domain::services::HeraldServiceImpl;
 use herald_core::infrastructure::archives::kubernetes::KubeArchiveSource;
@@ -30,6 +31,7 @@ use herald_core::infrastructure::traces::pod_resolver::KubeDeploymentResolver;
 use herald_core::infrastructure::traces::quickwit::QuickwitTraceIndexSink;
 use herald_core::infrastructure::usage::ferriskey::FerriskeyUsageSource;
 use herald_core::infrastructure::usage::routing::ProductUsageSource;
+use herald_core::infrastructure::webhooks::kubernetes::KubeWebhookDeliverySource;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::task::JoinHandle;
 use tokio::time::interval;
@@ -212,6 +214,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .clone()
         .map(|url| Arc::new(QuickwitLogIndexSink::new(url)) as Arc<dyn LogIndexSink>);
 
+    let webhook_deliveries: Option<Arc<dyn WebhookDeliverySource>> =
+        if args.log_index.quickwit_url.is_some() {
+            Some(Arc::new(KubeWebhookDeliverySource::from_env().await?))
+        } else {
+            None
+        };
+
     let service = HeraldServiceImpl::new(
         control_plane,
         message_bus,
@@ -223,7 +232,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         shard_config,
     )
     .with_certificate_sink(certificate_sink)
-    .with_log_index(log_index);
+    .with_log_index(log_index)
+    .with_webhook_deliveries(webhook_deliveries);
 
     // Off unless at least one listen address and a Quickwit endpoint are set
     // -- a receiver with nowhere to ship what it accepts has nothing to
