@@ -114,6 +114,14 @@ COPY --from=builder /usr/local/src/autharie/target/release/genesis /usr/local/bi
 
 ENTRYPOINT [ "genesis" ]
 
+FROM runtime AS ferriskey-mcp
+
+COPY --from=builder /usr/local/src/autharie/target/release/ferriskey-mcp /usr/local/bin/
+
+EXPOSE 8080
+
+ENTRYPOINT [ "ferriskey-mcp" ]
+
 FROM runtime AS mcp
 
 COPY --from=builder /usr/local/src/autharie/target/release/autharie-mcp /usr/local/bin/
