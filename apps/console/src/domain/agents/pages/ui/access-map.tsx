@@ -10,6 +10,7 @@ import {
   Panel,
   Position,
   ReactFlow,
+  useNodesState,
   type ColorMode,
   type Connection,
   type Edge,
@@ -31,7 +32,7 @@ import {
   Users,
   Wrench,
 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import { EmptyState } from '@/components/layout/page'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -58,7 +59,7 @@ interface Props {
 
 type MapNodeData = AccessNodeData & { canManage: boolean }
 type HeaderData = { title: string; hint: string }
-type MapEdgeData = AccessEdgeData & { dimmed: boolean }
+type MapEdgeData = AccessEdgeData
 
 type MapNode = Node<MapNodeData, Column> | Node<HeaderData, 'header'>
 type MapEdge = Edge<MapEdgeData, 'access'>
@@ -105,19 +106,37 @@ function useColorMode(): ColorMode {
   return mode
 }
 
+interface Focus {
+  policies: Set<string> | null
+  nodes: Set<string>
+}
+
+const FocusContext = createContext<Focus>({ policies: null, nodes: new Set() })
+
+function useNodeDimmed(id: string): boolean {
+  const focus = useContext(FocusContext)
+  return focus.policies !== null && !focus.nodes.has(id)
+}
+
+function useEdgeDimmed(policyId: string | undefined): boolean {
+  const focus = useContext(FocusContext)
+  return focus.policies !== null && !focus.policies.has(policyId ?? '')
+}
+
 const HANDLE = 'size-2.5! border-2! border-background! bg-muted-foreground!'
 
 function AccessNodeCard({ id, data, left, right }: { id: string; data: MapNodeData; left: boolean; right: boolean }) {
   const autonomous = data.caption === 'acts on its own'
   const handle = cn(HANDLE, data.canManage && 'bg-primary!')
+  const dimmed = useNodeDimmed(id)
 
   return (
     <div
       className={cn(
-        'flex items-center gap-3 rounded-lg border bg-card px-3 py-2 text-card-foreground shadow-xs',
+        'flex items-center gap-3 rounded-lg border bg-card px-3 py-2 text-card-foreground shadow-xs transition-opacity',
         data.destructive && 'border-destructive/50',
       )}
-      style={{ width: NODE_WIDTH }}
+      style={{ width: NODE_WIDTH, opacity: dimmed ? 0.25 : 1 }}
     >
       {left && <Handle type='target' position={Position.Left} className={HANDLE} isConnectable={false} />}
       <div
@@ -186,10 +205,18 @@ function AccessEdgeView({
     targetPosition,
   })
   const color = data ? strokeOf(data) : MUTED
+  const dimmed = useEdgeDimmed(data?.policyId)
+  const resting = data?.enabled === false ? 0.7 : 1
 
   return (
     <>
-      <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} interactionWidth={24} />
+      <BaseEdge
+        id={id}
+        path={path}
+        markerEnd={markerEnd}
+        style={{ ...style, opacity: dimmed ? 0.15 : resting }}
+        interactionWidth={24}
+      />
       {data?.label && (
         <EdgeLabelRenderer>
           <div
@@ -200,7 +227,7 @@ function AccessEdgeView({
             style={{
               transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
               borderColor: color,
-              opacity: data.dimmed ? 0.2 : 1,
+              opacity: dimmed ? 0.2 : 1,
             }}
           >
             <Clock className='size-3' />
@@ -268,23 +295,26 @@ export function AccessMap({
   const [hovered, setHovered] = useState<string | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
 
-  const focus = hovered ?? selected
-  const active = useMemo(() => {
-    if (highlightPolicyIds) return new Set(highlightPolicyIds)
-    if (focus) return new Set(connectedPolicies(graph, focus))
-    return null
-  }, [graph, highlightPolicyIds, focus])
-
-  const nodes = useMemo(() => {
+  const focused = hovered ?? selected
+  const focus = useMemo<Focus>(() => {
+    const policyIds = highlightPolicyIds
+      ? new Set(highlightPolicyIds)
+      : focused
+        ? new Set(connectedPolicies(graph, focused))
+        : null
     const touched = new Set<string>()
-    if (active) {
+    if (policyIds) {
       for (const edge of graph.edges) {
-        if (active.has(edge.data.policyId)) {
+        if (policyIds.has(edge.data.policyId)) {
           touched.add(edge.source)
           touched.add(edge.target)
         }
       }
     }
+    return { policies: policyIds, nodes: touched }
+  }, [graph, highlightPolicyIds, focused])
+
+  const layout = useMemo(() => {
     const columns: Column[] = ['who', 'agent', 'what']
     const headers: MapNode[] = columns.map((column) => ({
       id: `header:${column}`,
@@ -302,31 +332,29 @@ export function AccessMap({
       position: node.position,
       data: { ...node.data, canManage },
       draggable: false,
-      className: 'transition-opacity',
-      style: { opacity: active && !touched.has(node.id) ? 0.25 : 1 },
     })) as MapNode[]
     return [...headers, ...cards]
-  }, [graph, active, canManage])
+  }, [graph, canManage])
+
+  const [nodes, setNodes, onNodesChange] = useNodesState<MapNode>(layout)
+  useEffect(() => setNodes(layout), [layout, setNodes])
 
   const edges = useMemo<MapEdge[]>(
     () =>
       graph.edges.map((edge) => {
-        const dimmed = active !== null && !active.has(edge.data.policyId)
         const color = strokeOf(edge.data)
         return {
           ...edge,
-          data: { ...edge.data, dimmed },
           markerEnd: { type: MarkerType.ArrowClosed, color, width: 16, height: 16 },
           style: {
             stroke: color,
             strokeWidth: edge.data.enabled ? 2.5 : 2,
             strokeDasharray: edge.data.enabled ? undefined : '6 5',
-            opacity: dimmed ? 0.15 : edge.data.enabled ? 1 : 0.7,
             cursor: 'pointer',
           },
         }
       }),
-    [graph, active],
+    [graph],
   )
 
   const structure = useMemo(() => graph.nodes.map((node) => node.id).join('|'), [graph])
@@ -367,35 +395,38 @@ export function AccessMap({
     <div className='space-y-4'>
       {graph.nodes.length > 0 ? (
         <div className='h-[560px] w-full overflow-hidden rounded-lg border bg-background'>
-          <ReactFlow
-            key={structure}
-            nodes={nodes}
-            edges={edges}
-            nodeTypes={NODE_TYPES}
-            edgeTypes={EDGE_TYPES}
-            colorMode={colorMode}
-            fitView
-            fitViewOptions={{ padding: 0.12 }}
-            minZoom={0.3}
-            nodesDraggable={false}
-            nodesConnectable={canManage}
-            elementsSelectable
-            zoomOnScroll={false}
-            preventScrolling={false}
-            isValidConnection={isValidConnection}
-            onConnect={connect}
-            onEdgeClick={(_, edge) => editEdge(edge.data?.policyId ?? '')}
-            onNodeMouseEnter={(_, node) => node.type !== 'header' && setHovered(node.id)}
-            onNodeMouseLeave={() => setHovered(null)}
-            onNodeClick={(_, node) => setSelected(node.type === 'header' ? null : node.id)}
-            onPaneClick={() => setSelected(null)}
-          >
-            <Background gap={20} />
-            <Controls showInteractive={false} />
-            <Panel position='bottom-right'>
-              <Legend />
-            </Panel>
-          </ReactFlow>
+          <FocusContext.Provider value={focus}>
+            <ReactFlow
+              key={structure}
+              nodes={nodes}
+              onNodesChange={onNodesChange}
+              edges={edges}
+              nodeTypes={NODE_TYPES}
+              edgeTypes={EDGE_TYPES}
+              colorMode={colorMode}
+              fitView
+              fitViewOptions={{ padding: 0.12 }}
+              minZoom={0.3}
+              nodesDraggable={false}
+              nodesConnectable={canManage}
+              elementsSelectable
+              zoomOnScroll={false}
+              preventScrolling={false}
+              isValidConnection={isValidConnection}
+              onConnect={connect}
+              onEdgeClick={(_, edge) => editEdge(edge.data?.policyId ?? '')}
+              onNodeMouseEnter={(_, node) => node.type !== 'header' && setHovered(node.id)}
+              onNodeMouseLeave={() => setHovered(null)}
+              onNodeClick={(_, node) => setSelected(node.type === 'header' ? null : node.id)}
+              onPaneClick={() => setSelected(null)}
+            >
+              <Background gap={20} />
+              <Controls showInteractive={false} />
+              <Panel position='bottom-right'>
+                <Legend />
+              </Panel>
+            </ReactFlow>
+          </FocusContext.Provider>
         </div>
       ) : (
         <p className='rounded-lg border bg-muted/30 px-4 py-6 text-center text-sm text-muted-foreground'>
