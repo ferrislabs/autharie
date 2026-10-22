@@ -243,6 +243,7 @@ mod tests {
             client_id: "herald-service-lookalike".to_string(),
             roles: vec![],
             scopes: vec![],
+            act: None,
         })
     }
 

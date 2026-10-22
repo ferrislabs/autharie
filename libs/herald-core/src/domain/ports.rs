@@ -4,7 +4,9 @@ use crate::domain::entities::certificate::ReceivedCertificate;
 use crate::domain::entities::dataplane::DataPlaneId;
 use crate::domain::entities::deployment::{Deployment, DeploymentId};
 use crate::domain::entities::logs::{Ending, LogLine, LogStreamRequest, OrganisationId};
-use crate::domain::entities::outcome::{AgentsOutcome, DeploymentOutcomeReport, InboundOutcome};
+use crate::domain::entities::outcome::{
+    AgentsOutcome, DeploymentOutcomeReport, InboundOutcome, WebhooksOutcome,
+};
 use crate::domain::entities::usage::{CounterSample, UsagePoint, UsageTarget};
 use crate::domain::error::HeraldError;
 use crate::domain::log_index::LogIndexDocument;
@@ -98,6 +100,12 @@ pub trait ControlPlaneRepository: Send + Sync {
         &self,
         dp_id: &DataPlaneId,
         report: &DeploymentOutcomeReport,
+    ) -> impl Future<Output = Result<(), HeraldError>> + Send;
+
+    fn report_webhooks_outcome(
+        &self,
+        dp_id: &DataPlaneId,
+        outcome: &WebhooksOutcome,
     ) -> impl Future<Output = Result<(), HeraldError>> + Send;
 
     fn report_agents_outcome(
@@ -213,6 +221,15 @@ pub trait LogIndexSink: Send + Sync {
         organisation_id: OrganisationId,
         documents: Vec<LogIndexDocument>,
     ) -> std::pin::Pin<Box<dyn Future<Output = Result<(), HeraldError>> + Send + 'a>>;
+}
+
+#[cfg_attr(test, mockall::automock)]
+pub trait WebhookDeliverySource: Send + Sync {
+    fn read<'a>(
+        &'a self,
+        namespace: String,
+        config_map: String,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<Option<String>, HeraldError>> + Send + 'a>>;
 }
 
 /// Ships a batch of spans, already attributed to one organisation, to that

@@ -18,6 +18,14 @@ pub enum Audience {
     Multiple(Vec<String>),
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Actor {
+    #[serde(default)]
+    pub sub: Option<String>,
+    #[serde(default)]
+    pub client_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
     pub sub: Subject,
@@ -33,6 +41,9 @@ pub struct Claims {
     pub family_name: Option<String>,
     pub scope: String,
     pub client_id: Option<String>,
+
+    #[serde(default)]
+    pub act: Option<Actor>,
 
     #[serde(default)]
     pub realm_access: Option<RealmAccess>,
@@ -53,6 +64,10 @@ impl Claims {
             .as_ref()
             .map_or(&[], |access| &access.roles)
     }
+
+    pub fn scopes(&self) -> Vec<String> {
+        self.scope.split_whitespace().map(str::to_string).collect()
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -63,7 +78,7 @@ pub struct Jwt {
 
 #[cfg(test)]
 mod tests {
-    use crate::domain::models::claims::{Audience, Claims, Role, Scope, Subject};
+    use crate::domain::models::claims::{Actor, Audience, Claims, Role, Scope, Subject};
 
     #[test]
     fn test_subject_deserialize_from_json() {
@@ -201,5 +216,37 @@ mod tests {
                 "account".to_string()
             ]))
         );
+    }
+
+    #[test]
+    fn the_act_claim_is_parsed() {
+        let claims: Claims = serde_json::from_str(
+            r#"{"sub":"u","iss":"i","scope":"openid","act":{"sub":"gateway","client_id":"mcp-gateway"}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            claims.act,
+            Some(Actor {
+                sub: Some("gateway".to_string()),
+                client_id: Some("mcp-gateway".to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn an_empty_act_object_still_marks_the_token_delegated() {
+        let claims: Claims =
+            serde_json::from_str(r#"{"sub":"u","iss":"i","scope":"openid","act":{}}"#).unwrap();
+
+        assert_eq!(claims.act, Some(Actor::default()));
+    }
+
+    #[test]
+    fn a_token_without_act_is_not_delegated() {
+        let claims: Claims =
+            serde_json::from_str(r#"{"sub":"u","iss":"i","scope":"openid"}"#).unwrap();
+
+        assert!(claims.act.is_none());
     }
 }

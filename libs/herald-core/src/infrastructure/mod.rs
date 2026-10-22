@@ -8,3 +8,4 @@ pub mod logs;
 pub mod message_bus;
 pub mod traces;
 pub mod usage;
+pub mod webhooks;

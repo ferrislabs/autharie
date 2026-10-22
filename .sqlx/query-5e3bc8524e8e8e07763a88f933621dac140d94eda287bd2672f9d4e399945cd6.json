@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT o.id, o.name, o.slug, o.owner_id, o.status, o.plan,\n                   o.max_instances, o.max_users, o.max_storage_gb,\n                   o.created_at, o.updated_at, o.deleted_at\n            FROM organisations o\n            INNER JOIN members m ON o.id = m.organisation_id\n            WHERE m.user_id = $1\n            ORDER BY o.created_at DESC\n            ",
+  "query": "\n            SELECT id, name, slug, owner_id, status, plan,\n                   max_instances, max_users, max_storage_gb, mcp_enabled,\n                   created_at, updated_at, deleted_at\n            FROM organisations\n            WHERE id = $1\n            ",
   "describe": {
     "columns": [
       {
@@ -50,16 +50,21 @@
       },
       {
         "ordinal": 9,
+        "name": "mcp_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 10,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 10,
+        "ordinal": 11,
         "name": "updated_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 11,
+        "ordinal": 12,
         "name": "deleted_at",
         "type_info": "Timestamptz"
       }
@@ -81,8 +86,9 @@
       false,
       false,
       false,
+      false,
       true
     ]
   },
-  "hash": "83e5c872ed4a1f4749b53acdad535db6cc921b04d14e6ae8cd6ffab76f3fbd17"
+  "hash": "5e3bc8524e8e8e07763a88f933621dac140d94eda287bd2672f9d4e399945cd6"
 }

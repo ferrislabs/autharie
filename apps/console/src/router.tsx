@@ -25,9 +25,11 @@ import PageAutomaticUpgradesFeature from './domain/upgrades/pages/feature/page-a
 import PageAcceptInvitationFeature from './domain/organisations/pages/feature/page-accept-invitation-feature'
 import PageMembersFeature from './domain/organisations/pages/feature/page-members-feature'
 import PageRolesFeature from './domain/organisations/pages/feature/page-roles-feature'
+import PageOrganisationSettingsFeature from './domain/organisations/pages/feature/page-organisation-settings-feature'
 import PageBillingFeature from './domain/billing/pages/feature/page-billing-feature'
 import PageBrandingFeature from './domain/deployments/pages/feature/page-branding-feature'
 import PageNetworkAccessFeature from './domain/deployments/pages/feature/page-network-access-feature'
+import PageAgentsFeature from './domain/agents/pages/feature/page-agents-feature'
 import PageBackupsFeature from './domain/backups/pages/feature/page-backups-feature'
 import PageEstateFeature from './domain/platform/pages/feature/page-estate-feature'
 import PageOverviewFeature from './domain/platform/pages/feature/page-overview-feature'
@@ -77,6 +79,12 @@ const rolesRoute = createRoute({
   getParentRoute: () => appLayoutRoute,
   path: '/roles',
   component: PageRolesFeature,
+})
+
+const organisationSettingsRoute = createRoute({
+  getParentRoute: () => appLayoutRoute,
+  path: '/settings',
+  component: PageOrganisationSettingsFeature,
 })
 
 const billingRoute = createRoute({
@@ -166,6 +174,12 @@ const deploymentCustomizationRoute = createRoute({
   getParentRoute: () => deploymentTabLayoutRoute,
   path: '/customization',
   component: PageBrandingFeature,
+})
+
+const deploymentAgentsRoute = createRoute({
+  getParentRoute: () => deploymentTabLayoutRoute,
+  path: '/agents',
+  component: PageAgentsFeature,
 })
 
 const deploymentSettingsLayoutRoute = createRoute({
@@ -344,6 +358,7 @@ const routeTree = rootRoute.addChildren([
     membersRoute,
     rolesRoute,
     billingRoute,
+    organisationSettingsRoute,
   ]),
   deploymentLayoutRoute.addChildren([
     deploymentOverviewRoute,
@@ -366,6 +381,7 @@ const routeTree = rootRoute.addChildren([
       deploymentBackupsRoute,
       deploymentSecurityRoute,
       deploymentCustomizationRoute,
+      deploymentAgentsRoute,
     ]),
   ]),
   platformLayoutRoute.addChildren([

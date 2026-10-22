@@ -67,6 +67,7 @@ pub struct Organisation {
     pub status: OrganisationStatus,
     pub plan: Plan,
     pub limits: OrganisationLimits,
+    pub mcp_enabled: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub deleted_at: Option<DateTime<Utc>>,
@@ -91,6 +92,7 @@ impl Organisation {
             status: OrganisationStatus::Active,
             plan,
             limits,
+            mcp_enabled: false,
             created_at: now,
             updated_at: now,
             deleted_at: None,
@@ -115,6 +117,7 @@ impl Organisation {
             status: OrganisationStatus::Active,
             plan,
             limits,
+            mcp_enabled: false,
             created_at: now,
             updated_at: now,
             deleted_at: None,
@@ -180,6 +183,11 @@ impl Organisation {
     pub fn update_name(&mut self, name: OrganisationName, slug: OrganisationSlug) {
         self.name = name;
         self.slug = slug;
+        self.updated_at = Utc::now();
+    }
+
+    pub fn set_mcp_enabled(&mut self, enabled: bool) {
+        self.mcp_enabled = enabled;
         self.updated_at = Utc::now();
     }
 
