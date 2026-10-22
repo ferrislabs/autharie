@@ -327,7 +327,14 @@ async fn a_registered_credential_is_returned_without_its_secret_spec_ccp_1() {
     keys.sort();
     assert_eq!(
         keys,
-        ["created_at", "id", "label", "provider", "scope_checked_at"]
+        [
+            "application_name",
+            "created_at",
+            "id",
+            "label",
+            "provider",
+            "scope_checked_at"
+        ]
     );
     assert_eq!(created["provider"], "scaleway");
     assert_eq!(created["label"], "production");
