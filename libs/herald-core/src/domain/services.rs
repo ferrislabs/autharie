@@ -2,10 +2,13 @@ use crate::domain::deployment_registry::DeploymentRegistry;
 use crate::domain::entities::action::{AckFailure, Action, ActionEvent, ActionFailureReason};
 use crate::domain::entities::certificate::ReceivedCertificate;
 use crate::domain::entities::dataplane::DataPlaneId;
+use crate::domain::entities::deployment::DeploymentKind;
 use crate::domain::entities::deployment::{Deployment, DeploymentId};
 use crate::domain::entities::logs::{LOG_ACTION_TYPE, LogSessionId, LogStreamRequest};
+use crate::domain::entities::outcome::{InboundOutcome, WEBHOOKS_KIND};
 use crate::domain::entities::shard::ShardConfig;
 use crate::domain::error::HeraldError;
+use crate::domain::log_index::LogIndexDocument;
 use crate::domain::log_session::run_log_session;
 use crate::domain::log_shipping::run_continuous_log_shipping;
 use crate::domain::outcome_reconciliation::{
@@ -14,8 +17,10 @@ use crate::domain::outcome_reconciliation::{
 use crate::domain::ports::{
     ControlPlaneRepository, GatewayCertificateSink, HeraldService, InstanceStateSource,
     LogIndexSink, MessageBusRepository, OutcomeInboxRepository, PodLogSource, UsageSource,
+    WebhookDeliverySource,
 };
 use crate::domain::usage_collector::UsageCollector;
+use crate::domain::webhook_deliveries::{DeliveryLedger, parse_deliveries};
 use chrono::Utc;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -73,6 +78,10 @@ where
     /// -- the same shape as `certificate_sink` above.
     log_index: Option<Arc<dyn LogIndexSink>>,
 
+    webhook_deliveries: Option<Arc<dyn WebhookDeliverySource>>,
+
+    delivery_ledger: Mutex<DeliveryLedger>,
+
     /// The fingerprint of whatever `certificate_sink` last wrote
     /// successfully. `None` at startup -- a Herald that just restarted asks
     /// for the certificate once more and writes exactly what it already had,
@@ -122,6 +131,8 @@ where
             shard_config,
             certificate_sink: None,
             log_index: None,
+            webhook_deliveries: None,
+            delivery_ledger: Mutex::new(DeliveryLedger::default()),
             known_certificate_fingerprint: Mutex::new(None),
             deployment_registry: DeploymentRegistry::new(),
         }
@@ -149,6 +160,15 @@ where
     #[must_use]
     pub fn with_log_index(mut self, sink: Option<Arc<dyn LogIndexSink>>) -> Self {
         self.log_index = sink;
+        self
+    }
+
+    #[must_use]
+    pub fn with_webhook_deliveries(
+        mut self,
+        source: Option<Arc<dyn WebhookDeliverySource>>,
+    ) -> Self {
+        self.webhook_deliveries = source;
         self
     }
 
@@ -219,7 +239,36 @@ where
             }
         };
 
-        for report in reports {
+        for outcome in reports {
+            let report = match outcome {
+                InboundOutcome::Report(report) => report,
+                InboundOutcome::Webhooks(outcome) => {
+                    let counts = outcome.counts();
+                    match self
+                        .control_plane
+                        .report_webhooks_outcome(&self.dataplane_id, &outcome)
+                        .await
+                    {
+                        Ok(()) => info!(
+                            deployment_id = %outcome.deployment_id(),
+                            kind = WEBHOOKS_KIND,
+                            webhooks = counts.webhooks,
+                            secrets = counts.secrets,
+                            realms = counts.realms,
+                            requests = counts.requests,
+                            "relayed a webhooks outcome"
+                        ),
+                        Err(err) => warn!(
+                            %err,
+                            deployment_id = %outcome.deployment_id(),
+                            kind = WEBHOOKS_KIND,
+                            "failed to report a webhooks outcome"
+                        ),
+                    }
+                    continue;
+                }
+            };
+
             // A drill's result (#185) is never mistaken for a deployment
             // lifecycle transition: it goes to its own endpoint, which is
             // the control plane's guarantee that a drill can never move a
@@ -242,6 +291,70 @@ where
                     "failed to report an outcome"
                 );
             }
+        }
+    }
+
+    async fn ship_webhook_deliveries(&self, owned: &[Deployment]) {
+        let (Some(source), Some(sink)) = (&self.webhook_deliveries, &self.log_index) else {
+            return;
+        };
+
+        let mut ledger = self.delivery_ledger.lock().await;
+        ledger.retain(&owned.iter().map(|d| d.id.clone()).collect());
+
+        for deployment in owned {
+            let (Some(DeploymentKind::Ferriskey), Some(namespace)) =
+                (deployment.kind, deployment.namespace.as_deref())
+            else {
+                continue;
+            };
+
+            let config_map = format!("deployment-{}-webhook-deliveries", deployment.id);
+
+            let raw = match source.read(namespace.to_string(), config_map).await {
+                Ok(Some(raw)) => raw,
+                Ok(None) => continue,
+                Err(err) => {
+                    warn!(%err, deployment_id = %deployment.id, "could not read the webhook deliveries");
+                    continue;
+                }
+            };
+
+            let current = match parse_deliveries(&raw) {
+                Ok(current) => current,
+                Err(err) => {
+                    warn!(%err, deployment_id = %deployment.id, "the webhook deliveries are malformed; skipping them");
+                    continue;
+                }
+            };
+
+            let documents: Vec<LogIndexDocument> = ledger
+                .unshipped(&deployment.id, &current)
+                .into_iter()
+                .map(|delivery| {
+                    LogIndexDocument::from_delivery(
+                        &deployment.organisation_id,
+                        &deployment.id,
+                        delivery,
+                    )
+                })
+                .collect();
+
+            if documents.is_empty() {
+                continue;
+            }
+
+            let count = documents.len();
+            let shipped = sink
+                .ship(deployment.organisation_id.clone(), documents)
+                .await;
+
+            if let Err(err) = &shipped {
+                warn!(%err, deployment_id = %deployment.id, "failed to ship webhook deliveries; they will be sent again next cycle");
+            } else {
+                info!(deployment_id = %deployment.id, count, "shipped webhook deliveries");
+            }
+            ledger.settle(&deployment.id, &current, shipped.is_ok());
         }
     }
 
@@ -546,6 +659,8 @@ where
         // here too, not linger for whatever a stale entry would let through.
         self.deployment_registry.replace(&owned).await;
 
+        self.ship_webhook_deliveries(&owned).await;
+
         let owned_ids: Vec<DeploymentId> = owned
             .iter()
             .map(|deployment| deployment.id.clone())
@@ -848,13 +963,16 @@ mod tests {
         let mut outcomes = MockOutcomeInboxRepository::new();
         outcomes.expect_drain().times(1).returning(move |_| {
             Box::pin(async move {
-                Ok(vec![DeploymentOutcomeReport {
-                    version: None,
-                    deployment_id,
-                    outcome: "deleted".to_string(),
-                    duration_seconds: None,
-                    reason: None,
-                }])
+                Ok(vec![
+                    DeploymentOutcomeReport {
+                        version: None,
+                        deployment_id,
+                        outcome: "deleted".to_string(),
+                        duration_seconds: None,
+                        reason: None,
+                    }
+                    .into(),
+                ])
             })
         });
 
@@ -904,13 +1022,16 @@ mod tests {
         let mut outcomes = MockOutcomeInboxRepository::new();
         outcomes.expect_drain().times(1).returning(move |_| {
             Box::pin(async move {
-                Ok(vec![DeploymentOutcomeReport {
-                    version: None,
-                    deployment_id,
-                    outcome: "drill_succeeded".to_string(),
-                    duration_seconds: Some(212),
-                    reason: None,
-                }])
+                Ok(vec![
+                    DeploymentOutcomeReport {
+                        version: None,
+                        deployment_id,
+                        outcome: "drill_succeeded".to_string(),
+                        duration_seconds: Some(212),
+                        reason: None,
+                    }
+                    .into(),
+                ])
             })
         });
 
@@ -966,11 +1087,9 @@ mod tests {
         let recorded: Arc<std::sync::Mutex<Vec<DeploymentOutcomeReport>>> = Arc::default();
 
         let mut outcomes = MockOutcomeInboxRepository::new();
-        let mut queued = Some(vec![DeploymentOutcomeReport::observed(
-            deployment_id,
-            "deleted",
-            None,
-        )]);
+        let mut queued = Some(vec![
+            DeploymentOutcomeReport::observed(deployment_id, "deleted", None).into(),
+        ]);
         outcomes.expect_drain().returning(move |_| {
             let drained = queued.take().unwrap_or_default();
             Box::pin(async move { Ok(drained) })
@@ -1284,13 +1403,16 @@ mod tests {
         let mut outcomes = MockOutcomeInboxRepository::new();
         outcomes.expect_drain().returning(|_| {
             Box::pin(async {
-                Ok(vec![DeploymentOutcomeReport {
-                    version: None,
-                    deployment_id: Uuid::new_v4(),
-                    outcome: "deleted".to_string(),
-                    duration_seconds: None,
-                    reason: None,
-                }])
+                Ok(vec![
+                    DeploymentOutcomeReport {
+                        version: None,
+                        deployment_id: Uuid::new_v4(),
+                        outcome: "deleted".to_string(),
+                        duration_seconds: None,
+                        reason: None,
+                    }
+                    .into(),
+                ])
             })
         });
 

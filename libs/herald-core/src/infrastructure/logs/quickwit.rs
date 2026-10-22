@@ -193,6 +193,7 @@ mod tests {
             level: "info".to_string(),
             fingerprint: crate::domain::log_index::fingerprint(message),
             message: message.to_string(),
+            delivery: None,
         }
     }
 

@@ -4,7 +4,7 @@ use crate::domain::entities::certificate::ReceivedCertificate;
 use crate::domain::entities::dataplane::DataPlaneId;
 use crate::domain::entities::deployment::{Deployment, DeploymentId};
 use crate::domain::entities::logs::{Ending, LogLine, LogStreamRequest, OrganisationId};
-use crate::domain::entities::outcome::DeploymentOutcomeReport;
+use crate::domain::entities::outcome::{DeploymentOutcomeReport, InboundOutcome, WebhooksOutcome};
 use crate::domain::entities::usage::{CounterSample, UsagePoint, UsageTarget};
 use crate::domain::error::HeraldError;
 use crate::domain::log_index::LogIndexDocument;
@@ -98,6 +98,12 @@ pub trait ControlPlaneRepository: Send + Sync {
         &self,
         dp_id: &DataPlaneId,
         report: &DeploymentOutcomeReport,
+    ) -> impl Future<Output = Result<(), HeraldError>> + Send;
+
+    fn report_webhooks_outcome(
+        &self,
+        dp_id: &DataPlaneId,
+        outcome: &WebhooksOutcome,
     ) -> impl Future<Output = Result<(), HeraldError>> + Send;
 
     /// Carries what a drill (#185) proved, or did not.
@@ -209,6 +215,15 @@ pub trait LogIndexSink: Send + Sync {
     ) -> std::pin::Pin<Box<dyn Future<Output = Result<(), HeraldError>> + Send + 'a>>;
 }
 
+#[cfg_attr(test, mockall::automock)]
+pub trait WebhookDeliverySource: Send + Sync {
+    fn read<'a>(
+        &'a self,
+        namespace: String,
+        config_map: String,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<Option<String>, HeraldError>> + Send + 'a>>;
+}
+
 /// Ships a batch of spans, already attributed to one organisation, to that
 /// organisation's own trace index (`traces-{organisation_id}`) -- the exact
 /// counterpart to [`LogIndexSink`], holding the same "off entirely when
@@ -316,7 +331,7 @@ pub trait OutcomeInboxRepository: Send + Sync {
     fn drain(
         &self,
         limit: usize,
-    ) -> impl Future<Output = Result<Vec<DeploymentOutcomeReport>, HeraldError>> + Send;
+    ) -> impl Future<Output = Result<Vec<InboundOutcome>, HeraldError>> + Send;
 }
 
 #[cfg_attr(test, mockall::automock)]
