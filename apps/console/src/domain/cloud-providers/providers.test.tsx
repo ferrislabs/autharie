@@ -9,6 +9,7 @@ describe('the providers a credential can be created for', () => {
     const markup = renderToStaticMarkup(<Logo className='h-4 w-4' />)
 
     expect(PROVIDERS.map((provider) => provider.id)).toEqual(['scaleway'])
+    expect(scaleway.description).not.toBe('')
     expect(markup).toContain('aria-label="Scaleway"')
     expect(markup).toContain('viewBox="0 0 24 24"')
     expect(markup).toContain('<path d="')

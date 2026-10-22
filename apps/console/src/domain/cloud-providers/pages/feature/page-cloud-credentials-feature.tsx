@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useResolvedOrganisationId } from '@/domain/organisations/hooks/use-resolved-organisation-id'
-import { deletionRefusal } from '../../credentials'
+import { deletionRefusal, isCustomerCloudOff } from '../../credentials'
 import {
   useDeleteCloudCredential,
   useGetCloudCredentials,
@@ -14,6 +14,7 @@ export default function PageCloudCredentialsFeature() {
   const register = useRegisterCloudCredential()
   const remove = useDeleteCloudCredential()
   const [registerRefusal, setRegisterRefusal] = useState<string>()
+  const [unavailable, setUnavailable] = useState<string>()
 
   return (
     <PageCloudCredentials
@@ -21,19 +22,28 @@ export default function PageCloudCredentialsFeature() {
       isLoading={credentials.isLoading}
       isSaving={register.isPending || remove.isPending}
       registerRefusal={registerRefusal}
+      unavailable={unavailable}
       deleteRefusal={deletionRefusal(remove.error)}
-      onRegister={(request, onRegistered) => {
+      onRegister={(request, onDone) => {
         if (!organisationId || register.isPending) return
         remove.reset()
         setRegisterRefusal(undefined)
+        setUnavailable(undefined)
         register.mutate(
           {
             path: { organisation_id: organisationId },
             body: request,
           },
           {
-            onSuccess: onRegistered,
-            onError: (error) => setRegisterRefusal(error.message),
+            onSuccess: onDone,
+            onError: (error) => {
+              if (isCustomerCloudOff(error)) {
+                setUnavailable(error.message)
+                onDone()
+              } else {
+                setRegisterRefusal(error.message)
+              }
+            },
             onSettled: () => register.reset(),
           }
         )

@@ -7,11 +7,13 @@ export interface CredentialField {
   label: string
   placeholder?: string
   masked?: boolean
+  wide?: boolean
 }
 
 export interface ProviderDefinition {
   id: Provider
   label: string
+  description: string
   icon: ComponentType<SVGProps<SVGSVGElement>>
   fields: CredentialField[]
   secretKeys: string[]
@@ -22,9 +24,10 @@ export const PROVIDERS: ProviderDefinition[] = [
   {
     id: 'scaleway',
     label: 'Scaleway',
+    description: 'Run your clusters in your own Scaleway project.',
     icon: ScalewayLogo,
     fields: [
-      { id: 'name', label: 'Name', placeholder: 'Scaleway production' },
+      { id: 'name', label: 'Name', placeholder: 'Scaleway production', wide: true },
       { id: 'access_key', label: 'Access key', placeholder: 'SCWXXXXXXXXXXXXXXXXX' },
       { id: 'secret_key', label: 'Secret access key', masked: true },
       { id: 'organization_id', label: 'Organization id' },
