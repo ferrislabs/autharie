@@ -1,4 +1,8 @@
-use std::{collections::HashMap, sync::Mutex, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex, RwLock},
+    time::Duration,
+};
 
 use reqwest::Client;
 use serde_json::Value;
@@ -151,25 +155,46 @@ fn split_host(host: &str) -> (&str, Option<u16>) {
 }
 
 pub struct Routes {
-    upstreams: Vec<Upstream>,
+    upstreams: RwLock<Arc<Vec<Arc<Upstream>>>>,
 }
 
 impl Routes {
     pub fn new(upstreams: Vec<Upstream>) -> Self {
-        Self { upstreams }
+        Self {
+            upstreams: RwLock::new(Arc::new(upstreams.into_iter().map(Arc::new).collect())),
+        }
     }
 
-    pub fn for_resource(&self, host: &str, path: &str) -> Option<&Upstream> {
-        self.upstreams
+    pub fn replace(&self, upstreams: Vec<Upstream>) {
+        let next = Arc::new(upstreams.into_iter().map(Arc::new).collect());
+        *self.upstreams.write().unwrap_or_else(|e| e.into_inner()) = next;
+    }
+
+    pub fn len(&self) -> usize {
+        self.snapshot().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    fn snapshot(&self) -> Arc<Vec<Arc<Upstream>>> {
+        Arc::clone(&self.upstreams.read().unwrap_or_else(|e| e.into_inner()))
+    }
+
+    pub fn for_resource(&self, host: &str, path: &str) -> Option<Arc<Upstream>> {
+        self.snapshot()
             .iter()
             .filter(|u| u.matches_host(host) && u.serves_path(path))
             .max_by_key(|u| u.path.len())
+            .cloned()
     }
 
-    pub fn for_metadata(&self, host: &str, path: &str) -> Option<&Upstream> {
-        self.upstreams
+    pub fn for_metadata(&self, host: &str, path: &str) -> Option<Arc<Upstream>> {
+        self.snapshot()
             .iter()
             .find(|u| u.matches_host(host) && u.metadata_path == path)
+            .cloned()
     }
 }
 

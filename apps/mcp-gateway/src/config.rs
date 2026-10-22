@@ -61,6 +61,7 @@ pub struct GatewayConfig {
     pub jwks_refresh_secs: u64,
     #[serde(default = "default_pdp_timeout_ms")]
     pub pdp_timeout_ms: u64,
+    #[serde(default)]
     pub upstreams: Vec<UpstreamConfig>,
 }
 
@@ -80,8 +81,6 @@ fn default_pdp_timeout_ms() -> u64 {
 pub enum ConfigError {
     #[error("configuration unreadable: {0}")]
     Parse(String),
-    #[error("no upstream configured")]
-    NoUpstream,
     #[error("upstream {server}: {field} is not a valid {expected}")]
     Invalid {
         server: String,
@@ -103,9 +102,6 @@ impl GatewayConfig {
     }
 
     fn validate(&self) -> Result<(), ConfigError> {
-        if self.upstreams.is_empty() {
-            return Err(ConfigError::NoUpstream);
-        }
         let mut seen = HashSet::new();
         for upstream in &self.upstreams {
             upstream.validate()?;
@@ -239,11 +235,14 @@ mod tests {
     }
 
     #[test]
-    fn no_upstream_is_refused() {
-        assert_eq!(
-            GatewayConfig::from_toml("upstreams = []").unwrap_err(),
-            ConfigError::NoUpstream
+    fn no_upstream_is_valid() {
+        assert!(
+            GatewayConfig::from_toml("upstreams = []")
+                .unwrap()
+                .upstreams
+                .is_empty()
         );
+        assert!(GatewayConfig::from_toml("").unwrap().upstreams.is_empty());
     }
 
     #[test]

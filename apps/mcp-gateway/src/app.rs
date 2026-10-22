@@ -63,6 +63,11 @@ impl<S> AppState<S> {
     pub fn new(gateway: Gateway<S>) -> Self {
         Self(Arc::new(gateway))
     }
+
+    pub fn reload(&self, config: crate::config::GatewayConfig) -> Result<(), crate::BuildError> {
+        self.0.routes.replace(crate::build_upstreams(config)?);
+        Ok(())
+    }
 }
 
 pub fn router<S>(state: AppState<S>) -> Router
@@ -419,11 +424,11 @@ where
     };
 
     let Some(token) = bearer(&parts.headers) else {
-        return unauthorized(upstream, false);
+        return unauthorized(&upstream, false);
     };
     let principal = match upstream.verifier.verify(token).await {
         Ok(principal) => principal,
-        Err(VerifyError::Invalid) => return unauthorized(upstream, true),
+        Err(VerifyError::Invalid) => return unauthorized(&upstream, true),
         Err(VerifyError::Unavailable) => {
             return generic(StatusCode::SERVICE_UNAVAILABLE, "service unavailable");
         }
@@ -436,7 +441,7 @@ where
     let request_id = request_id(&parts.headers);
     let call = Call {
         gateway,
-        upstream,
+        upstream: &upstream,
         principal: &principal,
         request_id: &request_id,
     };
