@@ -540,6 +540,13 @@ spec:
                           - Refused
                           - Invalid
                           type: string
+                        protocolVersion:
+                          description: |-
+                            The MCP protocol version the server negotiated at discovery. Absent
+                            until one has succeeded; the gateway speaks 2026-07-28 to a server
+                            that is not known to speak anything older.
+                          nullable: true
+                          type: string
                         slug:
                           description: |-
                             The slug the server had when it was last reconciled, so its audience

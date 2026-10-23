@@ -465,6 +465,12 @@ pub struct AgentServerStatus {
     /// server as it is from one of the server as it was.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discovery_requested_at: Option<String>,
+
+    /// The MCP protocol version the server negotiated at discovery. Absent
+    /// until one has succeeded; the gateway speaks 2026-07-28 to a server
+    /// that is not known to speak anything older.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol_version: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

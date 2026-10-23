@@ -183,6 +183,7 @@ impl McpDiscoverer {
         }
 
         let mut found = Discovered::listed(tools, dropped);
+        found.protocol_version = Some(session.version.clone());
         if more {
             found.message = Some(format!("the list goes on after {MAX_PAGES} pages"));
         }
@@ -656,6 +657,7 @@ mod tests {
         let found = run(&w).await;
 
         assert_eq!(found.phase, AgentServerPhase::Ready);
+        assert_eq!(found.protocol_version.as_deref(), Some("2025-03-26"));
         assert_eq!(found.dropped, 0);
         let list = &found.tools[0];
         assert_eq!(list.name, "list_invoices");

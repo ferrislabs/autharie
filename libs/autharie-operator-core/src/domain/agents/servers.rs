@@ -9,6 +9,7 @@ use chrono::{DateTime, Utc};
 
 use super::AgentsError;
 
+pub const PROTOCOL_2026: &str = "2026-07-28";
 pub const MAX_TOOLS: usize = 200;
 pub const MAX_TOOL_NAME_CHARS: usize = 64;
 pub const MAX_TOOL_DESCRIPTION_CHARS: usize = 512;
@@ -63,6 +64,7 @@ pub struct Discovered {
     pub tools: Vec<AgentServerTool>,
     pub dropped: u32,
     pub message: Option<String>,
+    pub protocol_version: Option<String>,
 }
 
 impl Discovered {
@@ -72,6 +74,7 @@ impl Discovered {
             tools: Vec::new(),
             dropped: 0,
             message: Some(cut(message.as_ref(), MAX_MESSAGE_CHARS)),
+            protocol_version: None,
         }
     }
 
@@ -98,6 +101,7 @@ impl Discovered {
             tools: kept,
             dropped,
             message: None,
+            protocol_version: None,
         }
     }
 }
@@ -189,6 +193,7 @@ pub fn entry(
         message: found.message,
         discovered_at: Some(started.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
         discovery_requested_at: spec.discovery_requested_at.clone(),
+        protocol_version: found.protocol_version,
     }
 }
 
@@ -202,6 +207,7 @@ pub fn waiting(spec: &AgentServerSpec, message: &str) -> AgentServerStatus {
         message: Some(message.to_string()),
         discovered_at: None,
         discovery_requested_at: None,
+        protocol_version: None,
     }
 }
 
@@ -237,6 +243,7 @@ mod tests {
             message: None,
             discovered_at: discovered_at.map(|at| at.to_rfc3339()),
             discovery_requested_at: answered.map(str::to_string),
+            protocol_version: None,
         }
     }
 

@@ -626,6 +626,7 @@ mod tests {
                 message: None,
                 discovered_at: Some("2026-10-23T10:00:00.000Z".to_string()),
                 discovery_requested_at: Some("2026-10-23T09:59:59.000Z".to_string()),
+                protocol_version: Some("2025-11-25".to_string()),
             }],
             ..crate::domain::agents::settled_off(4)
         });
@@ -640,6 +641,7 @@ mod tests {
                 "dropped": 1,
                 "discoveredAt": "2026-10-23T10:00:00.000Z",
                 "discoveryRequestedAt": "2026-10-23T09:59:59.000Z",
+                "protocolVersion": "2025-11-25",
             }])
         );
     }

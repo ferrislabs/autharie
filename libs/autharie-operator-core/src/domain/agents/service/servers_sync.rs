@@ -245,6 +245,12 @@ where
                 url: &spec.url,
             })
             .await;
+        let found = Discovered {
+            protocol_version: found
+                .protocol_version
+                .or_else(|| last.and_then(|known| known.protocol_version.clone())),
+            ..found
+        };
         let wait = if found.phase == AgentServerPhase::Ready {
             REDISCOVER_AFTER
         } else {

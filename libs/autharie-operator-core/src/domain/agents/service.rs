@@ -2,8 +2,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use autharie_crds::v1alpha::identity_instance::{
-    AgentPolicyPhase, AgentPolicySpec, AgentPolicyStatus, AgentsPhase, AgentsSpec, AgentsStatus,
-    IdentityInstance, IdentityProvider,
+    AgentPolicyPhase, AgentPolicySpec, AgentPolicyStatus, AgentServerStatus, AgentsPhase,
+    AgentsSpec, AgentsStatus, IdentityInstance, IdentityProvider,
 };
 use chrono::{DateTime, Utc};
 use futures::lock::Mutex;
@@ -136,7 +136,7 @@ where
         if let Err(error) = self.edge.remove_route(instance).await {
             tracing::warn!(error = %error.message(), "could not remove the MCP route of a deleted instance");
         }
-        if let Err(error) = self.rebuild_gateway_config().await {
+        if let Err(error) = self.rebuild_gateway_config(None).await {
             tracing::warn!(error = %error.message(), "could not rebuild the gateway configuration after a deletion");
         }
     }
@@ -165,7 +165,10 @@ where
             .sync_servers(instance, agents, client_ready, &mut tally)
             .await;
         if client_ready {
-            if let Err(error) = self.rebuild_gateway_config().await {
+            if let Err(error) = self
+                .rebuild_gateway_config(Some((instance, &servers)))
+                .await
+            {
                 tally.issue(error);
             }
             if let Err(error) = self.edge.apply_route(instance).await {
@@ -385,7 +388,7 @@ where
         if let Err(error) = self.secrets.forget(instance).await {
             tally.issue(error);
         }
-        if let Err(error) = self.rebuild_gateway_config().await {
+        if let Err(error) = self.rebuild_gateway_config(None).await {
             tally.issue(error);
         }
 
@@ -496,7 +499,10 @@ where
         }
     }
 
-    async fn rebuild_gateway_config(&self) -> Result<(), AgentsError> {
+    async fn rebuild_gateway_config(
+        &self,
+        fresh: Option<(&IdentityInstance, &[AgentServerStatus])>,
+    ) -> Result<(), AgentsError> {
         let _guard = self.rebuild.lock().await;
 
         let instances = self.instances.list().await?;
@@ -511,7 +517,16 @@ where
             if let Some(upstream) = self.environment.upstream(instance, &secret) {
                 upstreams.push(upstream);
             }
-            upstreams.extend(self.environment.server_upstreams(instance, &secret));
+            let fresh = fresh.filter(|(own, _)| {
+                own.metadata.name == instance.metadata.name
+                    && own.metadata.namespace == instance.metadata.namespace
+            });
+            upstreams.extend(match fresh {
+                Some((_, known)) => self
+                    .environment
+                    .server_upstreams_known(instance, &secret, known),
+                None => self.environment.server_upstreams(instance, &secret),
+            });
         }
 
         let document = render(&upstreams);
@@ -1818,6 +1833,68 @@ mod tests {
         assert_eq!(
             last_status(&h).servers[0].discovery_requested_at.as_deref(),
             Some("2026-10-23T10:07:00.000Z")
+        );
+    }
+
+    #[tokio::test]
+    async fn the_protocol_a_server_negotiated_reaches_the_gateway_configuration_in_the_same_pass() {
+        let h = harness();
+        h.servers.with(|state| {
+            let mut found = Discovered::listed(Vec::new(), 0);
+            found.protocol_version = Some("2025-11-25".to_string());
+            state.answer = Some(found);
+        });
+        let instance = with_customers(vec![customer(CRM_ID, "crm", true, None)]);
+        serving(&h, &instance);
+
+        h.reconciler.reconcile(&instance).await;
+
+        assert!(written_config(&h).contains("egress = \"public\"\nprotocol = \"2025-11-25\"\n"));
+        assert_eq!(
+            last_status(&h).servers[0].protocol_version.as_deref(),
+            Some("2025-11-25")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_discovery_keeps_the_protocol_the_server_negotiated_before() {
+        let h = harness();
+        h.servers.with(|state| {
+            let mut found = Discovered::listed(Vec::new(), 0);
+            found.protocol_version = Some("2025-11-25".to_string());
+            state.answer = Some(found);
+        });
+        let first = with_customers(vec![customer(
+            CRM_ID,
+            "crm",
+            true,
+            Some("2026-10-23T10:00:00.000Z"),
+        )]);
+        serving(&h, &first);
+        h.reconciler.reconcile(&first).await;
+        h.servers.with(|state| {
+            state.answer = Some(Discovered::failed(AgentServerPhase::Unreachable, "down"));
+        });
+
+        let asked_again = with_status(
+            with_customers(vec![customer(
+                CRM_ID,
+                "crm",
+                true,
+                Some("2026-10-23T10:07:00.000Z"),
+            )]),
+            last_status(&h),
+        );
+        later(60);
+        h.reconciler.reconcile(&asked_again).await;
+
+        assert_eq!(
+            last_status(&h).servers[0].phase,
+            AgentServerPhase::Unreachable
+        );
+        assert_eq!(
+            last_status(&h).servers[0].protocol_version.as_deref(),
+            Some("2025-11-25")
         );
     }
 

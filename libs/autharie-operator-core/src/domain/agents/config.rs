@@ -1,6 +1,6 @@
 use std::fmt::Write;
 
-use autharie_crds::v1alpha::identity_instance::IdentityInstance;
+use autharie_crds::v1alpha::identity_instance::{AgentServerStatus, IdentityInstance};
 
 use super::{FERRISKEY_SERVER_NAME, GATEWAY_CLIENT_ID, evaluator_audience, servers};
 use crate::infrastructure::ferriskey_admin::api_base_url;
@@ -26,6 +26,7 @@ pub struct Upstream {
     pub server_name: String,
     pub scopes_supported: Vec<String>,
     pub egress: Egress,
+    pub protocol: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,6 +104,7 @@ impl AgentsEnvironment {
             server_name: FERRISKEY_SERVER_NAME.to_string(),
             scopes_supported: Vec::new(),
             egress: Egress::Cluster,
+            protocol: None,
         })
     }
 
@@ -111,6 +113,15 @@ impl AgentsEnvironment {
     }
 
     pub fn server_upstreams(&self, instance: &IdentityInstance, secret: &str) -> Vec<Upstream> {
+        self.server_upstreams_known(instance, secret, servers::known(instance))
+    }
+
+    pub fn server_upstreams_known(
+        &self,
+        instance: &IdentityInstance,
+        secret: &str,
+        known: &[AgentServerStatus],
+    ) -> Vec<Upstream> {
         let Some(base) = self.upstream(instance, secret) else {
             return Vec::new();
         };
@@ -127,6 +138,11 @@ impl AgentsEnvironment {
                 upstream_url: server.url.clone(),
                 server_name: server.slug.clone(),
                 egress: Egress::Public,
+                protocol: known
+                    .iter()
+                    .find(|status| status.id == server.id)
+                    .and_then(|status| status.protocol_version.clone())
+                    .filter(|version| version != servers::PROTOCOL_2026),
                 ..base.clone()
             })
             .collect()
@@ -176,9 +192,14 @@ pub fn render(upstreams: &[Upstream]) -> String {
             Egress::Cluster => "",
             Egress::Public => "egress = \"public\"\n",
         };
+        let protocol = upstream
+            .protocol
+            .as_deref()
+            .map(|version| format!("protocol = {}\n", quoted(version)))
+            .unwrap_or_default();
         let _ = write!(
             out,
-            "\n[[upstreams]]\ncanonical_uri = {}\nissuer = {}\njwks_uri = {}\nupstream_url = {}\nserver_name = {}\nscopes_supported = [{scopes}]\n{egress}\n[upstreams.pdp]\nevaluation_url = {}\nevaluations_url = {}\nclient_id = {}\nclient_secret = {}\n\n[upstreams.exchange]\ntoken_url = {}\nclient_id = {}\nclient_secret = {}\naudience = {}\n",
+            "\n[[upstreams]]\ncanonical_uri = {}\nissuer = {}\njwks_uri = {}\nupstream_url = {}\nserver_name = {}\nscopes_supported = [{scopes}]\n{egress}{protocol}\n[upstreams.pdp]\nevaluation_url = {}\nevaluations_url = {}\nclient_id = {}\nclient_secret = {}\n\n[upstreams.exchange]\ntoken_url = {}\nclient_id = {}\nclient_secret = {}\naudience = {}\n",
             quoted(&upstream.canonical_uri),
             quoted(&upstream.issuer),
             quoted(&upstream.jwks_uri),
@@ -491,6 +512,59 @@ mod tests {
         assert_eq!(crm.exchange.audience, "mcp-crm");
         assert_eq!(crm.upstream_url, "https://tools.example.com/mcp");
         assert_eq!(crm.exchange.client_id, "mcp-gateway");
+    }
+
+    fn negotiated(version: Option<&str>) -> AgentServerStatus {
+        AgentServerStatus {
+            id: "0b9ad3c4-4a5f-4c3b-8d57-0b2d6d9e1a11".to_string(),
+            slug: "crm".to_string(),
+            phase: autharie_crds::v1alpha::identity_instance::AgentServerPhase::Ready,
+            tools: Vec::new(),
+            dropped: 0,
+            message: None,
+            discovered_at: None,
+            discovery_requested_at: None,
+            protocol_version: version.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn a_server_that_negotiated_an_older_protocol_says_so_and_a_2026_one_stays_silent() {
+        let instance = two_servers();
+        for (version, wanted) in [
+            (Some("2025-11-25"), Some("2025-11-25")),
+            (Some("2026-07-28"), None),
+            (None, None),
+        ] {
+            let found =
+                environment().server_upstreams_known(&instance, "s3cret", &[negotiated(version)]);
+            assert_eq!(found[0].protocol.as_deref(), wanted);
+        }
+    }
+
+    #[test]
+    fn the_protocol_is_rendered_and_read_back_by_the_gateway() {
+        let instance = two_servers();
+        let mut all = Vec::new();
+        all.extend(environment().upstream(&instance, "s3cret"));
+        all.extend(environment().server_upstreams_known(
+            &instance,
+            "s3cret",
+            &[negotiated(Some("2025-11-25"))],
+        ));
+
+        let text = render(&all);
+        let config = mcp_gateway::config::GatewayConfig::from_toml(&text).expect("parses");
+
+        assert_eq!(text.matches("protocol = ").count(), 1);
+        assert!(text.contains("egress = \"public\"\nprotocol = \"2025-11-25\"\n"));
+        let crm = config.upstreams.iter().find(|u| u.server_name == "crm");
+        assert_eq!(crm.unwrap().protocol.as_deref(), Some("2025-11-25"));
+        let ferriskey = config
+            .upstreams
+            .iter()
+            .find(|u| u.server_name == "ferriskey");
+        assert_eq!(ferriskey.unwrap().protocol, None);
     }
 
     #[test]
