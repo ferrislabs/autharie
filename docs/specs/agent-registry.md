@@ -36,17 +36,17 @@ Design
     AutonomousAgent request: { request_id, name, description?, sealing_key: SealingKey } → desired creation; credential delivery { request_id, client_id, sealed, expires_at }.
     Access state is derived: blocked if in `blocked`; approved if in `approved` or approval mode off; else pending.
     Use cases: set approval mode, approve, block, unblock, delete agent, create autonomous agent, rotate its secret, record outcome (registry + credentials), list registry (merges FerrisKey-reported clients, access sets, and last activity from decisions; clients only seen in decisions get source Seen).
-  Persistence: migrations `agent_access` (deployment_id PK, approval_required, approved text[], blocked text[]), `agent_clients` (deployment_id, client_id, name, source, kind, enabled, created_at, reported_at; PK (deployment_id, client_id)), `agent_credentials` (request_id PK, deployment_id, client_id, sealed, expires_at).
+  Persistence: migrations `agent_access` (deployment_id PK, approval_required, approved text[], blocked text[], deleted text[], clients_truncated), `agent_clients` (deployment_id, client_id, name, source, kind, enabled, created_at, reported_at, position; PK (deployment_id, client_id)), `agent_autonomous` (deployment_id, client_id, name, description, created_at), `agent_credentials` (request_id PK, deployment_id, client_id, kind, sealing_key, sealed, delivered_at, expires_at).
   Action `deployment.agents` gains `access: { approval_required, approved[], blocked[] }`, `autonomous: [{ request_id?, client_id, name, rotate_request_id?, sealing_key? }]`, `deleted_agents: [client_id]`.
   CRD IdentityInstance: spec.agents.access, spec.agents.autonomous[], spec.agents.deletedAgents[]; status.agents.clients[] { clientId, name?, source, kind, enabled, createdAt? }, status.agents.clientsTruncated, status.agents.credentials[] { requestId, clientId, sealed }. Outcome carries the same; the control plane moves credentials to `agent_credentials` and the registry to `agent_clients`.
   Operator
     - List clients (paginated `GET /realms/{r}/clients`), keep agent clients only (invariant), report newest 500.
     - Blocked agents: PATCH enabled=false; unblocked: enabled=true (only if Autharie disabled it).
-    - Autonomous agents: create `agent-<slug>-<6 random>` (confidential, service_account_enabled, client credentials only, no redirect), fetch its secret, seal it to the request's key, put it in status once; rotation regenerates the secret the same way. Deletion deletes the FerrisKey client.
+    - Autonomous agents: create the client the control plane named `agent-<slug>-<6 random>` (confidential, service_account_enabled, client credentials only, no redirect), fetch its secret, seal it to the request's key, put it in status once; rotation deletes and recreates the client under the same id (FerrisKey cannot regenerate a secret). Deletion deletes the FerrisKey client.
     - Gateway config: every upstream of the deployment gets `access = { mode = "open"|"approval", approved = [...], blocked = [...] }`.
   Gateway (apps/mcp-gateway): after token validation and before the PDP, check the caller's client id against `access`; refuse with JSON-RPC error -32003 (403 semantics) and record the decision with `decision: false`, `reason: "agent_blocked" | "agent_pending"`, `policies: []`. `tools/list` for a refused agent returns the same error.
   Control plane API (under /organisations/{org}/deployments/{dep}/agents)
-    GET    /clients                                  → { data: [AgentClient], truncated }
+    GET    /clients                                  → { data: [AgentClient], truncated, approval_required }
     PUT    /access { approval_required }
     POST   /clients/{client_id}/approve | /block | /unblock
     DELETE /clients/{client_id}
@@ -66,7 +66,7 @@ Acceptance (Gherkin)
   @spec-ar-2  With approval mode on, a new agent's tools/list is refused with reason agent_pending; it shows as Pending in the registry; after Approve the next call reaches the PDP.
   @spec-ar-3  Blocking an approved agent refuses its next call with agent_blocked before the PDP, and its FerrisKey client is disabled; Unblock re-enables both.
   @spec-ar-4  Approval mode off: an unknown agent reaches the PDP as today.
-  @spec-ar-5  Creating an autonomous agent returns a request id; the operator creates `agent-…`, seals its secret to the supplied key; GET /credentials returns it once, then 410; the stored row is gone; the browser decrypts it and a client_credentials call with `resource` = the MCP URL gets a token the gateway accepts.
+  @spec-ar-5  Creating an autonomous agent returns a request id; the operator creates `agent-…`, seals its secret to the supplied key; GET /credentials returns it once, then 410; the stored sealed value is gone; the browser decrypts it and a client_credentials call with `resource` = the MCP URL gets a token the gateway accepts.
   @spec-ar-6  A sealing key under 2048 bits or not RSA is refused (400); a credential not fetched within 15 minutes is deleted.
   @spec-ar-7  Last activity in the registry matches the newest decision for that agent.
   @spec-ar-8  The operator never disables or deletes a client outside the agent set, even when asked (unit test with a forged desired state).
@@ -88,7 +88,7 @@ Frozen contracts
   Sealed credential = base64url(RSA-OAEP-SHA256(secret utf-8)); sealing_key = public JWK { kty: "RSA", n, e, alg: "RSA-OAEP-256" }.
 
 Risks / open questions
-  - CIMD clients are re-upserted on each fetch; FerrisKey might re-enable a disabled one. The gateway refusal still holds. Owner: WS-2 (check and note).
+  - CIMD clients are re-upserted on each fetch; FerrisKey might re-enable a disabled one. The gateway refusal still holds, and the operator looks again every 30 s and disables a blocked client again. Owner: WS-2.
   - A registry of 500 is enough for a realm's agents; beyond, `truncated` tells the console. Owner: WS-1.
   - Pending agents only appear once they try a call (FerrisKey emits nothing at registration) or once the operator lists them. Owner: product.
 
@@ -97,3 +97,8 @@ Verify (exit)
   make test && make test-integration
   cd apps/console && pnpm lint && pnpm exec tsc -b --noEmit && pnpm vitest run
   End to end on k3d: @spec-ar-1..5.
+
+Amended: 2026-10-23 FerrisKey has no client-secret regeneration route, so rotation deletes and recreates the client under the same client id.
+Amended: 2026-10-23 a delivered credential keeps a secret-free tombstone row until it expires, so a second GET answers 410 and not 404.
+Amended: 2026-10-23 the control plane names the autonomous client id when it takes the request (the operator creates that exact id), and keeps autonomous agents and deletions in `agent_autonomous` and `agent_access.deleted`.
+Amended: 2026-10-23 GET /clients also carries `approval_required`, since the console switch needs the mode and the list is the one read.
