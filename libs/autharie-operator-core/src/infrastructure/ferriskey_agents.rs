@@ -1213,7 +1213,10 @@ mod tests {
             .expect("ensured");
 
         assert!(world.read(Method::GET, "/realms/acme/clients/c2/roles"));
-        assert_eq!(world.wrote(Method::POST, "/realms/acme/clients/c1/roles"), None);
+        assert_eq!(
+            world.wrote(Method::POST, "/realms/acme/clients/c1/roles"),
+            None
+        );
     }
 
     #[tokio::test]
