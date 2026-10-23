@@ -17,6 +17,8 @@ use crate::{
         decision::{AgentDecision, AgentDecisionIndex, DecisionQuery},
         entities::{AgentPolicy, AgentSettings, AgentStatus, AgentsView, PolicyId, PolicyPhase},
         ports::{AgentAccess, AgentOutcomeService, AgentRepository, AgentService},
+        registry::{MAX_REGISTRY_CLIENTS, RequestKind},
+        registry_ports::AgentRegistryRepository,
     },
     audit::{
         AuditAction, AuditChange, AuditEntry, AuditEntryId, AuditTarget, AuditTargetKind,
@@ -33,15 +35,15 @@ pub struct AgentPublisher<D, G, A>
 where
     A: ActionRepository,
 {
-    deployments: D,
-    agents: G,
+    pub(super) deployments: D,
+    pub(super) agents: G,
     actions: ActionServiceImpl<A>,
 }
 
 impl<D, G, A> AgentPublisher<D, G, A>
 where
     D: DeploymentRepository,
-    G: AgentRepository,
+    G: AgentRepository + AgentRegistryRepository,
     A: ActionRepository,
 {
     pub fn new(deployments: D, agents: G, actions: A) -> Self {
@@ -77,6 +79,35 @@ where
             })
             .collect();
 
+        let access = self.agents.access(deployment.id).await?;
+        let requests = self.agents.open_requests(deployment.id, Utc::now()).await?;
+        let autonomous: Vec<Value> = self
+            .agents
+            .autonomous_agents(deployment.id)
+            .await?
+            .into_iter()
+            .map(|agent| {
+                let mut entry = json!({
+                    "client_id": agent.client_id,
+                    "name": agent.name,
+                });
+                if let Some(request) = requests
+                    .iter()
+                    .filter(|request| request.client_id == agent.client_id)
+                    .max_by_key(|request| request.expires_at)
+                {
+                    let key = match request.kind {
+                        RequestKind::Create => "request_id",
+                        RequestKind::Rotate => "rotate_request_id",
+                    };
+                    entry[key] = json!(request.request_id);
+                    entry["sealing_key"] = request.sealing_key.payload();
+                }
+                entry
+            })
+            .collect();
+        let deleted: Vec<&String> = access.deleted.iter().collect();
+
         let data = json!({
             "deployment_id": deployment.id.0,
             "namespace": deployment.namespace,
@@ -84,6 +115,9 @@ where
             "realm": settings.realm,
             "revision": settings.revision,
             "policies": policies,
+            "access": access.payload(),
+            "autonomous": autonomous,
+            "deleted_agents": deleted,
         });
 
         self.actions
@@ -171,7 +205,7 @@ where
     ) -> Self
     where
         D: DeploymentRepository,
-        G: AgentRepository,
+        G: AgentRepository + AgentRegistryRepository,
     {
         Self {
             publisher: AgentPublisher::new(deployments, agents, actions),
@@ -188,7 +222,7 @@ impl<D, O, G, A, AU, U, P> AgentServiceImpl<D, O, G, A, AU, U, P>
 where
     D: DeploymentRepository,
     O: OrganisationRepository,
-    G: AgentRepository,
+    G: AgentRepository + AgentRegistryRepository,
     A: ActionRepository,
     AU: AuditRepository,
     U: UserRepository,
@@ -309,7 +343,7 @@ impl<D, O, G, A, AU, U, P> AgentService for AgentServiceImpl<D, O, G, A, AU, U, 
 where
     D: DeploymentRepository,
     O: OrganisationRepository,
-    G: AgentRepository,
+    G: AgentRepository + AgentRegistryRepository,
     A: ActionRepository,
     AU: AuditRepository,
     U: UserRepository,
@@ -592,7 +626,7 @@ impl<D, P, G> AgentOutcomeService for AgentOutcomeServiceImpl<D, P, G>
 where
     D: DeploymentRepository,
     P: DataPlaneRepository,
-    G: AgentRepository,
+    G: AgentRepository + AgentRegistryRepository,
 {
     async fn report_agents_outcome(
         &self,
@@ -646,6 +680,58 @@ where
                 .await?;
         }
 
+        self.agents.purge_expired(now).await?;
+        self.ingest_registry(deployment_id, &outcome, now).await?;
+
         Ok(changed)
+    }
+}
+
+impl<D, P, G> AgentOutcomeServiceImpl<D, P, G>
+where
+    G: AgentRepository + AgentRegistryRepository,
+{
+    async fn ingest_registry(
+        &self,
+        deployment_id: DeploymentId,
+        outcome: &AgentsOutcome,
+        now: chrono::DateTime<Utc>,
+    ) -> Result<(), CoreError> {
+        let mut registry = outcome.registry.clone();
+        if registry.clients.len() > MAX_REGISTRY_CLIENTS {
+            registry.clients.truncate(MAX_REGISTRY_CLIENTS);
+            registry.truncated = true;
+        }
+        self.agents
+            .replace_registry(deployment_id, &registry, now)
+            .await?;
+
+        if !registry.truncated {
+            let mut access = self.agents.access(deployment_id).await?;
+            let before = access.deleted.len();
+            access.deleted.retain(|gone| {
+                registry
+                    .clients
+                    .iter()
+                    .any(|client| client.client_id.as_str() == gone)
+            });
+            if access.deleted.len() != before {
+                self.agents.save_access(deployment_id, &access, now).await?;
+            }
+        }
+
+        for credential in &outcome.credentials {
+            self.agents
+                .store_sealed(
+                    deployment_id,
+                    credential.request_id,
+                    &credential.client_id,
+                    &credential.sealed,
+                    now,
+                )
+                .await?;
+        }
+
+        Ok(())
     }
 }

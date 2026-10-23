@@ -640,6 +640,7 @@ version = "0.1.0"
 dependencies = [
  "autharie-auth",
  "autharie-permission",
+ "base64 0.22.1",
  "cedar-policy",
  "chrono",
  "chrono-tz",

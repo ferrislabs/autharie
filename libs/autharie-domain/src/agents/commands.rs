@@ -7,6 +7,7 @@ use uuid::Uuid;
 use crate::agents::{
     AgentError, DEFAULT_REALM, MAX_CEDAR_BYTES, MAX_RULE_BYTES,
     entities::{AgentsPhase, PolicyId, PolicyPhase},
+    registry::{ReportedCredential, ReportedRegistry},
 };
 
 const MAX_NAME_CHARS: usize = 100;
@@ -123,9 +124,21 @@ pub struct AgentsOutcome {
     pub mcp_url: Option<String>,
     pub message: Option<String>,
     pub policies: Vec<PolicyOutcome>,
+    pub registry: ReportedRegistry,
+    pub credentials: Vec<ReportedCredential>,
 }
 
 impl AgentsOutcome {
+    pub fn with_registry(
+        mut self,
+        registry: ReportedRegistry,
+        credentials: Vec<ReportedCredential>,
+    ) -> Self {
+        self.registry = registry;
+        self.credentials = credentials;
+        self
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn parse(
         revision: u64,
@@ -162,6 +175,8 @@ impl AgentsOutcome {
             mcp_url,
             message,
             policies,
+            registry: ReportedRegistry::default(),
+            credentials: Vec::new(),
         })
     }
 }
