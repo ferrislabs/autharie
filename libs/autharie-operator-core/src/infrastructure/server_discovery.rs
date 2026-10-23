@@ -14,7 +14,10 @@ use crate::domain::agents::servers::{
 const DEFAULT_DEADLINE: Duration = Duration::from_secs(10);
 const DEFAULT_MAX_BODY: usize = 1024 * 1024;
 const MAX_PAGES: usize = 20;
-const PROTOCOL_VERSION: &str = "2025-06-18";
+const PROTOCOL_VERSION: &str = "2025-11-25";
+const PROTOCOL_2026: &str = "2026-07-28";
+const META_PROTOCOL: &str = "io.modelcontextprotocol/protocolVersion";
+const META_CAPABILITIES: &str = "io.modelcontextprotocol/clientCapabilities";
 const GRANT_EXCHANGE: &str = "urn:ietf:params:oauth:grant-type:token-exchange";
 const TOKEN_TYPE_ACCESS: &str = "urn:ietf:params:oauth:token-type:access_token";
 
@@ -38,6 +41,7 @@ enum Failure {
     Refused(String),
     Unreachable(String),
     Invalid(String),
+    Unsupported,
 }
 
 impl Failure {
@@ -69,6 +73,10 @@ impl Failure {
                 Discovered::failed(AgentServerPhase::Unreachable, message)
             }
             Self::Invalid(message) => Discovered::failed(AgentServerPhase::Invalid, message),
+            Self::Unsupported => Discovered::failed(
+                AgentServerPhase::Invalid,
+                "the server does not support the protocol version asked",
+            ),
         }
     }
 }
@@ -116,6 +124,22 @@ impl McpDiscoverer {
     async fn run(&self, target: &DiscoveryTarget<'_>) -> Result<Discovered, Failure> {
         let token = self.token(target).await.map_err(Failure::Unreachable)?;
 
+        let modern = Session {
+            id: None,
+            version: PROTOCOL_2026.to_string(),
+        };
+        match self.list_tools(target, &token, &modern).await {
+            Err(Failure::Unsupported) => {}
+            settled => return settled,
+        }
+        self.run_legacy(target, &token).await
+    }
+
+    async fn run_legacy(
+        &self,
+        target: &DiscoveryTarget<'_>,
+        token: &str,
+    ) -> Result<Discovered, Failure> {
         let initialize = json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -127,7 +151,7 @@ impl McpDiscoverer {
             },
         });
         let (answer, id) = self
-            .post(target.url, &token, None, &initialize, Some(1))
+            .post(target.url, token, None, &initialize, Some(1))
             .await?;
         let session = Session {
             id,
@@ -138,9 +162,18 @@ impl McpDiscoverer {
         };
 
         let initialized = json!({ "jsonrpc": "2.0", "method": "notifications/initialized" });
-        self.post(target.url, &token, Some(&session), &initialized, None)
+        self.post(target.url, token, Some(&session), &initialized, None)
             .await?;
 
+        self.list_tools(target, token, &session).await
+    }
+
+    async fn list_tools(
+        &self,
+        target: &DiscoveryTarget<'_>,
+        token: &str,
+        session: &Session,
+    ) -> Result<Discovered, Failure> {
         let mut tools = Vec::new();
         let mut dropped = 0u32;
         let mut cursor: Option<String> = None;
@@ -151,14 +184,24 @@ impl McpDiscoverer {
                 "id": page + 2,
                 "method": "tools/list",
             });
+            let mut params = serde_json::Map::new();
             if let Some(cursor) = &cursor {
-                request["params"] = json!({ "cursor": cursor });
+                params.insert("cursor".to_string(), json!(cursor));
+            }
+            if session.version == PROTOCOL_2026 {
+                params.insert(
+                    "_meta".to_string(),
+                    json!({ META_PROTOCOL: PROTOCOL_2026, META_CAPABILITIES: {} }),
+                );
+            }
+            if !params.is_empty() {
+                request["params"] = Value::Object(params);
             }
             let (answer, _) = self
                 .post(
                     target.url,
-                    &token,
-                    Some(&session),
+                    token,
+                    Some(session),
                     &request,
                     Some(page as u64 + 2),
                 )
@@ -270,6 +313,11 @@ impl McpDiscoverer {
             .body(payload);
         if let Some(session) = session {
             request = request.header("mcp-protocol-version", session.version.as_str());
+            if session.version == PROTOCOL_2026
+                && let Some(method) = body["method"].as_str()
+            {
+                request = request.header("mcp-method", method);
+            }
             if let Some(id) = &session.id {
                 request = request.header("mcp-session-id", id.as_str());
             }
@@ -290,6 +338,19 @@ impl McpDiscoverer {
                 "the server refused the token ({})",
                 status.as_u16()
             )));
+        }
+        let modern = session.is_some_and(|session| session.version == PROTOCOL_2026);
+        if modern && status == StatusCode::BAD_REQUEST {
+            let bytes = read_capped(response, self.limits.max_body)
+                .await
+                .map_err(|error| Failure::from_egress(&error))?;
+            let refused = serde_json::from_slice::<Value>(&bytes)
+                .is_ok_and(|message| unsupported_version(&message));
+            return Err(if refused {
+                Failure::Unsupported
+            } else {
+                Failure::Unreachable("the server answered 400".to_string())
+            });
         }
         if !status.is_success() {
             return Err(Failure::Unreachable(format!(
@@ -322,6 +383,9 @@ impl McpDiscoverer {
         }
         .ok_or_else(|| Failure::Invalid("the answer is not a JSON-RPC message".to_string()))?;
 
+        if modern && unsupported_version(&message) {
+            return Err(Failure::Unsupported);
+        }
         if let Some(error) = message.get("error") {
             let reason = error["message"].as_str().unwrap_or("no reason given");
             return Err(Failure::Invalid(format!(
@@ -336,6 +400,14 @@ impl McpDiscoverer {
         }
         Ok((message, session_id))
     }
+}
+
+fn unsupported_version(message: &Value) -> bool {
+    let error = &message["error"];
+    matches!(error["code"].as_i64(), Some(-32600 | -32602))
+        && error["message"]
+            .as_str()
+            .is_some_and(|text| text.to_ascii_lowercase().contains("version"))
 }
 
 fn read_tool(tool: &Value) -> Option<AgentServerTool> {
@@ -474,8 +546,16 @@ mod tests {
         Redirect(String),
     }
 
+    #[derive(Clone, Copy)]
+    enum Generation {
+        Legacy,
+        LegacyAnswering400,
+        Modern,
+    }
+
     struct Server {
         mode: Mode,
+        generation: Generation,
         authorizations: Mutex<Vec<String>>,
         methods: Mutex<Vec<String>>,
         sessions: Mutex<Vec<Option<String>>>,
@@ -508,6 +588,10 @@ mod tests {
                 .map(str::to_string),
         );
         let method = body["method"].as_str().unwrap_or_default().to_string();
+        let asked_2026 = headers
+            .get("mcp-protocol-version")
+            .and_then(|v| v.to_str().ok())
+            == Some("2026-07-28");
         state.methods.lock().unwrap().push(method.clone());
         let id = body["id"].clone();
 
@@ -533,6 +617,37 @@ mod tests {
                     "result": { "tools": [], "padding": "a".repeat(2 * 1024 * 1024) }
                 }))
                 .into_response();
+            }
+            _ => {}
+        }
+
+        let unsupported = json!({
+            "jsonrpc": "2.0", "id": id,
+            "error": { "code": -32600, "message": "Unsupported protocol version: 2026-07-28" }
+        });
+        match (state.generation, asked_2026) {
+            (Generation::Legacy, true) | (Generation::Modern, false) => {
+                return Json(unsupported).into_response();
+            }
+            (Generation::LegacyAnswering400, true) => {
+                return (StatusCode::BAD_REQUEST, Json(unsupported)).into_response();
+            }
+            (Generation::Modern, true) => {
+                let announced = headers.get("mcp-method").and_then(|v| v.to_str().ok());
+                let meta = &body["params"]["_meta"];
+                if announced != Some(method.as_str())
+                    || meta["io.modelcontextprotocol/protocolVersion"] != "2026-07-28"
+                    || !meta["io.modelcontextprotocol/clientCapabilities"].is_object()
+                {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({
+                            "jsonrpc": "2.0", "id": id,
+                            "error": { "code": -32020, "message": "incomplete request" }
+                        })),
+                    )
+                        .into_response();
+                }
             }
             _ => {}
         }
@@ -583,6 +698,16 @@ mod tests {
     }
 
     async fn world(mode: Mode, policy: Policy, host: &str, address: &str) -> World {
+        world_of(mode, Generation::Legacy, policy, host, address).await
+    }
+
+    async fn world_of(
+        mode: Mode,
+        generation: Generation,
+        policy: Policy,
+        host: &str,
+        address: &str,
+    ) -> World {
         let tokens = Arc::new(Tokens::default());
         let token_port = serve(
             Router::new()
@@ -592,6 +717,7 @@ mod tests {
         .await;
         let server = Arc::new(Server {
             mode,
+            generation,
             authorizations: Mutex::default(),
             methods: Mutex::default(),
             sessions: Mutex::default(),
@@ -629,6 +755,17 @@ mod tests {
         world(mode, Policy::local_testing(), "crm.example", "127.0.0.1").await
     }
 
+    async fn open_as(mode: Mode, generation: Generation) -> World {
+        world_of(
+            mode,
+            generation,
+            Policy::local_testing(),
+            "crm.example",
+            "127.0.0.1",
+        )
+        .await
+    }
+
     async fn run(world: &World) -> Discovered {
         world
             .discoverer
@@ -640,6 +777,82 @@ mod tests {
                 url: &world.url,
             })
             .await
+    }
+
+    #[tokio::test]
+    async fn a_2026_server_is_listed_statelessly_and_recorded_as_2026() {
+        let w = open_as(Mode::Tools(tools(2)), Generation::Modern).await;
+
+        let found = run(&w).await;
+
+        assert_eq!(found.phase, AgentServerPhase::Ready);
+        assert_eq!(found.tools.len(), 2);
+        assert_eq!(found.protocol_version.as_deref(), Some("2026-07-28"));
+        assert_eq!(*w.server.methods.lock().unwrap(), ["tools/list"]);
+        assert_eq!(*w.server.sessions.lock().unwrap(), [None]);
+    }
+
+    #[tokio::test]
+    async fn a_2026_server_is_paged_through_with_the_meta_on_every_page() {
+        let w = open_as(Mode::Paged, Generation::Modern).await;
+
+        let found = run(&w).await;
+
+        assert_eq!(found.phase, AgentServerPhase::Ready);
+        assert_eq!(found.tools.len(), 3);
+        assert_eq!(found.protocol_version.as_deref(), Some("2026-07-28"));
+        assert_eq!(
+            *w.server.methods.lock().unwrap(),
+            ["tools/list", "tools/list"]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_2025_server_answering_32600_to_2026_is_asked_again_the_2025_way() {
+        let w = open_as(Mode::Tools(tools(2)), Generation::Legacy).await;
+
+        let found = run(&w).await;
+
+        assert_eq!(found.phase, AgentServerPhase::Ready);
+        assert_eq!(found.tools.len(), 2);
+        assert_eq!(found.protocol_version.as_deref(), Some("2025-03-26"));
+        assert_eq!(
+            *w.server.methods.lock().unwrap(),
+            [
+                "tools/list",
+                "initialize",
+                "notifications/initialized",
+                "tools/list"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn an_http_400_naming_the_version_falls_back_too() {
+        let w = open_as(Mode::Tools(tools(1)), Generation::LegacyAnswering400).await;
+
+        let found = run(&w).await;
+
+        assert_eq!(found.phase, AgentServerPhase::Ready);
+        assert_eq!(found.protocol_version.as_deref(), Some("2025-03-26"));
+    }
+
+    #[tokio::test]
+    async fn the_2025_handshake_asks_for_the_newest_2025_revision() {
+        assert_eq!(PROTOCOL_VERSION, "2025-11-25");
+    }
+
+    #[test]
+    fn only_a_version_error_counts_as_an_unsupported_version() {
+        let error = |code: i64, text: &str| json!({ "error": { "code": code, "message": text } });
+        assert!(unsupported_version(&error(
+            -32600,
+            "Unsupported protocol version: x"
+        )));
+        assert!(unsupported_version(&error(-32602, "bad Version")));
+        assert!(!unsupported_version(&error(-32600, "malformed")));
+        assert!(!unsupported_version(&error(-32601, "unknown version")));
+        assert!(!unsupported_version(&json!({ "result": {} })));
     }
 
     #[tokio::test]
@@ -669,7 +882,12 @@ mod tests {
         assert!(!plain.read_only && !plain.destructive);
         assert_eq!(
             *w.server.methods.lock().unwrap(),
-            ["initialize", "notifications/initialized", "tools/list"]
+            [
+                "tools/list",
+                "initialize",
+                "notifications/initialized",
+                "tools/list"
+            ]
         );
     }
 
@@ -692,9 +910,9 @@ mod tests {
                 .all(|value| *value == format!("Bearer {}", jwt(json!("mcp-crm"))))
         );
         let sessions = w.server.sessions.lock().unwrap().clone();
-        assert_eq!(sessions[0], None);
-        assert_eq!(sessions[1], Some("session-1".to_string()));
+        assert_eq!(sessions[..2], [None, None]);
         assert_eq!(sessions[2], Some("session-1".to_string()));
+        assert_eq!(sessions[3], Some("session-1".to_string()));
     }
 
     #[tokio::test]
@@ -855,6 +1073,7 @@ mod tests {
     #[tokio::test]
     async fn spec_ms_4_a_redirect_to_another_host_is_not_followed_and_the_status_says_refused() {
         let inside = Arc::new(Server {
+            generation: Generation::Legacy,
             mode: Mode::Tools(tools(1)),
             authorizations: Mutex::default(),
             methods: Mutex::default(),
