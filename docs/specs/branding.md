@@ -104,15 +104,17 @@ Frozen contracts
   spec.smtp: [ { realm, revision: u64, remove?: bool, host, port, encryption, username, fromEmail, fromName } ]
   // One entry per realm, each with its own revision: Genesis replaces the realm's entry only if the action's revision is newer. A removal keeps a tombstone `{ realm, revision, remove: true }` so a redelivered older save cannot bring the provider back. The password is only in Secret <instance>-smtp, key "<realm>".
   spec.portalThemes: [ { realm, revision: u64, config } ]   // same per-realm revision rule as smtp
-  spec.emailTemplates: [ { realm, templates: [ { id, emailType, name, structure } ] } ]  + spec.emailTemplatesRevision: u64
+  spec.emailTemplates: [ { realm, revision: u64, templates: [ { id, emailType, name, structure } ] } ]
+  // The realm's whole set; an empty `templates` list is written, not dropped, so the operator removes what it manages. Managed FerrisKey templates are named `autharie:<uuid>` (a UUID is required), template ids are UUIDs.
   status.smtp: [ { realm, revision: u64, phase: Pending|Applied|Failed, message? } ]
   status.portalThemes: [ { realm, revision: u64, phase: Pending|Applied|Failed, message? } ]
-  status.emailTemplates: [ { realm, templates: [ { id, ferriskeyId?, phase, message? } ] } ]
+  status.emailTemplates: [ { realm, revision: u64, phase, message?, templates: [ { id, ferriskeyId?, phase, message? } ] } ]
 
   // The revision is kept per (deployment, realm) and never goes back, even across a removal.
 
   // Outcome (Genesis → control plane), kinds "smtp", "portal_theme", "email_templates"
   { "deployment_id", "kind", "revision", "realm", "items": [ { "id"?, "ferriskey_id"?, "phase", "message"? } ] }
+  // smtp and portal_theme carry exactly one item. email_templates carries one item per template (with `id`) plus one realm-level item without `id`.
 
   // Token ranges (ThemeTokens::parse)
   colours #rrggbb · fonts.baseSize 10–24 · weights 100–900 in steps of 100 · sizePct 50–300 · radii and border weights 0–64 · spacing 0–128 · widgetShadow none|small|large
@@ -125,13 +127,15 @@ Frozen contracts
   PUT/DELETE     /organisations/{o}/deployments/{d}/branding/{realm}/themes/{t}
   POST           /organisations/{o}/deployments/{d}/branding/{realm}/themes/{t}/activate
   POST           /organisations/{o}/deployments/{d}/branding/{realm}/themes/deactivate   (use FerrisKey's default)
+  GET            /organisations/{o}/deployments/{d}/branding/{realm}/email-templates            → { data: [TemplateView], state: null | { phase, message?, revision } }
   GET/PUT/DELETE /organisations/{o}/deployments/{d}/branding/{realm}/email-templates/{email_type}
+  // PUT body { name, structure } → 202. TemplateView = { email_type, name, structure, state: { phase, message? }, updated_at }.
   GET            /organisations/{o}/deployments/{d}/branding/realms           → { data: [str] }
 
 Risks / open questions
   - Assumption to confirm: the provider and the templates are not behind a plan gate; themes keep today's.
   - Assumption to confirm: one template per email type and realm (Auth0's model), though FerrisKey can hold several.
-  - Whether `PUT /realms/{realm}/settings` is a partial update. If it replaces other settings, the operator must read, merge and write. Owner: S4 operator, check first.
+  - `PUT /realms/{realm}/settings` is a partial update (checked in FerrisKey: omitted keys unchanged, `null` clears a template pointer), so the operator sends only the template keys.
   - Instances older than FerrisKey 0.7.0 have no portal themes at all, older than 0.5.0 no templates: the slice reports Failed with FerrisKey's own error.
   - Autharie owns the tokens of the active FerrisKey theme: a hand edit of those tokens in FerrisKey is overwritten at the next apply. Pages are never touched. A template renamed by hand in FerrisKey becomes unmanaged and is recreated. Accepted, documented.
   - Themes that exist only in Autharie are invisible in FerrisKey's own console; only the active tokens show up there.
