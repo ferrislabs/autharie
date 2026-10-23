@@ -18,7 +18,9 @@ pub const MAX_DISCOVERY_MESSAGE_CHARS: usize = 300;
 const MAX_NAME_CHARS: usize = 100;
 const MAX_URL_BYTES: usize = 2048;
 const RESERVED_SLUGS: [&str; 3] = ["ferriskey", "autharie", "gateway"];
-const INTERNAL_SUFFIXES: [&str; 6] = [
+const INTERNAL_SUFFIXES: [&str; 8] = [
+    ".svc",
+    ".home.arpa",
     ".local",
     ".localhost",
     ".localdomain",
@@ -464,6 +466,8 @@ mod tests {
             "https://crm.local/",
             "https://crm.internal/",
             "https://api.default.svc.cluster.local/",
+            "https://ferriskey-mcp.autharie-system.svc/mcp",
+            "https://nas.home.arpa/",
             "https://printer.lan./",
         ] {
             let refused = CustomerServerUrl::try_from(text);

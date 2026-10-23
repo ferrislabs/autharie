@@ -50,6 +50,8 @@ describe('the URL of a customer server', () => {
       'https://crm.local/',
       'https://crm.internal/',
       'https://api.default.svc.cluster.local/',
+      'https://ferriskey-mcp.autharie-system.svc/mcp',
+      'https://nas.home.arpa/',
     ]) {
       expect(validateServerUrl(url), url).toMatch(/internal/)
     }

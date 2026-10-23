@@ -4,7 +4,7 @@ export const RESERVED_SLUGS = ['ferriskey', 'autharie', 'gateway']
 const SLUG = /^[a-z][a-z0-9-]{1,30}$/
 const MAX_NAME = 100
 const MAX_URL = 2048
-const INTERNAL_SUFFIXES = ['.local', '.localhost', '.localdomain', '.internal', '.intranet', '.lan']
+const INTERNAL_SUFFIXES = ['.svc', '.home.arpa', '.local', '.localhost', '.localdomain', '.internal', '.intranet', '.lan']
 
 export function slugFromName(name: string): string {
   const dashed = name
