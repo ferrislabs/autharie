@@ -9,6 +9,8 @@ use crate::domain::entities::identity_instance::{
     DesiredIdentityInstance, DesiredUpgrade, IdentityInstanceRef, InFlightUpgrade, UpgradeRef,
 };
 use crate::domain::entities::outcome::DeploymentOutcomeReport;
+use crate::domain::entities::smtp_outcome::SmtpOutcomeReport;
+use crate::domain::entities::smtp_payload::{PasswordChange, SmtpPayloadV1};
 use crate::domain::entities::webhooks_outcome::WebhooksOutcomeReport;
 use crate::domain::entities::webhooks_payload::{WebhookRequestEntry, WebhooksPayloadV1};
 use crate::domain::error::GenesisError;
@@ -222,5 +224,33 @@ pub trait AgentsPort: Send + Sync {
         &'a self,
         reference: &'a IdentityInstanceRef,
         desired: &'a AgentsPayloadV1,
+    ) -> impl Future<Output = Result<(), GenesisError>> + Send + 'a;
+}
+
+pub trait SmtpOutcomePublisher: Send + Sync {
+    fn publish_smtp<'a>(
+        &'a self,
+        report: &'a SmtpOutcomeReport,
+    ) -> impl Future<Output = Result<(), GenesisError>> + Send + 'a;
+}
+
+pub trait SmtpPort: Send + Sync {
+    fn revision<'a>(
+        &'a self,
+        reference: &'a IdentityInstanceRef,
+        realm: &'a str,
+    ) -> impl Future<Output = Result<Option<u64>, GenesisError>> + Send + 'a;
+
+    fn write_password<'a>(
+        &'a self,
+        reference: &'a IdentityInstanceRef,
+        realm: &'a str,
+        change: PasswordChange<'a>,
+    ) -> impl Future<Output = Result<(), GenesisError>> + Send + 'a;
+
+    fn apply<'a>(
+        &'a self,
+        reference: &'a IdentityInstanceRef,
+        desired: &'a SmtpPayloadV1,
     ) -> impl Future<Output = Result<(), GenesisError>> + Send + 'a;
 }

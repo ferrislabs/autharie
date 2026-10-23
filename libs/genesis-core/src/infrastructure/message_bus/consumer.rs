@@ -400,6 +400,11 @@ mod tests {
     }
 
     #[test]
+    fn the_smtp_action_is_bound() {
+        assert!(is_bound("deployment.smtp"));
+    }
+
+    #[test]
     fn the_webhook_actions_are_bound() {
         assert!(is_bound("deployment.webhooks"));
         assert!(is_bound("deployment.webhook.rotate_secret"));
