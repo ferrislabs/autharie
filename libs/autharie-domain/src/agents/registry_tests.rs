@@ -325,6 +325,23 @@ async fn spec_ar_5_creating_an_autonomous_agent_sends_the_request_and_the_sealin
 }
 
 #[tokio::test]
+async fn an_autonomous_agent_the_owner_creates_is_approved() {
+    let world = enabled_world().await;
+
+    world
+        .service
+        .create_autonomous_agent(caller(), org(), dep(), input())
+        .await
+        .expect("accepted");
+
+    let payload = last(&world);
+    assert_eq!(
+        payload["access"]["approved"],
+        json!([payload["autonomous"][0]["client_id"]])
+    );
+}
+
+#[tokio::test]
 async fn spec_ar_5_the_sealed_secret_is_handed_out_once_then_gone() {
     let world = enabled_world().await;
     let request_id = world

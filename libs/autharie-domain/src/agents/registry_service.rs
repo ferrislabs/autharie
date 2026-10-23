@@ -414,6 +414,11 @@ where
         agents
             .insert_autonomous_agent(deployment_id, &agent)
             .await?;
+        let mut access = agents.access(deployment_id).await?;
+        access.approve(&client_id);
+        agents
+            .save_access(deployment_id, &access, Utc::now())
+            .await?;
         let request_id = self
             .open_request(
                 &deployment,

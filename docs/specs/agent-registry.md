@@ -35,6 +35,7 @@ Design
     AgentAccess (stored per deployment): { approval_required: bool, approved: set<client_id>, blocked: set<client_id> }
     AutonomousAgent request: { request_id, name, description?, sealing_key: SealingKey } → desired creation; credential delivery { request_id, client_id, sealed, expires_at }.
     Access state is derived: blocked if in `blocked`; approved if in `approved` or approval mode off; else pending.
+    An autonomous agent created through Autharie is added to `approved` when it is created: the owner asked for it.
     Use cases: set approval mode, approve, block, unblock, delete agent, create autonomous agent, rotate its secret, record outcome (registry + credentials), list registry (merges FerrisKey-reported clients, access sets, and last activity from decisions; clients only seen in decisions get source Seen).
   Persistence: migrations `agent_access` (deployment_id PK, approval_required, approved text[], blocked text[], deleted text[], clients_truncated), `agent_clients` (deployment_id, client_id, name, source, kind, enabled, created_at, reported_at, position; PK (deployment_id, client_id)), `agent_autonomous` (deployment_id, client_id, name, description, created_at), `agent_credentials` (request_id PK, deployment_id, client_id, kind, sealing_key, sealed, delivered_at, expires_at).
   Action `deployment.agents` gains `access: { approval_required, approved[], blocked[] }`, `autonomous: [{ request_id?, client_id, name, rotate_request_id?, sealing_key? }]`, `deleted_agents: [client_id]`.
@@ -102,3 +103,4 @@ Amended: 2026-10-23 FerrisKey has no client-secret regeneration route, so rotati
 Amended: 2026-10-23 a delivered credential keeps a secret-free tombstone row until it expires, so a second GET answers 410 and not 404.
 Amended: 2026-10-23 the control plane names the autonomous client id when it takes the request (the operator creates that exact id), and keeps autonomous agents and deletions in `agent_autonomous` and `agent_access.deleted`.
 Amended: 2026-10-23 GET /clients also carries `approval_required`, since the console switch needs the mode and the list is the one read.
+Amended: 2026-10-23 an autonomous agent is approved at creation; found end to end, it showed as pending once approval mode was on.

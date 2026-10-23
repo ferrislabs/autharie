@@ -141,7 +141,11 @@ pub fn agents_patch(desired: &AgentsPayloadV1) -> serde_json::Value {
                 "realm": spec.realm,
                 "policies": spec.policies,
                 "policiesRevision": spec.policies_revision,
-                "access": spec.access,
+                "access": {
+                    "approvalRequired": spec.access.approval_required,
+                    "approved": spec.access.approved,
+                    "blocked": spec.access.blocked,
+                },
                 "autonomous": spec.autonomous,
                 "deletedAgents": spec.deleted_agents,
             }
@@ -189,7 +193,7 @@ mod tests {
                         "cedar": "permit (principal, action, resource);",
                     }],
                     "policiesRevision": 7,
-                    "access": { "approvalRequired": false },
+                    "access": { "approvalRequired": false, "approved": [], "blocked": [] },
                     "autonomous": [],
                     "deletedAgents": [],
                 } }
@@ -264,6 +268,16 @@ mod tests {
 
         assert_eq!(spec.policies[0].id, POLICY.to_string());
         assert_eq!(spec.policies_revision, 7);
+    }
+
+    #[test]
+    fn an_emptied_access_list_is_written_out_so_the_merge_clears_it() {
+        let patch = agents_patch(&desired(true, json!([])));
+
+        assert_eq!(
+            patch["spec"]["agents"]["access"],
+            json!({ "approvalRequired": false, "approved": [], "blocked": [] })
+        );
     }
 
     #[test]
