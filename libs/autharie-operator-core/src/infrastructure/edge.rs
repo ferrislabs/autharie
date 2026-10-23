@@ -304,6 +304,7 @@ mod tests {
                 webhook_requests: Vec::new(),
                 agents: None,
                 smtp: Vec::new(),
+                portal_themes: Vec::new(),
                 restore: None,
                 organisation_id: "org".to_string(),
                 provider: IdentityProvider::Ferriskey,

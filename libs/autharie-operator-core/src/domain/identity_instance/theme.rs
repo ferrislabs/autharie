@@ -1,4 +1,6 @@
-use autharie_crds::v1alpha::identity_instance::{Branding, BrandingColors, IamPhase, IamStatus};
+use autharie_crds::v1alpha::identity_instance::{
+    Branding, BrandingColors, IamPhase, IamStatus, PortalThemeSpec,
+};
 use serde_json::{Map, Value, json};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,6 +32,14 @@ fn colors_are_empty(colors: &BrandingColors) -> bool {
 
 fn is_empty(branding: &Branding) -> bool {
     branding.radius.is_none() && branding.colors.as_ref().is_none_or(colors_are_empty)
+}
+
+const LEGACY_BRANDING_REALM: &str = "master";
+
+pub fn legacy_branding_superseded(portal_themes: &[PortalThemeSpec]) -> bool {
+    portal_themes
+        .iter()
+        .any(|entry| entry.realm == LEGACY_BRANDING_REALM)
 }
 
 pub fn marker(branding: &Branding) -> String {

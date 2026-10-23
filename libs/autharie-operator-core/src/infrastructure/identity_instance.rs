@@ -33,6 +33,8 @@ use crate::domain::agents::config::AgentsEnvironment;
 use crate::domain::agents::ports::{AgentsOutcome, IdentityInstanceAgents};
 use crate::domain::agents::service::AgentsReconciler;
 use crate::domain::agents::{agents_enabled, authz_required};
+use crate::domain::portal_themes::ports::{IdentityInstancePortalThemes, PortalThemeOutcome};
+use crate::domain::portal_themes::service::PortalThemeReconciler;
 use crate::domain::ports::{
     IdentityInstanceDeployer, IdentityInstanceRepository, IdentityInstanceService,
 };
@@ -51,6 +53,7 @@ use crate::infrastructure::edge::{
     httproute_api_resource, route_is_ready, security_policy_api_resource,
 };
 use crate::infrastructure::ferriskey_agents::{KubeAgentServers, KubeFerriskeyAgents};
+use crate::infrastructure::ferriskey_portal_theme::KubeFerriskeyPortalTheme;
 use crate::infrastructure::ferriskey_smtp::KubeFerriskeySmtp;
 use crate::infrastructure::ferriskey_theme::KubeInstanceTheme;
 use crate::infrastructure::ferriskey_webhooks::KubeFerriskeyWebhooks;
@@ -58,6 +61,7 @@ use crate::infrastructure::kube_agents::{
     GatewayService, KubeAgentInstances, KubeAgentsEdge, KubeAgentsSecrets, KubeAgentsStatus,
     KubeGatewayConfig,
 };
+use crate::infrastructure::kube_portal_themes::KubePortalThemeStatus;
 use crate::infrastructure::kube_smtp::{KubeSmtpSecrets, KubeSmtpStatus};
 use crate::infrastructure::kube_webhooks::{
     KubeWebhookDeliveries, KubeWebhookSecrets, KubeWebhookStatus,
@@ -1911,12 +1915,13 @@ impl IdentityProviderHandler for FerriskeyProviderHandler {
 }
 
 #[derive(Clone)]
-struct OperatorContext<S, D, W, A, M> {
+struct OperatorContext<S, D, W, A, M, P> {
     service: Arc<S>,
     deployer: Arc<D>,
     webhooks: Arc<W>,
     agents: Arc<A>,
     smtp: Arc<M>,
+    portal_themes: Arc<P>,
     client: Client,
 }
 
@@ -1924,6 +1929,7 @@ const WEBHOOK_RETRY_SECONDS: u64 = 15;
 const AGENTS_RETRY_SECONDS: u64 = 15;
 const AGENTS_WATCH_SECONDS: u64 = 30;
 const SMTP_RETRY_SECONDS: u64 = 15;
+const PORTAL_THEME_RETRY_SECONDS: u64 = 15;
 
 /// A webhook that failed or is waiting brings the next look forward; it never
 /// turns the instance's own reconcile into a failure.
@@ -1971,9 +1977,22 @@ fn with_smtp_outcome(outcome: ReconcileOutcome, smtp: SmtpOutcome) -> ReconcileO
     }
 }
 
-async fn reconcile<S, D, W, A, M>(
+fn with_portal_theme_outcome(
+    outcome: ReconcileOutcome,
+    portal_themes: PortalThemeOutcome,
+) -> ReconcileOutcome {
+    match portal_themes {
+        PortalThemeOutcome::Settled => outcome,
+        PortalThemeOutcome::Retry => {
+            let soon = Duration::from_secs(PORTAL_THEME_RETRY_SECONDS);
+            ReconcileOutcome::requeue_after(outcome.requeue_after.map_or(soon, |at| at.min(soon)))
+        }
+    }
+}
+
+async fn reconcile<S, D, W, A, M, P>(
     instance: Arc<IdentityInstance>,
-    context: Arc<OperatorContext<S, D, W, A, M>>,
+    context: Arc<OperatorContext<S, D, W, A, M, P>>,
 ) -> Result<Action, OperatorError>
 where
     S: IdentityInstanceService,
@@ -1981,6 +2000,7 @@ where
     W: IdentityInstanceWebhooks,
     A: IdentityInstanceAgents,
     M: IdentityInstanceSmtp,
+    P: IdentityInstancePortalThemes,
 {
     if instance.metadata.deletion_timestamp.is_some() {
         return handle_deletion(instance, context).await;
@@ -1999,19 +2019,23 @@ where
     let webhooks = context.webhooks.reconcile(&instance).await;
     let agents = context.agents.reconcile(&instance).await;
     let smtp = context.smtp.reconcile(&instance).await;
+    let portal_themes = context.portal_themes.reconcile(&instance).await;
     Ok(outcome_to_action(with_agents_watch(
-        with_smtp_outcome(
-            with_agents_outcome(with_webhook_outcome(outcome, webhooks), agents),
-            smtp,
+        with_portal_theme_outcome(
+            with_smtp_outcome(
+                with_agents_outcome(with_webhook_outcome(outcome, webhooks), agents),
+                smtp,
+            ),
+            portal_themes,
         ),
         &instance,
     )))
 }
 
-fn error_policy<S, D, W, A, M>(
+fn error_policy<S, D, W, A, M, P>(
     _instance: Arc<IdentityInstance>,
     error: &OperatorError,
-    _context: Arc<OperatorContext<S, D, W, A, M>>,
+    _context: Arc<OperatorContext<S, D, W, A, M, P>>,
 ) -> Action {
     error!(error = %error, "Reconcile error");
     error_requeue_action()
@@ -2119,6 +2143,10 @@ pub async fn run() -> Result<(), OperatorError> {
         Arc::new(KubeFerriskeySmtp::new(client.clone())),
         Arc::new(KubeSmtpSecrets::new(client.clone())),
     ));
+    let portal_themes = Arc::new(PortalThemeReconciler::new(
+        Arc::new(KubePortalThemeStatus::new(client.clone())),
+        Arc::new(KubeFerriskeyPortalTheme::new(client.clone())),
+    ));
     let deployer = Arc::new(KubeIdentityInstanceDeployer::new(
         client.clone(),
         edge,
@@ -2142,6 +2170,7 @@ pub async fn run() -> Result<(), OperatorError> {
         webhooks,
         agents,
         smtp,
+        portal_themes,
         client: client.clone(),
     });
 
@@ -2172,6 +2201,7 @@ pub async fn run() -> Result<(), OperatorError> {
                     KubeAgentServers,
                 >,
                 SmtpReconciler<KubeSmtpStatus, KubeFerriskeySmtp, KubeSmtpSecrets>,
+                PortalThemeReconciler<KubePortalThemeStatus, KubeFerriskeyPortalTheme>,
             >,
             error_policy::<
                 OperatorApplication<
@@ -2196,6 +2226,7 @@ pub async fn run() -> Result<(), OperatorError> {
                     KubeAgentServers,
                 >,
                 SmtpReconciler<KubeSmtpStatus, KubeFerriskeySmtp, KubeSmtpSecrets>,
+                PortalThemeReconciler<KubePortalThemeStatus, KubeFerriskeyPortalTheme>,
             >,
             context,
         )
@@ -2242,9 +2273,9 @@ async fn ensure_finalizer(
     Ok(())
 }
 
-async fn handle_deletion<S, D, W, A, M>(
+async fn handle_deletion<S, D, W, A, M, P>(
     instance: Arc<IdentityInstance>,
-    context: Arc<OperatorContext<S, D, W, A, M>>,
+    context: Arc<OperatorContext<S, D, W, A, M, P>>,
 ) -> Result<Action, OperatorError>
 where
     S: IdentityInstanceService,
@@ -4103,6 +4134,35 @@ mod tests {
     }
 
     #[test]
+    fn a_settled_portal_theme_pass_leaves_the_requeue_alone() {
+        let steady = ReconcileOutcome::requeue_after(Duration::from_secs(60));
+
+        let outcome = with_portal_theme_outcome(steady, PortalThemeOutcome::Settled);
+
+        assert_eq!(outcome.requeue_after, Some(Duration::from_secs(60)));
+    }
+
+    #[test]
+    fn a_portal_theme_retry_brings_the_next_pass_forward_but_never_pushes_it_back() {
+        let steady = ReconcileOutcome::requeue_after(Duration::from_secs(60));
+        let soon = ReconcileOutcome::requeue_after(Duration::from_secs(5));
+
+        assert_eq!(
+            with_portal_theme_outcome(steady, PortalThemeOutcome::Retry).requeue_after,
+            Some(Duration::from_secs(PORTAL_THEME_RETRY_SECONDS))
+        );
+        assert_eq!(
+            with_portal_theme_outcome(soon, PortalThemeOutcome::Retry).requeue_after,
+            Some(Duration::from_secs(5))
+        );
+        assert_eq!(
+            with_portal_theme_outcome(ReconcileOutcome::default(), PortalThemeOutcome::Retry)
+                .requeue_after,
+            Some(Duration::from_secs(PORTAL_THEME_RETRY_SECONDS))
+        );
+    }
+
+    #[test]
     fn a_settled_smtp_pass_leaves_the_requeue_alone() {
         let steady = ReconcileOutcome::requeue_after(Duration::from_secs(60));
 
@@ -4226,6 +4286,7 @@ mod tests {
                 webhook_requests: Vec::new(),
                 agents: None,
                 smtp: Vec::new(),
+                portal_themes: Vec::new(),
                 restore: None,
                 organisation_id: "org-1".to_string(),
                 provider: IdentityProvider::Keycloak,

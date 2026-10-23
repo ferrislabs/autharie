@@ -7,7 +7,8 @@ use autharie_crds::v1alpha::identity_instance::{
 };
 
 use crate::domain::identity_instance::theme::{
-    ThemeDecision, decide, default_theme_config, differs, marker, outcome_status, theme_config,
+    ThemeDecision, decide, default_theme_config, differs, legacy_branding_superseded, marker,
+    outcome_status, theme_config,
 };
 use crate::domain::ports::{
     IdentityInstanceDeployer, IdentityInstanceRepository, IdentityInstanceService,
@@ -208,7 +209,9 @@ where
         &self,
         instance: &IdentityInstance,
     ) -> Result<BrandingOutcome, OperatorError> {
-        if instance.spec.provider != IdentityProvider::Ferriskey {
+        if instance.spec.provider != IdentityProvider::Ferriskey
+            || legacy_branding_superseded(&instance.spec.portal_themes)
+        {
             return Ok(BrandingOutcome::Settled);
         }
 
@@ -272,7 +275,7 @@ mod tests {
     use autharie_crds::v1alpha::identity_instance::{
         Branding, DatabaseConfig, DatabaseMode, IamConfig, IamPhase, IamStatus, IdentityInstance,
         IdentityInstanceSpec, IdentityInstanceStatus, IdentityProvider, ManagedClusterConfig,
-        ManagedClusterStorage,
+        ManagedClusterStorage, PortalThemeSpec,
     };
     use kube::core::ObjectMeta;
     use std::sync::Arc;
@@ -290,6 +293,7 @@ mod tests {
                 webhook_requests: Vec::new(),
                 agents: None,
                 smtp: Vec::new(),
+                portal_themes: Vec::new(),
                 restore: None,
                 organisation_id: "org-1".to_string(),
                 provider: IdentityProvider::Keycloak,
@@ -729,6 +733,97 @@ mod tests {
             applied,
             observed_at: Some("t".to_string()),
         }
+    }
+
+    fn portal_theme_for(realm: &str) -> PortalThemeSpec {
+        PortalThemeSpec {
+            realm: realm.to_string(),
+            revision: 1,
+            config: serde_json::json!({}),
+        }
+    }
+
+    #[tokio::test]
+    async fn legacy_branding_is_skipped_when_a_theme_owns_master() {
+        let mut instance = ferriskey_with(Some(radius(6)), None);
+        instance.spec.portal_themes = vec![portal_theme_for("master")];
+        let mut theme = MockInstanceThemePort::new();
+        theme.expect_put_theme().times(0);
+        let mut repository = MockIdentityInstanceRepository::new();
+        repository.expect_patch_status().times(0);
+
+        let service = IdentityInstanceServiceImpl::new(
+            Arc::new(repository),
+            Arc::new(ready_deployer()),
+            Arc::new(theme),
+        );
+        let outcome = service.reconcile(instance).await.unwrap();
+
+        assert_eq!(
+            outcome.requeue_after,
+            Some(Duration::from_secs(STEADY_STATE_REQUEUE_SECONDS))
+        );
+    }
+
+    #[tokio::test]
+    async fn legacy_branding_is_not_restored_to_default_when_a_theme_owns_master() {
+        let applied = iam_status(IamPhase::Applied, Some(marker(&radius(6))));
+        let mut instance = ferriskey_with(None, Some(applied));
+        instance.spec.portal_themes = vec![portal_theme_for("master")];
+        let mut theme = MockInstanceThemePort::new();
+        theme.expect_put_theme().times(0);
+        let mut repository = MockIdentityInstanceRepository::new();
+        repository.expect_patch_status().times(0);
+
+        let service = IdentityInstanceServiceImpl::new(
+            Arc::new(repository),
+            Arc::new(ready_deployer()),
+            Arc::new(theme),
+        );
+        service.reconcile(instance).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn legacy_branding_still_applies_when_themes_only_cover_other_realms() {
+        let mut instance = ferriskey_with(Some(radius(6)), None);
+        instance.spec.portal_themes = vec![portal_theme_for("acme")];
+        let mut theme = MockInstanceThemePort::new();
+        theme
+            .expect_put_theme()
+            .times(1)
+            .withf(|_, config| config["borders"]["widgetRadius"] == 6)
+            .returning(|_, _| Box::pin(async { Ok(()) }));
+        let mut repository = MockIdentityInstanceRepository::new();
+        repository
+            .expect_patch_status()
+            .times(1)
+            .withf(|_, status| {
+                status
+                    .iam
+                    .as_ref()
+                    .is_some_and(|iam| iam.phase == IamPhase::Applied)
+            })
+            .returning(|instance, _| {
+                let instance = instance.clone();
+                Box::pin(async move { Ok(instance) })
+            });
+
+        let service = IdentityInstanceServiceImpl::new(
+            Arc::new(repository),
+            Arc::new(ready_deployer()),
+            Arc::new(theme),
+        );
+        service.reconcile(instance).await.unwrap();
+    }
+
+    #[test]
+    fn only_a_master_entry_supersedes_the_legacy_branding() {
+        assert!(!legacy_branding_superseded(&[]));
+        assert!(!legacy_branding_superseded(&[portal_theme_for("acme")]));
+        assert!(legacy_branding_superseded(&[
+            portal_theme_for("acme"),
+            portal_theme_for("master"),
+        ]));
     }
 
     #[tokio::test]

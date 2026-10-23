@@ -1019,6 +1019,7 @@ mod tests {
                 webhooks_revision: 1,
                 webhook_requests: requests,
                 smtp: Vec::new(),
+                portal_themes: Vec::new(),
             },
             status: Some(IdentityInstanceStatus {
                 phase: Some(Phase::Running),

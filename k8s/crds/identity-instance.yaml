@@ -377,6 +377,24 @@ spec:
                 type: object
               organisationId:
                 type: string
+              portalThemes:
+                items:
+                  properties:
+                    config:
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                    realm:
+                      type: string
+                    revision:
+                      format: uint64
+                      minimum: 0.0
+                      type: integer
+                  required:
+                  - config
+                  - realm
+                  - revision
+                  type: object
+                type: array
               provider:
                 enum:
                 - keycloak
@@ -811,6 +829,30 @@ spec:
                 - null
                 nullable: true
                 type: string
+              portalThemes:
+                items:
+                  properties:
+                    message:
+                      nullable: true
+                      type: string
+                    phase:
+                      enum:
+                      - Pending
+                      - Applied
+                      - Failed
+                      type: string
+                    realm:
+                      type: string
+                    revision:
+                      format: uint64
+                      minimum: 0.0
+                      type: integer
+                  required:
+                  - phase
+                  - realm
+                  - revision
+                  type: object
+                type: array
               ready:
                 default: false
                 description: Is the instance ready to serve traffic
