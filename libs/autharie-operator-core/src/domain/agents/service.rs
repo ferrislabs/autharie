@@ -1,9 +1,11 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use autharie_crds::v1alpha::identity_instance::{
     AgentPolicyPhase, AgentPolicySpec, AgentPolicyStatus, AgentsPhase, AgentsSpec, AgentsStatus,
     IdentityInstance, IdentityProvider,
 };
+use chrono::{DateTime, Utc};
 use futures::lock::Mutex;
 
 use super::config::{AgentsEnvironment, render};
@@ -12,23 +14,29 @@ use super::ports::{
     AgentInstances, AgentsEdge, AgentsOutcome, AgentsSecretsPort, AgentsStatusRepository,
     FerriskeyAgentsPort, GatewayConfigStore, IdentityInstanceAgents,
 };
+use super::servers::{self, AgentServersPort};
 use super::{
     AgentsError, ManagedPolicy, PolicyWrite, agents_enabled, managed_id, managed_name,
-    remote_description, settings_with_resource, settings_without_resource, settled_off,
+    remote_description, settings_with_resources, settings_without_resources, settled_off,
 };
 
-pub struct AgentsReconciler<F, S, R, L, G, E> {
+mod servers_sync;
+
+pub struct AgentsReconciler<F, S, R, L, G, E, V> {
     ferriskey: Arc<F>,
     secrets: Arc<S>,
     status: Arc<R>,
     instances: Arc<L>,
     config: Arc<G>,
     edge: Arc<E>,
+    servers: Arc<V>,
     environment: AgentsEnvironment,
     rebuild: Mutex<()>,
+    clock: fn() -> DateTime<Utc>,
 }
 
-impl<F, S, R, L, G, E> AgentsReconciler<F, S, R, L, G, E> {
+impl<F, S, R, L, G, E, V> AgentsReconciler<F, S, R, L, G, E, V> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         ferriskey: Arc<F>,
         secrets: Arc<S>,
@@ -36,6 +44,7 @@ impl<F, S, R, L, G, E> AgentsReconciler<F, S, R, L, G, E> {
         instances: Arc<L>,
         config: Arc<G>,
         edge: Arc<E>,
+        servers: Arc<V>,
         environment: AgentsEnvironment,
     ) -> Self {
         Self {
@@ -45,9 +54,16 @@ impl<F, S, R, L, G, E> AgentsReconciler<F, S, R, L, G, E> {
             instances,
             config,
             edge,
+            servers,
             environment,
             rebuild: Mutex::new(()),
+            clock: Utc::now,
         }
+    }
+
+    pub fn with_clock(mut self, clock: fn() -> DateTime<Utc>) -> Self {
+        self.clock = clock;
+        self
     }
 }
 
@@ -55,9 +71,14 @@ impl<F, S, R, L, G, E> AgentsReconciler<F, S, R, L, G, E> {
 struct Tally {
     issues: Vec<AgentsError>,
     retry: bool,
+    revisit: Option<Duration>,
 }
 
 impl Tally {
+    fn revisit_in(&mut self, wait: Duration) {
+        self.revisit = Some(self.revisit.map_or(wait, |known| known.min(wait)));
+    }
+
     fn issue(&mut self, error: AgentsError) {
         tracing::warn!(error = %error.message(), "agent settings could not be applied");
         self.issues.push(error);
@@ -83,7 +104,7 @@ fn serves_agents(instance: &IdentityInstance) -> bool {
         && instance.metadata.deletion_timestamp.is_none()
 }
 
-impl<F, S, R, L, G, E> IdentityInstanceAgents for AgentsReconciler<F, S, R, L, G, E>
+impl<F, S, R, L, G, E, V> IdentityInstanceAgents for AgentsReconciler<F, S, R, L, G, E, V>
 where
     F: FerriskeyAgentsPort,
     S: AgentsSecretsPort,
@@ -91,6 +112,7 @@ where
     L: AgentInstances,
     G: GatewayConfigStore,
     E: AgentsEdge,
+    V: AgentServersPort,
 {
     async fn reconcile(&self, instance: &IdentityInstance) -> AgentsOutcome {
         if !serves_agents(instance) || instance.spec.stopped || !instance.is_ready() {
@@ -120,7 +142,7 @@ where
     }
 }
 
-impl<F, S, R, L, G, E> AgentsReconciler<F, S, R, L, G, E>
+impl<F, S, R, L, G, E, V> AgentsReconciler<F, S, R, L, G, E, V>
 where
     F: FerriskeyAgentsPort,
     S: AgentsSecretsPort,
@@ -128,15 +150,20 @@ where
     L: AgentInstances,
     G: GatewayConfigStore,
     E: AgentsEdge,
+    V: AgentServersPort,
 {
     async fn enable(&self, instance: &IdentityInstance, agents: &AgentsSpec) -> AgentsOutcome {
         let canonical = self.environment.canonical_uri(instance);
         let mut tally = Tally::default();
+        let resources = self.server_resources(instance, agents);
 
         let client_ready = self
-            .prepare(instance, &agents.realm, &canonical, &mut tally)
+            .prepare(instance, &agents.realm, &canonical, &resources, &mut tally)
             .await;
         let policies = self.sync_policies(instance, agents, &mut tally).await;
+        let servers = self
+            .sync_servers(instance, agents, client_ready, &mut tally)
+            .await;
         if client_ready {
             if let Err(error) = self.rebuild_gateway_config().await {
                 tally.issue(error);
@@ -153,7 +180,7 @@ where
             mcp_url: Some(canonical),
             message: tally.message(),
             policies,
-            servers: Vec::new(),
+            servers,
         };
         self.record(instance, status, tally).await
     }
@@ -163,6 +190,7 @@ where
         instance: &IdentityInstance,
         realm: &str,
         canonical: &str,
+        resources: &[String],
         tally: &mut Tally,
     ) -> bool {
         if let Err(error) = self
@@ -176,7 +204,9 @@ where
 
         match self.ferriskey.realm_settings(instance, realm).await {
             Ok(current) => {
-                if let Some(wanted) = settings_with_resource(&current, canonical)
+                let mut wanted_resources = vec![canonical.to_string()];
+                wanted_resources.extend_from_slice(resources);
+                if let Some(wanted) = settings_with_resources(&current, &wanted_resources)
                     && let Err(error) = self
                         .ferriskey
                         .update_realm_settings(instance, realm, &wanted)
@@ -383,6 +413,19 @@ where
             Err(error) => tally.issue(error),
         }
 
+        let doomed = self.doomed_servers(instance, agents);
+        for slug in &doomed {
+            let uri = self.environment.server_canonical_uri(instance, slug);
+            match self
+                .servers
+                .remove_server_client(instance, realm, slug, &uri)
+                .await
+            {
+                Ok(()) | Err(AgentsError::NotFound) => {}
+                Err(error) => tally.issue(error),
+            }
+        }
+
         match self
             .ferriskey
             .remove_gateway_client(instance, realm, &canonical)
@@ -392,9 +435,15 @@ where
             Err(error) => tally.issue(error),
         }
 
+        let mut taken_back = vec![canonical.clone()];
+        taken_back.extend(
+            doomed
+                .iter()
+                .map(|slug| self.environment.server_canonical_uri(instance, slug)),
+        );
         match self.ferriskey.realm_settings(instance, realm).await {
             Ok(current) => {
-                if let Some(wanted) = settings_without_resource(&current, &canonical)
+                if let Some(wanted) = settings_without_resources(&current, &taken_back)
                     && let Err(error) = self
                         .ferriskey
                         .update_realm_settings(instance, realm, &wanted)
@@ -413,6 +462,7 @@ where
             AgentsStatus {
                 phase: tally.phase(),
                 message: tally.message(),
+                servers: servers::known(instance).to_vec(),
                 ..settled_off(agents.policies_revision)
             }
         };
@@ -438,7 +488,9 @@ where
         }
 
         if status.phase == AgentsPhase::Ready && !tally.retry {
-            AgentsOutcome::Settled
+            tally
+                .revisit
+                .map_or(AgentsOutcome::Settled, AgentsOutcome::Revisit)
         } else {
             AgentsOutcome::Retry
         }
@@ -459,6 +511,7 @@ where
             if let Some(upstream) = self.environment.upstream(instance, &secret) {
                 upstreams.push(upstream);
             }
+            upstreams.extend(self.environment.server_upstreams(instance, &secret));
         }
 
         let document = render(&upstreams);
@@ -471,13 +524,17 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, HashMap};
+    use std::collections::{BTreeMap, BTreeSet, HashMap};
     use std::sync::Mutex as StdMutex;
 
-    use autharie_crds::v1alpha::identity_instance::{IdentityInstanceSpec, IdentityInstanceStatus};
+    use autharie_crds::v1alpha::identity_instance::{
+        AgentServerPhase, AgentServerSpec, AgentServerTool, IdentityInstanceSpec,
+        IdentityInstanceStatus,
+    };
 
     use super::*;
     use crate::domain::OperatorError;
+    use crate::domain::agents::servers::{Discovered, DiscoveryTarget};
     use crate::domain::agents::test_spec;
     use crate::domain::agents::{GatewayClient, RealmSettings, RemotePolicy};
 
@@ -781,6 +838,102 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct ServersState {
+        calls: Vec<String>,
+        clients: BTreeSet<String>,
+        discovered: Vec<(String, String, String, String)>,
+        answer: Option<Discovered>,
+        fail_ensure: Option<AgentsError>,
+        fail_remove: Option<AgentsError>,
+    }
+
+    #[derive(Default)]
+    struct FakeServers {
+        state: StdMutex<ServersState>,
+    }
+
+    impl FakeServers {
+        fn with(&self, change: impl FnOnce(&mut ServersState)) {
+            change(&mut self.state.lock().expect("not poisoned"));
+        }
+
+        fn calls(&self) -> Vec<String> {
+            self.state.lock().expect("not poisoned").calls.clone()
+        }
+
+        fn discoveries(&self) -> usize {
+            self.state.lock().expect("not poisoned").discovered.len()
+        }
+    }
+
+    impl AgentServersPort for FakeServers {
+        async fn ensure_server_client(
+            &self,
+            _instance: &IdentityInstance,
+            _realm: &str,
+            slug: &str,
+            canonical_uri: &str,
+        ) -> Result<(), AgentsError> {
+            let mut state = self.state.lock().expect("not poisoned");
+            state.calls.push(format!("ensure:{slug}:{canonical_uri}"));
+            if let Some(error) = state.fail_ensure.clone() {
+                return Err(error);
+            }
+            state.clients.insert(slug.to_string());
+            Ok(())
+        }
+
+        async fn remove_server_client(
+            &self,
+            _instance: &IdentityInstance,
+            _realm: &str,
+            slug: &str,
+            _canonical_uri: &str,
+        ) -> Result<(), AgentsError> {
+            let mut state = self.state.lock().expect("not poisoned");
+            state.calls.push(format!("remove:{slug}"));
+            if let Some(error) = state.fail_remove.clone() {
+                return Err(error);
+            }
+            state.clients.remove(slug);
+            Ok(())
+        }
+
+        async fn discover(&self, target: &DiscoveryTarget<'_>) -> Discovered {
+            let mut state = self.state.lock().expect("not poisoned");
+            state.discovered.push((
+                target.url.to_string(),
+                target.audience.to_string(),
+                target.client_secret.to_string(),
+                target.token_url.to_string(),
+            ));
+            state.answer.clone().unwrap_or_else(|| {
+                Discovered::listed(
+                    vec![AgentServerTool {
+                        name: "list_invoices".to_string(),
+                        description: None,
+                        read_only: true,
+                        destructive: false,
+                    }],
+                    0,
+                )
+            })
+        }
+    }
+
+    thread_local! {
+        static NOW: std::cell::Cell<i64> = const { std::cell::Cell::new(1_792_000_000) };
+    }
+
+    fn clock() -> DateTime<Utc> {
+        DateTime::from_timestamp(NOW.with(std::cell::Cell::get), 0).expect("a time")
+    }
+
+    fn later(seconds: i64) {
+        NOW.with(|now| now.set(now.get() + seconds));
+    }
+
     type Reconciler = AgentsReconciler<
         FakeFerriskey,
         FakeSecrets,
@@ -788,6 +941,7 @@ mod tests {
         FakeInstances,
         FakeConfig,
         FakeEdge,
+        FakeServers,
     >;
 
     struct Harness {
@@ -797,6 +951,7 @@ mod tests {
         instances: Arc<FakeInstances>,
         config: Arc<FakeConfig>,
         edge: Arc<FakeEdge>,
+        servers: Arc<FakeServers>,
         reconciler: Reconciler,
     }
 
@@ -807,6 +962,7 @@ mod tests {
         let instances = Arc::new(FakeInstances::default());
         let config = Arc::new(FakeConfig::default());
         let edge = Arc::new(FakeEdge::default());
+        let servers = Arc::new(FakeServers::default());
         let reconciler = AgentsReconciler::new(
             ferriskey.clone(),
             secrets.clone(),
@@ -814,8 +970,10 @@ mod tests {
             instances.clone(),
             config.clone(),
             edge.clone(),
+            servers.clone(),
             AgentsEnvironment::new("autharie-system", None),
-        );
+        )
+        .with_clock(clock);
         Harness {
             ferriskey,
             secrets,
@@ -823,6 +981,7 @@ mod tests {
             instances,
             config,
             edge,
+            servers,
             reconciler,
         }
     }
@@ -1464,5 +1623,426 @@ mod tests {
         );
         assert!(!written_config(&h).contains("[[upstreams]]"));
         assert!(h.ferriskey.calls().is_empty());
+    }
+
+    const CRM_ID: &str = "0b9ad3c4-4a5f-4c3b-8d57-0b2d6d9e1a11";
+    const ERP_ID: &str = "7f1c2d3e-0000-4000-8000-00000000000c";
+    const CRM_URI: &str = "https://auth.acme.test/mcp/crm";
+    const ERP_URI: &str = "https://auth.acme.test/mcp/erp";
+
+    fn customer(id: &str, slug: &str, enabled: bool, asked: Option<&str>) -> AgentServerSpec {
+        AgentServerSpec {
+            id: id.to_string(),
+            slug: slug.to_string(),
+            url: format!("https://{slug}.example.com/mcp"),
+            enabled,
+            discovery_requested_at: asked.map(str::to_string),
+        }
+    }
+
+    fn with_customers(servers: Vec<AgentServerSpec>) -> IdentityInstance {
+        let mut spec = agents(true, Vec::new());
+        spec.servers = servers;
+        acme(Some(spec))
+    }
+
+    fn serving(h: &Harness, instance: &IdentityInstance) {
+        *h.instances.all.lock().expect("not poisoned") = vec![instance.clone()];
+    }
+
+    #[tokio::test]
+    async fn spec_ms_2_a_customer_server_gets_its_client_its_resource_its_upstream_and_its_status()
+    {
+        let h = harness();
+        let instance = with_customers(vec![customer(CRM_ID, "crm", true, None)]);
+        serving(&h, &instance);
+
+        let outcome = h.reconciler.reconcile(&instance).await;
+
+        assert_eq!(h.servers.calls(), vec![format!("ensure:crm:{CRM_URI}")]);
+        let state = h.ferriskey.state.lock().expect("not poisoned");
+        assert_eq!(
+            state.settings.allowed_resources,
+            vec![CANONICAL.to_string(), CRM_URI.to_string()]
+        );
+        drop(state);
+        let config = written_config(&h);
+        assert!(config.contains("canonical_uri = \"https://auth.acme.test/mcp/crm\""));
+        assert!(config.contains("server_name = \"crm\""));
+        assert!(config.contains("upstream_url = \"https://crm.example.com/mcp\""));
+        assert!(config.contains("audience = \"mcp-crm\""));
+        assert!(config.contains("egress = \"public\""));
+        assert_eq!(
+            *h.edge.calls.lock().expect("not poisoned"),
+            vec!["apply:deployment-1".to_string()]
+        );
+        let status = last_status(&h);
+        assert_eq!(status.phase, AgentsPhase::Ready);
+        assert_eq!(status.servers.len(), 1);
+        assert_eq!(status.servers[0].id, CRM_ID);
+        assert_eq!(status.servers[0].slug, "crm");
+        assert_eq!(status.servers[0].phase, AgentServerPhase::Ready);
+        assert_eq!(status.servers[0].tools[0].name, "list_invoices");
+        assert!(status.servers[0].discovered_at.is_some());
+        assert_eq!(
+            outcome,
+            AgentsOutcome::Revisit(crate::domain::agents::servers::REDISCOVER_AFTER)
+        );
+    }
+
+    #[tokio::test]
+    async fn the_discovery_is_asked_of_the_server_url_with_the_gateway_secret_and_the_servers_audience()
+     {
+        let h = harness();
+        let instance = with_customers(vec![customer(CRM_ID, "crm", true, None)]);
+        serving(&h, &instance);
+
+        h.reconciler.reconcile(&instance).await;
+
+        let asked = h
+            .servers
+            .state
+            .lock()
+            .expect("not poisoned")
+            .discovered
+            .clone();
+        assert_eq!(
+            asked,
+            vec![(
+                "https://crm.example.com/mcp".to_string(),
+                "mcp-crm".to_string(),
+                "client-secret".to_string(),
+                "http://deployment-1-api.tenant-a.svc:3333/api/realms/acme/protocol/openid-connect/token"
+                    .to_string(),
+            )]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_server_switched_off_gets_no_client_no_upstream_and_no_status() {
+        let h = harness();
+        let instance = with_customers(vec![
+            customer(CRM_ID, "crm", true, None),
+            customer(ERP_ID, "erp", false, None),
+        ]);
+        serving(&h, &instance);
+
+        h.reconciler.reconcile(&instance).await;
+
+        assert_eq!(h.servers.calls(), vec![format!("ensure:crm:{CRM_URI}")]);
+        assert!(!written_config(&h).contains("erp"));
+        let status = last_status(&h);
+        assert_eq!(status.servers.len(), 1);
+        assert_eq!(status.servers[0].slug, "crm");
+    }
+
+    #[tokio::test]
+    async fn a_second_pass_does_not_discover_again_until_it_is_time() {
+        let h = harness();
+        let first = with_customers(vec![customer(CRM_ID, "crm", true, None)]);
+        serving(&h, &first);
+        h.reconciler.reconcile(&first).await;
+        let applied = last_status(&h);
+        let patches = h.status.patches.lock().expect("not poisoned").len();
+        let second = with_status(first, applied);
+
+        later(3600);
+        let outcome = h.reconciler.reconcile(&second).await;
+
+        assert_eq!(h.servers.discoveries(), 1);
+        assert_eq!(
+            h.status.patches.lock().expect("not poisoned").len(),
+            patches
+        );
+        assert!(
+            matches!(outcome, AgentsOutcome::Revisit(wait) if wait <= crate::domain::agents::servers::REDISCOVER_AFTER)
+        );
+    }
+
+    #[tokio::test]
+    async fn after_six_hours_the_tools_are_listed_again() {
+        let h = harness();
+        let first = with_customers(vec![customer(CRM_ID, "crm", true, None)]);
+        serving(&h, &first);
+        h.reconciler.reconcile(&first).await;
+        let second = with_status(first, last_status(&h));
+
+        later(6 * 3600 + 1);
+        h.reconciler.reconcile(&second).await;
+
+        assert_eq!(h.servers.discoveries(), 2);
+        assert_ne!(
+            last_status(&h).servers[0].discovered_at,
+            second
+                .status
+                .as_ref()
+                .unwrap()
+                .agents
+                .as_ref()
+                .unwrap()
+                .servers[0]
+                .discovered_at
+        );
+    }
+
+    #[tokio::test]
+    async fn a_new_request_lists_the_tools_again_at_once_and_is_echoed_in_the_status() {
+        let h = harness();
+        let first = with_customers(vec![customer(
+            CRM_ID,
+            "crm",
+            true,
+            Some("2026-10-23T10:00:00.000Z"),
+        )]);
+        serving(&h, &first);
+        h.reconciler.reconcile(&first).await;
+        let applied = last_status(&h);
+        assert_eq!(
+            applied.servers[0].discovery_requested_at.as_deref(),
+            Some("2026-10-23T10:00:00.000Z")
+        );
+
+        let asked_again = with_status(
+            with_customers(vec![customer(
+                CRM_ID,
+                "crm",
+                true,
+                Some("2026-10-23T10:07:00.000Z"),
+            )]),
+            applied,
+        );
+        later(60);
+        h.reconciler.reconcile(&asked_again).await;
+
+        assert_eq!(h.servers.discoveries(), 2);
+        assert_eq!(
+            last_status(&h).servers[0].discovery_requested_at.as_deref(),
+            Some("2026-10-23T10:07:00.000Z")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_server_that_cannot_be_reached_is_reported_without_failing_the_agents() {
+        let h = harness();
+        h.servers.with(|state| {
+            state.answer = Some(Discovered::failed(
+                AgentServerPhase::Unreachable,
+                "the server could not be reached",
+            ));
+        });
+        let instance = with_customers(vec![customer(CRM_ID, "crm", true, None)]);
+        serving(&h, &instance);
+
+        let outcome = h.reconciler.reconcile(&instance).await;
+
+        let status = last_status(&h);
+        assert_eq!(status.phase, AgentsPhase::Ready);
+        assert_eq!(status.servers[0].phase, AgentServerPhase::Unreachable);
+        assert_eq!(
+            status.servers[0].message.as_deref(),
+            Some("the server could not be reached")
+        );
+        assert_eq!(
+            outcome,
+            AgentsOutcome::Revisit(crate::domain::agents::servers::RETRY_FAILED_AFTER)
+        );
+    }
+
+    #[tokio::test]
+    async fn spec_ms_7_a_server_taken_out_of_the_spec_loses_its_client_its_resource_and_its_upstream()
+     {
+        let h = harness();
+        let both = with_customers(vec![
+            customer(CRM_ID, "crm", true, None),
+            customer(ERP_ID, "erp", true, None),
+        ]);
+        serving(&h, &both);
+        h.reconciler.reconcile(&both).await;
+        let applied = last_status(&h);
+        assert_eq!(applied.servers.len(), 2);
+        h.servers.with(|state| state.calls.clear());
+
+        let only_crm = with_status(
+            with_customers(vec![customer(CRM_ID, "crm", true, None)]),
+            applied,
+        );
+        serving(&h, &only_crm);
+        h.reconciler.reconcile(&only_crm).await;
+
+        assert!(h.servers.calls().contains(&"remove:erp".to_string()));
+        assert!(!h.servers.calls().contains(&"remove:crm".to_string()));
+        let state = h.ferriskey.state.lock().expect("not poisoned");
+        assert_eq!(
+            state.settings.allowed_resources,
+            vec![CANONICAL.to_string(), CRM_URI.to_string()]
+        );
+        drop(state);
+        assert!(!written_config(&h).contains("mcp/erp"));
+        assert!(written_config(&h).contains("mcp/crm"));
+        let status = last_status(&h);
+        assert_eq!(status.servers.len(), 1);
+        assert_eq!(status.servers[0].slug, "crm");
+    }
+
+    #[tokio::test]
+    async fn a_server_switched_off_after_being_on_is_taken_back_like_a_removed_one() {
+        let h = harness();
+        let on = with_customers(vec![customer(CRM_ID, "crm", true, None)]);
+        serving(&h, &on);
+        h.reconciler.reconcile(&on).await;
+        let applied = last_status(&h);
+
+        let off = with_status(
+            with_customers(vec![customer(CRM_ID, "crm", false, None)]),
+            applied,
+        );
+        serving(&h, &off);
+        h.reconciler.reconcile(&off).await;
+
+        assert!(h.servers.calls().contains(&"remove:crm".to_string()));
+        assert!(last_status(&h).servers.is_empty());
+        assert!(!written_config(&h).contains("mcp/crm"));
+    }
+
+    #[tokio::test]
+    async fn a_removal_that_fails_keeps_the_server_in_the_status_so_it_is_tried_again() {
+        let h = harness();
+        let both = with_customers(vec![
+            customer(CRM_ID, "crm", true, None),
+            customer(ERP_ID, "erp", true, None),
+        ]);
+        serving(&h, &both);
+        h.reconciler.reconcile(&both).await;
+        let applied = last_status(&h);
+        h.servers.with(|state| {
+            state.fail_remove = Some(AgentsError::Retry {
+                message: "FerrisKey is unreachable".to_string(),
+            });
+        });
+
+        let only_crm = with_status(
+            with_customers(vec![customer(CRM_ID, "crm", true, None)]),
+            applied,
+        );
+        let outcome = h.reconciler.reconcile(&only_crm).await;
+
+        assert_eq!(outcome, AgentsOutcome::Retry);
+        let slugs: Vec<_> = last_status(&h)
+            .servers
+            .iter()
+            .map(|server| server.slug.clone())
+            .collect();
+        assert!(slugs.contains(&"erp".to_string()));
+        let state = h.ferriskey.state.lock().expect("not poisoned");
+        assert!(
+            state
+                .settings
+                .allowed_resources
+                .contains(&ERP_URI.to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn turning_agents_off_takes_back_every_server_client_and_resource() {
+        let h = harness();
+        let on = with_customers(vec![
+            customer(CRM_ID, "crm", true, None),
+            customer(ERP_ID, "erp", false, None),
+        ]);
+        serving(&h, &on);
+        h.reconciler.reconcile(&on).await;
+        let applied = last_status(&h);
+
+        let mut off_spec = agents(false, Vec::new());
+        off_spec.servers = vec![
+            customer(CRM_ID, "crm", true, None),
+            customer(ERP_ID, "erp", false, None),
+        ];
+        let off = with_status(acme(Some(off_spec)), applied);
+        *h.instances.all.lock().expect("not poisoned") = vec![off.clone()];
+        let outcome = h.reconciler.reconcile(&off).await;
+
+        assert_eq!(outcome, AgentsOutcome::Settled);
+        let calls = h.servers.calls();
+        assert!(calls.contains(&"remove:crm".to_string()));
+        assert!(calls.contains(&"remove:erp".to_string()));
+        let state = h.ferriskey.state.lock().expect("not poisoned");
+        assert!(state.settings.allowed_resources.is_empty());
+        drop(state);
+        assert_eq!(last_status(&h), settled_off(3));
+    }
+
+    #[tokio::test]
+    async fn a_client_that_cannot_be_made_for_a_server_is_reported_and_retried_without_discovering()
+    {
+        let h = harness();
+        h.servers.with(|state| {
+            state.fail_ensure = Some(AgentsError::Retry {
+                message: "FerrisKey is unreachable".to_string(),
+            });
+        });
+        let instance = with_customers(vec![customer(CRM_ID, "crm", true, None)]);
+        serving(&h, &instance);
+
+        let outcome = h.reconciler.reconcile(&instance).await;
+
+        assert_eq!(outcome, AgentsOutcome::Retry);
+        assert_eq!(h.servers.discoveries(), 0);
+        let status = last_status(&h);
+        assert_eq!(status.phase, AgentsPhase::Applying);
+        assert_eq!(status.servers.len(), 1);
+        assert_eq!(status.servers[0].discovered_at, None);
+        assert_eq!(status.message.as_deref(), Some("FerrisKey is unreachable"));
+    }
+
+    #[tokio::test]
+    async fn nothing_is_done_for_servers_while_the_gateway_client_is_not_ready() {
+        let h = harness();
+        h.ferriskey.with(|state| {
+            state.fail.insert(
+                "ensure_gateway_client",
+                AgentsError::Retry {
+                    message: "FerrisKey is unreachable".to_string(),
+                },
+            );
+        });
+        let instance = with_customers(vec![customer(CRM_ID, "crm", true, None)]);
+
+        h.reconciler.reconcile(&instance).await;
+
+        assert!(h.servers.calls().is_empty());
+        assert_eq!(h.servers.discoveries(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_slug_the_gateway_could_confuse_with_its_own_client_is_invalid_and_never_sent_to_ferriskey()
+     {
+        let h = harness();
+        let instance = with_customers(vec![customer(CRM_ID, "gateway", true, None)]);
+        serving(&h, &instance);
+
+        h.reconciler.reconcile(&instance).await;
+
+        assert!(h.servers.calls().is_empty());
+        assert_eq!(last_status(&h).servers[0].phase, AgentServerPhase::Invalid);
+        assert!(!written_config(&h).contains("mcp/gateway"));
+    }
+
+    #[tokio::test]
+    async fn the_servers_of_a_disabled_instance_are_not_in_the_gateway_configuration() {
+        let h = harness();
+        let mut spec = agents(false, Vec::new());
+        spec.servers = vec![customer(CRM_ID, "crm", true, None)];
+        let off = acme(Some(spec));
+        h.secrets
+            .stored
+            .lock()
+            .expect("not poisoned")
+            .insert("deployment-1".to_string(), "s".to_string());
+        serving(&h, &off);
+
+        h.reconciler.reconcile(&off).await;
+
+        assert!(!written_config(&h).contains("[[upstreams]]"));
     }
 }

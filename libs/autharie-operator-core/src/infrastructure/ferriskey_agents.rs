@@ -511,24 +511,38 @@ async fn ensure_role_assigned<C: Caller>(
 /// realm. The realm's own API audience, `<realm>-realm`, usually is not one, so
 /// it is created as a client nobody signs in with.
 async fn ensure_audience_client<C: Caller>(caller: &C, realm: &str) -> Result<(), AgentsError> {
-    let audience = evaluator_audience(realm);
+    ensure_audience_client_for(
+        caller,
+        realm,
+        &evaluator_audience(realm),
+        &format!("{realm} API"),
+    )
+    .await
+}
+
+async fn ensure_audience_client_for<C: Caller>(
+    caller: &C,
+    realm: &str,
+    audience: &str,
+    name: &str,
+) -> Result<(), AgentsError> {
     let body = send(
         caller,
         ApiRequest::new(Method::GET, format!("/realms/{}/clients", segment(realm)?))
-            .query("client_id_exact", audience.as_str())
+            .query("client_id_exact", audience)
             .query("limit", 10),
     )
     .await?;
     if items(&body)
         .into_iter()
-        .any(|client| text(client, "client_id") == Some(audience.as_str()))
+        .any(|client| text(client, "client_id") == Some(audience))
     {
         return Ok(());
     }
     send(
         caller,
         ApiRequest::new(Method::POST, format!("/realms/{}/clients", segment(realm)?)).body(json!({
-            "name": format!("{realm} API"),
+            "name": name,
             "client_id": audience,
             "client_type": "confidential",
             "service_account_enabled": false,
@@ -548,7 +562,15 @@ async fn ensure_exchange_policy<C: Caller>(
     realm: &str,
     client: &RemoteClient,
 ) -> Result<(), AgentsError> {
-    let audience = evaluator_audience(realm);
+    ensure_exchange_policy_for(caller, realm, client, &evaluator_audience(realm)).await
+}
+
+async fn ensure_exchange_policy_for<C: Caller>(
+    caller: &C,
+    realm: &str,
+    client: &RemoteClient,
+    audience: &str,
+) -> Result<(), AgentsError> {
     let policies_path = format!(
         "{}/token-exchange-policies",
         client_path(realm, &client.id)?
@@ -556,7 +578,7 @@ async fn ensure_exchange_policy<C: Caller>(
     let body = send(caller, ApiRequest::new(Method::GET, policies_path.clone())).await?;
     let existing = items(&body)
         .into_iter()
-        .find(|policy| text(policy, "target_audience") == Some(audience.as_str()));
+        .find(|policy| text(policy, "target_audience") == Some(audience));
 
     if let Some(policy) = existing {
         if policy["allow_delegation"].as_bool().unwrap_or(false) {
@@ -668,7 +690,7 @@ async fn ensure_gateway_client<C: Caller>(
     Ok(GatewayClient { secret })
 }
 
-async fn remove_gateway_client<C: Caller>(
+async fn release_owner<C: Caller>(
     caller: &C,
     realm: &str,
     canonical: &str,
@@ -681,6 +703,15 @@ async fn remove_gateway_client<C: Caller>(
             .collect();
         replace_owners(caller, realm, &kept).await?;
     }
+    Ok(())
+}
+
+async fn remove_gateway_client<C: Caller>(
+    caller: &C,
+    realm: &str,
+    canonical: &str,
+) -> Result<(), AgentsError> {
+    release_owner(caller, realm, canonical).await?;
 
     if let Some(client) = find_client(caller, realm).await? {
         send(
@@ -698,6 +729,10 @@ async fn all_policies<C: Caller>(
 ) -> Result<Vec<RemotePolicy>, AgentsError> {
     parse_policies(&send(caller, list_policies_request(realm)?).await?)
 }
+
+mod servers;
+
+pub use servers::KubeAgentServers;
 
 pub struct KubeFerriskeyAgents {
     client: Client,
