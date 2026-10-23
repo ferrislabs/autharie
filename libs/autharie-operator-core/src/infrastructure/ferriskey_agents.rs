@@ -509,8 +509,13 @@ async fn ensure_role_assigned<C: Caller>(
 
 /// FerrisKey only exchanges a token for an audience that is a client of the
 /// realm. The realm's own API audience, `<realm>-realm`, usually is not one, so
-/// it is created as a client nobody signs in with.
-async fn ensure_audience_client<C: Caller>(caller: &C, realm: &str) -> Result<(), AgentsError> {
+/// it is created as a client nobody signs in with. It also carries the
+/// evaluator role: in the master realm FerrisKey only counts a service
+/// account's client roles held on that mirror client.
+async fn ensure_audience_client<C: Caller>(
+    caller: &C,
+    realm: &str,
+) -> Result<RemoteClient, AgentsError> {
     let audience = evaluator_audience(realm);
     let body = send(
         caller,
@@ -519,13 +524,13 @@ async fn ensure_audience_client<C: Caller>(caller: &C, realm: &str) -> Result<()
             .query("limit", 10),
     )
     .await?;
-    if items(&body)
+    if let Some(existing) = items(&body)
         .into_iter()
-        .any(|client| text(client, "client_id") == Some(audience.as_str()))
+        .find(|client| text(client, "client_id") == Some(audience.as_str()))
     {
-        return Ok(());
+        return parse_client(existing);
     }
-    send(
+    let created = send(
         caller,
         ApiRequest::new(Method::POST, format!("/realms/{}/clients", segment(realm)?)).body(json!({
             "name": format!("{realm} API"),
@@ -539,8 +544,8 @@ async fn ensure_audience_client<C: Caller>(caller: &C, realm: &str) -> Result<()
             "require_pkce": false,
         })),
     )
-    .await
-    .map(|_| ())
+    .await?;
+    parse_client(&created)
 }
 
 async fn ensure_exchange_policy<C: Caller>(
@@ -659,10 +664,10 @@ async fn ensure_gateway_client<C: Caller>(
 ) -> Result<GatewayClient, AgentsError> {
     let client = ensure_client(caller, realm).await?;
     let secret = client_secret(caller, realm, &client).await?;
-    let role = ensure_evaluator_role(caller, realm, &client).await?;
+    let audience = ensure_audience_client(caller, realm).await?;
+    let role = ensure_evaluator_role(caller, realm, &audience).await?;
     let user = service_account(caller, realm, &client).await?;
     ensure_role_assigned(caller, realm, &user, &role).await?;
-    ensure_audience_client(caller, realm).await?;
     ensure_exchange_policy(caller, realm, &client).await?;
     ensure_owner(caller, realm, &client, canonical).await?;
     Ok(GatewayClient { secret })
@@ -926,6 +931,14 @@ mod tests {
                 .collect()
         }
 
+        fn read(&self, method: Method, path: &str) -> bool {
+            self.log
+                .lock()
+                .expect("not poisoned")
+                .iter()
+                .any(|(m, p, _)| *m == method && p == path)
+        }
+
         fn wrote(&self, method: Method, path: &str) -> Option<Value> {
             self.writes()
                 .into_iter()
@@ -1025,7 +1038,7 @@ mod tests {
             ),
             (
                 Method::GET,
-                "/realms/acme/clients/c1/roles",
+                "/realms/acme/clients/c2/roles",
                 json!({ "data": [{
                     "id": "r1", "name": "authz-evaluator",
                     "permissions": ["evaluate_authorization", "view_authorization"]
@@ -1154,6 +1167,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_evaluator_role_sits_on_the_realm_mirror_client() {
+        let world = configured_realm();
+
+        ensure_gateway_client(&world, "acme", CANONICAL)
+            .await
+            .expect("ensured");
+
+        assert!(world.read(Method::GET, "/realms/acme/clients/c2/roles"));
+        assert!(!world.read(Method::GET, "/realms/acme/clients/c1/roles"));
+    }
+
+    #[tokio::test]
     async fn a_realm_already_set_up_is_only_read() {
         let world = configured_realm();
 
@@ -1257,7 +1282,10 @@ mod tests {
             (
                 Method::GET,
                 "/realms/acme/clients",
-                json!({ "data": [{ "id": "c1", "client_id": "mcp-gateway" }] }),
+                json!({ "data": [
+                    { "id": "c1", "client_id": "mcp-gateway" },
+                    { "id": "c2", "client_id": "acme-realm" }
+                ] }),
             ),
             (
                 Method::GET,
@@ -1266,7 +1294,7 @@ mod tests {
             ),
             (
                 Method::GET,
-                "/realms/acme/clients/c1/roles",
+                "/realms/acme/clients/c2/roles",
                 json!({ "data": [{ "id": "r1", "name": "authz-evaluator", "permissions": ["evaluate_authorization", "view_authorization"] }] }),
             ),
             (Method::GET, "/realms/acme/users", json!({ "data": [] })),
