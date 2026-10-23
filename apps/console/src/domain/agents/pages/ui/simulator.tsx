@@ -11,7 +11,8 @@ import {
 import { StatusBadge } from '@/components/ui/status-badge'
 import { simulate, type CedarApi, type NamedPolicy, type Outcome } from '../../cedar-engine'
 import { INITIAL_DRAFT, scenarioOf, type SimulationDraft } from '../../simulation-draft'
-import { TOOL_CATALOGUE, toolId } from '../../tool-catalogue'
+import { toolId, type Catalogue } from '../../tool-catalogue'
+import { useCatalogue } from './catalogue-context'
 import { Field, TEXTAREA_CLASS } from './field'
 
 interface Props {
@@ -26,9 +27,10 @@ function run(
   api: CedarApi,
   policies: NamedPolicy[],
   ran: { draft: SimulationDraft; at: Date },
+  catalogue: Catalogue,
 ): Outcome | string {
   try {
-    return simulate(api, policies, scenarioOf(ran.draft, ran.at))
+    return simulate(api, policies, scenarioOf(ran.draft, ran.at), catalogue)
   } catch (error) {
     return error instanceof Error ? error.message : 'The simulation failed.'
   }
@@ -38,9 +40,10 @@ export function Simulator({ api, isLoading, failed, policies, blocked }: Props) 
   const [draft, setDraft] = useState<SimulationDraft>(INITIAL_DRAFT)
   const [ran, setRan] = useState<{ draft: SimulationDraft; at: Date } | null>(null)
 
+  const catalogue = useCatalogue()
   const result = useMemo(
-    () => (api && ran && !blocked ? run(api, policies, ran) : null),
-    [api, ran, blocked, policies],
+    () => (api && ran && !blocked ? run(api, policies, ran, catalogue) : null),
+    [api, ran, blocked, policies, catalogue],
   )
 
   const set = (patch: Partial<SimulationDraft>) => setDraft({ ...draft, ...patch })
@@ -118,7 +121,7 @@ export function Simulator({ api, isLoading, failed, policies, blocked }: Props) 
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {TOOL_CATALOGUE.map((tool) => (
+              {catalogue.tools.map((tool) => (
                 <SelectItem key={toolId(tool)} value={toolId(tool)}>
                   {toolId(tool)}
                   {tool.readOnly ? ' (read-only)' : ''}

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import * as cedar from '@cedar-policy/cedar-wasm/nodejs'
 import { compileRule } from './compile-rule'
 import { contextTime, isValid, simulate, validatePolicy, type NamedPolicy, type Scenario } from './cedar-engine'
+import { catalogueOf } from './tool-catalogue'
 import type { RuleModel } from './types'
 
 function compiled(over: Partial<RuleModel>): string {
@@ -204,5 +205,66 @@ describe('the time handed to a policy', () => {
   it('numbers Monday 1 and Sunday 7', () => {
     expect(contextTime(MONDAY_10H)).toEqual({ weekday: 1, hour: 10 })
     expect(contextTime(SUNDAY_10H)).toEqual({ weekday: 7, hour: 10 })
+  })
+})
+
+describe('the tools of a customer server', () => {
+  const catalogue = catalogueOf([
+    {
+      slug: 'crm',
+      name: 'CRM',
+      discovery: {
+        tools: [
+          { name: 'list_invoices', read_only: true, destructive: false },
+          { name: 'delete_invoice', read_only: false, destructive: true },
+        ],
+      },
+    },
+  ])
+  const supportOnCrm = compiled({
+    who: { kind: 'groups', groups: ['support'] },
+    what: { kind: 'read-only', server: 'crm' },
+  })
+  const asSupport = (tool: string, groups = ['support']) =>
+    userScenario({
+      subject: { kind: 'user', id: 'u-1', groups, roles: [], agent: 'agent-x' },
+      tool,
+    })
+
+  it('is checked against the schema', () => {
+    const validation = validatePolicy(cedar, supportOnCrm)
+
+    expect(validation.syntax).toEqual([])
+    expect(validation.errors).toEqual([])
+  })
+
+  it('is denied by default, then allowed by the rule for a read-only tool', () => {
+    const none: NamedPolicy[] = []
+    const some = [policy('crm-reads', supportOnCrm)]
+
+    expect(simulate(cedar, none, asSupport('crm/list_invoices'), catalogue).decision).toBe('deny')
+    const outcome = simulate(cedar, some, asSupport('crm/list_invoices'), catalogue)
+    expect(outcome.decision).toBe('allow')
+    expect(outcome.determining.map((entry) => entry.id)).toEqual(['crm-reads'])
+  })
+
+  it('keeps denying what the rule does not cover', () => {
+    const some = [policy('crm-reads', supportOnCrm)]
+
+    expect(simulate(cedar, some, asSupport('crm/delete_invoice'), catalogue).decision).toBe('deny')
+    expect(simulate(cedar, some, asSupport('crm/list_invoices', ['sales']), catalogue).decision).toBe('deny')
+    expect(simulate(cedar, some, asSupport('ferriskey/get_user'), catalogue).decision).toBe('deny')
+  })
+
+  it('takes the read-only hint the server announced', () => {
+    const some = [policy('crm-reads', supportOnCrm)]
+
+    expect(simulate(cedar, some, asSupport('crm/list_invoices')).decision).toBe('deny')
+  })
+
+  it('is decided like any tool, even one missing from the last discovery', () => {
+    const permitAll = [policy('server', compiled({ what: { kind: 'server', server: 'crm' } }))]
+
+    expect(simulate(cedar, permitAll, asSupport('crm/brand_new_tool'), catalogue).decision).toBe('allow')
   })
 })

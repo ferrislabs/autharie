@@ -1,8 +1,9 @@
-export type ServerId = 'ferriskey' | 'autharie'
+export type ServerId = string
 
 export interface CatalogueServer {
   id: ServerId
   label: string
+  builtin: boolean
 }
 
 export interface CatalogueTool {
@@ -13,9 +14,23 @@ export interface CatalogueTool {
   destructive: boolean
 }
 
-export const SERVERS: CatalogueServer[] = [
-  { id: 'ferriskey', label: 'FerrisKey' },
-  { id: 'autharie', label: 'Autharie' },
+export interface Catalogue {
+  servers: CatalogueServer[]
+  tools: CatalogueTool[]
+  complete: boolean
+}
+
+export interface DiscoveredServer {
+  slug: string
+  name: string
+  discovery?: {
+    tools: { name: string; description?: string; read_only: boolean; destructive: boolean }[]
+  }
+}
+
+const BUILTIN_SERVERS: CatalogueServer[] = [
+  { id: 'ferriskey', label: 'FerrisKey', builtin: true },
+  { id: 'autharie', label: 'Autharie', builtin: true },
 ]
 
 const FERRISKEY_TOOLS: CatalogueTool[] = [
@@ -58,18 +73,56 @@ const AUTHARIE_TOOLS: CatalogueTool[] = [
   { server: 'autharie', name: 'delete_webhook', description: 'Delete a webhook.', readOnly: false, destructive: true },
 ]
 
-export const TOOL_CATALOGUE: CatalogueTool[] = [...FERRISKEY_TOOLS, ...AUTHARIE_TOOLS]
+const BUILTIN_TOOLS: CatalogueTool[] = [...FERRISKEY_TOOLS, ...AUTHARIE_TOOLS]
+
+export const BUILTIN_CATALOGUE: Catalogue = {
+  servers: BUILTIN_SERVERS,
+  tools: BUILTIN_TOOLS,
+  complete: false,
+}
+
+export function catalogueOf(servers: DiscoveredServer[], complete = true): Catalogue {
+  const customer = servers
+
+  return {
+    servers: [
+      ...BUILTIN_SERVERS,
+      ...customer.map((server) => ({ id: server.slug, label: server.name, builtin: false })),
+    ],
+    tools: [
+      ...BUILTIN_TOOLS,
+      ...customer.flatMap((server) =>
+        (server.discovery?.tools ?? []).map((tool) => ({
+          server: server.slug,
+          name: tool.name,
+          description: tool.description ?? '',
+          readOnly: tool.read_only,
+          destructive: tool.destructive,
+        })),
+      ),
+    ],
+    complete,
+  }
+}
 
 export function toolId(tool: Pick<CatalogueTool, 'server' | 'name'>): string {
   return `${tool.server}/${tool.name}`
 }
 
-export function toolsOf(server: ServerId): CatalogueTool[] {
-  return TOOL_CATALOGUE.filter((tool) => tool.server === server)
+export function toolsOf(catalogue: Catalogue, server: ServerId): CatalogueTool[] {
+  return catalogue.tools.filter((tool) => tool.server === server)
 }
 
-export function findTool(id: string): CatalogueTool | undefined {
-  return TOOL_CATALOGUE.find((tool) => toolId(tool) === id)
+export function findTool(catalogue: Catalogue, id: string): CatalogueTool | undefined {
+  return catalogue.tools.find((tool) => toolId(tool) === id)
+}
+
+export function findServer(catalogue: Catalogue, id: string): CatalogueServer | undefined {
+  return catalogue.servers.find((server) => server.id === id)
+}
+
+export function isUnknownServer(catalogue: Catalogue, id: string): boolean {
+  return catalogue.complete && id.length > 0 && findServer(catalogue, id) === undefined
 }
 
 export function serverOfTool(id: string): string {

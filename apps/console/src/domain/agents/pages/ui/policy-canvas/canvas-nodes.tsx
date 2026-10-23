@@ -10,7 +10,9 @@ import {
   subjectLabel,
   targetCaption,
   targetLabel,
+  unknownServers,
 } from '../../../canvas-labels'
+import { useCatalogue } from '../catalogue-context'
 import { useCanvasUi, useDimmedBox } from './canvas-context'
 import {
   MUTED,
@@ -93,12 +95,20 @@ export function WhatNode({ id, data, selected }: NodeProps<WhatNodeType>) {
   const { readOnly } = useCanvasUi()
   const dimmed = useDimmedBox(id)
   const target = data.box.target
-  const destructive = isDestructiveTarget(target)
-  const some = destructiveCount(target)
+  const catalogue = useCatalogue()
+  const destructive = isDestructiveTarget(target, catalogue)
+  const some = destructiveCount(target, catalogue)
+  const unknown = unknownServers(target, catalogue)
 
   return (
     <div
-      className={cn(CARD, 'flex items-center gap-3 px-3 py-2', selected && 'ring-2 ring-ring', destructive && 'border-destructive/50')}
+      className={cn(
+        CARD,
+        'flex items-center gap-3 px-3 py-2',
+        selected && 'ring-2 ring-ring',
+        destructive && 'border-destructive/50',
+        unknown.length > 0 && 'border-dashed border-amber-500/60',
+      )}
       style={{ width: COLUMN_WIDTH.what, opacity: dimmed ? 0.25 : 1 }}
     >
       <Handle
@@ -113,11 +123,19 @@ export function WhatNode({ id, data, selected }: NodeProps<WhatNodeType>) {
       </IconTile>
       <div className='min-w-0 flex-1'>
         <p className='truncate text-sm font-medium' title={target.type === 'tools' ? target.tools.join('\n') : undefined}>
-          {targetLabel(target)}
+          {targetLabel(target, catalogue)}
         </p>
         <p className='flex items-center gap-1 truncate text-xs text-muted-foreground'>
           {some > 0 && <AlertTriangle className='size-3 shrink-0 text-destructive' />}
+          {unknown.length > 0 && (
+            <AlertTriangle
+              role='img'
+              aria-label='Unknown server'
+              className='size-3 shrink-0 text-amber-600 dark:text-amber-300'
+            />
+          )}
           <span className='truncate'>
+            {unknown.length > 0 && 'server removed · '}
             {some > 0 && !destructive ? `${some} destructive · ` : destructive ? 'destructive · ' : ''}
             {targetCaption(target)}
           </span>
