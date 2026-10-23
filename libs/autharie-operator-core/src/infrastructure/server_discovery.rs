@@ -340,17 +340,8 @@ impl McpDiscoverer {
             )));
         }
         let modern = session.is_some_and(|session| session.version == PROTOCOL_2026);
-        if modern && status == StatusCode::BAD_REQUEST {
-            let bytes = read_capped(response, self.limits.max_body)
-                .await
-                .map_err(|error| Failure::from_egress(&error))?;
-            let refused = serde_json::from_slice::<Value>(&bytes)
-                .is_ok_and(|message| unsupported_version(&message));
-            return Err(if refused {
-                Failure::Unsupported
-            } else {
-                Failure::Unreachable("the server answered 400".to_string())
-            });
+        if modern && status.is_client_error() {
+            return Err(Failure::Unsupported);
         }
         if !status.is_success() {
             return Err(Failure::Unreachable(format!(
@@ -383,7 +374,7 @@ impl McpDiscoverer {
         }
         .ok_or_else(|| Failure::Invalid("the answer is not a JSON-RPC message".to_string()))?;
 
-        if modern && unsupported_version(&message) {
+        if modern && message.get("error").is_some() {
             return Err(Failure::Unsupported);
         }
         if let Some(error) = message.get("error") {
@@ -400,14 +391,6 @@ impl McpDiscoverer {
         }
         Ok((message, session_id))
     }
-}
-
-fn unsupported_version(message: &Value) -> bool {
-    let error = &message["error"];
-    matches!(error["code"].as_i64(), Some(-32600 | -32602))
-        && error["message"]
-            .as_str()
-            .is_some_and(|text| text.to_ascii_lowercase().contains("version"))
 }
 
 fn read_tool(tool: &Value) -> Option<AgentServerTool> {
@@ -550,6 +533,7 @@ mod tests {
     enum Generation {
         Legacy,
         LegacyAnswering400,
+        SessionBound,
         Modern,
     }
 
@@ -631,6 +615,16 @@ mod tests {
             }
             (Generation::LegacyAnswering400, true) => {
                 return (StatusCode::BAD_REQUEST, Json(unsupported)).into_response();
+            }
+            (Generation::SessionBound, true) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "jsonrpc": "2.0", "id": null,
+                        "error": { "code": -32000, "message": "Bad Request: No valid session ID provided" }
+                    })),
+                )
+                    .into_response();
             }
             (Generation::Modern, true) => {
                 let announced = headers.get("mcp-method").and_then(|v| v.to_str().ok());
@@ -842,17 +836,30 @@ mod tests {
         assert_eq!(PROTOCOL_VERSION, "2025-11-25");
     }
 
-    #[test]
-    fn only_a_version_error_counts_as_an_unsupported_version() {
-        let error = |code: i64, text: &str| json!({ "error": { "code": code, "message": text } });
-        assert!(unsupported_version(&error(
-            -32600,
-            "Unsupported protocol version: x"
-        )));
-        assert!(unsupported_version(&error(-32602, "bad Version")));
-        assert!(!unsupported_version(&error(-32600, "malformed")));
-        assert!(!unsupported_version(&error(-32601, "unknown version")));
-        assert!(!unsupported_version(&json!({ "result": {} })));
+    #[tokio::test]
+    async fn a_2025_sdk_server_wanting_a_session_is_asked_again_the_2025_way() {
+        let w = open_as(Mode::Tools(tools(1)), Generation::SessionBound).await;
+
+        let found = run(&w).await;
+
+        assert_eq!(found.phase, AgentServerPhase::Ready);
+        assert_eq!(found.protocol_version.as_deref(), Some("2025-03-26"));
+    }
+
+    #[tokio::test]
+    async fn a_server_that_is_broken_or_refuses_the_token_is_not_asked_a_second_time() {
+        for status in [
+            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::UNAUTHORIZED,
+            StatusCode::FORBIDDEN,
+        ] {
+            let w = open(Mode::Fail(status)).await;
+
+            let found = run(&w).await;
+
+            assert_eq!(found.phase, AgentServerPhase::Unreachable);
+            assert_eq!(w.server.hits.load(Ordering::SeqCst), 1);
+        }
     }
 
     #[tokio::test]
