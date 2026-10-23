@@ -1,43 +1,33 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { isPending } from '@/domain/branding/smtp-state'
-import { selectAccessToken, useAuthStore } from '@/stores/auth'
-
-interface Scope {
-  organisationId: string | null
-  deploymentId: string | null
-}
+import {
+  BRANDING_POLL_MS,
+  brandingPath,
+  useBrandingEnabled,
+  type BrandingScope,
+} from '@/api/branding-scope'
 
 const BASE = '/organisations/{organisation_id}/deployments/{deployment_id}/branding'
-const POLL_MS = 3000
-
-function pathOf({ organisationId, deploymentId }: Scope) {
-  return { organisation_id: organisationId ?? 'current', deployment_id: deploymentId ?? 'current' }
-}
-
-function useEnabled({ organisationId, deploymentId }: Scope) {
-  const accessToken = useAuthStore(selectAccessToken)
-  return !!organisationId && !!deploymentId && !!accessToken
-}
 
 function smtpKey(path: { organisation_id: string; deployment_id: string; realm: string }) {
   return window.api.get(`${BASE}/{realm}/smtp`, { path }).queryKey
 }
 
-export const useGetSmtp = (scope: Scope, realm: string) => {
-  const enabled = useEnabled(scope)
+export const useGetSmtp = (scope: BrandingScope, realm: string) => {
+  const enabled = useBrandingEnabled(scope)
 
   return useQuery({
-    ...window.api.get(`${BASE}/{realm}/smtp`, { path: { ...pathOf(scope), realm } }).queryOptions,
+    ...window.api.get(`${BASE}/{realm}/smtp`, { path: { ...brandingPath(scope), realm } }).queryOptions,
     enabled,
-    refetchInterval: (query) => (isPending(query.state.data?.data?.state) ? POLL_MS : false),
+    refetchInterval: (query) => (isPending(query.state.data?.data?.state) ? BRANDING_POLL_MS : false),
   })
 }
 
-export const useGetBrandingRealms = (scope: Scope) => {
-  const enabled = useEnabled(scope)
+export const useGetBrandingRealms = (scope: BrandingScope) => {
+  const enabled = useBrandingEnabled(scope)
 
   return useQuery({
-    ...window.api.get(`${BASE}/realms`, { path: pathOf(scope) }).queryOptions,
+    ...window.api.get(`${BASE}/realms`, { path: brandingPath(scope) }).queryOptions,
     enabled,
   })
 }

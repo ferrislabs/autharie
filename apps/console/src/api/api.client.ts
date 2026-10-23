@@ -543,6 +543,65 @@ export namespace Schemas {
     permissions: number
   }
   export type CreateRoleResponse = { data: Role }
+  export type ThemeShadow = 'none' | 'small' | 'large'
+  export type ThemeBorders = Partial<{
+    buttonBorderWeight: number | null
+    buttonRadius: number | null
+    inputBorderWeight: number | null
+    inputRadius: number | null
+    magicLinkButtonBorderWeight: number | null
+    passkeyButtonBorderWeight: number | null
+    socialButtonBorderWeight: number | null
+    widgetBorderWeight: number | null
+    widgetRadius: number | null
+    widgetShadow: null | ThemeShadow
+  }>
+  export type HexColour = string
+  export type ThemeColors = Partial<{
+    bodyText: null | HexColour
+    error: null | HexColour
+    links: null | HexColour
+    magicLinkButtonBackground: null | HexColour
+    magicLinkButtonBorder: null | HexColour
+    magicLinkButtonLabel: null | HexColour
+    pageBackground: null | HexColour
+    passkeyButtonBackground: null | HexColour
+    passkeyButtonBorder: null | HexColour
+    passkeyButtonLabel: null | HexColour
+    primaryButton: null | HexColour
+    primaryButtonLabel: null | HexColour
+    secondaryButton: null | HexColour
+    secondaryButtonLabel: null | HexColour
+    socialButtonBackground: null | HexColour
+    socialButtonBorder: null | HexColour
+    socialButtonLabel: null | HexColour
+    widgetBackground: null | HexColour
+  }>
+  export type ThemeFontStyle = { sizePct: number; weight: number }
+  export type ThemeLinkStyle = 'normal' | 'underline'
+  export type ThemeLinkFont = { sizePct: number; style: ThemeLinkStyle; weight: number }
+  export type ThemeFonts = Partial<{
+    baseSize: number | null
+    body: null | ThemeFontStyle
+    buttons: null | ThemeFontStyle
+    inputLabels: null | ThemeFontStyle
+    links: null | ThemeLinkFont
+    subtitle: null | ThemeFontStyle
+    title: null | ThemeFontStyle
+    url: string | null
+  }>
+  export type ThemeSpacing = Partial<{
+    fieldGap: number | null
+    sectionGap: number | null
+    widgetPadding: number | null
+  }>
+  export type ThemeTokens = Partial<{
+    borders: null | ThemeBorders
+    colors: null | ThemeColors
+    fonts: null | ThemeFonts
+    spacing: null | ThemeSpacing
+  }>
+  export type CreateThemeBody = { name: string; tokens: ThemeTokens }
   export type CredentialRequestData = { request_id: string }
   export type CredentialRequestResponse = { data: CredentialRequestData }
   export type CutoverRequest = { demote: string }
@@ -1149,6 +1208,24 @@ export namespace Schemas {
     data: Array<Tenant>
     next_cursor?: (null | OrganisationId) | undefined
   }
+  export type ThemeId = string
+  export type ThemeName = string
+  export type ThemeView = {
+    active: boolean
+    created_at: string
+    id: ThemeId
+    name: ThemeName
+    tokens: ThemeTokens
+    updated_at: string
+  }
+  export type ThemeResponse = { data: ThemeView }
+  export type ThemeState =
+    | { phase: 'Pending' }
+    | { phase: 'Applied' }
+    | { message: string; phase: 'Failed' }
+  export type ThemeSync = ThemeState & { revision: number }
+  export type ThemesDeactivated = Record<string, unknown>
+  export type ThemesResponse = { data: Array<ThemeView>; state: null | ThemeSync }
   export type TraceDetail = { spans: Array<SpanHit>; trace_id: string }
   export type TraceFacetBucket = { count: number; value: string }
   export type TraceFacets = {
@@ -1173,6 +1250,7 @@ export namespace Schemas {
     permissions: number | null
   }>
   export type UpdateRoleResponse = { data: Role }
+  export type UpdateThemeBody = Partial<{ name: string | null; tokens: null | ThemeTokens }>
   export type UpgradeDataplanesRequest = {
     components: ComponentSelection
     dataplane_ids: DataplaneSelection
@@ -1978,6 +2056,64 @@ export namespace Endpoints {
     }
     response: Schemas.SmtpRemoved
   }
+  export type get_List_themes_handler = {
+    method: 'GET'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/branding/{realm}/themes'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string; realm: string }
+    }
+    response: Schemas.ThemesResponse
+  }
+  export type post_Create_theme_handler = {
+    method: 'POST'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/branding/{realm}/themes'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string; realm: string }
+
+      body: Schemas.CreateThemeBody
+    }
+    response: Schemas.ThemeResponse
+  }
+  export type post_Deactivate_themes_handler = {
+    method: 'POST'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/branding/{realm}/themes/deactivate'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string; realm: string }
+    }
+    response: Schemas.ThemesDeactivated
+  }
+  export type put_Update_theme_handler = {
+    method: 'PUT'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/branding/{realm}/themes/{theme_id}'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string; realm: string; theme_id: string }
+
+      body: Schemas.UpdateThemeBody
+    }
+    response: Schemas.ThemeResponse
+  }
+  export type delete_Delete_theme_handler = {
+    method: 'DELETE'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/branding/{realm}/themes/{theme_id}'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string; realm: string; theme_id: string }
+    }
+    response: unknown
+  }
+  export type post_Activate_theme_handler = {
+    method: 'POST'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/branding/{realm}/themes/{theme_id}/activate'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string; realm: string; theme_id: string }
+    }
+    response: Schemas.ThemeResponse
+  }
   export type put_Resize_cluster_handler = {
     method: 'PUT'
     path: '/organisations/{organisation_id}/deployments/{deployment_id}/cluster-profile'
@@ -2761,6 +2897,9 @@ export type EndpointByMethod = {
     '/organisations/{organisation_id}/deployments/{deployment_id}/agents/servers/{server_id}/discover': Endpoints.post_Discover_agent_server_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/backups': Endpoints.post_Ask_for_backup_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/backups/{backup_id}/restore': Endpoints.post_Restore_backup_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/branding/{realm}/themes': Endpoints.post_Create_theme_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/branding/{realm}/themes/deactivate': Endpoints.post_Deactivate_themes_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/branding/{realm}/themes/{theme_id}/activate': Endpoints.post_Activate_theme_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/cutover': Endpoints.post_Cutover_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/start': Endpoints.post_Start_deployment_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/stop': Endpoints.post_Stop_deployment_handler
@@ -2803,6 +2942,7 @@ export type EndpointByMethod = {
     '/organisations/{organisation_id}/deployments/{deployment_id}/backups': Endpoints.get_List_backups_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/branding/realms': Endpoints.get_List_branding_realms_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/branding/{realm}/smtp': Endpoints.get_Get_smtp_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/branding/{realm}/themes': Endpoints.get_List_themes_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/features': Endpoints.get_Get_deployment_features_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/iam-settings': Endpoints.get_Get_iam_settings_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/logs': Endpoints.get_Read_logs_handler
@@ -2855,6 +2995,7 @@ export type EndpointByMethod = {
     '/organisations/{organisation_id}/deployments/{deployment_id}/agents/policies/{policy_id}': Endpoints.delete_Delete_agent_policy_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/agents/servers/{server_id}': Endpoints.delete_Remove_agent_server_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/branding/{realm}/smtp': Endpoints.delete_Delete_smtp_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/branding/{realm}/themes/{theme_id}': Endpoints.delete_Delete_theme_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/webhooks/{webhook_id}': Endpoints.delete_Delete_webhook_handler
     '/organisations/{organisation_id}/invitations/{invitation_id}': Endpoints.delete_Revoke_invitation_handler
     '/organisations/{organisation_id}/members/{user_id}': Endpoints.delete_Remove_member_handler
@@ -2870,6 +3011,7 @@ export type EndpointByMethod = {
     '/organisations/{organisation_id}/deployments/{deployment_id}/agents/servers/{server_id}': Endpoints.put_Update_agent_server_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/backup-schedule': Endpoints.put_Set_backup_schedule_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/branding/{realm}/smtp': Endpoints.put_Put_smtp_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/branding/{realm}/themes/{theme_id}': Endpoints.put_Update_theme_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/cluster-profile': Endpoints.put_Resize_cluster_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/iam-settings': Endpoints.put_Set_iam_settings_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/network-access': Endpoints.put_Set_network_access_handler

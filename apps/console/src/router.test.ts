@@ -52,6 +52,7 @@ describe('the route tree', () => {
       '/backups',
       '/security',
       '/branding/universal-login',
+      '/branding/universal-login/theme-1',
       '/branding/email-provider',
     ]) {
       const shells = shellsFor(`${DEPLOYMENT}${path}`)
@@ -202,8 +203,41 @@ describe('the settings pages that became tabs', () => {
     const shells = shellsFor(`${DEPLOYMENT}/branding/universal-login`)
 
     expect(shells).toContain('DeploymentBrandingLayout')
-    expect(shells).toContain('PageBrandingFeature')
+    expect(shells).toContain('PageUniversalLoginFeature')
   })
+
+  it('opens the theme builder under Universal login, inside the Branding side navigation', () => {
+    const shells = shellsFor(`${DEPLOYMENT}/branding/universal-login/theme-1`)
+
+    expect(shells).toContain('DeploymentLayout')
+    expect(shells).toContain('DeploymentBrandingLayout')
+    expect(shells).toContain('PageThemeBuilderFeature')
+    expect(shells).not.toContain('PageUniversalLoginFeature')
+  })
+
+  it('keeps the list and the builder apart', () => {
+    expect(shellsFor(`${DEPLOYMENT}/branding/universal-login`)).not.toContain('PageThemeBuilderFeature')
+  })
+
+  it('hands the theme id to the builder', () => {
+    const { routeParams } = router.getMatchedRoutes(`${DEPLOYMENT}/branding/universal-login/theme-1`)
+
+    expect(routeParams).toMatchObject({ themeId: 'theme-1' })
+  })
+
+  it.each(['/branding/universal-login', '/branding/universal-login/theme-1'])(
+    'carries the realm in the url of %s, master unless told otherwise',
+    (path) => {
+      const { foundRoute } = router.getMatchedRoutes(`${DEPLOYMENT}${path}`)
+      const validate = foundRoute?.options.validateSearch as
+        | ((search: Record<string, unknown>) => unknown)
+        | undefined
+
+      expect(validate).toBeDefined()
+      expect(validate?.({})).toEqual({ realm: 'master' })
+      expect(validate?.({ realm: 'acme' })).toEqual({ realm: 'acme' })
+    }
+  )
 
   it('puts Email provider under the Branding side navigation', () => {
     const shells = shellsFor(`${DEPLOYMENT}/branding/email-provider`)

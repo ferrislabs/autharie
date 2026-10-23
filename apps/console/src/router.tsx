@@ -28,8 +28,9 @@ import PageMembersFeature from './domain/organisations/pages/feature/page-member
 import PageRolesFeature from './domain/organisations/pages/feature/page-roles-feature'
 import PageOrganisationSettingsFeature from './domain/organisations/pages/feature/page-organisation-settings-feature'
 import PageBillingFeature from './domain/billing/pages/feature/page-billing-feature'
-import PageBrandingFeature from './domain/deployments/pages/feature/page-branding-feature'
 import PageEmailProviderFeature from './domain/branding/pages/feature/page-email-provider-feature'
+import PageThemeBuilderFeature from './domain/branding/pages/feature/page-theme-builder-feature'
+import PageUniversalLoginFeature from './domain/branding/pages/feature/page-universal-login-feature'
 import { validateRealmSearch } from './domain/branding/use-branding-realm'
 import PageNetworkAccessFeature from './domain/deployments/pages/feature/page-network-access-feature'
 import PageWebhooksFeature from './domain/webhooks/pages/feature/page-webhooks-feature'
@@ -197,7 +198,15 @@ const deploymentBrandingIndexRoute = createRoute({
 const deploymentUniversalLoginRoute = createRoute({
   getParentRoute: () => deploymentBrandingLayoutRoute,
   path: '/universal-login',
-  component: PageBrandingFeature,
+  component: PageUniversalLoginFeature,
+  validateSearch: validateRealmSearch,
+})
+
+const deploymentThemeBuilderRoute = createRoute({
+  getParentRoute: () => deploymentBrandingLayoutRoute,
+  path: '/universal-login/$themeId',
+  component: PageThemeBuilderFeature,
+  validateSearch: validateRealmSearch,
 })
 
 const deploymentEmailProviderRoute = createRoute({
@@ -446,6 +455,7 @@ const routeTree = rootRoute.addChildren([
     deploymentBrandingLayoutRoute.addChildren([
       deploymentBrandingIndexRoute,
       deploymentUniversalLoginRoute,
+      deploymentThemeBuilderRoute,
       deploymentEmailProviderRoute,
     ]),
     deploymentCustomizationRedirect,
