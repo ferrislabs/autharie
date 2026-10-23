@@ -180,7 +180,7 @@ impl TokenCache {
 }
 
 /// Realm names are slugs; anything else would change the path it lands in.
-fn realm_segment(realm: &str) -> Result<&str, WebhookError> {
+pub(crate) fn realm_segment(realm: &str) -> Result<&str, WebhookError> {
     let slug = !realm.is_empty()
         && realm
             .chars()

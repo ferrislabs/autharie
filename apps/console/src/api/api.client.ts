@@ -359,6 +359,7 @@ export namespace Schemas {
     widget_background: string | null
   }>
   export type BrandingInput = Partial<{ colors: BrandingColorsInput; radius: number | null }>
+  export type BrandingRealmsResponse = { data: Array<string> }
   export type BreakingRisk = 'none' | 'config' | 'breaking'
   export type Capacity = {
     cpu_millis: number
@@ -674,6 +675,8 @@ export namespace Schemas {
     recorded_at: string
     target: FleetTarget
   }
+  export type FromEmail = string
+  export type FromName = string
   export type GetActionResponse = { data: Action }
   export type GetActiveUsersResponseData = Partial<{ active_users: number | null }>
   export type GetActiveUsersResponse = { data: GetActiveUsersResponseData }
@@ -906,6 +909,7 @@ export namespace Schemas {
   export type OperatorResponse = { data: PlatformOperator }
   export type OperatorsResponse = { data: Array<PlatformOperator> }
   export type OrganisationResponse = { data: Organisation }
+  export type OutcomeItemReport = { message?: (string | null) | undefined; phase: string }
   export type PaymentMethodSessionResponse = { url: string }
   export type ProviderEventsResponse = { received: boolean }
   export type ProviderOffers = {
@@ -981,12 +985,14 @@ export namespace Schemas {
     credentials: Array<AgentCredentialReport>
     deployment_id: string | null
     gateway_client_ready: boolean
+    items: Array<OutcomeItemReport>
     kind: string | null
     mcp_url: string | null
     message: string | null
     outcome: string
     phase: string | null
     policies: Array<AgentPolicyReport>
+    realm: string | null
     realms: Array<string>
     reason: string | null
     requests: Array<WebhookRequestReport>
@@ -1049,6 +1055,39 @@ export namespace Schemas {
     auto_upgrade: AutoUpgradePolicy
     maintenance_window?: (null | MaintenanceWindowRequest) | undefined
   }
+  export type SmtpEncryption = 'tls' | 'starttls' | 'none'
+  export type SmtpHost = string
+  export type SmtpPort = number
+  export type SmtpRemoved = Record<string, unknown>
+  export type SmtpRequestBody = {
+    encryption: SmtpEncryption
+    from_email: string
+    from_name: string
+    host: string
+    password?: (string | null) | undefined
+    port: number
+    username: string
+  }
+  export type SmtpUsername = string
+  export type SmtpSettings = {
+    encryption: SmtpEncryption
+    from_email: FromEmail
+    from_name: FromName
+    host: SmtpHost
+    port: SmtpPort
+    username: SmtpUsername
+  }
+  export type SmtpState =
+    | { phase: 'Pending' }
+    | { phase: 'Applied' }
+    | { message: string; phase: 'Failed' }
+  export type SmtpView = SmtpSettings & {
+    password_set: boolean
+    state: SmtpState
+    updated_at: string
+  }
+  export type SmtpResponse = Partial<{ data: null | SmtpView }>
+  export type SmtpSavedResponse = { data: SmtpView }
   export type SpanHit = {
     deployment_id: DeploymentId
     duration_nanos: number
@@ -1901,6 +1940,44 @@ export namespace Endpoints {
     }
     response: Schemas.RestoreBackupResponse
   }
+  export type get_List_branding_realms_handler = {
+    method: 'GET'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/branding/realms'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string }
+    }
+    response: Schemas.BrandingRealmsResponse
+  }
+  export type get_Get_smtp_handler = {
+    method: 'GET'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/branding/{realm}/smtp'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string; realm: string }
+    }
+    response: Schemas.SmtpResponse
+  }
+  export type put_Put_smtp_handler = {
+    method: 'PUT'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/branding/{realm}/smtp'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string; realm: string }
+
+      body: Schemas.SmtpRequestBody
+    }
+    response: Schemas.SmtpSavedResponse
+  }
+  export type delete_Delete_smtp_handler = {
+    method: 'DELETE'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/branding/{realm}/smtp'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string; realm: string }
+    }
+    response: Schemas.SmtpRemoved
+  }
   export type put_Resize_cluster_handler = {
     method: 'PUT'
     path: '/organisations/{organisation_id}/deployments/{deployment_id}/cluster-profile'
@@ -2724,6 +2801,8 @@ export type EndpointByMethod = {
     '/organisations/{organisation_id}/deployments/{deployment_id}/availability': Endpoints.get_Get_deployment_availability_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/backup-schedule': Endpoints.get_Get_backup_schedule_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/backups': Endpoints.get_List_backups_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/branding/realms': Endpoints.get_List_branding_realms_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/branding/{realm}/smtp': Endpoints.get_Get_smtp_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/features': Endpoints.get_Get_deployment_features_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/iam-settings': Endpoints.get_Get_iam_settings_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/logs': Endpoints.get_Read_logs_handler
@@ -2775,6 +2854,7 @@ export type EndpointByMethod = {
     '/organisations/{organisation_id}/deployments/{deployment_id}/agents/clients/{client_id}': Endpoints.delete_Delete_agent_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/agents/policies/{policy_id}': Endpoints.delete_Delete_agent_policy_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/agents/servers/{server_id}': Endpoints.delete_Remove_agent_server_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/branding/{realm}/smtp': Endpoints.delete_Delete_smtp_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/webhooks/{webhook_id}': Endpoints.delete_Delete_webhook_handler
     '/organisations/{organisation_id}/invitations/{invitation_id}': Endpoints.delete_Revoke_invitation_handler
     '/organisations/{organisation_id}/members/{user_id}': Endpoints.delete_Remove_member_handler
@@ -2789,6 +2869,7 @@ export type EndpointByMethod = {
     '/organisations/{organisation_id}/deployments/{deployment_id}/agents/policies/{policy_id}': Endpoints.put_Update_agent_policy_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/agents/servers/{server_id}': Endpoints.put_Update_agent_server_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/backup-schedule': Endpoints.put_Set_backup_schedule_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/branding/{realm}/smtp': Endpoints.put_Put_smtp_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/cluster-profile': Endpoints.put_Resize_cluster_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/iam-settings': Endpoints.put_Set_iam_settings_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/network-access': Endpoints.put_Set_network_access_handler

@@ -7,6 +7,7 @@ use genesis_core::application::handlers::deployment::DeploymentEventHandler;
 use genesis_core::application::handlers::drill::DrillEventHandler;
 use genesis_core::application::handlers::iam_settings::IamSettingsEventHandler;
 use genesis_core::application::handlers::network_access::NetworkAccessEventHandler;
+use genesis_core::application::handlers::smtp::SmtpEventHandler;
 use genesis_core::application::handlers::upgrade::UpgradeEventHandler;
 use genesis_core::application::handlers::webhooks::{
     WebhookRequestEventHandler, WebhooksEventHandler,
@@ -19,6 +20,7 @@ use genesis_core::infrastructure::kubernetes::agents::KubeAgentsPort;
 use genesis_core::infrastructure::kubernetes::dataplane_upgrade::KubeDataplaneUpgradePort;
 use genesis_core::infrastructure::kubernetes::identity_instance::KubeIdentityInstancePort;
 use genesis_core::infrastructure::kubernetes::identity_instance_upgrade::KubeIdentityInstanceUpgradePort;
+use genesis_core::infrastructure::kubernetes::smtp::KubeSmtpPort;
 use genesis_core::infrastructure::kubernetes::status_watcher::IdentityInstanceStatusWatcher;
 use genesis_core::infrastructure::kubernetes::webhooks::KubeWebhookPort;
 use genesis_core::infrastructure::message_bus::consumer::IggyConsumer;
@@ -84,6 +86,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let outcomes: Arc<dyn OutcomePublisher> = publisher.clone();
     let webhook_port = Arc::new(KubeWebhookPort::new(kube.clone()));
     let agents_port = Arc::new(KubeAgentsPort::new(kube.clone()));
+    let smtp_port = Arc::new(KubeSmtpPort::new(kube.clone()));
     let database: Arc<dyn DatabaseProbe> = Arc::new(SqlxDatabaseProbe);
 
     let handlers: Vec<Arc<dyn EventHandler>> = vec![
@@ -109,6 +112,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )),
         Arc::new(WebhookRequestEventHandler::retry_delivery(webhook_port)),
         Arc::new(AgentsEventHandler::new(agents_port)),
+        Arc::new(SmtpEventHandler::new(smtp_port)),
         Arc::new(BackupEventHandler::new(identity_instances.clone())),
         Arc::new(DrillEventHandler::new(
             identity_instances.clone(),

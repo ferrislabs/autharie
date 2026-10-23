@@ -17,9 +17,14 @@ use uuid::Uuid;
 use crate::domain::entities::identity_instance::IdentityInstanceRef;
 use crate::domain::entities::outcome::DeploymentOutcomeReport;
 use crate::domain::error::GenesisError;
-use crate::domain::ports::{AgentsOutcomePublisher, OutcomePublisher, WebhookOutcomePublisher};
+use crate::domain::ports::{
+    AgentsOutcomePublisher, OutcomePublisher, SmtpOutcomePublisher, WebhookOutcomePublisher,
+};
 use crate::infrastructure::kubernetes::agents_status::{
     AgentsTracker, Observation as AgentsObservation, build_report as build_agents_report,
+};
+use crate::infrastructure::kubernetes::smtp_status::{
+    Observation as SmtpObservation, SmtpTracker, build_report as build_smtp_report,
 };
 use crate::infrastructure::kubernetes::webhook_status::{
     Observation, WebhookTracker, build_report,
@@ -57,7 +62,9 @@ pub struct IdentityInstanceStatusWatcher<W> {
     webhook_outcomes: Arc<W>,
 }
 
-impl<W: WebhookOutcomePublisher + AgentsOutcomePublisher> IdentityInstanceStatusWatcher<W> {
+impl<W: WebhookOutcomePublisher + AgentsOutcomePublisher + SmtpOutcomePublisher>
+    IdentityInstanceStatusWatcher<W>
+{
     pub fn new(
         client: Client,
         outcomes: Arc<dyn OutcomePublisher>,
@@ -144,6 +151,37 @@ impl<W: WebhookOutcomePublisher + AgentsOutcomePublisher> IdentityInstanceStatus
         }
     }
 
+    async fn report_smtp(
+        &self,
+        instance: &IdentityInstance,
+        deployment_id: Uuid,
+        tracker: &mut SmtpTracker,
+    ) {
+        let observation = SmtpObservation::of(instance.status.as_ref());
+
+        tracker.retain_observed(deployment_id, &observation);
+
+        let due: Vec<_> = tracker
+            .due(deployment_id, &observation)
+            .into_iter()
+            .map(|status| (status, build_smtp_report(deployment_id, status)))
+            .collect();
+
+        let mut published = Vec::new();
+        for (status, report) in &due {
+            match self.webhook_outcomes.publish_smtp(report).await {
+                Ok(()) => published.push(*status),
+                Err(err) => {
+                    warn!(%err, %deployment_id, realm = %status.realm, "failed to publish an smtp outcome");
+                }
+            }
+        }
+
+        for status in published {
+            tracker.record(deployment_id, status);
+        }
+    }
+
     async fn read_secrets(&self, instance: &str, namespace: &str) -> BTreeMap<String, String> {
         let api: Api<Secret> = Api::namespaced(self.client.clone(), namespace);
 
@@ -183,6 +221,7 @@ impl<W: WebhookOutcomePublisher + AgentsOutcomePublisher> IdentityInstanceStatus
 
         let mut webhooks = WebhookTracker::default();
         let mut agents = AgentsTracker::default();
+        let mut smtp = SmtpTracker::default();
 
         info!("watching IdentityInstance status");
 
@@ -212,6 +251,7 @@ impl<W: WebhookOutcomePublisher + AgentsOutcomePublisher> IdentityInstanceStatus
                 .await;
             self.report_agents(&instance, deployment_id, &mut agents)
                 .await;
+            self.report_smtp(&instance, deployment_id, &mut smtp).await;
 
             let Some(outcome) = outcome_for(instance.status.as_ref()) else {
                 forget_unsettled(&mut reported, deployment_id);

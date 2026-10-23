@@ -34,9 +34,10 @@ use crate::{
             WebhookRequest, WebhookState, WebhookView,
         },
         ports::{
-            SecretVault, WebhookOutcomeService, WebhookPolicy, WebhookRepository, WebhookService,
+            KnownRealms, SecretVault, WebhookOutcomeService, WebhookPolicy, WebhookRepository,
+            WebhookService,
         },
-        value_objects::{DEFAULT_REALM, HeaderInput, WebhookId, WebhookRealm, parse_delivery_id},
+        value_objects::{HeaderInput, WebhookId, WebhookRealm, parse_delivery_id},
     },
 };
 
@@ -163,14 +164,9 @@ where
         deployment_id: DeploymentId,
         realm: &WebhookRealm,
     ) -> Result<(), CoreError> {
-        let sync = self.webhooks.sync_state(deployment_id).await?;
+        let known = self.webhooks.known_realms(deployment_id).await?;
 
-        let known = match sync.realms.filter(|realms| !realms.is_empty()) {
-            Some(realms) => realms.iter().any(|known| known == realm.as_str()),
-            None => realm.as_str() == DEFAULT_REALM,
-        };
-
-        if known {
+        if known.iter().any(|known| known == realm.as_str()) {
             return Ok(());
         }
 
@@ -762,13 +758,7 @@ where
             .await?;
         self.deployment(organisation_id, deployment_id).await?;
 
-        Ok(self
-            .webhooks
-            .sync_state(deployment_id)
-            .await?
-            .realms
-            .filter(|realms| !realms.is_empty())
-            .unwrap_or_else(|| vec![DEFAULT_REALM.to_string()]))
+        self.webhooks.known_realms(deployment_id).await
     }
 
     async fn webhook_deliveries<I>(

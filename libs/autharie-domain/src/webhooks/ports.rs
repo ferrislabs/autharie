@@ -130,6 +130,22 @@ pub trait WebhookRepository: Send + Sync {
     ) -> impl Future<Output = Result<Vec<WebhookRequest>, CoreError>> + Send;
 }
 
+pub trait KnownRealms: Send + Sync {
+    fn known_realms(
+        &self,
+        deployment_id: DeploymentId,
+    ) -> impl Future<Output = Result<Vec<String>, CoreError>> + Send;
+}
+
+impl<W> KnownRealms for W
+where
+    W: WebhookRepository,
+{
+    async fn known_realms(&self, deployment_id: DeploymentId) -> Result<Vec<String>, CoreError> {
+        Ok(self.sync_state(deployment_id).await?.known_realms())
+    }
+}
+
 pub trait WebhookService: Send + Sync {
     fn list_webhooks(
         &self,

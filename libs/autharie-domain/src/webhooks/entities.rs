@@ -11,7 +11,8 @@ use crate::{
     webhooks::{
         WebhookError,
         value_objects::{
-            HeaderName, WebhookEndpoint, WebhookEvent, WebhookId, WebhookName, WebhookRealm,
+            DEFAULT_REALM, HeaderName, WebhookEndpoint, WebhookEvent, WebhookId, WebhookName,
+            WebhookRealm,
         },
     },
 };
@@ -157,6 +158,15 @@ pub struct WebhookSync {
     pub realms: Option<Vec<String>>,
 }
 
+impl WebhookSync {
+    pub fn known_realms(&self) -> Vec<String> {
+        match self.realms.as_deref() {
+            Some(realms) if !realms.is_empty() => realms.to_vec(),
+            _ => vec![DEFAULT_REALM.to_string()],
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -181,6 +191,26 @@ mod tests {
         assert_eq!(
             value,
             serde_json::json!({ "phase": "Active", "ferriskey_id": "fk" })
+        );
+    }
+
+    #[test]
+    fn the_known_realms_are_those_reported_or_master_alone() {
+        let unreported = WebhookSync::default();
+        let empty = WebhookSync {
+            realms: Some(vec![]),
+            ..WebhookSync::default()
+        };
+        let reported = WebhookSync {
+            realms: Some(vec!["master".to_string(), "customers".to_string()]),
+            ..WebhookSync::default()
+        };
+
+        assert_eq!(unreported.known_realms(), vec!["master".to_string()]);
+        assert_eq!(empty.known_realms(), vec!["master".to_string()]);
+        assert_eq!(
+            reported.known_realms(),
+            vec!["master".to_string(), "customers".to_string()]
         );
     }
 

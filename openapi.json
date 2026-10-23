@@ -1091,7 +1091,7 @@
           "dataplanes"
         ],
         "summary": "report what a data plane did with a deployment",
-        "description": "Records an outcome the data plane observed directly. This is the only path by which the control plane learns what happened to a deployment after it was handed over. With `kind: webhooks` it records the state of the deployment's webhooks, new signing secrets, its realms and the result of rotation and retry requests instead; with `kind: deployment.agents` it records the status of the deployment's agents and the phase of each policy. A report older than the one already applied changes nothing.",
+        "description": "Records an outcome the data plane observed directly. This is the only path by which the control plane learns what happened to a deployment after it was handed over. With `kind: webhooks` it records the state of the deployment's webhooks, new signing secrets, its realms and the result of rotation and retry requests instead; with `kind: deployment.agents` it records the status of the deployment's agents and the phase of each policy; with `kind: smtp` it records the state of one realm's email provider. A report older than the one already applied changes nothing.",
         "operationId": "report_outcome_handler",
         "parameters": [
           {
@@ -6452,6 +6452,434 @@
           },
           "409": {
             "description": "The archive cannot be restored onto what it was taken of",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/organisations/{organisation_id}/deployments/{deployment_id}/branding/realms": {
+      "get": {
+        "tags": [
+          "branding"
+        ],
+        "summary": "list the realms the branding can be set for",
+        "description": "The realms the data plane last reported, or `master` alone until it reports any. The same list as the webhooks' realms.",
+        "operationId": "list_branding_realms_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The realm names",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrandingRealmsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not view this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/organisations/{organisation_id}/deployments/{deployment_id}/branding/{realm}/smtp": {
+      "get": {
+        "tags": [
+          "branding"
+        ],
+        "summary": "read a realm's email provider",
+        "description": "`data` is null when the realm has no email provider. The password is never returned: `password_set` says one is stored. The state is `Pending` until the data plane reports the provider applied.",
+        "operationId": "get_smtp_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "realm",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The realm's email provider, or null",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SmtpResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The realm is not valid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not view this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "branding"
+        ],
+        "summary": "set a realm's email provider",
+        "description": "Stores the provider as `Pending` and asks the data plane to apply it. The password is required the first time and optional after: left out, the stored one is kept. It is sealed on arrival and never returned. FerrisKey deployments only.",
+        "operationId": "put_smtp_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "realm",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SmtpRequestBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Stored, and being applied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SmtpSavedResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The host, port, address, a length or the realm is not valid, or the first save carries no password",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not change this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The deployment is not a FerrisKey one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "branding"
+        ],
+        "summary": "remove a realm's email provider",
+        "description": "Forgets the provider and asks the data plane to remove it from FerrisKey.",
+        "operationId": "delete_smtp_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "realm",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Removed, and being applied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SmtpRemoved"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The realm is not valid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not change this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment, or the realm has no email provider",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The deployment is not a FerrisKey one",
             "content": {
               "application/json": {
                 "schema": {
@@ -15263,6 +15691,20 @@
         },
         "additionalProperties": false
       },
+      "BrandingRealmsResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "BreakingRisk": {
         "type": "string",
         "description": "How much a release is expected to break.\n\nDeclared by whoever publishes it, never derived from the version number.\nSemver states an intent; it does not describe what a third party actually\nshipped, and a patch that changes a default is a config break whatever it\nis numbered.",
@@ -17219,6 +17661,13 @@
         ],
         "description": "What an entry was recorded against.\n\nAn enum rather than the `(kind, Uuid)` pair [`super::AuditTarget`] uses: an\noperator is named by a subject, and a subject is not a UUID. Carrying one\nin a UUID column would mean inventing an identifier for a row the identity\nprovider owns, and inventing one is how two subjects eventually collide."
       },
+      "FromEmail": {
+        "type": "string",
+        "example": "no-reply@example.com"
+      },
+      "FromName": {
+        "type": "string"
+      },
       "GetActionResponse": {
         "type": "object",
         "required": [
@@ -18712,6 +19161,24 @@
           "Deleted"
         ]
       },
+      "OutcomeItemReport": {
+        "type": "object",
+        "required": [
+          "phase"
+        ],
+        "properties": {
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phase": {
+            "type": "string",
+            "description": "`Pending`, `Applied` or `Failed`."
+          }
+        }
+      },
       "PaymentMethodSessionResponse": {
         "type": "object",
         "required": [
@@ -19465,12 +19932,19 @@
             "type": "boolean",
             "description": "Whether the gateway's client exists in the realm. Only with `kind: deployment.agents`."
           },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OutcomeItemReport"
+            },
+            "description": "What became of the realm's email provider: exactly one item. Only with `kind: smtp`."
+          },
           "kind": {
             "type": [
               "string",
               "null"
             ],
-            "description": "`webhooks` for a report of a deployment's webhooks, `deployment.agents`\nfor a report of its agents; absent for the outcome of the deployment\nitself."
+            "description": "`webhooks` for a report of a deployment's webhooks, `deployment.agents`\nfor a report of its agents, `smtp` for a report of a realm's email\nprovider; absent for the outcome of the deployment itself."
           },
           "mcp_url": {
             "type": [
@@ -19488,7 +19962,7 @@
           },
           "outcome": {
             "type": "string",
-            "description": "What the data plane observed: `running`, `failed` or `deleted`.\nNot sent with `kind: webhooks` or `kind: deployment.agents`.\n\nAll three are things a component saw rather than inferred -- the\noperator wrote `Running`/`ready` or `Failed` onto the resource, and\ndeletion is reported by whatever removed it. None of them is a timeout,\nwhich is why none needs a policy about when to give up."
+            "description": "What the data plane observed: `running`, `failed` or `deleted`.\nNot sent with `kind: webhooks`, `kind: deployment.agents` or `kind: smtp`.\n\nAll three are things a component saw rather than inferred -- the\noperator wrote `Running`/`ready` or `Failed` onto the resource, and\ndeletion is reported by whatever removed it. None of them is a timeout,\nwhich is why none needs a policy about when to give up."
           },
           "phase": {
             "type": [
@@ -19503,6 +19977,13 @@
               "$ref": "#/components/schemas/AgentPolicyReport"
             },
             "description": "What became of each enabled policy. Only with `kind: deployment.agents`."
+          },
+          "realm": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The realm the report is about. Only with `kind: smtp`."
           },
           "realms": {
             "type": "array",
@@ -19529,7 +20010,7 @@
               "null"
             ],
             "format": "int64",
-            "description": "The revision of the `deployment.webhooks` or `deployment.agents` action\nthis report reflects. Required with either kind.",
+            "description": "The revision of the `deployment.webhooks`, `deployment.agents` or\n`deployment.smtp` action this report reflects. Required with every kind.",
             "minimum": 0
           },
           "secrets": {
@@ -20287,6 +20768,206 @@
           }
         ],
         "description": "What the signal is about.\n\nLike `SignalKind`, a closed enum enforcing that new subjects are handled\neverywhere they are added."
+      },
+      "SmtpEncryption": {
+        "type": "string",
+        "enum": [
+          "tls",
+          "starttls",
+          "none"
+        ]
+      },
+      "SmtpHost": {
+        "type": "string",
+        "example": "smtp.example.com"
+      },
+      "SmtpPort": {
+        "type": "integer",
+        "format": "int32",
+        "example": 587,
+        "minimum": 0
+      },
+      "SmtpRemoved": {
+        "type": "object"
+      },
+      "SmtpRequestBody": {
+        "type": "object",
+        "required": [
+          "host",
+          "port",
+          "encryption",
+          "username",
+          "from_email",
+          "from_name"
+        ],
+        "properties": {
+          "encryption": {
+            "$ref": "#/components/schemas/SmtpEncryption"
+          },
+          "from_email": {
+            "type": "string"
+          },
+          "from_name": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string"
+          },
+          "password": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "port": {
+            "type": "integer",
+            "format": "int64",
+            "example": 587,
+            "maximum": 65535,
+            "minimum": 1
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SmtpResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SmtpView"
+              }
+            ]
+          }
+        }
+      },
+      "SmtpSavedResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SmtpView"
+          }
+        }
+      },
+      "SmtpSettings": {
+        "type": "object",
+        "required": [
+          "host",
+          "port",
+          "encryption",
+          "username",
+          "from_email",
+          "from_name"
+        ],
+        "properties": {
+          "encryption": {
+            "$ref": "#/components/schemas/SmtpEncryption"
+          },
+          "from_email": {
+            "$ref": "#/components/schemas/FromEmail"
+          },
+          "from_name": {
+            "$ref": "#/components/schemas/FromName"
+          },
+          "host": {
+            "$ref": "#/components/schemas/SmtpHost"
+          },
+          "port": {
+            "$ref": "#/components/schemas/SmtpPort"
+          },
+          "username": {
+            "$ref": "#/components/schemas/SmtpUsername"
+          }
+        }
+      },
+      "SmtpState": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "phase"
+            ],
+            "properties": {
+              "phase": {
+                "type": "string",
+                "enum": [
+                  "Pending"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "phase"
+            ],
+            "properties": {
+              "phase": {
+                "type": "string",
+                "enum": [
+                  "Applied"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "message",
+              "phase"
+            ],
+            "properties": {
+              "message": {
+                "type": "string"
+              },
+              "phase": {
+                "type": "string",
+                "enum": [
+                  "Failed"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "SmtpUsername": {
+        "type": "string"
+      },
+      "SmtpView": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/SmtpSettings"
+          },
+          {
+            "type": "object",
+            "required": [
+              "password_set",
+              "state",
+              "updated_at"
+            ],
+            "properties": {
+              "password_set": {
+                "type": "boolean"
+              },
+              "state": {
+                "$ref": "#/components/schemas/SmtpState"
+              },
+              "updated_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        ]
       },
       "SpanHit": {
         "type": "object",

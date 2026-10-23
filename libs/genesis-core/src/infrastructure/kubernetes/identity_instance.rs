@@ -487,6 +487,7 @@ fn to_identity_instance(desired: &DesiredIdentityInstance) -> IdentityInstance {
         webhooks_revision: 0,
         webhook_requests: Vec::new(),
         agents: None,
+        smtp: Vec::new(),
         // Carried whole from the action. Both paths are the source's, computed
         // by the control plane because it owns the archive layout -- rebuilding
         // either here would be a second implementation of the prefix rule, and

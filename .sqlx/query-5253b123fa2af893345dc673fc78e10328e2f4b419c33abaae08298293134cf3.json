@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO deployment_smtp_sync (deployment_id, realm, revision)\n            VALUES ($1, $2, 1)\n            ON CONFLICT (deployment_id, realm) DO UPDATE\n            SET revision = deployment_smtp_sync.revision + 1,\n                updated_at = now()\n            RETURNING revision\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "revision",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "5253b123fa2af893345dc673fc78e10328e2f4b419c33abaae08298293134cf3"
+}

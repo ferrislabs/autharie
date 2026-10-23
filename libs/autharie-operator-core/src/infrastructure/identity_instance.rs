@@ -37,6 +37,8 @@ use crate::domain::ports::{
     IdentityInstanceDeployer, IdentityInstanceRepository, IdentityInstanceService,
 };
 use crate::domain::shared_database::SharedDatabaseName;
+use crate::domain::smtp::ports::{IdentityInstanceSmtp, SmtpOutcome};
+use crate::domain::smtp::service::SmtpReconciler;
 use crate::domain::webhooks::ports::{IdentityInstanceWebhooks, WebhookOutcome};
 use crate::domain::webhooks::service::WebhookReconciler;
 use crate::domain::{OperatorError, ReconcileOutcome};
@@ -49,12 +51,14 @@ use crate::infrastructure::edge::{
     httproute_api_resource, route_is_ready, security_policy_api_resource,
 };
 use crate::infrastructure::ferriskey_agents::{KubeAgentServers, KubeFerriskeyAgents};
+use crate::infrastructure::ferriskey_smtp::KubeFerriskeySmtp;
 use crate::infrastructure::ferriskey_theme::KubeInstanceTheme;
 use crate::infrastructure::ferriskey_webhooks::KubeFerriskeyWebhooks;
 use crate::infrastructure::kube_agents::{
     GatewayService, KubeAgentInstances, KubeAgentsEdge, KubeAgentsSecrets, KubeAgentsStatus,
     KubeGatewayConfig,
 };
+use crate::infrastructure::kube_smtp::{KubeSmtpSecrets, KubeSmtpStatus};
 use crate::infrastructure::kube_webhooks::{
     KubeWebhookDeliveries, KubeWebhookSecrets, KubeWebhookStatus,
 };
@@ -1907,17 +1911,19 @@ impl IdentityProviderHandler for FerriskeyProviderHandler {
 }
 
 #[derive(Clone)]
-struct OperatorContext<S, D, W, A> {
+struct OperatorContext<S, D, W, A, M> {
     service: Arc<S>,
     deployer: Arc<D>,
     webhooks: Arc<W>,
     agents: Arc<A>,
+    smtp: Arc<M>,
     client: Client,
 }
 
 const WEBHOOK_RETRY_SECONDS: u64 = 15;
 const AGENTS_RETRY_SECONDS: u64 = 15;
 const AGENTS_WATCH_SECONDS: u64 = 30;
+const SMTP_RETRY_SECONDS: u64 = 15;
 
 /// A webhook that failed or is waiting brings the next look forward; it never
 /// turns the instance's own reconcile into a failure.
@@ -1955,15 +1961,26 @@ fn with_agents_watch(outcome: ReconcileOutcome, instance: &IdentityInstance) -> 
     ReconcileOutcome::requeue_after(outcome.requeue_after.map_or(soon, |at| at.min(soon)))
 }
 
-async fn reconcile<S, D, W, A>(
+fn with_smtp_outcome(outcome: ReconcileOutcome, smtp: SmtpOutcome) -> ReconcileOutcome {
+    match smtp {
+        SmtpOutcome::Settled => outcome,
+        SmtpOutcome::Retry => {
+            let soon = Duration::from_secs(SMTP_RETRY_SECONDS);
+            ReconcileOutcome::requeue_after(outcome.requeue_after.map_or(soon, |at| at.min(soon)))
+        }
+    }
+}
+
+async fn reconcile<S, D, W, A, M>(
     instance: Arc<IdentityInstance>,
-    context: Arc<OperatorContext<S, D, W, A>>,
+    context: Arc<OperatorContext<S, D, W, A, M>>,
 ) -> Result<Action, OperatorError>
 where
     S: IdentityInstanceService,
     D: IdentityInstanceDeployer,
     W: IdentityInstanceWebhooks,
     A: IdentityInstanceAgents,
+    M: IdentityInstanceSmtp,
 {
     if instance.metadata.deletion_timestamp.is_some() {
         return handle_deletion(instance, context).await;
@@ -1981,16 +1998,20 @@ where
     let outcome = context.service.reconcile((*instance).clone()).await?;
     let webhooks = context.webhooks.reconcile(&instance).await;
     let agents = context.agents.reconcile(&instance).await;
+    let smtp = context.smtp.reconcile(&instance).await;
     Ok(outcome_to_action(with_agents_watch(
-        with_agents_outcome(with_webhook_outcome(outcome, webhooks), agents),
+        with_smtp_outcome(
+            with_agents_outcome(with_webhook_outcome(outcome, webhooks), agents),
+            smtp,
+        ),
         &instance,
     )))
 }
 
-fn error_policy<S, D, W, A>(
+fn error_policy<S, D, W, A, M>(
     _instance: Arc<IdentityInstance>,
     error: &OperatorError,
-    _context: Arc<OperatorContext<S, D, W, A>>,
+    _context: Arc<OperatorContext<S, D, W, A, M>>,
 ) -> Action {
     error!(error = %error, "Reconcile error");
     error_requeue_action()
@@ -2093,6 +2114,11 @@ pub async fn run() -> Result<(), OperatorError> {
         agent_servers,
         AgentsEnvironment::new(edge.gateway_namespace.clone(), public_https_port),
     ));
+    let smtp = Arc::new(SmtpReconciler::new(
+        Arc::new(KubeSmtpStatus::new(client.clone())),
+        Arc::new(KubeFerriskeySmtp::new(client.clone())),
+        Arc::new(KubeSmtpSecrets::new(client.clone())),
+    ));
     let deployer = Arc::new(KubeIdentityInstanceDeployer::new(
         client.clone(),
         edge,
@@ -2115,6 +2141,7 @@ pub async fn run() -> Result<(), OperatorError> {
         deployer,
         webhooks,
         agents,
+        smtp,
         client: client.clone(),
     });
 
@@ -2144,6 +2171,7 @@ pub async fn run() -> Result<(), OperatorError> {
                     KubeAgentsEdge,
                     KubeAgentServers,
                 >,
+                SmtpReconciler<KubeSmtpStatus, KubeFerriskeySmtp, KubeSmtpSecrets>,
             >,
             error_policy::<
                 OperatorApplication<
@@ -2167,6 +2195,7 @@ pub async fn run() -> Result<(), OperatorError> {
                     KubeAgentsEdge,
                     KubeAgentServers,
                 >,
+                SmtpReconciler<KubeSmtpStatus, KubeFerriskeySmtp, KubeSmtpSecrets>,
             >,
             context,
         )
@@ -2213,9 +2242,9 @@ async fn ensure_finalizer(
     Ok(())
 }
 
-async fn handle_deletion<S, D, W, A>(
+async fn handle_deletion<S, D, W, A, M>(
     instance: Arc<IdentityInstance>,
-    context: Arc<OperatorContext<S, D, W, A>>,
+    context: Arc<OperatorContext<S, D, W, A, M>>,
 ) -> Result<Action, OperatorError>
 where
     S: IdentityInstanceService,
@@ -4073,6 +4102,34 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_settled_smtp_pass_leaves_the_requeue_alone() {
+        let steady = ReconcileOutcome::requeue_after(Duration::from_secs(60));
+
+        let outcome = with_smtp_outcome(steady, SmtpOutcome::Settled);
+
+        assert_eq!(outcome.requeue_after, Some(Duration::from_secs(60)));
+    }
+
+    #[test]
+    fn an_smtp_retry_brings_the_next_pass_forward_but_never_pushes_it_back() {
+        let steady = ReconcileOutcome::requeue_after(Duration::from_secs(60));
+        let soon = ReconcileOutcome::requeue_after(Duration::from_secs(5));
+
+        assert_eq!(
+            with_smtp_outcome(steady, SmtpOutcome::Retry).requeue_after,
+            Some(Duration::from_secs(SMTP_RETRY_SECONDS))
+        );
+        assert_eq!(
+            with_smtp_outcome(soon, SmtpOutcome::Retry).requeue_after,
+            Some(Duration::from_secs(5))
+        );
+        assert_eq!(
+            with_smtp_outcome(ReconcileOutcome::default(), SmtpOutcome::Retry).requeue_after,
+            Some(Duration::from_secs(SMTP_RETRY_SECONDS))
+        );
+    }
+
     fn agents_instance(enabled: bool) -> IdentityInstance {
         let mut instance = stopped(IdentityProvider::Ferriskey);
         instance.spec.stopped = false;
@@ -4168,6 +4225,7 @@ mod tests {
                 webhooks_revision: 0,
                 webhook_requests: Vec::new(),
                 agents: None,
+                smtp: Vec::new(),
                 restore: None,
                 organisation_id: "org-1".to_string(),
                 provider: IdentityProvider::Keycloak,

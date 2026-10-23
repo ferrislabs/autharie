@@ -427,6 +427,59 @@ spec:
                 - destinationPath
                 - serverName
                 type: object
+              smtp:
+                description: |-
+                  The outgoing mail settings of each realm that has some. FerrisKey only.
+
+                  One entry per realm, each with its own revision. A removal stays as an
+                  entry with `remove: true`, so an older save delivered late cannot bring
+                  the provider back. The password is not here: it is in the
+                  `<instance>-smtp` Secret, under the realm's name.
+                items:
+                  properties:
+                    encryption:
+                      enum:
+                      - tls
+                      - starttls
+                      - none
+                      - null
+                      nullable: true
+                      type: string
+                    fromEmail:
+                      nullable: true
+                      type: string
+                    fromName:
+                      nullable: true
+                      type: string
+                    host:
+                      nullable: true
+                      type: string
+                    port:
+                      format: uint16
+                      maximum: 65535.0
+                      minimum: 1.0
+                      nullable: true
+                      type: integer
+                    realm:
+                      type: string
+                    remove:
+                      description: The realm has no mail provider. The other fields are then not read.
+                      type: boolean
+                    revision:
+                      description: |-
+                        Grows with every save of this realm's settings; the operator acts on an
+                        entry whose revision it has not reported yet.
+                      format: uint64
+                      minimum: 0.0
+                      type: integer
+                    username:
+                      nullable: true
+                      type: string
+                  required:
+                  - realm
+                  - revision
+                  type: object
+                type: array
               stopped:
                 description: Scaled to nothing, with the database hibernated and its volumes kept.
                 type: boolean
@@ -766,6 +819,32 @@ spec:
                 description: The realms FerrisKey lists, so a console can offer them.
                 items:
                   type: string
+                type: array
+              smtp:
+                description: What became of each of `spec.smtp`, in the same order.
+                items:
+                  properties:
+                    message:
+                      nullable: true
+                      type: string
+                    phase:
+                      enum:
+                      - Pending
+                      - Applied
+                      - Failed
+                      type: string
+                    realm:
+                      type: string
+                    revision:
+                      description: The revision of `spec.smtp` this entry reports on.
+                      format: uint64
+                      minimum: 0.0
+                      type: integer
+                  required:
+                  - phase
+                  - realm
+                  - revision
+                  type: object
                 type: array
               webhookRequests:
                 description: The requests already executed, so a restart does not run them twice.

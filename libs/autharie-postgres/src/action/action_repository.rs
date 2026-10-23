@@ -591,7 +591,11 @@ impl ActionRepository for PostgresActionRepository<'_> {
                 status_agent_id = NULL,
                 status_reason = NULL,
                 leased_until = NULL,
-                payload = CASE WHEN action_type = 'deployment.webhooks' THEN payload - 'headers' ELSE payload END
+                payload = CASE action_type
+                    WHEN 'deployment.webhooks' THEN payload - 'headers'
+                    WHEN 'deployment.smtp' THEN payload #- '{smtp,password}'
+                    ELSE payload
+                END
             WHERE deployment_id = $2
               AND id = $3
               AND status = 'leased'
@@ -655,7 +659,11 @@ impl ActionRepository for PostgresActionRepository<'_> {
                 status_agent_id = NULL,
                 status_reason = $2,
                 leased_until = NULL,
-                payload = CASE WHEN action_type = 'deployment.webhooks' THEN payload - 'headers' ELSE payload END
+                payload = CASE action_type
+                    WHEN 'deployment.webhooks' THEN payload - 'headers'
+                    WHEN 'deployment.smtp' THEN payload #- '{smtp,password}'
+                    ELSE payload
+                END
             WHERE deployment_id = $3
               AND id = $4
               AND status = 'leased'
