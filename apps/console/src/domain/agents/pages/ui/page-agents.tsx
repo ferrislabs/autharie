@@ -4,11 +4,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { describeAgents } from '../../agent-state'
 import type { DecisionFilters } from '../../decisions'
 import type { PolicyTemplateDraft } from '../../policy-templates'
-import type { AgentDecision, AgentPolicy, AgentSettings } from '../../types'
+import type { AgentDecision, AgentPolicy, AgentServer, AgentSettings } from '../../types'
 import { AgentsHeader } from './agents-header'
 import { ConnectAgent } from './connect-agent'
 import { DecisionLog } from './decision-log'
 import { PoliciesList } from './policies-list'
+import { ServersSection } from './servers-section'
 
 export type AgentsTabId = 'overview' | 'access-map' | 'policies' | 'activity'
 
@@ -40,7 +41,18 @@ interface Props {
   onEditPolicy: (policy: AgentPolicy) => void
   onDeletePolicy: (policy: AgentPolicy) => void
   onTogglePolicy: (policy: AgentPolicy, enabled: boolean) => void
+  servers?: AgentServer[]
+  serversLoading?: boolean
+  serversError?: string
+  busyServerId?: string | null
+  onAddServer?: () => void
+  onEditServer?: (server: AgentServer) => void
+  onRemoveServer?: (server: AgentServer) => void
+  onRefreshServer?: (server: AgentServer) => void
 }
+
+const NO_SERVERS: AgentServer[] = []
+const noop = () => {}
 
 export function PageAgents(props: Props) {
   if (props.isLoading) return <Skeleton className='h-64 w-full' />
@@ -81,7 +93,18 @@ export function PageAgents(props: Props) {
               onSaveRealm={props.onSaveRealm}
               onOpenOrganisationSettings={props.onOpenOrganisationSettings}
             />
-            <ConnectAgent settings={props.settings} state={state} />
+            <ServersSection
+              servers={props.servers ?? NO_SERVERS}
+              isLoading={props.serversLoading ?? false}
+              error={props.serversError}
+              canManage={props.canManage}
+              busyId={props.busyServerId ?? null}
+              onAdd={props.onAddServer ?? noop}
+              onEdit={props.onEditServer ?? noop}
+              onRemove={props.onRemoveServer ?? noop}
+              onRefresh={props.onRefreshServer ?? noop}
+            />
+            <ConnectAgent settings={props.settings} state={state} servers={props.servers} />
           </TabsContent>
 
           <TabsContent value='access-map'>

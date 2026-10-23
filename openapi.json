@@ -4344,6 +4344,537 @@
         ]
       }
     },
+    "/organisations/{organisation_id}/deployments/{deployment_id}/agents/servers": {
+      "get": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "list the MCP servers registered on a deployment",
+        "description": "Each server carries the tools the data plane last discovered on it, with their read-only and destructive hints, and the URL agents reach it at through the gateway. Requires VIEW_INSTANCES.",
+        "operationId": "list_agent_servers_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The servers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentServersResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not view this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "register an MCP server on a deployment",
+        "description": "Refuses anything but a public https URL, stores the server, asks the data plane to expose it through the gateway and to discover its tools. At most 10 per deployment. FerrisKey deployments only. Requires MANAGE_INSTANCES.",
+        "operationId": "register_agent_server_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterAgentServerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Registered, and being applied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentServerResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A field is not valid; the message names it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not change this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The slug is taken, the deployment holds 10 servers, or it is not a FerrisKey one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/organisations/{organisation_id}/deployments/{deployment_id}/agents/servers/{server_id}": {
+      "put": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "change an MCP server",
+        "description": "Changes the name, URL and whether the server is on. The slug never changes. A new URL clears the discovered tools and asks for a new discovery. Requires MANAGE_INSTANCES.",
+        "operationId": "update_agent_server_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "server_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangeAgentServerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Stored, and being applied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentServerResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A field is not valid; the message names it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not change this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment or server",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The deployment is not a FerrisKey one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "remove an MCP server",
+        "description": "Removes the server, and with it its gateway upstream, route and audience client. The policies that name it stay. Requires MANAGE_INSTANCES.",
+        "operationId": "remove_agent_server_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "server_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not change this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment or server",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The deployment is not a FerrisKey one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/organisations/{organisation_id}/deployments/{deployment_id}/agents/servers/{server_id}/discover": {
+      "post": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "ask the data plane to list a server's tools again",
+        "description": "Answers at once; the new tools show on the server once the data plane has reported them. Requires MANAGE_INSTANCES.",
+        "operationId": "discover_agent_server_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "server_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Asked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentServerDiscoveryAsked"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not change this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment or server",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The deployment is not a FerrisKey one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/organisations/{organisation_id}/deployments/{deployment_id}/availability": {
       "get": {
         "tags": [
@@ -12431,6 +12962,122 @@
           }
         }
       },
+      "AgentServerDiscoveryAsked": {
+        "type": "object",
+        "required": [
+          "asked"
+        ],
+        "properties": {
+          "asked": {
+            "type": "boolean"
+          }
+        }
+      },
+      "AgentServerReport": {
+        "type": "object",
+        "required": [
+          "id",
+          "phase"
+        ],
+        "properties": {
+          "discovered_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the discovery started. Absent until one has run."
+          },
+          "discovery_requested_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "The `discovery_requested_at` of the server that this discovery answers."
+          },
+          "dropped": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phase": {
+            "type": "string",
+            "description": "`Ready`, `Unreachable`, `Refused` or `Invalid`."
+          },
+          "protocol_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The MCP protocol version the server negotiated at discovery."
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentServerToolReport"
+            }
+          }
+        }
+      },
+      "AgentServerResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/CustomerServer"
+          }
+        }
+      },
+      "AgentServerToolReport": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "destructive": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "read_only": {
+            "type": "boolean"
+          }
+        }
+      },
+      "AgentServersResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CustomerServer"
+            }
+          }
+        }
+      },
       "AgentStatus": {
         "type": "object",
         "required": [
@@ -13571,6 +14218,26 @@
           }
         }
       },
+      "ChangeAgentServerRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "url",
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "ChangeSubscriptionRequest": {
         "type": "object",
         "required": [
@@ -13956,6 +14623,62 @@
             "$ref": "#/components/schemas/Role"
           }
         }
+      },
+      "CustomerServer": {
+        "type": "object",
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "url",
+          "enabled",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "discovery": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Discovery"
+              }
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "$ref": "#/components/schemas/ServerId"
+          },
+          "mcp_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "$ref": "#/components/schemas/ServerSlug"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "url": {
+            "$ref": "#/components/schemas/CustomerServerUrl"
+          }
+        }
+      },
+      "CustomerServerUrl": {
+        "type": "string"
       },
       "CutoverRequest": {
         "type": "object",
@@ -14628,6 +15351,81 @@
               }
             }
           }
+        ]
+      },
+      "DiscoveredTool": {
+        "type": "object",
+        "required": [
+          "name",
+          "read_only",
+          "destructive"
+        ],
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "destructive": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "read_only": {
+            "type": "boolean"
+          }
+        }
+      },
+      "Discovery": {
+        "type": "object",
+        "required": [
+          "phase",
+          "tools",
+          "dropped",
+          "discovered_at"
+        ],
+        "properties": {
+          "discovered_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "dropped": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phase": {
+            "$ref": "#/components/schemas/DiscoveryPhase"
+          },
+          "protocol_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiscoveredTool"
+            }
+          }
+        }
+      },
+      "DiscoveryPhase": {
+        "type": "string",
+        "enum": [
+          "Ready",
+          "Unreachable",
+          "Refused",
+          "Invalid"
         ]
       },
       "Distribution": {
@@ -16934,6 +17732,35 @@
       "Region": {
         "type": "string"
       },
+      "RegisterAgentServerRequest": {
+        "type": "object",
+        "required": [
+          "slug",
+          "name",
+          "url"
+        ],
+        "properties": {
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "`true` when left out."
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string",
+            "description": "Short name, unique in the deployment: `^[a-z][a-z0-9-]{1,30}$`, never `ferriskey` or `autharie`.\nIt prefixes the server's tools (`<slug>/<tool>`) and its gateway path (`/mcp/<slug>`)."
+          },
+          "url": {
+            "type": "string",
+            "description": "A public `https://` URL, without user name or password."
+          }
+        },
+        "additionalProperties": false
+      },
       "RegisterCloudCredentialRequest": {
         "type": "object",
         "required": [
@@ -17402,6 +18229,13 @@
             },
             "description": "Only secret versions the control plane has not been given yet."
           },
+          "servers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentServerReport"
+            },
+            "description": "What the data plane discovered on each customer MCP server. Only with `kind: deployment.agents`."
+          },
           "version": {
             "type": [
               "string",
@@ -17789,6 +18623,13 @@
             "description": "Absent means every plan. A named list restricts the percentage to\nthose plans; see the module docs on [`Rollout`] for what widening and\nnarrowing mean here."
           }
         }
+      },
+      "ServerId": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "ServerSlug": {
+        "type": "string"
       },
       "ServiceIntent": {
         "type": "string",

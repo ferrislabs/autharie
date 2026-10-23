@@ -1,4 +1,4 @@
-import { TOOL_CATALOGUE, toolId } from './tool-catalogue'
+import { toolId, type Catalogue } from './tool-catalogue'
 import type { RuleModel } from './types'
 
 export interface PolicyTemplateDraft {
@@ -11,7 +11,7 @@ export interface PolicyTemplate {
   id: string
   title: string
   description: string
-  build: () => PolicyTemplateDraft
+  build: (catalogue: Catalogue) => PolicyTemplateDraft
 }
 
 export const POLICY_TEMPLATES: PolicyTemplate[] = [
@@ -36,7 +36,7 @@ export const POLICY_TEMPLATES: PolicyTemplate[] = [
     id: 'block-destructive',
     title: 'Block destructive tools',
     description: 'A safety net: disabling users, removing roles or deleting is always refused.',
-    build: () => ({
+    build: (catalogue) => ({
       name: 'Block destructive tools',
       description: 'Refuses every tool marked destructive, whatever other policies permit.',
       rule: {
@@ -46,7 +46,7 @@ export const POLICY_TEMPLATES: PolicyTemplate[] = [
         agents: { kind: 'any' },
         what: {
           kind: 'tools',
-          tools: TOOL_CATALOGUE.filter((tool) => tool.destructive).map(toolId),
+          tools: catalogue.tools.filter((tool) => tool.destructive).map(toolId),
         },
         when: null,
       },

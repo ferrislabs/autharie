@@ -2,7 +2,8 @@ import { useMemo, useState } from 'react'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { toggleItem } from '../../../rule-form'
-import { findTool, nameOfTool, SERVERS, serverOfTool, TOOL_CATALOGUE, toolId } from '../../../tool-catalogue'
+import { findTool, nameOfTool, serverOfTool, toolId, type Catalogue } from '../../../tool-catalogue'
+import { useCatalogue } from '../catalogue-context'
 
 interface Row {
   id: string
@@ -17,18 +18,19 @@ interface Group {
   rows: Row[]
 }
 
-function groupsOf(selected: string[], query: string): Group[] {
+function groupsOf(catalogue: Catalogue, selected: string[], query: string): Group[] {
   const needle = query.trim().toLowerCase()
   const matches = (row: Row) => needle.length === 0 || row.id.toLowerCase().includes(needle)
-  const groups: Group[] = SERVERS.map((server) => ({
+  const groups: Group[] = catalogue.servers.map((server) => ({
     id: server.id,
     label: server.label,
-    rows: TOOL_CATALOGUE.filter((tool) => tool.server === server.id)
+    rows: catalogue.tools
+      .filter((tool) => tool.server === server.id)
       .map((tool) => ({ id: toolId(tool), name: tool.name, readOnly: tool.readOnly, destructive: tool.destructive }))
       .filter(matches),
   }))
   const other = selected
-    .filter((id) => findTool(id) === undefined)
+    .filter((id) => findTool(catalogue, id) === undefined)
     .map((id) => ({ id, name: serverOfTool(id) ? nameOfTool(id) : id, readOnly: false, destructive: false }))
     .filter(matches)
   if (other.length > 0) groups.push({ id: 'other', label: 'Other', rows: other })
@@ -58,7 +60,8 @@ export function ToolPicker({
   onChange: (tools: string[]) => void
 }) {
   const [query, setQuery] = useState('')
-  const groups = useMemo(() => groupsOf(tools, query), [tools, query])
+  const catalogue = useCatalogue()
+  const groups = useMemo(() => groupsOf(catalogue, tools, query), [catalogue, tools, query])
 
   return (
     <div className='space-y-2'>

@@ -3,6 +3,7 @@ pub mod authzen;
 pub mod config;
 pub mod decision;
 pub mod exchange;
+pub mod legacy;
 pub mod logging;
 pub mod reload;
 pub mod rpc;
@@ -11,6 +12,7 @@ pub mod verifier;
 
 use std::time::Duration;
 
+use autharie_egress::{GuardedClient, Settings};
 use reqwest::{Client, redirect::Policy};
 
 use crate::{
@@ -49,9 +51,21 @@ pub fn build_upstreams(config: GatewayConfig) -> Result<Vec<Upstream>, BuildErro
         .collect()
 }
 
+pub fn public_client() -> Result<GuardedClient, BuildError> {
+    Ok(GuardedClient::new(Settings::default())?)
+}
+
 pub fn build_state<S: DecisionSink>(
     config: GatewayConfig,
     sink: S,
+) -> Result<AppState<S>, BuildError> {
+    build_state_with(config, sink, public_client()?)
+}
+
+pub fn build_state_with<S: DecisionSink>(
+    config: GatewayConfig,
+    sink: S,
+    public: GuardedClient,
 ) -> Result<AppState<S>, BuildError> {
     let http = Client::builder()
         .redirect(Policy::none())
@@ -61,5 +75,7 @@ pub fn build_state<S: DecisionSink>(
         routes: Routes::new(build_upstreams(config)?),
         sink,
         http,
+        public,
+        sessions: legacy::Sessions::default(),
     }))
 }

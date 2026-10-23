@@ -6,8 +6,10 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import type { Target, WhatBox } from '../../../canvas-model'
-import { SERVERS } from '../../../tool-catalogue'
+import type { Catalogue } from '../../../tool-catalogue'
+import { useCatalogue } from '../catalogue-context'
 import { EditorShell, Row, SharedNote } from './editor-parts'
+import { serverOptions } from './server-options'
 import { ToolPicker } from './tool-picker'
 
 const TYPES: { value: Target['type']; label: string }[] = [
@@ -18,12 +20,12 @@ const TYPES: { value: Target['type']; label: string }[] = [
 
 const ALL_SERVERS = 'all'
 
-function withType(type: Target['type']): Target {
+function withType(type: Target['type'], catalogue: Catalogue): Target {
   switch (type) {
     case 'read-only':
       return { type, server: null }
     case 'server':
-      return { type, server: SERVERS[0].id }
+      return { type, server: catalogue.servers[0].id }
     case 'tools':
       return { type, tools: [] }
   }
@@ -42,6 +44,8 @@ function ServerSelect({
   disabled: boolean
   onChange: (server: string | null) => void
 }) {
+  const options = serverOptions(useCatalogue(), value)
+
   return (
     <Select
       value={value ?? ALL_SERVERS}
@@ -53,9 +57,9 @@ function ServerSelect({
       </SelectTrigger>
       <SelectContent>
         {allowAll && <SelectItem value={ALL_SERVERS}>Every server</SelectItem>}
-        {SERVERS.map((server) => (
-          <SelectItem key={server.id} value={server.id}>
-            {server.label}
+        {options.map((option) => (
+          <SelectItem key={option.value} value={option.value}>
+            {option.label}
           </SelectItem>
         ))}
       </SelectContent>
@@ -77,6 +81,7 @@ export function WhatEditor({
   onClose: () => void
 }) {
   const target = box.target
+  const catalogue = useCatalogue()
 
   return (
     <EditorShell title='What' subtitle='Tools this rule covers' onClose={onClose}>
@@ -84,7 +89,7 @@ export function WhatEditor({
         <Select
           value={target.type}
           disabled={readOnly}
-          onValueChange={(type) => onChange({ ...box, target: withType(type as Target['type']) })}
+          onValueChange={(type) => onChange({ ...box, target: withType(type as Target['type'], catalogue) })}
         >
           <SelectTrigger id='what-type' className='w-full'>
             <SelectValue />

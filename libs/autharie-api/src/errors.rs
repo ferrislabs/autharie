@@ -449,17 +449,24 @@ impl From<CoreError> for ApiError {
             CoreError::Agent(AgentError::InvalidCedar { .. }) => ApiError::Unprocessable {
                 reason: value.to_string(),
             },
-            CoreError::Agent(AgentError::Invalid { .. }) => ApiError::BadRequest {
-                reason: value.to_string(),
-            },
-            CoreError::Agent(AgentError::PolicyNotFound { .. }) => ApiError::NotFound {
-                reason: value.to_string(),
-            },
-            CoreError::Agent(AgentError::UnsupportedKind | AgentError::TooManyPolicies { .. }) => {
-                ApiError::Conflict {
+            CoreError::Agent(AgentError::Invalid { .. } | AgentError::Server(_)) => {
+                ApiError::BadRequest {
                     reason: value.to_string(),
                 }
             }
+            CoreError::Agent(
+                AgentError::PolicyNotFound { .. } | AgentError::ServerNotFound { .. },
+            ) => ApiError::NotFound {
+                reason: value.to_string(),
+            },
+            CoreError::Agent(
+                AgentError::UnsupportedKind
+                | AgentError::TooManyPolicies { .. }
+                | AgentError::TooManyServers { .. }
+                | AgentError::ServerSlugTaken { .. },
+            ) => ApiError::Conflict {
+                reason: value.to_string(),
+            },
             CoreError::Key(KeyError::ProviderUnavailable { .. }) => {
                 tracing::error!(error = %value, "the key manager is not available");
 

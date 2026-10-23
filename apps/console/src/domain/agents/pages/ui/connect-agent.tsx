@@ -1,14 +1,25 @@
+import { useState } from 'react'
 import { Section } from '@/components/layout/page'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import type { AgentsState } from '../../agent-state'
-import { connectionGuides, FALLBACK_SERVER_NAME } from '../../connection-snippets'
-import type { AgentSettings } from '../../types'
+import { connectionGuides, connectionTargets, FALLBACK_SERVER_NAME } from '../../connection-snippets'
+import type { AgentServer, AgentSettings } from '../../types'
 import { CopyButton } from './copy-button'
 
 interface Props {
   settings: AgentSettings
   state: AgentsState
+  servers?: AgentServer[]
 }
+
+const NO_SERVERS: AgentServer[] = []
 
 function missing(settings: AgentSettings, state: AgentsState): string {
   if (state.callout) return state.callout
@@ -16,14 +27,38 @@ function missing(settings: AgentSettings, state: AgentsState): string {
   return state.message ?? 'The MCP URL appears here once the deployment has applied the change.'
 }
 
-export function ConnectAgent({ settings, state }: Props) {
-  const mcpUrl = settings.mcp_url
-  const guides = mcpUrl ? connectionGuides({ mcpUrl, serverName: FALLBACK_SERVER_NAME }) : []
+export function ConnectAgent({ settings, state, servers = NO_SERVERS }: Props) {
+  const targets = connectionTargets(settings.mcp_url, servers)
+  const [picked, setPicked] = useState<string | null>(null)
+  const target = targets.find((entry) => entry.id === picked) ?? targets[0]
+  const mcpUrl = target?.mcpUrl
+  const guides = mcpUrl ? connectionGuides({ mcpUrl, serverName: target?.serverName ?? FALLBACK_SERVER_NAME }) : []
 
   return (
     <Section title='Connect an agent'>
       {settings.enabled && mcpUrl ? (
         <Tabs defaultValue='claude-code' className='gap-3'>
+          {targets.length > 1 && (
+            <div className='flex flex-wrap items-center gap-2 text-sm'>
+              <label htmlFor='connect-target' className='text-muted-foreground'>
+                Connect to
+              </label>
+              <Select value={target.id} onValueChange={setPicked}>
+                <SelectTrigger id='connect-target' className='w-64'>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {targets.map((entry) => (
+                    <SelectItem key={entry.id} value={entry.id}>
+                      {entry.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <code className='min-w-0 truncate rounded bg-muted px-1.5 py-0.5 text-xs'>{mcpUrl}</code>
+              <CopyButton text={mcpUrl} label={`Copy the MCP URL of ${target.label}`} />
+            </div>
+          )}
           <TabsList className='h-auto flex-wrap justify-start'>
             {guides.map((guide) => (
               <TabsTrigger key={guide.id} value={guide.id}>

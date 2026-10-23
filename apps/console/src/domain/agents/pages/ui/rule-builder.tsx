@@ -8,7 +8,8 @@ import {
 } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 import { toggleItem, type RuleForm } from '../../rule-form'
-import { SERVERS, TOOL_CATALOGUE, toolId, toolsOf } from '../../tool-catalogue'
+import { toolId, toolsOf } from '../../tool-catalogue'
+import { useCatalogue } from './catalogue-context'
 import { Field, TEXTAREA_CLASS } from './field'
 
 interface Props {
@@ -108,6 +109,7 @@ function HourSelect({
 }
 
 export function RuleBuilder({ form, onChange }: Props) {
+  const catalogue = useCatalogue()
   const set = (patch: Partial<RuleForm>) => onChange({ ...form, ...patch })
 
   return (
@@ -251,7 +253,7 @@ export function RuleBuilder({ form, onChange }: Props) {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value={ANY_SERVER}>Any server</SelectItem>
-                {SERVERS.map((server) => (
+                {catalogue.servers.map((server) => (
                   <SelectItem key={server.id} value={server.id}>
                     {server.label}
                   </SelectItem>
@@ -268,7 +270,7 @@ export function RuleBuilder({ form, onChange }: Props) {
                 <SelectValue placeholder='Pick a server' />
               </SelectTrigger>
               <SelectContent>
-                {SERVERS.map((server) => (
+                {catalogue.servers.map((server) => (
                   <SelectItem key={server.id} value={server.id}>
                     {server.label}
                   </SelectItem>
@@ -280,12 +282,12 @@ export function RuleBuilder({ form, onChange }: Props) {
 
         {form.what === 'tools' && (
           <div className='space-y-3'>
-            {SERVERS.map((server) => (
+            {catalogue.servers.map((server) => (
               <fieldset key={server.id} className='space-y-1'>
                 <legend className='mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground'>
                   {server.label}
                 </legend>
-                {toolsOf(server.id).map((tool) => {
+                {toolsOf(catalogue, server.id).map((tool) => {
                   const id = toolId(tool)
 
                   return (
@@ -312,7 +314,7 @@ export function RuleBuilder({ form, onChange }: Props) {
               </fieldset>
             ))}
             <p className='text-xs text-muted-foreground'>
-              {form.tools.length} of {TOOL_CATALOGUE.length} tools selected.
+              {form.tools.length} of {catalogue.tools.length} tools selected.
             </p>
           </div>
         )}

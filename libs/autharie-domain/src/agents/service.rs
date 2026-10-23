@@ -17,6 +17,7 @@ use crate::{
         decision::{AgentDecision, AgentDecisionIndex, DecisionQuery},
         entities::{AgentPolicy, AgentSettings, AgentStatus, AgentsView, PolicyId, PolicyPhase},
         ports::{AgentAccess, AgentOutcomeService, AgentRepository, AgentService},
+        server_ports::AgentServerRepository,
     },
     audit::{
         AuditAction, AuditChange, AuditEntry, AuditEntryId, AuditTarget, AuditTargetKind,
@@ -28,6 +29,8 @@ use crate::{
     organisation::{OrganisationId, ports::OrganisationRepository},
     user::ports::UserRepository,
 };
+
+mod servers;
 
 pub struct AgentPublisher<D, G, A>
 where
@@ -41,7 +44,7 @@ where
 impl<D, G, A> AgentPublisher<D, G, A>
 where
     D: DeploymentRepository,
-    G: AgentRepository,
+    G: AgentRepository + AgentServerRepository,
     A: ActionRepository,
 {
     pub fn new(deployments: D, agents: G, actions: A) -> Self {
@@ -76,6 +79,21 @@ where
                 })
             })
             .collect();
+        let servers: Vec<Value> = self
+            .agents
+            .list_servers(deployment.id)
+            .await?
+            .into_iter()
+            .map(|server| {
+                json!({
+                    "id": server.id.0,
+                    "slug": server.slug,
+                    "url": server.url,
+                    "enabled": server.enabled,
+                    "discovery_requested_at": server.discovery_requested_at,
+                })
+            })
+            .collect();
 
         let data = json!({
             "deployment_id": deployment.id.0,
@@ -84,6 +102,7 @@ where
             "realm": settings.realm,
             "revision": settings.revision,
             "policies": policies,
+            "servers": servers,
         });
 
         self.actions
@@ -171,7 +190,7 @@ where
     ) -> Self
     where
         D: DeploymentRepository,
-        G: AgentRepository,
+        G: AgentRepository + AgentServerRepository,
     {
         Self {
             publisher: AgentPublisher::new(deployments, agents, actions),
@@ -188,7 +207,7 @@ impl<D, O, G, A, AU, U, P> AgentServiceImpl<D, O, G, A, AU, U, P>
 where
     D: DeploymentRepository,
     O: OrganisationRepository,
-    G: AgentRepository,
+    G: AgentRepository + AgentServerRepository,
     A: ActionRepository,
     AU: AuditRepository,
     U: UserRepository,
@@ -309,7 +328,7 @@ impl<D, O, G, A, AU, U, P> AgentService for AgentServiceImpl<D, O, G, A, AU, U, 
 where
     D: DeploymentRepository,
     O: OrganisationRepository,
-    G: AgentRepository,
+    G: AgentRepository + AgentServerRepository,
     A: ActionRepository,
     AU: AuditRepository,
     U: UserRepository,
@@ -592,7 +611,7 @@ impl<D, P, G> AgentOutcomeService for AgentOutcomeServiceImpl<D, P, G>
 where
     D: DeploymentRepository,
     P: DataPlaneRepository,
-    G: AgentRepository,
+    G: AgentRepository + AgentServerRepository,
 {
     async fn report_agents_outcome(
         &self,
@@ -644,6 +663,15 @@ where
                     now,
                 )
                 .await?;
+        }
+
+        for report in &outcome.servers {
+            if let Some(discovery) = &report.discovery {
+                changed |= self
+                    .agents
+                    .record_discovery(deployment_id, report.id, discovery, report.answers)
+                    .await?;
+            }
         }
 
         Ok(changed)

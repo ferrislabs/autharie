@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { emptyFilters } from '../../decisions'
-import type { AgentDecision, AgentPolicy, AgentSettings } from '../../types'
+import type { AgentDecision, AgentPolicy, AgentServer, AgentSettings } from '../../types'
 import { PageAgents } from './page-agents'
 
 const noop = () => {}
@@ -229,5 +229,119 @@ describe('the decision log', () => {
     expect(html).toContain('policy-9')
     expect(html).toContain('no permit')
     expect(html).toContain('2026-10-22 10:00:00')
+  })
+})
+
+const crm: AgentServer = {
+  id: 's1',
+  slug: 'crm',
+  name: 'CRM',
+  url: 'https://tools.example.com/mcp',
+  enabled: true,
+  mcp_url: 'https://dep.example.com/mcp/crm',
+  discovery: {
+    phase: 'Ready',
+    tools: [
+      { name: 'list_invoices', read_only: true, destructive: false },
+      { name: 'delete_invoice', read_only: false, destructive: true },
+    ],
+    dropped: 0,
+    discovered_at: '2026-10-23T10:00:00Z',
+    protocol_version: '2025-11-25',
+  },
+  created_at: '',
+  updated_at: '',
+}
+
+const ready: Partial<AgentSettings> = {
+  enabled: true,
+  realm: 'master',
+  mcp_url: 'https://dep.example.com/mcp',
+  status: { phase: 'Ready', gateway_client_ready: true, updated_at: '' },
+}
+
+function withServers(servers: AgentServer[], over: Partial<React.ComponentProps<typeof PageAgents>> = {}) {
+  return render({
+    realm: 'master',
+    settings: { enabled: false, realm: 'master', organisation_mcp_enabled: true, ...ready },
+    servers,
+    ...over,
+  })
+}
+
+describe('your MCP servers', () => {
+  it('invites to register a first server', () => {
+    const html = withServers([])
+
+    expect(html).toContain('Your MCP servers')
+    expect(html).toContain('No MCP server of yours yet')
+    expect(html).toContain('Add a server')
+  })
+
+  it('lists each server with its address, status, tool count and last discovery', () => {
+    const html = withServers([crm])
+
+    expect(html).toContain('CRM')
+    expect(html).toContain('https://tools.example.com/mcp')
+    expect(html).toContain('Ready')
+    expect(html).toContain('2 tools')
+    expect(html).toContain('Last discovery 2026-10-23 10:00 UTC')
+    expect(html).toContain('MCP 2025-11-25')
+    expect(html).toContain('Refresh the tools of CRM')
+    expect(html).toContain('Edit CRM')
+    expect(html).toContain('Remove CRM')
+  })
+
+  it('says a server is still being discovered, or could not be reached', () => {
+    expect(withServers([{ ...crm, discovery: undefined }])).toContain('Discovering tools')
+
+    const html = withServers([
+      { ...crm, discovery: { ...crm.discovery!, phase: 'Unreachable', tools: [], message: 'the server did not answer in time' } },
+    ])
+    expect(html).toContain('Unreachable')
+    expect(html).toContain('the server did not answer in time')
+  })
+
+  it('says a server is refused when its address is not a public one', () => {
+    const html = withServers([
+      { ...crm, discovery: { ...crm.discovery!, phase: 'Refused', tools: [], message: 'the server’s address is not a public one' } },
+    ])
+
+    expect(html).toContain('Refused')
+    expect(html).toContain('not a public one')
+  })
+
+  it('shows a switched-off server as off and cannot refresh it', () => {
+    const html = withServers([{ ...crm, enabled: false }])
+
+    expect(html).toContain('Off')
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*aria-label="Refresh the tools of CRM"/)
+  })
+
+  it('leaves the buttons to those who manage the deployment', () => {
+    const html = withServers([crm], { canManage: false })
+
+    expect(html).toContain('CRM')
+    expect(html).not.toContain('Add a server')
+    expect(html).not.toContain('Remove CRM')
+  })
+
+  it('stops offering to add at ten servers', () => {
+    const ten = Array.from({ length: 10 }, (_, index) => ({ ...crm, id: `s${index}`, slug: `srv-${index}` }))
+    const html = withServers(ten)
+
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>.*Add a server/)
+    expect(html).toContain('at most 10 servers')
+  })
+
+  it('gives each server its own address in the connection guide', () => {
+    const html = withServers([crm, { ...crm, id: 's2', slug: 'erp', name: 'ERP', mcp_url: 'https://dep.example.com/mcp/erp' }])
+
+    expect(html).toContain('Connect to')
+    expect(html).toContain('https://dep.example.com/mcp')
+  })
+
+  it('does not offer a server that is switched off in the connection guide', () => {
+    expect(withServers([{ ...crm, enabled: false }])).not.toContain('Connect to')
   })
 })

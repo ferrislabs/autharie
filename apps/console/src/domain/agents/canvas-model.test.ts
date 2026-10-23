@@ -29,6 +29,7 @@ import {
 } from './canvas-model'
 import { compileRule } from './compile-rule'
 import { POLICY_TEMPLATES } from './policy-templates'
+import { BUILTIN_CATALOGUE } from './tool-catalogue'
 import type { AgentPolicy, RuleModel } from './types'
 
 function rule(over: Partial<RuleModel> = {}): RuleModel {
@@ -162,7 +163,7 @@ describe('docFromPolicies', () => {
 describe('ruleOf round trip', () => {
   for (const template of POLICY_TEMPLATES) {
     it(`gives back the ${template.id} template`, () => {
-      const built = template.build()
+      const built = template.build(BUILTIN_CATALOGUE)
       const doc = docFromPolicies([policy('t', built.rule)])
       const back = ok(doc, 'rule:t')
       expect(back).toEqual(built.rule)
@@ -412,26 +413,26 @@ describe('reducers', () => {
 describe('templates', () => {
   for (const template of POLICY_TEMPLATES) {
     it(`drops ${template.id} as a compilable rule`, () => {
-      const doc = addTemplate({ boxes: [], links: [], positions: {} }, template, { x: 0, y: 0 })
+      const doc = addTemplate({ boxes: [], links: [], positions: {} }, template, { x: 0, y: 0 }, BUILTIN_CATALOGUE)
       const rules = boxesOf(doc, 'rule')
       expect(rules).toHaveLength(1)
       expect(rules[0].policyId).toBeNull()
-      expect(rules[0].name).toBe(template.build().name)
-      expect(ok(doc, rules[0].id)).toEqual(template.build().rule)
+      expect(rules[0].name).toBe(template.build(BUILTIN_CATALOGUE).name)
+      expect(ok(doc, rules[0].id)).toEqual(template.build(BUILTIN_CATALOGUE).rule)
       for (const box of doc.boxes) expect(doc.positions[box.id]).toBeDefined()
     })
   }
 
   it('does not clash with boxes already on the canvas', () => {
     const template = POLICY_TEMPLATES[0]
-    let doc = addTemplate({ boxes: [], links: [], positions: {} }, template, { x: 0, y: 0 })
-    doc = addTemplate(doc, template, { x: 0, y: 300 })
+    let doc = addTemplate({ boxes: [], links: [], positions: {} }, template, { x: 0, y: 0 }, BUILTIN_CATALOGUE)
+    doc = addTemplate(doc, template, { x: 0, y: 300 }, BUILTIN_CATALOGUE)
     expect(new Set(doc.boxes.map((box) => box.id)).size).toBe(doc.boxes.length)
     expect(boxesOf(doc, 'rule')).toHaveLength(2)
   })
 
   it('returns boxes and links', () => {
-    const dropped = ruleFromTemplate(POLICY_TEMPLATES[2])
+    const dropped = ruleFromTemplate(POLICY_TEMPLATES[2], BUILTIN_CATALOGUE)
     expect(dropped.boxes).toHaveLength(3)
     expect(dropped.links).toHaveLength(2)
     expect(dropped.boxes.some((box) => box.id === dropped.ruleId)).toBe(true)
@@ -527,7 +528,7 @@ describe('diffDoc', () => {
     doc = removeBox(doc, 'rule:b')
     const box = doc.boxes.find((entry) => entry.id === 'rule:a') as RuleBox
     doc = updateBox(doc, { ...box, name: 'x' })
-    const added = addTemplate(doc, POLICY_TEMPLATES[0], { x: 0, y: 500 })
+    const added = addTemplate(doc, POLICY_TEMPLATES[0], { x: 0, y: 500 }, BUILTIN_CATALOGUE)
     expect(changeCount(diffDoc([a, b], added))).toBe(3)
     expect(pendingChanges([a, b], added).changedRuleIds.size).toBe(2)
   })
@@ -541,5 +542,28 @@ describe('diffDoc', () => {
     const server = policy('p1', rule(), { name: 'New rule' })
     expect(changeCount(diffDoc([server], published))).toBe(0)
     expect(changeCount(diffDoc([], published))).toBe(0)
+  })
+})
+
+describe('a rule about a customer server', () => {
+  it('compiles "support may call read-only tools on crm" to Cedar on the server', () => {
+    const { doc, ruleId } = blank()
+    const withGroup = withWho(doc, ruleId, { type: 'group', value: 'support' })
+    const full = withWhat(withGroup.doc, ruleId, { type: 'read-only', server: 'crm' })
+
+    const model = ok(full.doc, ruleId)
+    const compiled = compileRule(model)
+
+    expect(model.who).toEqual({ kind: 'groups', groups: ['support'] })
+    expect(model.what).toEqual({ kind: 'read-only', server: 'crm' })
+    if (!compiled.ok) throw new Error(compiled.issues.join('; '))
+    expect(compiled.cedar).toContain('resource.server == "crm"')
+    expect(compiled.cedar).toContain('readOnlyHint')
+  })
+
+  it('keeps pointing at the server once it is removed, so the canvas can mark it', () => {
+    const docs = docFromPolicies([policy('a', rule({ what: { kind: 'server', server: 'erp' } }))])
+
+    expect(boxesOf(docs, 'what')[0].target).toEqual({ type: 'server', server: 'erp' })
   })
 })

@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE agent_servers\n            SET name = $3,\n                url = $4,\n                enabled = $5,\n                discovery = $6,\n                discovery_requested_at = $7,\n                updated_at = $8\n            WHERE deployment_id = $1 AND id = $2\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Text",
+        "Bool",
+        "Jsonb",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ab8ffd99bc63640971f3aade1a2d57574b87f588855c9d932edb45aa2c843914"
+}

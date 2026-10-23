@@ -1,6 +1,6 @@
 import type { Scenario } from './cedar-engine'
 import { splitList } from './rule-form'
-import { TOOL_CATALOGUE, toolId } from './tool-catalogue'
+import { BUILTIN_CATALOGUE, toolId } from './tool-catalogue'
 
 export interface SimulationDraft {
   kind: 'user' | 'agent'
@@ -18,7 +18,7 @@ export const INITIAL_DRAFT: SimulationDraft = {
   groups: '',
   roles: '',
   agent: 'my-agent',
-  tool: toolId(TOOL_CATALOGUE[0]),
+  tool: toolId(BUILTIN_CATALOGUE.tools[0]),
   time: '',
 }
 

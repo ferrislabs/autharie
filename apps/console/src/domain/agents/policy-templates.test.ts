@@ -2,12 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { compileRule } from './compile-rule'
 import { draftFromTemplate, toInput } from './policy-draft'
 import { POLICY_TEMPLATES } from './policy-templates'
-import { TOOL_CATALOGUE, toolId } from './tool-catalogue'
+import { BUILTIN_CATALOGUE, catalogueOf, toolId } from './tool-catalogue'
 
 function built(id: string) {
   const template = POLICY_TEMPLATES.find((entry) => entry.id === id)
   if (!template) throw new Error('no template')
-  return template.build()
+  return template.build(BUILTIN_CATALOGUE)
 }
 
 describe('POLICY_TEMPLATES', () => {
@@ -21,7 +21,7 @@ describe('POLICY_TEMPLATES', () => {
 
   it('builds rules that compile and names that fit', () => {
     for (const template of POLICY_TEMPLATES) {
-      const draft = template.build()
+      const draft = template.build(BUILTIN_CATALOGUE)
       expect(compileRule(draft.rule).ok).toBe(true)
       expect(draft.name.length).toBeLessThanOrEqual(80)
     }
@@ -29,7 +29,7 @@ describe('POLICY_TEMPLATES', () => {
 
   it('opens in the builder as a saveable policy with the same rule', () => {
     for (const template of POLICY_TEMPLATES) {
-      const initial = template.build()
+      const initial = template.build(BUILTIN_CATALOGUE)
       const draft = draftFromTemplate(initial)
       expect(draft.mode).toBe('builder')
       expect(draft.name).toBe(initial.name)
@@ -40,8 +40,8 @@ describe('POLICY_TEMPLATES', () => {
   })
 
   it('builds a fresh rule each time', () => {
-    const first = POLICY_TEMPLATES[0].build()
-    const second = POLICY_TEMPLATES[0].build()
+    const first = POLICY_TEMPLATES[0].build(BUILTIN_CATALOGUE)
+    const second = POLICY_TEMPLATES[0].build(BUILTIN_CATALOGUE)
     expect(first.rule).not.toBe(second.rule)
   })
 
@@ -49,8 +49,29 @@ describe('POLICY_TEMPLATES', () => {
     const rule = built('block-destructive').rule
     expect(rule.effect).toBe('forbid')
     if (rule.what.kind !== 'tools') throw new Error('expected tools')
-    expect(rule.what.tools).toEqual(TOOL_CATALOGUE.filter((tool) => tool.destructive).map(toolId))
+    expect(rule.what.tools).toEqual(BUILTIN_CATALOGUE.tools.filter((tool) => tool.destructive).map(toolId))
     expect(rule.what.tools.length).toBeGreaterThan(0)
+  })
+
+  it('forbids the destructive tools that customer servers announced too', () => {
+    const catalogue = catalogueOf([
+      {
+        slug: 'crm',
+        name: 'CRM',
+        discovery: {
+          tools: [
+            { name: 'list_invoices', read_only: true, destructive: false },
+            { name: 'delete_invoice', read_only: false, destructive: true },
+          ],
+        },
+      },
+    ])
+
+    const draft = POLICY_TEMPLATES.find((entry) => entry.id === 'block-destructive')?.build(catalogue)
+
+    if (draft?.rule.what.kind !== 'tools') throw new Error('expected tools')
+    expect(draft.rule.what.tools).toContain('crm/delete_invoice')
+    expect(draft.rule.what.tools).not.toContain('crm/list_invoices')
   })
 
   it('scopes admins to ferriskey', () => {

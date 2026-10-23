@@ -2,12 +2,16 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { pendingChanges, docFromPolicies, newRuleBox, addBox, type RuleBox, type WhoBox, type WhatBox } from '../../../canvas-model'
 import { compileRule } from '../../../compile-rule'
+import { BUILTIN_CATALOGUE, catalogueOf } from '../../../tool-catalogue'
 import type { AgentPolicy, RuleModel } from '../../../types'
+import { CatalogueContext } from '../catalogue-context'
 import { CanvasContextMenu } from './canvas-context-menu'
 import { DraftBar } from './draft-bar'
 import { RuleEditor } from './rule-editor'
 import { PolicyCanvas } from './policy-canvas'
 import { paneMenu } from './menu-items'
+import { serverOptions } from './server-options'
+import { ToolPicker } from './tool-picker'
 import { WhatEditor } from './what-editor'
 import { WhoEditor } from './who-editor'
 
@@ -100,7 +104,7 @@ describe('CanvasContextMenu', () => {
 
   it('is a menu with the add entries', () => {
     const html = renderToStaticMarkup(
-      <CanvasContextMenu x={10} y={10} width={800} height={500} items={paneMenu(actions, 'all')} onClose={noop} />,
+      <CanvasContextMenu x={10} y={10} width={800} height={500} items={paneMenu(actions, 'all', BUILTIN_CATALOGUE)} onClose={noop} />,
     )
     expect(html).toContain('role="menu"')
     for (const label of ['New rule', 'Add who', 'Add what', 'From template']) expect(html).toContain(label)
@@ -109,12 +113,12 @@ describe('CanvasContextMenu', () => {
 
   it('restricts to the kind being linked', () => {
     const rule = renderToStaticMarkup(
-      <CanvasContextMenu x={0} y={0} width={800} height={500} items={paneMenu(actions, 'rule')} onClose={noop} />,
+      <CanvasContextMenu x={0} y={0} width={800} height={500} items={paneMenu(actions, 'rule', BUILTIN_CATALOGUE)} onClose={noop} />,
     )
     expect(rule).toContain('New rule')
     expect(rule).not.toContain('Add who')
     const what = renderToStaticMarkup(
-      <CanvasContextMenu x={0} y={0} width={800} height={500} items={paneMenu(actions, 'what')} onClose={noop} />,
+      <CanvasContextMenu x={0} y={0} width={800} height={500} items={paneMenu(actions, 'what', BUILTIN_CATALOGUE)} onClose={noop} />,
     )
     expect(what).toContain('Read-only tools')
     expect(what).toContain('Read-only on FerrisKey')
@@ -168,5 +172,87 @@ describe('editors', () => {
     expect(whatHtml).toContain('destructive')
     expect(whatHtml).toContain('read-only')
     expect(whatHtml).toContain('1 tool selected')
+  })
+})
+
+describe('customer servers on the canvas', () => {
+  const catalogue = catalogueOf([
+    {
+      slug: 'crm',
+      name: 'CRM',
+      discovery: {
+        tools: [
+          { name: 'list_invoices', description: 'lists', read_only: true, destructive: false },
+          { name: 'delete_invoice', read_only: false, destructive: true },
+        ],
+      },
+    },
+  ])
+  const actions = { newRule: noop, addWho: noop, addWhat: noop, fromTemplate: noop }
+
+  it('offers the whole server and read-only on it in the add menu', () => {
+    const html = renderToStaticMarkup(
+      <CanvasContextMenu x={0} y={0} width={800} height={500} items={paneMenu(actions, 'what', catalogue)} onClose={noop} />,
+    )
+
+    expect(html).toContain('Read-only on CRM')
+    expect(html).toContain('Read-only on FerrisKey')
+  })
+
+  it('lists the servers in the submenu of whole servers', () => {
+    const items = paneMenu(actions, 'what', catalogue)
+    const whole = items.find((item) => item.id === 'what:server')
+
+    expect(whole?.items?.map((item) => item.label)).toEqual(['FerrisKey', 'Autharie', 'CRM'])
+  })
+
+  it('lists the discovered tools in the picker with their hints', () => {
+    const html = renderToStaticMarkup(
+      <CatalogueContext.Provider value={catalogue}>
+        <ToolPicker tools={['crm/delete_invoice']} onChange={noop} />
+      </CatalogueContext.Provider>,
+    )
+
+    expect(html).toContain('CRM')
+    expect(html).toContain('list_invoices')
+    expect(html).toContain('delete_invoice')
+    expect(html).toContain('read-only')
+    expect(html).toContain('destructive')
+  })
+
+  it('keeps a selected tool of a server that is gone, under Other', () => {
+    const html = renderToStaticMarkup(
+      <CatalogueContext.Provider value={catalogue}>
+        <ToolPicker tools={['erp/old_tool']} onChange={noop} />
+      </CatalogueContext.Provider>,
+    )
+
+    expect(html).toContain('Other')
+    expect(html).toContain('old_tool')
+  })
+
+  it('offers the customer servers where a server is picked', () => {
+    expect(serverOptions(catalogue, 'crm')).toEqual([
+      { value: 'ferriskey', label: 'FerrisKey' },
+      { value: 'autharie', label: 'Autharie' },
+      { value: 'crm', label: 'CRM' },
+    ])
+  })
+
+  it('keeps a server nobody registered any more in the list, named as unknown', () => {
+    expect(serverOptions(catalogue, 'erp')[0]).toEqual({
+      value: 'erp',
+      label: 'erp (unknown server)',
+    })
+    expect(serverOptions(BUILTIN_CATALOGUE, 'erp')).toHaveLength(2)
+    expect(serverOptions(catalogue, null)).toHaveLength(3)
+  })
+
+  it('still offers only the built-in servers without a catalogue', () => {
+    const html = renderToStaticMarkup(
+      <CanvasContextMenu x={0} y={0} width={800} height={500} items={paneMenu(actions, 'what', BUILTIN_CATALOGUE)} onClose={noop} />,
+    )
+
+    expect(html).not.toContain('CRM')
   })
 })

@@ -12,7 +12,7 @@ use crate::domain::OperatorError;
 use crate::domain::agents::ports::{
     AgentInstances, AgentsEdge, AgentsSecretsPort, AgentsStatusRepository, GatewayConfigStore,
 };
-use crate::domain::agents::{AgentsError, GATEWAY_CONFIG_KEY, GATEWAY_CONFIG_SECRET};
+use crate::domain::agents::{AgentsError, GATEWAY_CONFIG_KEY, GATEWAY_CONFIG_SECRET, servers};
 
 use super::edge::{Backend, Edge, build_hostname_route, exposed, httproute_api_resource};
 use super::ferriskey_admin::name_and_namespace;
@@ -141,6 +141,7 @@ pub fn agents_status_patch(status: &AgentsStatus) -> Value {
                 "mcpUrl": status.mcp_url,
                 "message": status.message,
                 "policies": status.policies,
+                "servers": status.servers,
             }
         }
     })
@@ -293,6 +294,10 @@ impl GatewayService {
 
 pub const MCP_PATHS: [&str; 2] = ["/mcp", "/.well-known/oauth-protected-resource/mcp"];
 
+pub fn server_paths(slug: &str) -> [String; 2] {
+    MCP_PATHS.map(|path| format!("{path}/{slug}"))
+}
+
 pub fn build_mcp_route(
     instance: &IdentityInstance,
     edge: &Edge,
@@ -306,9 +311,20 @@ pub fn build_mcp_route(
         (ROUTE_NAMESPACE_LABEL.to_string(), namespace),
     ]);
 
+    let customer_paths = instance
+        .spec
+        .agents
+        .as_ref()
+        .map(servers::serving)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|server| servers::is_slug(&server.slug))
+        .flat_map(|server| server_paths(&server.slug));
     let backends: Vec<Backend> = MCP_PATHS
         .iter()
-        .map(|path| Backend::new(*path, service.name.clone(), service.port))
+        .map(|path| path.to_string())
+        .chain(customer_paths)
+        .map(|path| Backend::new(path, service.name.clone(), service.port))
         .collect();
 
     build_hostname_route(
@@ -409,6 +425,7 @@ mod tests {
             realm: "acme".to_string(),
             policies: Vec::new(),
             policies_revision: 0,
+            servers: Vec::new(),
         });
         instance
     }
@@ -465,6 +482,77 @@ mod tests {
         }
     }
 
+    fn with_customers(servers: serde_json::Value) -> IdentityInstance {
+        let mut found = instance();
+        found.spec.agents.as_mut().expect("agents").servers =
+            serde_json::from_value(servers).expect("servers");
+        found
+    }
+
+    fn paths_of(route: &Value) -> Vec<String> {
+        route["spec"]["rules"]
+            .as_array()
+            .expect("rules")
+            .iter()
+            .flat_map(|rule| rule["matches"].as_array().expect("matches"))
+            .map(|m| m["path"]["value"].as_str().expect("a path").to_string())
+            .collect()
+    }
+
+    #[test]
+    fn spec_ms_2_each_customer_server_adds_its_own_paths_to_the_route() {
+        let route = build_mcp_route(
+            &with_customers(json!([
+                {
+                    "id": "0b9ad3c4-4a5f-4c3b-8d57-0b2d6d9e1a11",
+                    "slug": "crm",
+                    "url": "https://tools.example.com/mcp",
+                    "enabled": true,
+                },
+                {
+                    "id": "7f1c2d3e-0000-4000-8000-00000000000c",
+                    "slug": "erp",
+                    "url": "https://erp.example.com/mcp",
+                    "enabled": false,
+                },
+                {
+                    "id": "7f1c2d3e-0000-4000-8000-00000000000d",
+                    "slug": "gateway",
+                    "url": "https://x.example.com/mcp",
+                    "enabled": true,
+                },
+            ])),
+            &edge(),
+            &service(),
+        );
+
+        assert_eq!(
+            paths_of(&route),
+            vec![
+                "/mcp",
+                "/.well-known/oauth-protected-resource/mcp",
+                "/mcp/crm",
+                "/.well-known/oauth-protected-resource/mcp/crm",
+            ]
+        );
+        for rule in route["spec"]["rules"].as_array().expect("rules") {
+            assert_eq!(
+                rule["backendRefs"],
+                json!([{ "name": "mcp-gateway", "port": 8080 }])
+            );
+        }
+    }
+
+    #[test]
+    fn spec_ms_7_a_removed_server_leaves_the_route_with_the_paths_that_remain() {
+        let route = build_mcp_route(&instance(), &edge(), &service());
+
+        assert_eq!(
+            paths_of(&route),
+            vec!["/mcp", "/.well-known/oauth-protected-resource/mcp"]
+        );
+    }
+
     #[test]
     fn the_route_attaches_to_the_data_plane_gateway() {
         let route = build_mcp_route(&instance(), &edge(), &service());
@@ -513,7 +601,49 @@ mod tests {
         assert_eq!(agents["mcpUrl"], Value::Null);
         assert_eq!(agents["message"], Value::Null);
         assert_eq!(agents["policies"], json!([]));
+        assert_eq!(agents["servers"], json!([]));
         assert_eq!(patch["status"].as_object().expect("object").len(), 1);
+    }
+
+    #[test]
+    fn the_status_patch_carries_each_server_with_its_tools() {
+        use autharie_crds::v1alpha::identity_instance::{
+            AgentServerPhase, AgentServerStatus, AgentServerTool,
+        };
+
+        let patch = agents_status_patch(&AgentsStatus {
+            servers: vec![AgentServerStatus {
+                id: "s1".to_string(),
+                slug: "crm".to_string(),
+                phase: AgentServerPhase::Ready,
+                tools: vec![AgentServerTool {
+                    name: "list_invoices".to_string(),
+                    description: None,
+                    read_only: true,
+                    destructive: false,
+                }],
+                dropped: 1,
+                message: None,
+                discovered_at: Some("2026-10-23T10:00:00.000Z".to_string()),
+                discovery_requested_at: Some("2026-10-23T09:59:59.000Z".to_string()),
+                protocol_version: Some("2025-11-25".to_string()),
+            }],
+            ..crate::domain::agents::settled_off(4)
+        });
+
+        assert_eq!(
+            patch["status"]["agents"]["servers"],
+            json!([{
+                "id": "s1",
+                "slug": "crm",
+                "phase": "Ready",
+                "tools": [{ "name": "list_invoices", "readOnly": true, "destructive": false }],
+                "dropped": 1,
+                "discoveredAt": "2026-10-23T10:00:00.000Z",
+                "discoveryRequestedAt": "2026-10-23T09:59:59.000Z",
+                "protocolVersion": "2025-11-25",
+            }])
+        );
     }
 
     #[test]
@@ -529,6 +659,7 @@ mod tests {
                 phase: AgentPolicyPhase::Invalid,
                 message: Some("unexpected token".to_string()),
             }],
+            servers: Vec::new(),
         });
 
         assert_eq!(patch["status"]["agents"]["phase"], "Applying");

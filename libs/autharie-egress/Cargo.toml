@@ -1,0 +1,21 @@
+[package]
+name = "autharie-egress"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+[features]
+default = ["client"]
+client = ["dep:reqwest", "dep:tokio", "dep:bytes", "dep:url"]
+test-support = []
+
+[dependencies]
+bytes = { version = "1", optional = true }
+reqwest = { version = "0.12.24", default-features = false, optional = true }
+thiserror = "2.0.17"
+tokio = { version = "1.49.0", features = ["net", "time"], optional = true }
+url = { version = "2.5.8", optional = true }
+
+[dev-dependencies]
+axum = "0.8.8"
+tokio = { version = "1.49.0", features = ["macros", "rt-multi-thread", "net", "time", "sync"] }
