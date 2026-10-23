@@ -100,12 +100,15 @@ Frozen contracts
     "templates": [ { "id": uuid, "email_type": "reset_password"|"magic_link"|"email_verification", "name": str, "structure": json } ] }
 
   // IdentityInstance
-  spec.smtp: [ { realm, host, port, encryption, username, fromEmail, fromName } ]  + spec.smtpRevision: u64      // password only in Secret <instance>-smtp, key "<realm>"
+  spec.smtp: [ { realm, revision: u64, remove?: bool, host, port, encryption, username, fromEmail, fromName } ]
+  // One entry per realm, each with its own revision: Genesis replaces the realm's entry only if the action's revision is newer. A removal keeps a tombstone `{ realm, revision, remove: true }` so a redelivered older save cannot bring the provider back. The password is only in Secret <instance>-smtp, key "<realm>".
   spec.portalThemes: [ { realm, activeId?, themes: [ { id, name, config } ] } ]  + spec.portalThemesRevision: u64
   spec.emailTemplates: [ { realm, templates: [ { id, emailType, name, structure } ] } ]  + spec.emailTemplatesRevision: u64
-  status.smtp: [ { realm, phase: Pending|Applied|Failed, message? } ]
+  status.smtp: [ { realm, revision: u64, phase: Pending|Applied|Failed, message? } ]
   status.portalThemes: [ { realm, themes: [ { id, ferriskeyId?, phase, message? } ] } ]
   status.emailTemplates: [ { realm, templates: [ { id, ferriskeyId?, phase, message? } ] } ]
+
+  // The revision is kept per (deployment, realm) and never goes back, even across a removal.
 
   // Outcome (Genesis → control plane), kinds "smtp", "portal_themes", "email_templates"
   { "deployment_id", "kind", "revision", "realm", "items": [ { "id"?, "ferriskey_id"?, "phase", "message"? } ] }
@@ -114,6 +117,8 @@ Frozen contracts
   colours #rrggbb · fonts.baseSize 10–24 · weights 100–900 in steps of 100 · sizePct 50–300 · radii and border weights 0–64 · spacing 0–128 · widgetShadow none|small|large
 
   // API (organisation member routes, realm in the path)
+  // GET → { data: null | { host, port, encryption, username, from_email, from_name, password_set: true, state: { phase, message? }, updated_at } }
+  // PUT body { host, port, encryption, username, password?, from_email, from_name } → 202 with the same view; password is required on the first save and optional after. DELETE → 202.
   GET/PUT/DELETE /organisations/{o}/deployments/{d}/branding/{realm}/smtp
   GET/POST       /organisations/{o}/deployments/{d}/branding/{realm}/themes
   PUT/DELETE     /organisations/{o}/deployments/{d}/branding/{realm}/themes/{t}
