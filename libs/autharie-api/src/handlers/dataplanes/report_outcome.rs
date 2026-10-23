@@ -88,6 +88,9 @@ pub struct AgentServerReport {
     pub discovered_at: Option<DateTime<Utc>>,
     /// The `discovery_requested_at` of the server that this discovery answers.
     pub discovery_requested_at: Option<DateTime<Utc>>,
+    /// The MCP protocol version the server negotiated at discovery.
+    #[serde(default)]
+    pub protocol_version: Option<String>,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -274,6 +277,7 @@ fn agents_outcome(
         .servers
         .into_iter()
         .map(|report| {
+            let protocol_version = report.protocol_version;
             ServerOutcome::parse(
                 report.id,
                 &report.phase,
@@ -292,6 +296,7 @@ fn agents_outcome(
                 report.discovered_at,
                 report.discovery_requested_at,
             )
+            .map(|outcome| outcome.with_protocol_version(protocol_version))
         })
         .collect::<Result<Vec<_>, _>>()
         .map_err(bad)?;
@@ -532,7 +537,8 @@ mod tests {
                         ],
                         "dropped": 1,
                         "discovered_at": "2026-10-23T10:00:00Z",
-                        "discovery_requested_at": "2026-10-23T09:59:59.500Z"
+                        "discovery_requested_at": "2026-10-23T09:59:59.500Z",
+                        "protocol_version": "2025-11-25"
                     },
                     { "id": Uuid::new_v4(), "phase": "Unreachable", "message": "timed out" }
                 ]
@@ -546,6 +552,7 @@ mod tests {
         assert!(discovery.tools[0].read_only);
         assert!(discovery.tools[1].destructive);
         assert_eq!(discovery.dropped, 1);
+        assert_eq!(discovery.protocol_version.as_deref(), Some("2025-11-25"));
         assert!(outcome.servers[0].answers.is_some());
         assert_eq!(outcome.servers[1].discovery, None);
     }

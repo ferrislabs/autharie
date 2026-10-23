@@ -93,6 +93,7 @@ fn server_outcome(server: &AgentServerStatus) -> AgentServerOutcome {
         message: server.message.clone(),
         discovered_at: server.discovered_at.clone(),
         discovery_requested_at: server.discovery_requested_at.clone(),
+        protocol_version: server.protocol_version.clone(),
     }
 }
 
@@ -262,6 +263,7 @@ mod tests {
                 message: None,
                 discovered_at: Some("2026-10-23T10:00:00Z".to_string()),
                 discovery_requested_at: Some("2026-10-23T09:59:59.000Z".to_string()),
+                protocol_version: Some("2025-11-25".to_string()),
             },
             AgentServerStatus {
                 id: "s2".to_string(),
@@ -272,6 +274,7 @@ mod tests {
                 message: Some("not a public address".to_string()),
                 discovered_at: Some("2026-10-23T10:00:02Z".to_string()),
                 discovery_requested_at: None,
+                protocol_version: None,
             },
         ];
 
@@ -286,6 +289,10 @@ mod tests {
         assert_eq!(
             report.servers[0].discovery_requested_at.as_deref(),
             Some("2026-10-23T09:59:59.000Z")
+        );
+        assert_eq!(
+            report.servers[0].protocol_version.as_deref(),
+            Some("2025-11-25")
         );
         assert_eq!(report.servers[1].phase, "Refused");
         assert_eq!(
@@ -306,6 +313,7 @@ mod tests {
             message: Some("timed out".to_string()),
             discovered_at: Some("2026-10-23T10:00:00Z".to_string()),
             discovery_requested_at: None,
+            protocol_version: None,
         }];
         let mut after = before.clone();
         after.servers[0].phase = AgentServerPhase::Ready;

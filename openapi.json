@@ -13015,6 +13015,13 @@
             "type": "string",
             "description": "`Ready`, `Unreachable`, `Refused` or `Invalid`."
           },
+          "protocol_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The MCP protocol version the server negotiated at discovery."
+          },
           "tools": {
             "type": "array",
             "items": {
@@ -15397,6 +15404,12 @@
           },
           "phase": {
             "$ref": "#/components/schemas/DiscoveryPhase"
+          },
+          "protocol_version": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "tools": {
             "type": "array",

@@ -14,6 +14,7 @@ pub const MAX_DISCOVERED_TOOLS: usize = 200;
 pub const MAX_TOOL_NAME_CHARS: usize = 64;
 pub const MAX_TOOL_DESCRIPTION_CHARS: usize = 512;
 pub const MAX_DISCOVERY_MESSAGE_CHARS: usize = 300;
+pub const MAX_PROTOCOL_VERSION_CHARS: usize = 32;
 
 const MAX_NAME_CHARS: usize = 100;
 const MAX_URL_BYTES: usize = 2048;
@@ -251,6 +252,8 @@ pub struct Discovery {
     pub dropped: u32,
     pub message: Option<String>,
     pub discovered_at: DateTime<Utc>,
+    #[serde(default)]
+    pub protocol_version: Option<String>,
 }
 
 fn cut(text: String, max_chars: usize) -> String {
@@ -295,7 +298,15 @@ impl Discovery {
                 .map(|text| cut(text, MAX_DISCOVERY_MESSAGE_CHARS))
                 .filter(|text| !text.is_empty()),
             discovered_at,
+            protocol_version: None,
         }
+    }
+
+    pub fn with_protocol_version(mut self, version: Option<String>) -> Self {
+        self.protocol_version = version
+            .map(|text| cut(text, MAX_PROTOCOL_VERSION_CHARS))
+            .filter(|text| !text.is_empty());
+        self
     }
 }
 
@@ -365,6 +376,13 @@ pub struct ServerOutcome {
 }
 
 impl ServerOutcome {
+    pub fn with_protocol_version(mut self, version: Option<String>) -> Self {
+        self.discovery = self
+            .discovery
+            .map(|discovery| discovery.with_protocol_version(version));
+        self
+    }
+
     pub fn parse(
         id: Uuid,
         phase: &str,
@@ -398,6 +416,56 @@ mod tests {
             read_only: false,
             destructive: false,
         }
+    }
+
+    #[test]
+    fn the_negotiated_protocol_is_kept_bounded_and_never_empty() {
+        let discovery = || Discovery::bounded(DiscoveryPhase::Ready, vec![], 0, None, Utc::now());
+
+        assert_eq!(discovery().protocol_version, None);
+        assert_eq!(
+            discovery()
+                .with_protocol_version(Some("2025-11-25".to_string()))
+                .protocol_version
+                .as_deref(),
+            Some("2025-11-25")
+        );
+        assert_eq!(
+            discovery()
+                .with_protocol_version(Some(String::new()))
+                .protocol_version,
+            None
+        );
+        let long = discovery().with_protocol_version(Some("v".repeat(500)));
+        assert_eq!(long.protocol_version.unwrap().chars().count(), 32);
+    }
+
+    #[test]
+    fn a_stored_discovery_without_a_protocol_still_reads() {
+        let stored = serde_json::json!({
+            "phase": "Ready", "tools": [], "dropped": 0, "message": null,
+            "discovered_at": "2026-10-23T10:00:00Z",
+        });
+
+        let discovery: Discovery = serde_json::from_value(stored).unwrap();
+
+        assert_eq!(discovery.protocol_version, None);
+    }
+
+    #[test]
+    fn an_outcome_carries_the_protocol_into_its_discovery_only_when_it_has_one() {
+        let id = Uuid::new_v4();
+        let waiting = ServerOutcome::parse(id, "Ready", vec![], 0, None, None, None)
+            .unwrap()
+            .with_protocol_version(Some("2025-11-25".to_string()));
+        assert!(waiting.discovery.is_none());
+        let done = ServerOutcome::parse(id, "Ready", vec![], 0, None, Some(Utc::now()), None)
+            .unwrap()
+            .with_protocol_version(Some("2025-11-25".to_string()));
+        assert_eq!(
+            done.discovery.unwrap().protocol_version.as_deref(),
+            Some("2025-11-25")
+        );
     }
 
     #[test]
