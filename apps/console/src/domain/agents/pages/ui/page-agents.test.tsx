@@ -247,6 +247,7 @@ const crm: AgentServer = {
     ],
     dropped: 0,
     discovered_at: '2026-10-23T10:00:00Z',
+    protocol_version: '2025-11-25',
   },
   created_at: '',
   updated_at: '',
@@ -285,6 +286,7 @@ describe('your MCP servers', () => {
     expect(html).toContain('Ready')
     expect(html).toContain('2 tools')
     expect(html).toContain('Last discovery 2026-10-23 10:00 UTC')
+    expect(html).toContain('MCP 2025-11-25')
     expect(html).toContain('Refresh the tools of CRM')
     expect(html).toContain('Edit CRM')
     expect(html).toContain('Remove CRM')

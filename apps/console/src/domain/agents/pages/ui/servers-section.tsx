@@ -60,6 +60,11 @@ function Row({
         <StatusBadge tone={chip.tone}>{chip.label}</StatusBadge>
         {count && <span>{count}</span>}
         {discovery && <span>Last discovery {formatTime(discovery.discovered_at)} UTC</span>}
+        {discovery?.protocol_version && (
+          <span className='text-[11px] text-muted-foreground/70'>
+            MCP {discovery.protocol_version}
+          </span>
+        )}
       </div>
 
       {canManage && (

@@ -60,6 +60,7 @@ export interface ServerDiscovery {
   dropped: number
   message?: string
   discovered_at: string
+  protocol_version?: string
 }
 
 export interface AgentServer {

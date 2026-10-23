@@ -131,6 +131,7 @@ export namespace Schemas {
     id: string
     message?: (string | null) | undefined
     phase: string
+    protocol_version?: (string | null) | undefined
     tools?: Array<AgentServerToolReport> | undefined
   }
   export type DiscoveryPhase = 'Ready' | 'Unreachable' | 'Refused' | 'Invalid'
@@ -145,6 +146,7 @@ export namespace Schemas {
     dropped: number
     message?: (string | null) | undefined
     phase: DiscoveryPhase
+    protocol_version?: (string | null) | undefined
     tools: Array<DiscoveredTool>
   }
   export type ServerId = string
