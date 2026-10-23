@@ -108,7 +108,7 @@ pub struct IdentityInstanceSpec {
     pub agents: Option<AgentsSpec>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentsSpec {
     pub enabled: bool,
@@ -120,6 +120,59 @@ pub struct AgentsSpec {
 
     #[serde(default, skip_serializing_if = "is_zero")]
     pub policies_revision: u64,
+
+    #[serde(default, skip_serializing_if = "AgentAccessSpec::is_open")]
+    pub access: AgentAccessSpec,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub autonomous: Vec<AutonomousAgentSpec>,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deleted_agents: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentAccessSpec {
+    #[serde(default)]
+    pub approval_required: bool,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub approved: Vec<String>,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blocked: Vec<String>,
+}
+
+impl AgentAccessSpec {
+    fn is_open(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AutonomousAgentSpec {
+    pub client_id: String,
+
+    pub name: String,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotate_request_id: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sealing_key: Option<SealingKeySpec>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SealingKeySpec {
+    pub kty: String,
+    pub n: String,
+    pub e: String,
+    pub alg: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -180,6 +233,10 @@ pub struct WebhookRequest {
 
 fn is_zero(value: &u64) -> bool {
     *value == 0
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -385,6 +442,74 @@ pub struct AgentsStatus {
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub policies: Vec<AgentPolicyStatus>,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub clients: Vec<AgentClientStatus>,
+
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub clients_truncated: bool,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub credentials: Vec<AgentCredentialStatus>,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disabled_clients: Vec<String>,
+}
+
+impl Default for AgentsStatus {
+    fn default() -> Self {
+        Self {
+            phase: AgentsPhase::Applying,
+            gateway_client_ready: false,
+            observed_revision: 0,
+            mcp_url: None,
+            message: None,
+            policies: Vec::new(),
+            clients: Vec::new(),
+            clients_truncated: false,
+            credentials: Vec::new(),
+            disabled_clients: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentClientStatus {
+    pub client_id: String,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+
+    pub source: String,
+
+    pub kind: String,
+
+    pub enabled: bool,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentCredentialStatus {
+    pub request_id: String,
+
+    pub client_id: String,
+
+    pub sealed: String,
+}
+
+impl std::fmt::Debug for AgentCredentialStatus {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AgentCredentialStatus")
+            .field("request_id", &self.request_id)
+            .field("client_id", &self.client_id)
+            .field("sealed", &"<sealed>")
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -865,6 +990,69 @@ mod tests {
             serde_json::to_value(&spec).unwrap()["agents"],
             value["agents"]
         );
+    }
+
+    #[test]
+    fn the_registry_fields_round_trip_in_the_frozen_shape() {
+        let value = json!({
+            "enabled": true,
+            "realm": "acme",
+            "access": { "approvalRequired": true, "approved": ["a"], "blocked": ["b"] },
+            "autonomous": [
+                { "clientId": "agent-x-abc123", "name": "X", "requestId": "r1",
+                  "sealingKey": { "kty": "RSA", "n": "AA", "e": "AQAB", "alg": "RSA-OAEP-256" } },
+                { "clientId": "agent-y-abc123", "name": "Y", "rotateRequestId": "r2",
+                  "sealingKey": { "kty": "RSA", "n": "AA", "e": "AQAB", "alg": "RSA-OAEP-256" } },
+                { "clientId": "agent-z-abc123", "name": "Z" }
+            ],
+            "deletedAgents": ["old"]
+        });
+
+        let agents: AgentsSpec = serde_json::from_value(value.clone()).unwrap();
+
+        assert!(agents.access.approval_required);
+        assert_eq!(agents.autonomous[0].request_id.as_deref(), Some("r1"));
+        assert_eq!(
+            agents.autonomous[1].rotate_request_id.as_deref(),
+            Some("r2")
+        );
+        assert_eq!(agents.autonomous[2].sealing_key, None);
+        assert_eq!(agents.deleted_agents, vec!["old".to_string()]);
+        assert_eq!(serde_json::to_value(&agents).unwrap(), value);
+    }
+
+    #[test]
+    fn an_open_access_and_no_registry_work_serialise_to_nothing() {
+        let agents: AgentsSpec =
+            serde_json::from_value(json!({ "enabled": true, "realm": "master" })).unwrap();
+
+        assert_eq!(
+            serde_json::to_value(&agents).unwrap(),
+            json!({ "enabled": true, "realm": "master" })
+        );
+    }
+
+    #[test]
+    fn the_registry_status_round_trips_and_a_credential_never_prints() {
+        let value = json!({
+            "phase": "Ready",
+            "gatewayClientReady": true,
+            "clients": [
+                { "clientId": "dcr", "source": "dynamic", "kind": "delegated", "enabled": true,
+                  "createdAt": "2026-10-23T10:00:00Z" }
+            ],
+            "clientsTruncated": true,
+            "credentials": [{ "requestId": "r1", "clientId": "agent-x", "sealed": "TOP-SECRET" }],
+            "disabledClients": ["b"]
+        });
+
+        let status: super::AgentsStatus = serde_json::from_value(value.clone()).unwrap();
+
+        assert_eq!(status.clients[0].source, "dynamic");
+        assert!(status.clients_truncated);
+        assert_eq!(status.disabled_clients, vec!["b".to_string()]);
+        assert_eq!(serde_json::to_value(&status).unwrap(), value);
+        assert!(!format!("{status:?}").contains("TOP-SECRET"));
     }
 
     #[test]

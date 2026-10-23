@@ -12,6 +12,36 @@ pub struct AgentPolicyOutcome {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentClientReport {
+    pub client_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    pub source: String,
+    pub kind: String,
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentCredentialReport {
+    pub request_id: String,
+    pub client_id: String,
+    pub sealed: String,
+}
+
+impl std::fmt::Debug for AgentCredentialReport {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AgentCredentialReport")
+            .field("request_id", &self.request_id)
+            .field("client_id", &self.client_id)
+            .field("sealed", &"<sealed>")
+            .finish()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentsOutcomeReport {
     pub deployment_id: Uuid,
     kind: String,
@@ -23,6 +53,16 @@ pub struct AgentsOutcomeReport {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
     pub policies: Vec<AgentPolicyOutcome>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub clients: Vec<AgentClientReport>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub clients_truncated: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub credentials: Vec<AgentCredentialReport>,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 impl AgentsOutcomeReport {
@@ -44,7 +84,22 @@ impl AgentsOutcomeReport {
             mcp_url,
             message,
             policies,
+            clients: Vec::new(),
+            clients_truncated: false,
+            credentials: Vec::new(),
         }
+    }
+
+    pub fn with_registry(
+        mut self,
+        clients: Vec<AgentClientReport>,
+        clients_truncated: bool,
+        credentials: Vec<AgentCredentialReport>,
+    ) -> Self {
+        self.clients = clients;
+        self.clients_truncated = clients_truncated;
+        self.credentials = credentials;
+        self
     }
 }
 
@@ -93,6 +148,41 @@ mod tests {
                 ],
             })
         );
+    }
+
+    #[test]
+    fn the_registry_is_reported_in_the_frozen_shape() {
+        let report = AgentsOutcomeReport::new(DEPLOYMENT, 3, "Ready", true, None, None, vec![])
+            .with_registry(
+                vec![AgentClientReport {
+                    client_id: "dcr".to_string(),
+                    name: None,
+                    source: "dynamic".to_string(),
+                    kind: "delegated".to_string(),
+                    enabled: true,
+                    created_at: Some("2026-10-23T10:00:00Z".to_string()),
+                }],
+                true,
+                vec![AgentCredentialReport {
+                    request_id: "r1".to_string(),
+                    client_id: "agent-x-abc123".to_string(),
+                    sealed: "c2VhbGVk".to_string(),
+                }],
+            );
+
+        let value = serde_json::to_value(&report).expect("serialises");
+
+        assert_eq!(
+            value["clients"],
+            json!([{ "client_id": "dcr", "source": "dynamic", "kind": "delegated",
+                     "enabled": true, "created_at": "2026-10-23T10:00:00Z" }])
+        );
+        assert_eq!(value["clients_truncated"], true);
+        assert_eq!(
+            value["credentials"],
+            json!([{ "request_id": "r1", "client_id": "agent-x-abc123", "sealed": "c2VhbGVk" }])
+        );
+        assert!(!format!("{report:?}").contains("c2VhbGVk"));
     }
 
     #[test]

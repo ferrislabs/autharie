@@ -10,7 +10,7 @@ use super::config::{AgentsEnvironment, render};
 use super::plan::{Change, plan};
 use super::ports::{
     AgentInstances, AgentsEdge, AgentsOutcome, AgentsSecretsPort, AgentsStatusRepository,
-    FerriskeyAgentsPort, GatewayConfigStore, IdentityInstanceAgents,
+    FerriskeyAgentsPort, FerriskeyClientsPort, GatewayConfigStore, IdentityInstanceAgents,
 };
 use super::{
     AgentsError, ManagedPolicy, PolicyWrite, agents_enabled, managed_id, managed_name,
@@ -18,7 +18,7 @@ use super::{
 };
 
 pub struct AgentsReconciler<F, S, R, L, G, E> {
-    ferriskey: Arc<F>,
+    pub(super) ferriskey: Arc<F>,
     secrets: Arc<S>,
     status: Arc<R>,
     instances: Arc<L>,
@@ -52,13 +52,13 @@ impl<F, S, R, L, G, E> AgentsReconciler<F, S, R, L, G, E> {
 }
 
 #[derive(Default)]
-struct Tally {
+pub(super) struct Tally {
     issues: Vec<AgentsError>,
-    retry: bool,
+    pub(super) retry: bool,
 }
 
 impl Tally {
-    fn issue(&mut self, error: AgentsError) {
+    pub(super) fn issue(&mut self, error: AgentsError) {
         tracing::warn!(error = %error.message(), "agent settings could not be applied");
         self.issues.push(error);
     }
@@ -85,7 +85,7 @@ fn serves_agents(instance: &IdentityInstance) -> bool {
 
 impl<F, S, R, L, G, E> IdentityInstanceAgents for AgentsReconciler<F, S, R, L, G, E>
 where
-    F: FerriskeyAgentsPort,
+    F: FerriskeyAgentsPort + FerriskeyClientsPort,
     S: AgentsSecretsPort,
     R: AgentsStatusRepository,
     L: AgentInstances,
@@ -122,7 +122,7 @@ where
 
 impl<F, S, R, L, G, E> AgentsReconciler<F, S, R, L, G, E>
 where
-    F: FerriskeyAgentsPort,
+    F: FerriskeyAgentsPort + FerriskeyClientsPort,
     S: AgentsSecretsPort,
     R: AgentsStatusRepository,
     L: AgentInstances,
@@ -137,6 +137,7 @@ where
             .prepare(instance, &agents.realm, &canonical, &mut tally)
             .await;
         let policies = self.sync_policies(instance, agents, &mut tally).await;
+        let registry = self.sync_registry(instance, agents, &mut tally).await;
         if client_ready {
             if let Err(error) = self.rebuild_gateway_config().await {
                 tally.issue(error);
@@ -153,6 +154,10 @@ where
             mcp_url: Some(canonical),
             message: tally.message(),
             policies,
+            clients: registry.clients,
+            clients_truncated: registry.truncated,
+            credentials: registry.credentials,
+            disabled_clients: registry.disabled,
         };
         self.record(instance, status, tally).await
     }
@@ -477,8 +482,12 @@ mod tests {
 
     use super::*;
     use crate::domain::OperatorError;
+    use crate::domain::agents::ports::{ClientSecret, FerriskeyClientsPort};
+    use crate::domain::agents::registry::{AgentClient, AgentClientId, RemoteClient};
+    use crate::domain::agents::sealing::fixtures;
     use crate::domain::agents::test_spec;
     use crate::domain::agents::{GatewayClient, RealmSettings, RemotePolicy};
+    use autharie_crds::v1alpha::identity_instance::{AgentAccessSpec, AutonomousAgentSpec};
 
     const POLICY_A: &str = "0b9ad3c4-4a5f-4c3b-8d57-0b2d6d9e1a11";
     const POLICY_B: &str = "7f1c2d3e-0000-4000-8000-00000000000b";
@@ -495,6 +504,9 @@ mod tests {
         next_id: u32,
         fail: HashMap<&'static str, AgentsError>,
         reject_source: Option<(String, AgentsError)>,
+        clients: Vec<RemoteClient>,
+        client_secrets: BTreeMap<String, String>,
+        client_writes: Vec<String>,
     }
 
     #[derive(Default)]
@@ -658,6 +670,117 @@ mod tests {
                     .retain(|found| found.ferriskey_id != policy.policy.ferriskey_id)
             });
             Ok(())
+        }
+    }
+
+    impl FakeFerriskey {
+        fn client_writes(&self) -> Vec<String> {
+            self.state
+                .lock()
+                .expect("not poisoned")
+                .client_writes
+                .clone()
+        }
+
+        fn realm_client(&self, client_id: &str) -> Option<RemoteClient> {
+            self.state
+                .lock()
+                .expect("not poisoned")
+                .clients
+                .iter()
+                .find(|client| client.client_id == client_id)
+                .cloned()
+        }
+    }
+
+    impl FerriskeyClientsPort for FakeFerriskey {
+        async fn list_clients(
+            &self,
+            _instance: &IdentityInstance,
+            _realm: &str,
+        ) -> Result<Vec<RemoteClient>, AgentsError> {
+            self.enter("list_clients")?;
+            Ok(self.state.lock().expect("not poisoned").clients.clone())
+        }
+
+        async fn set_client_enabled(
+            &self,
+            _instance: &IdentityInstance,
+            _realm: &str,
+            client: &AgentClient,
+            enabled: bool,
+        ) -> Result<(), AgentsError> {
+            self.enter("set_client_enabled")?;
+            self.with(|state| {
+                state
+                    .client_writes
+                    .push(format!("enabled:{}:{enabled}", client.client_id()));
+                for found in state.clients.iter_mut() {
+                    if found.id == client.remote_id() {
+                        found.enabled = enabled;
+                    }
+                }
+            });
+            Ok(())
+        }
+
+        async fn delete_client(
+            &self,
+            _instance: &IdentityInstance,
+            _realm: &str,
+            client: &AgentClient,
+        ) -> Result<(), AgentsError> {
+            self.enter("delete_client")?;
+            self.with(|state| {
+                state
+                    .client_writes
+                    .push(format!("delete:{}", client.client_id()));
+                state.clients.retain(|found| found.id != client.remote_id());
+            });
+            Ok(())
+        }
+
+        async fn create_autonomous_client(
+            &self,
+            _instance: &IdentityInstance,
+            _realm: &str,
+            id: &AgentClientId,
+            name: &str,
+        ) -> Result<AgentClient, AgentsError> {
+            self.enter("create_autonomous_client")?;
+            let mut state = self.state.lock().expect("not poisoned");
+            state.next_id += 1;
+            let remote = RemoteClient {
+                id: format!("uuid-{}", state.next_id),
+                client_id: id.as_str().to_string(),
+                name: Some(name.to_string()),
+                registration_source: "admin".to_string(),
+                enabled: true,
+                created_at: Some("2026-10-23T12:00:00Z".to_string()),
+            };
+            state
+                .client_secrets
+                .insert(remote.id.clone(), format!("secret-of-{}", remote.id));
+            state.client_writes.push(format!("create:{}", id.as_str()));
+            state.clients.push(remote.clone());
+            Ok(AgentClient::try_from(remote).expect("an agent"))
+        }
+
+        async fn client_secret(
+            &self,
+            _instance: &IdentityInstance,
+            _realm: &str,
+            client: &AgentClient,
+        ) -> Result<ClientSecret, AgentsError> {
+            self.enter("client_secret")?;
+            self.state
+                .lock()
+                .expect("not poisoned")
+                .client_secrets
+                .get(client.remote_id())
+                .cloned()
+                .map(ClientSecret::new)
+                .ok_or(AgentsError::NotFound)
         }
     }
 
@@ -840,6 +963,7 @@ mod tests {
             realm: "acme".to_string(),
             policies,
             policies_revision: 3,
+            ..AgentsSpec::default()
         }
     }
 
@@ -1462,5 +1586,501 @@ mod tests {
         );
         assert!(!written_config(&h).contains("[[upstreams]]"));
         assert!(h.ferriskey.calls().is_empty());
+    }
+
+    fn realm_client(id: &str, client_id: &str, source: &str, enabled: bool) -> RemoteClient {
+        RemoteClient {
+            id: id.to_string(),
+            client_id: client_id.to_string(),
+            name: Some(client_id.to_string()),
+            registration_source: source.to_string(),
+            enabled,
+            created_at: Some("2026-10-23T10:00:00Z".to_string()),
+        }
+    }
+
+    fn seed(h: &Harness, clients: Vec<RemoteClient>) {
+        h.ferriskey.with(|state| state.clients = clients);
+    }
+
+    fn registry_spec(
+        access: AgentAccessSpec,
+        autonomous: Vec<AutonomousAgentSpec>,
+        deleted: Vec<&str>,
+    ) -> AgentsSpec {
+        AgentsSpec {
+            access,
+            autonomous,
+            deleted_agents: deleted.into_iter().map(str::to_string).collect(),
+            ..agents(true, Vec::new())
+        }
+    }
+
+    fn blocking(ids: &[&str]) -> AgentAccessSpec {
+        AgentAccessSpec {
+            approval_required: false,
+            approved: Vec::new(),
+            blocked: ids.iter().map(|id| id.to_string()).collect(),
+        }
+    }
+
+    fn asking(client_id: &str, request: &str, rotate: bool) -> AutonomousAgentSpec {
+        let key = fixtures::public_spec();
+        AutonomousAgentSpec {
+            client_id: client_id.to_string(),
+            name: "Nightly sync".to_string(),
+            request_id: (!rotate).then(|| request.to_string()),
+            rotate_request_id: rotate.then(|| request.to_string()),
+            sealing_key: Some(key),
+        }
+    }
+
+    async fn settle(h: &Harness, spec: AgentsSpec) -> AgentsOutcome {
+        let previous = h
+            .status
+            .patches
+            .lock()
+            .expect("not poisoned")
+            .last()
+            .cloned();
+        let mut instance = acme(Some(spec));
+        if let Some(previous) = previous {
+            instance = with_status(instance, previous);
+        }
+        *h.instances.all.lock().expect("not poisoned") = vec![instance.clone()];
+        h.reconciler.reconcile(&instance).await
+    }
+
+    #[tokio::test]
+    async fn spec_ar_1_the_status_lists_dcr_and_cimd_clients_and_never_the_others() {
+        let h = harness();
+        seed(
+            &h,
+            vec![
+                realm_client("u1", "dcr-client", "dynamic", true),
+                realm_client(
+                    "u2",
+                    "https://app.example/client.json",
+                    "metadata_document",
+                    true,
+                ),
+                realm_client("u3", "mcp-gateway", "admin", true),
+                realm_client("u4", "console", "admin", true),
+            ],
+        );
+
+        settle(&h, agents(true, Vec::new())).await;
+
+        let status = last_status(&h);
+        let listed: Vec<_> = status
+            .clients
+            .iter()
+            .map(|c| (c.client_id.as_str(), c.source.as_str(), c.kind.as_str()))
+            .collect();
+        assert_eq!(
+            listed,
+            vec![
+                ("dcr-client", "dynamic", "delegated"),
+                (
+                    "https://app.example/client.json",
+                    "metadata_document",
+                    "delegated"
+                ),
+            ]
+        );
+        assert!(!status.clients_truncated);
+    }
+
+    #[tokio::test]
+    async fn the_reported_registry_is_bounded_to_500_with_a_truncated_flag() {
+        let h = harness();
+        seed(
+            &h,
+            (0..520)
+                .map(|n| realm_client(&format!("u{n}"), &format!("client-{n}"), "dynamic", true))
+                .collect(),
+        );
+
+        settle(&h, agents(true, Vec::new())).await;
+
+        let status = last_status(&h);
+        assert_eq!(status.clients.len(), 500);
+        assert!(status.clients_truncated);
+    }
+
+    #[tokio::test]
+    async fn spec_ar_3_a_blocked_agent_is_disabled_and_remembered_as_disabled_by_us() {
+        let h = harness();
+        seed(&h, vec![realm_client("u1", "dcr-client", "dynamic", true)]);
+
+        settle(
+            &h,
+            registry_spec(blocking(&["dcr-client"]), Vec::new(), Vec::new()),
+        )
+        .await;
+
+        assert_eq!(
+            h.ferriskey.client_writes(),
+            vec!["enabled:dcr-client:false"]
+        );
+        assert!(!h.ferriskey.realm_client("dcr-client").unwrap().enabled);
+        let status = last_status(&h);
+        assert_eq!(status.disabled_clients, vec!["dcr-client".to_string()]);
+        assert!(!status.clients[0].enabled);
+    }
+
+    #[tokio::test]
+    async fn a_blocked_agent_is_not_disabled_again_on_the_next_pass() {
+        let h = harness();
+        seed(&h, vec![realm_client("u1", "dcr-client", "dynamic", true)]);
+        let spec = registry_spec(blocking(&["dcr-client"]), Vec::new(), Vec::new());
+
+        settle(&h, spec.clone()).await;
+        settle(&h, spec).await;
+
+        assert_eq!(h.ferriskey.client_writes().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_client_that_registration_re_enabled_is_disabled_again_while_blocked() {
+        let h = harness();
+        seed(
+            &h,
+            vec![realm_client(
+                "u1",
+                "https://c.example/c.json",
+                "metadata_document",
+                true,
+            )],
+        );
+        let spec = registry_spec(
+            blocking(&["https://c.example/c.json"]),
+            Vec::new(),
+            Vec::new(),
+        );
+        settle(&h, spec.clone()).await;
+        h.ferriskey.with(|state| state.clients[0].enabled = true);
+
+        settle(&h, spec).await;
+
+        assert_eq!(h.ferriskey.client_writes().len(), 2);
+        assert!(
+            !h.ferriskey
+                .realm_client("https://c.example/c.json")
+                .unwrap()
+                .enabled
+        );
+    }
+
+    #[tokio::test]
+    async fn spec_ar_3_unblocking_enables_what_we_disabled_and_leaves_an_admins_choice_alone() {
+        let h = harness();
+        seed(
+            &h,
+            vec![
+                realm_client("u1", "ours", "dynamic", true),
+                realm_client("u2", "theirs", "dynamic", false),
+            ],
+        );
+        settle(
+            &h,
+            registry_spec(blocking(&["ours"]), Vec::new(), Vec::new()),
+        )
+        .await;
+
+        settle(&h, registry_spec(blocking(&[]), Vec::new(), Vec::new())).await;
+
+        assert!(h.ferriskey.realm_client("ours").unwrap().enabled);
+        assert!(!h.ferriskey.realm_client("theirs").unwrap().enabled);
+        assert!(last_status(&h).disabled_clients.is_empty());
+        assert_eq!(
+            h.ferriskey.client_writes(),
+            vec!["enabled:ours:false", "enabled:ours:true"]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_blocked_agent_an_admin_had_already_disabled_is_adopted_without_a_write() {
+        let h = harness();
+        seed(&h, vec![realm_client("u1", "dcr-client", "dynamic", false)]);
+
+        settle(
+            &h,
+            registry_spec(blocking(&["dcr-client"]), Vec::new(), Vec::new()),
+        )
+        .await;
+
+        assert!(h.ferriskey.client_writes().is_empty());
+        assert_eq!(
+            last_status(&h).disabled_clients,
+            vec!["dcr-client".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn spec_ar_8_a_forged_desired_state_never_touches_a_client_outside_the_agent_set() {
+        let h = harness();
+        seed(
+            &h,
+            vec![
+                realm_client("u1", "mcp-gateway", "admin", true),
+                realm_client("u2", "console", "admin", true),
+                realm_client("u3", "agent-lookalike", "federation", true),
+                realm_client("u4", "dcr-client", "dynamic", true),
+            ],
+        );
+        let forged = registry_spec(
+            blocking(&["mcp-gateway", "console", "agent-lookalike"]),
+            vec![
+                asking("mcp-gateway", "r1", true),
+                asking("console", "r2", false),
+            ],
+            vec!["mcp-gateway", "console", "agent-lookalike"],
+        );
+
+        settle(&h, forged).await;
+
+        assert!(h.ferriskey.client_writes().is_empty());
+        for kept in ["mcp-gateway", "console", "agent-lookalike", "dcr-client"] {
+            assert!(h.ferriskey.realm_client(kept).unwrap().enabled, "{kept}");
+        }
+        assert!(last_status(&h).credentials.is_empty());
+    }
+
+    #[tokio::test]
+    async fn deleting_an_agent_deletes_its_client_and_drops_it_from_the_registry() {
+        let h = harness();
+        seed(
+            &h,
+            vec![
+                realm_client("u1", "dcr-client", "dynamic", true),
+                realm_client("u2", "console", "admin", true),
+            ],
+        );
+
+        settle(
+            &h,
+            registry_spec(
+                AgentAccessSpec::default(),
+                Vec::new(),
+                vec!["dcr-client", "console"],
+            ),
+        )
+        .await;
+
+        assert_eq!(h.ferriskey.client_writes(), vec!["delete:dcr-client"]);
+        assert!(h.ferriskey.realm_client("console").is_some());
+        assert!(last_status(&h).clients.is_empty());
+    }
+
+    #[tokio::test]
+    async fn spec_ar_5_an_autonomous_agent_is_created_and_its_secret_sealed_to_the_browsers_key() {
+        let h = harness();
+        let spec = registry_spec(
+            AgentAccessSpec::default(),
+            vec![asking("agent-nightly-abc123", "r1", false)],
+            Vec::new(),
+        );
+
+        let outcome = settle(&h, spec).await;
+
+        assert_eq!(outcome, AgentsOutcome::Settled);
+        let created = h
+            .ferriskey
+            .realm_client("agent-nightly-abc123")
+            .expect("created");
+        assert_eq!(created.registration_source, "admin");
+        let status = last_status(&h);
+        assert_eq!(status.credentials.len(), 1);
+        assert_eq!(status.credentials[0].request_id, "r1");
+        assert_eq!(status.credentials[0].client_id, "agent-nightly-abc123");
+        assert_eq!(
+            fixtures::open(&status.credentials[0].sealed),
+            format!("secret-of-{}", created.id)
+        );
+        assert!(!status.credentials[0].sealed.contains("secret-of"));
+        assert_eq!(status.clients[0].source, "autharie");
+        assert_eq!(status.clients[0].kind, "autonomous");
+    }
+
+    #[tokio::test]
+    async fn an_answered_request_is_not_executed_again_on_the_next_pass() {
+        let h = harness();
+        let spec = registry_spec(
+            AgentAccessSpec::default(),
+            vec![asking("agent-nightly-abc123", "r1", false)],
+            Vec::new(),
+        );
+        settle(&h, spec.clone()).await;
+        let first = last_status(&h).credentials.clone();
+        let writes = h.ferriskey.client_writes();
+        let calls_before = h.ferriskey.calls().len();
+
+        settle(&h, spec).await;
+
+        assert_eq!(h.ferriskey.client_writes(), writes);
+        assert_eq!(last_status(&h).credentials, first);
+        assert!(
+            !h.ferriskey.calls()[calls_before..]
+                .iter()
+                .any(|call| call == "client_secret")
+        );
+    }
+
+    #[tokio::test]
+    async fn the_credential_goes_when_the_control_plane_stops_naming_the_request() {
+        let h = harness();
+        settle(
+            &h,
+            registry_spec(
+                AgentAccessSpec::default(),
+                vec![asking("agent-nightly-abc123", "r1", false)],
+                Vec::new(),
+            ),
+        )
+        .await;
+        assert_eq!(last_status(&h).credentials.len(), 1);
+
+        settle(
+            &h,
+            registry_spec(
+                AgentAccessSpec::default(),
+                vec![AutonomousAgentSpec {
+                    client_id: "agent-nightly-abc123".to_string(),
+                    name: "Nightly sync".to_string(),
+                    request_id: None,
+                    rotate_request_id: None,
+                    sealing_key: None,
+                }],
+                Vec::new(),
+            ),
+        )
+        .await;
+
+        assert!(last_status(&h).credentials.is_empty());
+        assert!(h.ferriskey.realm_client("agent-nightly-abc123").is_some());
+    }
+
+    #[tokio::test]
+    async fn rotating_replaces_the_client_under_the_same_id_and_seals_the_new_secret() {
+        let h = harness();
+        settle(
+            &h,
+            registry_spec(
+                AgentAccessSpec::default(),
+                vec![asking("agent-nightly-abc123", "r1", false)],
+                Vec::new(),
+            ),
+        )
+        .await;
+        let first_secret = fixtures::open(&last_status(&h).credentials[0].sealed);
+
+        settle(
+            &h,
+            registry_spec(
+                AgentAccessSpec::default(),
+                vec![asking("agent-nightly-abc123", "r2", true)],
+                Vec::new(),
+            ),
+        )
+        .await;
+
+        let status = last_status(&h);
+        assert_eq!(status.credentials.len(), 1);
+        assert_eq!(status.credentials[0].request_id, "r2");
+        assert_ne!(fixtures::open(&status.credentials[0].sealed), first_secret);
+        assert_eq!(
+            h.ferriskey.client_writes(),
+            vec![
+                "create:agent-nightly-abc123",
+                "delete:agent-nightly-abc123",
+                "create:agent-nightly-abc123"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn spec_ar_6_a_sealing_key_under_2048_bits_creates_nothing_and_seals_nothing() {
+        let h = harness();
+        let mut weak = asking("agent-nightly-abc123", "r1", false);
+        weak.sealing_key.as_mut().unwrap().n = {
+            use base64::Engine;
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(vec![0xffu8; 255])
+        };
+        let spec = registry_spec(AgentAccessSpec::default(), vec![weak], Vec::new());
+
+        settle(&h, spec).await;
+
+        assert!(h.ferriskey.client_writes().is_empty());
+        let status = last_status(&h);
+        assert!(status.credentials.is_empty());
+        assert_eq!(status.phase, AgentsPhase::Failed);
+        assert!(status.message.unwrap().contains("2048"));
+    }
+
+    #[tokio::test]
+    async fn a_failing_creation_is_retried_and_leaves_no_credential() {
+        let h = harness();
+        h.ferriskey.with(|state| {
+            state.fail.insert(
+                "create_autonomous_client",
+                AgentsError::Retry {
+                    message: "down".to_string(),
+                },
+            );
+        });
+        let spec = registry_spec(
+            AgentAccessSpec::default(),
+            vec![asking("agent-nightly-abc123", "r1", false)],
+            Vec::new(),
+        );
+
+        let outcome = settle(&h, spec).await;
+
+        assert_eq!(outcome, AgentsOutcome::Retry);
+        assert!(last_status(&h).credentials.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_client_listing_that_fails_keeps_the_last_known_registry_and_asks_again() {
+        let h = harness();
+        seed(&h, vec![realm_client("u1", "dcr-client", "dynamic", true)]);
+        settle(&h, agents(true, Vec::new())).await;
+        h.ferriskey.with(|state| {
+            state.fail.insert(
+                "list_clients",
+                AgentsError::Retry {
+                    message: "down".to_string(),
+                },
+            );
+        });
+
+        let outcome = settle(&h, agents(true, Vec::new())).await;
+
+        assert_eq!(outcome, AgentsOutcome::Retry);
+        let status = last_status(&h);
+        assert_eq!(status.clients.len(), 1);
+        assert_eq!(status.phase, AgentsPhase::Applying);
+    }
+
+    #[tokio::test]
+    async fn the_gateway_config_carries_the_access_lists_of_the_instance() {
+        let h = harness();
+        let spec = registry_spec(
+            AgentAccessSpec {
+                approval_required: true,
+                approved: vec!["trusted".to_string()],
+                blocked: vec!["banned".to_string()],
+            },
+            Vec::new(),
+            Vec::new(),
+        );
+
+        settle(&h, spec).await;
+
+        let document = written_config(&h);
+        assert!(document.contains("mode = \"approval\""));
+        assert!(document.contains("approved = [\"trusted\"]"));
+        assert!(document.contains("blocked = [\"banned\"]"));
     }
 }

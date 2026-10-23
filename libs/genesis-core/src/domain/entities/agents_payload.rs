@@ -13,6 +13,36 @@ pub struct AgentPolicyDefinition {
     pub cedar: String,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+pub struct AgentAccessPayload {
+    #[serde(default)]
+    pub approval_required: bool,
+    #[serde(default)]
+    pub approved: Vec<String>,
+    #[serde(default)]
+    pub blocked: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct SealingKeyPayload {
+    pub kty: String,
+    pub n: String,
+    pub e: String,
+    pub alg: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AutonomousAgentPayload {
+    pub client_id: String,
+    pub name: String,
+    #[serde(default)]
+    pub request_id: Option<Uuid>,
+    #[serde(default)]
+    pub rotate_request_id: Option<Uuid>,
+    #[serde(default)]
+    pub sealing_key: Option<SealingKeyPayload>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct AgentsPayloadV1 {
     pub deployment_id: Uuid,
@@ -22,6 +52,12 @@ pub struct AgentsPayloadV1 {
     pub revision: u64,
     #[serde(default)]
     pub policies: Vec<AgentPolicyDefinition>,
+    #[serde(default)]
+    pub access: AgentAccessPayload,
+    #[serde(default)]
+    pub autonomous: Vec<AutonomousAgentPayload>,
+    #[serde(default)]
+    pub deleted_agents: Vec<String>,
 }
 
 impl AgentsPayloadV1 {
@@ -51,8 +87,58 @@ impl AgentsPayloadV1 {
             }
         }
 
+        for id in self
+            .access
+            .approved
+            .iter()
+            .chain(&self.access.blocked)
+            .chain(&self.deleted_agents)
+        {
+            if !is_client_id(id) {
+                return Err(invalid("an agent access list names an invalid client id"));
+            }
+        }
+
+        let mut clients = BTreeSet::new();
+        for agent in &self.autonomous {
+            if !is_client_id(&agent.client_id) || !clients.insert(agent.client_id.as_str()) {
+                return Err(invalid(
+                    "an autonomous agent has an invalid or repeated client id",
+                ));
+            }
+            if agent.name.trim().is_empty() {
+                return Err(invalid("an autonomous agent needs a name"));
+            }
+            if agent.request_id.is_some() && agent.rotate_request_id.is_some() {
+                return Err(invalid(
+                    "an autonomous agent cannot be created and rotated at once",
+                ));
+            }
+            let asked = agent.request_id.or(agent.rotate_request_id).is_some();
+            if asked != agent.sealing_key.is_some() {
+                return Err(invalid(
+                    "an autonomous agent request needs its sealing key, and only then",
+                ));
+            }
+            if agent
+                .sealing_key
+                .as_ref()
+                .is_some_and(|key| key.kty != "RSA" || key.alg != "RSA-OAEP-256")
+            {
+                return Err(invalid("a sealing key must be an RSA-OAEP-256 key"));
+            }
+        }
+
         Ok(())
     }
+}
+
+fn is_client_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.chars().count() <= 512
+        && id
+            .chars()
+            .all(|c| !c.is_control() && !c.is_whitespace() && c != '"' && c != '\\')
 }
 
 fn is_realm_name(realm: &str) -> bool {
@@ -187,6 +273,82 @@ mod tests {
                 .len(),
             2
         );
+    }
+
+    fn registry(mutate: impl FnOnce(&mut Value)) -> Value {
+        with(|value| {
+            value["access"] = json!({
+                "approval_required": true, "approved": ["a"], "blocked": ["b"]
+            });
+            value["autonomous"] = json!([{
+                "client_id": "agent-x-abc123", "name": "X", "request_id": OTHER,
+                "sealing_key": { "kty": "RSA", "n": "AA", "e": "AQAB", "alg": "RSA-OAEP-256" }
+            }]);
+            value["deleted_agents"] = json!(["old"]);
+            mutate(value);
+        })
+    }
+
+    #[test]
+    fn the_registry_fields_are_decoded() {
+        let parsed = AgentsPayloadV1::from_value(&registry(|_| {})).expect("valid");
+
+        assert!(parsed.access.approval_required);
+        assert_eq!(parsed.access.approved, vec!["a".to_string()]);
+        assert_eq!(parsed.access.blocked, vec!["b".to_string()]);
+        assert_eq!(parsed.autonomous[0].request_id, Some(OTHER));
+        assert_eq!(parsed.deleted_agents, vec!["old".to_string()]);
+    }
+
+    #[test]
+    fn a_payload_without_the_registry_fields_is_open_and_empty() {
+        let parsed = AgentsPayloadV1::from_value(&payload()).expect("valid");
+
+        assert_eq!(parsed.access, AgentAccessPayload::default());
+        assert!(parsed.autonomous.is_empty());
+        assert!(parsed.deleted_agents.is_empty());
+    }
+
+    #[test]
+    fn an_invalid_registry_payload_is_refused() {
+        let cases: Vec<Box<dyn Fn(&mut Value)>> = vec![
+            Box::new(|v| v["access"]["approved"] = json!(["a b"])),
+            Box::new(|v| v["deleted_agents"] = json!([""])),
+            Box::new(|v| v["autonomous"][0]["client_id"] = json!("")),
+            Box::new(|v| v["autonomous"][0]["name"] = json!(" ")),
+            Box::new(|v| {
+                let first = v["autonomous"][0].clone();
+                v["autonomous"].as_array_mut().unwrap().push(first);
+            }),
+            Box::new(|v| v["autonomous"][0]["rotate_request_id"] = json!(POLICY)),
+            Box::new(|v| {
+                v["autonomous"][0]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("sealing_key");
+            }),
+            Box::new(|v| {
+                v["autonomous"][0]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("request_id");
+            }),
+            Box::new(|v| v["autonomous"][0]["sealing_key"]["kty"] = json!("EC")),
+            Box::new(|v| v["autonomous"][0]["sealing_key"]["alg"] = json!("RSA-OAEP")),
+        ];
+
+        for case in cases {
+            assert!(AgentsPayloadV1::from_value(&registry(case)).is_err());
+        }
+    }
+
+    #[test]
+    fn a_settled_autonomous_agent_has_no_request_and_no_key() {
+        let value = registry(|v| {
+            v["autonomous"] = json!([{ "client_id": "agent-x-abc123", "name": "X" }]);
+        });
+
+        assert!(AgentsPayloadV1::from_value(&value).is_ok());
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use std::fmt::Write;
 
-use autharie_crds::v1alpha::identity_instance::IdentityInstance;
+use autharie_crds::v1alpha::identity_instance::{AgentAccessSpec, IdentityInstance};
 
 use super::{FERRISKEY_SERVER_NAME, GATEWAY_CLIENT_ID, evaluator_audience};
 use crate::infrastructure::ferriskey_admin::api_base_url;
@@ -25,6 +25,7 @@ pub struct Upstream {
     pub upstream_url: String,
     pub server_name: String,
     pub scopes_supported: Vec<String>,
+    pub access: AgentAccessSpec,
 }
 
 impl std::fmt::Debug for Upstream {
@@ -95,6 +96,7 @@ impl AgentsEnvironment {
             ),
             server_name: FERRISKEY_SERVER_NAME.to_string(),
             scopes_supported: Vec::new(),
+            access: agents.access.clone(),
         })
     }
 }
@@ -117,6 +119,32 @@ fn quoted(value: &str) -> String {
     }
     out.push('"');
     out
+}
+
+fn quoted_list(values: &[String]) -> String {
+    let mut sorted: Vec<&String> = values.iter().collect();
+    sorted.sort();
+    sorted.dedup();
+    sorted
+        .into_iter()
+        .map(|value| quoted(value))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn render_access(out: &mut String, access: &AgentAccessSpec) {
+    let mode = if access.approval_required {
+        "approval"
+    } else {
+        "open"
+    };
+    let _ = write!(
+        out,
+        "\n[upstreams.access]\nmode = {}\napproved = [{}]\nblocked = [{}]\n",
+        quoted(mode),
+        quoted_list(&access.approved),
+        quoted_list(&access.blocked),
+    );
 }
 
 pub fn render(upstreams: &[Upstream]) -> String {
@@ -155,6 +183,7 @@ pub fn render(upstreams: &[Upstream]) -> String {
             quoted(&upstream.client_secret),
             quoted(&upstream.audience),
         );
+        render_access(&mut out, &upstream.access);
     }
     out
 }
@@ -172,8 +201,7 @@ mod tests {
         instance.spec.agents = Some(AgentsSpec {
             enabled: true,
             realm: realm.to_string(),
-            policies: Vec::new(),
-            policies_revision: 0,
+            ..AgentsSpec::default()
         });
         instance
     }
@@ -339,6 +367,75 @@ mod tests {
         let text = render(&[found]);
 
         assert!(text.contains("client_secret = \"a\\\"b\\\\c\\nd\""));
+    }
+
+    fn rendered_access(access: AgentAccessSpec) -> toml::Value {
+        let mut found = upstream("auth.acme.test");
+        found.access = access;
+
+        let parsed: toml::Value = toml::from_str(&render(&[found])).expect("valid TOML");
+        parsed["upstreams"][0]["access"].clone()
+    }
+
+    #[test]
+    fn an_upstream_without_approval_renders_open_and_empty() {
+        let access = rendered_access(AgentAccessSpec::default());
+
+        assert_eq!(access["mode"].as_str(), Some("open"));
+        assert!(access["approved"].as_array().unwrap().is_empty());
+        assert!(access["blocked"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn spec_ar_3_approval_mode_renders_the_approved_and_blocked_lists_sorted() {
+        let access = rendered_access(AgentAccessSpec {
+            approval_required: true,
+            approved: vec!["zed".to_string(), "alpha".to_string(), "zed".to_string()],
+            blocked: vec![
+                "https://cimd.example/c.json".to_string(),
+                "a\"b".to_string(),
+            ],
+        });
+
+        assert_eq!(access["mode"].as_str(), Some("approval"));
+        let approved: Vec<_> = access["approved"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        let blocked: Vec<_> = access["blocked"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert_eq!(approved, vec!["alpha", "zed"]);
+        assert_eq!(blocked, vec!["a\"b", "https://cimd.example/c.json"]);
+    }
+
+    #[test]
+    fn the_access_table_follows_its_upstream_and_a_change_changes_the_document() {
+        let open = upstream("auth.acme.test");
+        let mut closed = open.clone();
+        closed.access.approval_required = true;
+
+        assert_ne!(render(&[open]), render(&[closed]));
+    }
+
+    #[test]
+    fn the_upstream_of_an_instance_carries_its_access_lists() {
+        let mut found = instance("deployment-1", "tenant-a", "auth.acme.test", "acme");
+        found.spec.agents.as_mut().unwrap().access = AgentAccessSpec {
+            approval_required: true,
+            approved: vec!["a".to_string()],
+            blocked: vec![],
+        };
+
+        let upstream = environment().upstream(&found, "s").expect("an upstream");
+
+        assert!(upstream.access.approval_required);
+        assert_eq!(upstream.access.approved, vec!["a".to_string()]);
     }
 
     #[test]

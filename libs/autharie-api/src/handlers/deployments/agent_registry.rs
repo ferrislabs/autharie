@@ -110,8 +110,6 @@ pub struct PutAgentAccessRequest {
 pub struct CreateAutonomousRequest {
     pub name: String,
     pub description: Option<String>,
-    /// The browser's public key for this request: an RSA JWK of at least 2048 bits with
-    /// `alg: RSA-OAEP-256`.
     pub sealing_key: SealingJwk,
 }
 

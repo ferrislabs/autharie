@@ -110,7 +110,6 @@ pub struct AgentDecisionsQuery {
     pub tool: Option<String>,
     /// Exact subject id.
     pub subject: Option<String>,
-    /// Exact agent (client) id.
     pub agent: Option<String>,
     /// At most 200, 50 when left out.
     pub limit: Option<usize>,

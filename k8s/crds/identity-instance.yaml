@@ -40,6 +40,59 @@ spec:
                 description: The agent settings this deployment should have, whole. FerrisKey only.
                 nullable: true
                 properties:
+                  access:
+                    properties:
+                      approvalRequired:
+                        default: false
+                        type: boolean
+                      approved:
+                        items:
+                          type: string
+                        type: array
+                      blocked:
+                        items:
+                          type: string
+                        type: array
+                    type: object
+                  autonomous:
+                    items:
+                      properties:
+                        clientId:
+                          type: string
+                        name:
+                          type: string
+                        requestId:
+                          nullable: true
+                          type: string
+                        rotateRequestId:
+                          nullable: true
+                          type: string
+                        sealingKey:
+                          nullable: true
+                          properties:
+                            alg:
+                              type: string
+                            e:
+                              type: string
+                            kty:
+                              type: string
+                            n:
+                              type: string
+                          required:
+                          - alg
+                          - e
+                          - kty
+                          - n
+                          type: object
+                      required:
+                      - clientId
+                      - name
+                      type: object
+                    type: array
+                  deletedAgents:
+                    items:
+                      type: string
+                    type: array
                   enabled:
                     type: boolean
                   policies:
@@ -445,6 +498,51 @@ spec:
                 description: What became of `spec.agents`. Absent until the operator has had something to do.
                 nullable: true
                 properties:
+                  clients:
+                    items:
+                      properties:
+                        clientId:
+                          type: string
+                        createdAt:
+                          nullable: true
+                          type: string
+                        enabled:
+                          type: boolean
+                        kind:
+                          type: string
+                        name:
+                          nullable: true
+                          type: string
+                        source:
+                          type: string
+                      required:
+                      - clientId
+                      - enabled
+                      - kind
+                      - source
+                      type: object
+                    type: array
+                  clientsTruncated:
+                    type: boolean
+                  credentials:
+                    items:
+                      properties:
+                        clientId:
+                          type: string
+                        requestId:
+                          type: string
+                        sealed:
+                          type: string
+                      required:
+                      - clientId
+                      - requestId
+                      - sealed
+                      type: object
+                    type: array
+                  disabledClients:
+                    items:
+                      type: string
+                    type: array
                   gatewayClientReady:
                     default: false
                     type: boolean

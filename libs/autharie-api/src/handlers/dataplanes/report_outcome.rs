@@ -68,9 +68,7 @@ pub struct AgentClientReport {
     pub client_id: String,
     #[serde(default)]
     pub name: Option<String>,
-    /// `dynamic`, `metadata_document` or `autharie`.
     pub source: String,
-    /// `delegated` or `autonomous`.
     pub kind: String,
     pub enabled: bool,
     #[serde(default)]
@@ -121,16 +119,12 @@ pub struct ReportOutcomeRequest {
     #[serde(default)]
     pub policies: Vec<AgentPolicyReport>,
 
-    /// The agent clients the data plane found in the realm, newest first, at most 500.
-    /// Only with `kind: deployment.agents`.
     #[serde(default)]
     pub clients: Vec<AgentClientReport>,
 
-    /// Whether the realm holds more agent clients than `clients` lists.
     #[serde(default)]
     pub clients_truncated: bool,
 
-    /// Secrets sealed for the browsers that asked, each for one request.
     #[serde(default)]
     pub credentials: Vec<AgentCredentialReport>,
 

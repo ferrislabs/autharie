@@ -6,7 +6,9 @@ use autharie_crds::v1alpha::identity_instance::{
 };
 use uuid::Uuid;
 
-use crate::domain::entities::agents_outcome::{AgentPolicyOutcome, AgentsOutcomeReport};
+use crate::domain::entities::agents_outcome::{
+    AgentClientReport, AgentCredentialReport, AgentPolicyOutcome, AgentsOutcomeReport,
+};
 
 pub const REPORT_AGAIN_AFTER: Duration = Duration::from_secs(300);
 
@@ -84,25 +86,52 @@ pub fn build_report(deployment_id: Uuid, observation: &Observation) -> Option<Ag
         })
         .collect();
 
-    Some(AgentsOutcomeReport::new(
-        deployment_id,
-        status.observed_revision,
-        match status.phase {
-            AgentsPhase::Applying => "Applying",
-            AgentsPhase::Ready => "Ready",
-            AgentsPhase::Failed => "Failed",
-        },
-        status.gateway_client_ready,
-        status.mcp_url.clone(),
-        status.message.clone(),
-        policies,
-    ))
+    let clients = status
+        .clients
+        .iter()
+        .map(|client| AgentClientReport {
+            client_id: client.client_id.clone(),
+            name: client.name.clone(),
+            source: client.source.clone(),
+            kind: client.kind.clone(),
+            enabled: client.enabled,
+            created_at: client.created_at.clone(),
+        })
+        .collect();
+    let credentials = status
+        .credentials
+        .iter()
+        .map(|credential| AgentCredentialReport {
+            request_id: credential.request_id.clone(),
+            client_id: credential.client_id.clone(),
+            sealed: credential.sealed.clone(),
+        })
+        .collect();
+
+    Some(
+        AgentsOutcomeReport::new(
+            deployment_id,
+            status.observed_revision,
+            match status.phase {
+                AgentsPhase::Applying => "Applying",
+                AgentsPhase::Ready => "Ready",
+                AgentsPhase::Failed => "Failed",
+            },
+            status.gateway_client_ready,
+            status.mcp_url.clone(),
+            status.message.clone(),
+            policies,
+        )
+        .with_registry(clients, status.clients_truncated, credentials),
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use autharie_crds::v1alpha::identity_instance::AgentPolicyStatus;
+    use autharie_crds::v1alpha::identity_instance::{
+        AgentClientStatus, AgentCredentialStatus, AgentPolicyStatus,
+    };
 
     const DEPLOYMENT: Uuid = Uuid::from_u128(1);
 
@@ -125,6 +154,7 @@ mod tests {
                     message: Some("unexpected token".to_string()),
                 },
             ],
+            ..AgentsStatus::default()
         }
     }
 
@@ -206,6 +236,48 @@ mod tests {
             report.policies[1].message.as_deref(),
             Some("unexpected token")
         );
+    }
+
+    #[test]
+    fn the_registry_and_the_sealed_credentials_ride_with_the_report() {
+        let mut with_registry = status(AgentsPhase::Ready, true);
+        with_registry.clients = vec![AgentClientStatus {
+            client_id: "dcr".to_string(),
+            name: Some("DCR".to_string()),
+            source: "dynamic".to_string(),
+            kind: "delegated".to_string(),
+            enabled: true,
+            created_at: None,
+        }];
+        with_registry.clients_truncated = true;
+        with_registry.credentials = vec![AgentCredentialStatus {
+            request_id: "r1".to_string(),
+            client_id: "agent-x-abc123".to_string(),
+            sealed: "c2VhbGVk".to_string(),
+        }];
+
+        let report = build_report(DEPLOYMENT, &observed(with_registry)).expect("report");
+
+        assert_eq!(report.clients[0].client_id, "dcr");
+        assert_eq!(report.clients[0].name.as_deref(), Some("DCR"));
+        assert!(report.clients_truncated);
+        assert_eq!(report.credentials[0].sealed, "c2VhbGVk");
+    }
+
+    #[test]
+    fn a_new_client_is_a_change_that_is_due_at_once() {
+        let before = observed(status(AgentsPhase::Ready, true));
+        let mut grown = status(AgentsPhase::Ready, true);
+        grown.clients = vec![AgentClientStatus {
+            client_id: "dcr".to_string(),
+            name: None,
+            source: "dynamic".to_string(),
+            kind: "delegated".to_string(),
+            enabled: true,
+            created_at: None,
+        }];
+
+        assert!(is_due(Some((&before, Duration::ZERO)), &observed(grown)));
     }
 
     #[test]
