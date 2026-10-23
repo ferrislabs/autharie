@@ -3,15 +3,27 @@ import { selectAccessToken, useAuthStore } from '@/stores/auth'
 import { DECISIONS_REFRESH_MS, buildDecisionQuery, type DecisionFilters } from '../decisions'
 import {
   createPolicy,
+  createServer,
   deletePolicy,
+  deleteServer,
+  discoverServer,
   getSettings,
   listDecisions,
   listPolicies,
   listRealms,
+  listServers,
   updatePolicy,
+  updateServer,
   updateSettings,
 } from '../services/agents.service'
-import type { AgentPolicyInput, AgentSettingsInput, Scope } from '../types'
+import type {
+  AgentPolicyInput,
+  AgentServer,
+  AgentServerChange,
+  AgentServerCreate,
+  AgentSettingsInput,
+  Scope,
+} from '../types'
 
 const SETTLING_REFRESH_MS = 3000
 
@@ -100,5 +112,54 @@ export function useAgentDecisions(scope: Scope, filters: DecisionFilters) {
     queryFn: () => listDecisions(scope, buildDecisionQuery(filters, new Date())),
     enabled,
     refetchInterval: DECISIONS_REFRESH_MS,
+  })
+}
+
+export type SaveServer =
+  | { kind: 'create'; input: AgentServerCreate }
+  | { kind: 'change'; id: string; input: AgentServerChange }
+
+export function needsDiscovery(servers: AgentServer[] | undefined): boolean {
+  return (servers ?? []).some((server) => server.enabled && server.discovery === undefined)
+}
+
+export function useAgentServers(scope: Scope) {
+  const enabled = useEnabled(scope)
+
+  return useQuery({
+    queryKey: key(scope, 'servers'),
+    queryFn: () => listServers(scope),
+    enabled,
+    refetchInterval: (query) => (needsDiscovery(query.state.data) ? SETTLING_REFRESH_MS : false),
+  })
+}
+
+export function useSaveServer(scope: Scope) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (save: SaveServer) =>
+      save.kind === 'create'
+        ? createServer(scope, save.input)
+        : updateServer(scope, save.id, save.input),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: key(scope, 'servers') }),
+  })
+}
+
+export function useDeleteServer(scope: Scope) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (serverId: string) => deleteServer(scope, serverId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: key(scope, 'servers') }),
+  })
+}
+
+export function useDiscoverServer(scope: Scope) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (serverId: string) => discoverServer(scope, serverId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: key(scope, 'servers') }),
   })
 }

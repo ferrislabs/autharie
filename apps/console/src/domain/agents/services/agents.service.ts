@@ -3,6 +3,9 @@ import type {
   AgentDecision,
   AgentPolicy,
   AgentPolicyInput,
+  AgentServer,
+  AgentServerChange,
+  AgentServerCreate,
   AgentSettings,
   AgentSettingsInput,
   DecisionQuery,
@@ -68,4 +71,28 @@ export function listDecisions(scope: Scope, query: DecisionQuery): Promise<Agent
 
 export function listRealms(scope: Scope): Promise<string[]> {
   return data('get', scope, '/webhook-realms')
+}
+
+export function listServers(scope: Scope): Promise<AgentServer[]> {
+  return data('get', scope, '/agents/servers')
+}
+
+export function createServer(scope: Scope, input: AgentServerCreate): Promise<AgentServer> {
+  return data('post', scope, '/agents/servers', { body: input })
+}
+
+export function updateServer(
+  scope: Scope,
+  serverId: string,
+  input: AgentServerChange,
+): Promise<AgentServer> {
+  return data('put', scope, `/agents/servers/${encodeURIComponent(serverId)}`, { body: input })
+}
+
+export async function deleteServer(scope: Scope, serverId: string): Promise<void> {
+  await call('delete', scope, `/agents/servers/${encodeURIComponent(serverId)}`)
+}
+
+export async function discoverServer(scope: Scope, serverId: string): Promise<void> {
+  await call('post', scope, `/agents/servers/${encodeURIComponent(serverId)}/discover`)
 }

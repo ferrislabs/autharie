@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { connectionGuides, safeServerName, SIGN_IN_STEP } from './connection-snippets'
+import { connectionGuides, connectionTargets, safeServerName, SIGN_IN_STEP } from './connection-snippets'
 
 const URL = 'https://dep.example.com/mcp'
 
@@ -58,5 +58,34 @@ describe('connectionGuides', () => {
     for (const entry of connectionGuides({ mcpUrl: URL, serverName: 'x' })) {
       expect(entry.steps[entry.steps.length - 1].text).toBe(SIGN_IN_STEP)
     }
+  })
+})
+
+describe('connectionTargets', () => {
+  const crm = { slug: 'crm', name: 'CRM', enabled: true, mcp_url: 'https://dep.example.com/mcp/crm' }
+
+  it('starts with the deployment and adds each server at its own address', () => {
+    const targets = connectionTargets(URL, [crm])
+
+    expect(targets.map((target) => target.mcpUrl)).toEqual([URL, 'https://dep.example.com/mcp/crm'])
+    expect(targets[1]).toMatchObject({ id: 'crm', label: 'CRM', serverName: 'crm' })
+  })
+
+  it('skips a server that is off or has no address yet', () => {
+    const targets = connectionTargets(URL, [
+      { ...crm, enabled: false },
+      { slug: 'erp', name: 'ERP', enabled: true },
+    ])
+
+    expect(targets).toHaveLength(1)
+  })
+
+  it('configures the client with the slug of the server it connects to', () => {
+    const [, target] = connectionTargets(URL, [crm])
+    const code = connectionGuides({ mcpUrl: target.mcpUrl, serverName: target.serverName }).find(
+      (entry) => entry.id === 'claude-code',
+    )
+
+    expect(code?.steps[0].snippet).toBe('claude mcp add --transport http crm https://dep.example.com/mcp/crm')
   })
 })
