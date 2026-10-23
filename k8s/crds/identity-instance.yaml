@@ -516,6 +516,13 @@ spec:
                           description: When the last discovery started (RFC 3339). Absent until one has run.
                           nullable: true
                           type: string
+                        discoveryRequestedAt:
+                          description: |-
+                            The `discoveryRequestedAt` of the spec that this discovery answers, as
+                            written there. It is how the control plane tells a discovery of the
+                            server as it is from one of the server as it was.
+                          nullable: true
+                          type: string
                         dropped:
                           default: 0
                           format: uint32

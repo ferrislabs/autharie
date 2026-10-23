@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use autharie_auth::Identity;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, DurationRound, Utc};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -217,18 +217,22 @@ impl AgentServerRepository for Memory {
         _: DeploymentId,
         id: ServerId,
         discovery: &Discovery,
+        answers: Option<DateTime<Utc>>,
     ) -> Result<bool, CoreError> {
         let mut state = self.0.lock().unwrap();
         let Some(server) = state.servers.iter_mut().find(|s| s.id == id) else {
             return Ok(false);
         };
-        let fresh = server
-            .discovery_requested_at
-            .is_none_or(|asked| discovery.discovered_at >= asked)
-            && server
-                .discovery
-                .as_ref()
-                .is_none_or(|known| discovery.discovered_at > known.discovered_at);
+        let answered = answers.unwrap_or(discovery.discovered_at);
+        let fresh = server.discovery_requested_at.is_none_or(|asked| {
+            answered
+                >= asked
+                    .duration_trunc(chrono::Duration::milliseconds(1))
+                    .unwrap()
+        }) && server
+            .discovery
+            .as_ref()
+            .is_none_or(|known| discovery.discovered_at > known.discovered_at);
         if fresh {
             server.discovery = Some(discovery.clone());
         }

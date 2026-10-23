@@ -359,6 +359,7 @@ impl ServerInput {
 pub struct ServerOutcome {
     pub id: ServerId,
     pub discovery: Option<Discovery>,
+    pub answers: Option<DateTime<Utc>>,
 }
 
 impl ServerOutcome {
@@ -369,6 +370,7 @@ impl ServerOutcome {
         dropped: u32,
         message: Option<String>,
         discovered_at: Option<DateTime<Utc>>,
+        answers: Option<DateTime<Utc>>,
     ) -> Result<Self, AgentError> {
         let phase = DiscoveryPhase::parse(phase).ok_or_else(|| {
             AgentError::invalid(format!("'{phase}' is not a server discovery phase"))
@@ -378,6 +380,7 @@ impl ServerOutcome {
             id: ServerId(id),
             discovery: discovered_at
                 .map(|at| Discovery::bounded(phase, tools, dropped, message, at)),
+            answers,
         })
     }
 }
@@ -597,8 +600,10 @@ mod tests {
     fn an_outcome_names_a_known_phase_and_carries_nothing_before_a_discovery() {
         let id = Uuid::from_u128(5);
 
-        assert!(ServerOutcome::parse(id, "Exploded", vec![], 0, None, Some(Utc::now())).is_err());
-        let waiting = ServerOutcome::parse(id, "Ready", vec![], 0, None, None).unwrap();
+        assert!(
+            ServerOutcome::parse(id, "Exploded", vec![], 0, None, Some(Utc::now()), None).is_err()
+        );
+        let waiting = ServerOutcome::parse(id, "Ready", vec![], 0, None, None, None).unwrap();
         assert_eq!(waiting.discovery, None);
         let done = ServerOutcome::parse(
             id,
@@ -607,6 +612,7 @@ mod tests {
             0,
             Some("timed out".into()),
             Some(Utc::now()),
+            None,
         )
         .unwrap();
         assert_eq!(done.discovery.unwrap().phase, DiscoveryPhase::Unreachable);

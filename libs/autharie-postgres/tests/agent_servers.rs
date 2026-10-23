@@ -338,6 +338,7 @@ async fn a_discovery_is_kept_only_when_it_is_newer_and_started_after_the_last_re
                 dep.id,
                 crm.id,
                 &discovery(asked - Duration::seconds(5), &["old"]),
+                None,
             )
             .await?;
         let first = agents
@@ -345,6 +346,7 @@ async fn a_discovery_is_kept_only_when_it_is_newer_and_started_after_the_last_re
                 dep.id,
                 crm.id,
                 &discovery(asked + Duration::seconds(5), &["a"]),
+                None,
             )
             .await?;
         let older = agents
@@ -352,6 +354,7 @@ async fn a_discovery_is_kept_only_when_it_is_newer_and_started_after_the_last_re
                 dep.id,
                 crm.id,
                 &discovery(asked + Duration::seconds(2), &["b"]),
+                None,
             )
             .await?;
         let newer = agents
@@ -359,10 +362,16 @@ async fn a_discovery_is_kept_only_when_it_is_newer_and_started_after_the_last_re
                 dep.id,
                 crm.id,
                 &discovery(asked + Duration::seconds(9), &["c"]),
+                None,
             )
             .await?;
         let ghost = agents
-            .record_discovery(dep.id, ServerId(Uuid::new_v4()), &discovery(asked, &["z"]))
+            .record_discovery(
+                dep.id,
+                ServerId(Uuid::new_v4()),
+                &discovery(asked, &["z"]),
+                None,
+            )
             .await?;
         let stored = agents.get_server(dep.id, crm.id).await?.unwrap();
         Ok((before_request, first, older, newer, ghost, stored))
@@ -376,4 +385,40 @@ async fn a_discovery_is_kept_only_when_it_is_newer_and_started_after_the_last_re
     assert!(newer);
     assert!(!ghost);
     assert_eq!(stored.discovery.unwrap().tools[0].name, "c");
+}
+
+#[tokio::test]
+async fn a_discovery_answers_the_request_it_echoes_whatever_the_data_planes_clock_says() {
+    let Some(pool) = pool().await else {
+        return;
+    };
+
+    let found: Result<_, CoreError> = in_scratch_tx(&pool, db_error, async |tx| {
+        let agents = PostgresAgentRepository::new(&tx);
+        let dep = seeded(&tx, "servers-g").await?;
+        let crm = server(dep.id, "crm");
+        let asked = crm.discovery_requested_at.unwrap();
+        agents.insert_server(&crm).await?;
+        let slow_clock = discovery(asked - Duration::seconds(30), &["a"]);
+
+        let older_request = agents
+            .record_discovery(
+                dep.id,
+                crm.id,
+                &slow_clock,
+                Some(asked - Duration::seconds(60)),
+            )
+            .await?;
+        let echoed = agents
+            .record_discovery(dep.id, crm.id, &slow_clock, Some(asked))
+            .await?;
+        let stored = agents.get_server(dep.id, crm.id).await?.unwrap();
+        Ok((older_request, echoed, stored))
+    })
+    .await;
+
+    let (older_request, echoed, stored) = found.expect("the transaction");
+    assert!(!older_request);
+    assert!(echoed);
+    assert_eq!(stored.discovery.unwrap().tools[0].name, "a");
 }

@@ -30,6 +30,8 @@ pub struct AgentServerOutcome {
     pub message: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discovered_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discovery_requested_at: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -140,6 +142,7 @@ mod tests {
                     dropped: 1,
                     message: None,
                     discovered_at: Some("2026-10-23T10:00:00Z".to_string()),
+                    discovery_requested_at: Some("2026-10-23T09:59:59.000Z".to_string()),
                 },
                 AgentServerOutcome {
                     id: "s2".to_string(),
@@ -148,6 +151,7 @@ mod tests {
                     dropped: 0,
                     message: Some("not a public address".to_string()),
                     discovered_at: None,
+                    discovery_requested_at: None,
                 },
             ]);
 
@@ -162,6 +166,7 @@ mod tests {
                     "tools": [{ "name": "list_invoices", "read_only": true, "destructive": false }],
                     "dropped": 1,
                     "discovered_at": "2026-10-23T10:00:00Z",
+                    "discovery_requested_at": "2026-10-23T09:59:59.000Z",
                 },
                 {
                     "id": "s2",

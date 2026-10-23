@@ -174,6 +174,7 @@ mod tests {
             realm: realm.to_string(),
             policies: Vec::new(),
             policies_revision: 0,
+            servers: Vec::new(),
         });
         instance
     }

@@ -669,7 +669,7 @@ where
             if let Some(discovery) = &report.discovery {
                 changed |= self
                     .agents
-                    .record_discovery(deployment_id, report.id, discovery)
+                    .record_discovery(deployment_id, report.id, discovery, report.answers)
                     .await?;
             }
         }

@@ -41,6 +41,7 @@ fn discovered(id: ServerId, at: DateTime<Utc>, names: &[&str]) -> ServerOutcome 
             None,
             at,
         )),
+        answers: None,
     }
 }
 
@@ -162,6 +163,7 @@ async fn moving_a_server_forgets_its_tools_and_asks_for_a_new_discovery() {
             &discovered(server.id, asked + Duration::seconds(5), &["list_invoices"])
                 .discovery
                 .unwrap(),
+            None,
         )
         .await
         .unwrap();
@@ -200,6 +202,7 @@ async fn renaming_or_switching_off_a_server_keeps_what_was_discovered() {
             &discovered(server.id, at, &["list_invoices"])
                 .discovery
                 .unwrap(),
+            None,
         )
         .await
         .unwrap();
@@ -386,4 +389,53 @@ async fn a_report_about_a_server_that_was_removed_changes_nothing() {
         .unwrap();
 
     assert!(world.memory.read(|state| state.servers.is_empty()));
+}
+
+#[tokio::test]
+async fn a_discovery_that_echoes_the_request_it_answers_is_kept_even_if_the_data_plane_clock_runs_behind()
+ {
+    let world = ferriskey(true);
+    enable(&world).await;
+    let server = register(&world, crm()).await;
+    let revision = world
+        .memory
+        .read(|state| state.settings.as_ref().unwrap().revision);
+    let asked = server.discovery_requested_at.unwrap();
+    let mut late = discovered(server.id, asked - Duration::seconds(20), &["list_invoices"]);
+    late.answers = Some(asked.duration_trunc(Duration::milliseconds(1)).unwrap());
+
+    ingest_on(&world.memory, DATAPLANE)
+        .report_agents_outcome(caller(), dep(), with_servers(&world, revision, vec![late]))
+        .await
+        .unwrap();
+
+    let stored = world
+        .memory
+        .read(|state| state.servers[0].discovery.clone());
+    assert_eq!(stored.unwrap().tools[0].name, "list_invoices");
+}
+
+#[tokio::test]
+async fn a_discovery_that_answers_an_older_request_is_dropped_whatever_its_clock_says() {
+    let world = ferriskey(true);
+    enable(&world).await;
+    let server = register(&world, crm()).await;
+    let revision = world
+        .memory
+        .read(|state| state.settings.as_ref().unwrap().revision);
+    let asked = server.discovery_requested_at.unwrap();
+    let mut old = discovered(server.id, asked + Duration::seconds(20), &["old"]);
+    old.answers = Some(asked - Duration::seconds(60));
+
+    ingest_on(&world.memory, DATAPLANE)
+        .report_agents_outcome(caller(), dep(), with_servers(&world, revision, vec![old]))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        world
+            .memory
+            .read(|state| state.servers[0].discovery.clone()),
+        None
+    );
 }

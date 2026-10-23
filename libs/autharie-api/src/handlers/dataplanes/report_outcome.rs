@@ -86,6 +86,8 @@ pub struct AgentServerReport {
     pub message: Option<String>,
     /// When the discovery started. Absent until one has run.
     pub discovered_at: Option<DateTime<Utc>>,
+    /// The `discovery_requested_at` of the server that this discovery answers.
+    pub discovery_requested_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -288,6 +290,7 @@ fn agents_outcome(
                 report.dropped,
                 report.message,
                 report.discovered_at,
+                report.discovery_requested_at,
             )
         })
         .collect::<Result<Vec<_>, _>>()
@@ -528,7 +531,8 @@ mod tests {
                             { "name": "delete_invoice", "destructive": true, "description": "removes" }
                         ],
                         "dropped": 1,
-                        "discovered_at": "2026-10-23T10:00:00Z"
+                        "discovered_at": "2026-10-23T10:00:00Z",
+                        "discovery_requested_at": "2026-10-23T09:59:59.500Z"
                     },
                     { "id": Uuid::new_v4(), "phase": "Unreachable", "message": "timed out" }
                 ]
@@ -542,6 +546,7 @@ mod tests {
         assert!(discovery.tools[0].read_only);
         assert!(discovery.tools[1].destructive);
         assert_eq!(discovery.dropped, 1);
+        assert!(outcome.servers[0].answers.is_some());
         assert_eq!(outcome.servers[1].discovery, None);
     }
 

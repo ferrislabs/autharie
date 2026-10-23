@@ -459,6 +459,12 @@ pub struct AgentServerStatus {
     /// When the last discovery started (RFC 3339). Absent until one has run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discovered_at: Option<String>,
+
+    /// The `discoveryRequestedAt` of the spec that this discovery answers, as
+    /// written there. It is how the control plane tells a discovery of the
+    /// server as it is from one of the server as it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discovery_requested_at: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1049,7 +1055,8 @@ mod tests {
                         { "name": "delete_invoice", "description": "removes", "destructive": true }
                     ],
                     "dropped": 2,
-                    "discoveredAt": "2026-10-23T10:00:01Z"
+                    "discoveredAt": "2026-10-23T10:00:01Z",
+                    "discoveryRequestedAt": "2026-10-23T10:00:00.000Z"
                 }, {
                     "id": "7f1c2d3e-0000-4000-8000-00000000000b",
                     "slug": "erp",
@@ -1066,6 +1073,10 @@ mod tests {
         assert!(!servers[0].tools[0].destructive);
         assert!(servers[0].tools[1].destructive);
         assert_eq!(servers[0].dropped, 2);
+        assert_eq!(
+            servers[0].discovery_requested_at.as_deref(),
+            Some("2026-10-23T10:00:00.000Z")
+        );
         assert_eq!(servers[1].phase, AgentServerPhase::Refused);
         assert!(servers[1].tools.is_empty());
         let back = serde_json::to_value(&status).unwrap();

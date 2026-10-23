@@ -92,6 +92,7 @@ fn server_outcome(server: &AgentServerStatus) -> AgentServerOutcome {
         dropped: server.dropped,
         message: server.message.clone(),
         discovered_at: server.discovered_at.clone(),
+        discovery_requested_at: server.discovery_requested_at.clone(),
     }
 }
 
@@ -260,6 +261,7 @@ mod tests {
                 dropped: 3,
                 message: None,
                 discovered_at: Some("2026-10-23T10:00:00Z".to_string()),
+                discovery_requested_at: Some("2026-10-23T09:59:59.000Z".to_string()),
             },
             AgentServerStatus {
                 id: "s2".to_string(),
@@ -269,6 +271,7 @@ mod tests {
                 dropped: 0,
                 message: Some("not a public address".to_string()),
                 discovered_at: Some("2026-10-23T10:00:02Z".to_string()),
+                discovery_requested_at: None,
             },
         ];
 
@@ -280,6 +283,10 @@ mod tests {
         assert_eq!(report.servers[0].tools[0].name, "list_invoices");
         assert!(report.servers[0].tools[0].read_only);
         assert_eq!(report.servers[0].dropped, 3);
+        assert_eq!(
+            report.servers[0].discovery_requested_at.as_deref(),
+            Some("2026-10-23T09:59:59.000Z")
+        );
         assert_eq!(report.servers[1].phase, "Refused");
         assert_eq!(
             report.servers[1].message.as_deref(),
@@ -298,6 +305,7 @@ mod tests {
             dropped: 0,
             message: Some("timed out".to_string()),
             discovered_at: Some("2026-10-23T10:00:00Z".to_string()),
+            discovery_requested_at: None,
         }];
         let mut after = before.clone();
         after.servers[0].phase = AgentServerPhase::Ready;

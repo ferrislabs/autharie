@@ -153,6 +153,7 @@ where
             mcp_url: Some(canonical),
             message: tally.message(),
             policies,
+            servers: Vec::new(),
         };
         self.record(instance, status, tally).await
     }
@@ -840,6 +841,7 @@ mod tests {
             realm: "acme".to_string(),
             policies,
             policies_revision: 3,
+            servers: Vec::new(),
         }
     }
 

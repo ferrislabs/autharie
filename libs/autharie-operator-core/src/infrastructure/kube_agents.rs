@@ -409,6 +409,7 @@ mod tests {
             realm: "acme".to_string(),
             policies: Vec::new(),
             policies_revision: 0,
+            servers: Vec::new(),
         });
         instance
     }
@@ -529,6 +530,7 @@ mod tests {
                 phase: AgentPolicyPhase::Invalid,
                 message: Some("unexpected token".to_string()),
             }],
+            servers: Vec::new(),
         });
 
         assert_eq!(patch["status"]["agents"]["phase"], "Applying");

@@ -216,8 +216,10 @@ impl AgentServerRepository for PostgresAgentRepository<'_> {
         deployment_id: DeploymentId,
         id: ServerId,
         discovery: &Discovery,
+        answers: Option<DateTime<Utc>>,
     ) -> Result<bool, CoreError> {
         let stored = discovery_column(Some(discovery))?;
+        let answered = answers.unwrap_or(discovery.discovered_at);
 
         let result = {
             let mut tx = self.tx.lock().await;
@@ -227,12 +229,16 @@ impl AgentServerRepository for PostgresAgentRepository<'_> {
             SET discovery = $3
             WHERE deployment_id = $1
               AND id = $2
-              AND (discovery_requested_at IS NULL OR $4 >= discovery_requested_at)
-              AND (discovery IS NULL OR $4 > (discovery ->> 'discovered_at')::timestamptz)
+              AND (
+                  discovery_requested_at IS NULL
+                  OR $4 >= date_trunc('milliseconds', discovery_requested_at)
+              )
+              AND (discovery IS NULL OR $5 > (discovery ->> 'discovered_at')::timestamptz)
             "#,
                 deployment_id.0,
                 id.0,
                 stored.as_ref() as Option<&Value>,
+                answered,
                 discovery.discovered_at
             )
             .execute(&mut ***tx)

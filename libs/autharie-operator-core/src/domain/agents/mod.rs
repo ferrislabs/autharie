@@ -113,6 +113,7 @@ pub fn settled_off(revision: u64) -> AgentsStatus {
         mcp_url: None,
         message: None,
         policies: Vec::new(),
+        servers: Vec::new(),
     }
 }
 
@@ -205,6 +206,7 @@ mod tests {
             realm: "master".to_string(),
             policies: Vec::new(),
             policies_revision: 0,
+            servers: Vec::new(),
         });
         instance.status = status.map(|agents| IdentityInstanceStatus {
             agents: Some(agents),
@@ -273,6 +275,7 @@ mod tests {
                 phase: AgentPolicyPhase::Applied,
                 message: None,
             }],
+            servers: Vec::new(),
         };
 
         assert!(authz_required(&instance(Some(false), Some(pending))));

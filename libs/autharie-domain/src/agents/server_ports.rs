@@ -1,6 +1,7 @@
 use std::future::Future;
 
 use autharie_auth::Identity;
+use chrono::{DateTime, Utc};
 
 use crate::{
     CoreError,
@@ -42,6 +43,7 @@ pub trait AgentServerRepository: Send + Sync {
         deployment_id: DeploymentId,
         id: ServerId,
         discovery: &Discovery,
+        answers: Option<DateTime<Utc>>,
     ) -> impl Future<Output = Result<bool, CoreError>> + Send;
 }
 

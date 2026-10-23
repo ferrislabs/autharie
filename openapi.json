@@ -12988,6 +12988,14 @@
             "format": "date-time",
             "description": "When the discovery started. Absent until one has run."
           },
+          "discovery_requested_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "The `discovery_requested_at` of the server that this discovery answers."
+          },
           "dropped": {
             "type": "integer",
             "format": "int32",

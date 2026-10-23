@@ -4025,6 +4025,7 @@ mod tests {
             realm: "master".to_string(),
             policies: Vec::new(),
             policies_revision: 0,
+            servers: Vec::new(),
         });
         instance
     }
@@ -4070,6 +4071,7 @@ mod tests {
                     mcp_url: None,
                     message: None,
                     policies: Vec::new(),
+                    servers: Vec::new(),
                 }),
                 ..Default::default()
             },
