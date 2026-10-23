@@ -61,6 +61,8 @@ pub struct UpstreamConfig {
     pub scopes_supported: Vec<String>,
     #[serde(default)]
     pub egress: Egress,
+    #[serde(default)]
+    pub protocol: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -309,6 +311,19 @@ mod tests {
         );
         let config = GatewayConfig::from_toml(&public).unwrap();
         assert_eq!(config.upstreams[0].egress, Egress::Public);
+    }
+
+    #[test]
+    fn an_upstream_speaks_2026_unless_it_names_another_protocol() {
+        let config = GatewayConfig::from_toml(ONE).unwrap();
+        assert_eq!(config.upstreams[0].protocol, None);
+
+        let legacy = ONE.replace(
+            "server_name = \"autharie\"",
+            "server_name = \"autharie\"\nprotocol = \"2025-11-25\"",
+        );
+        let config = GatewayConfig::from_toml(&legacy).unwrap();
+        assert_eq!(config.upstreams[0].protocol.as_deref(), Some("2025-11-25"));
     }
 
     #[test]

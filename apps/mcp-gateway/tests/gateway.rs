@@ -969,7 +969,7 @@ async fn an_unknown_host_is_not_served() {
 async fn methods_that_need_no_decision_are_forwarded_with_the_exchanged_token() {
     let h = Harness::start().await;
     let token = h.token(json!({}));
-    let body = json!({"jsonrpc": "2.0", "id": 3, "method": "initialize", "params": {}});
+    let body = json!({"jsonrpc": "2.0", "id": 3, "method": "ping"});
 
     let response = h.send(&token, body).await;
     assert_eq!(response.status(), 200);

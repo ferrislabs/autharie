@@ -3,6 +3,7 @@ pub mod authzen;
 pub mod config;
 pub mod decision;
 pub mod exchange;
+pub mod legacy;
 pub mod logging;
 pub mod reload;
 pub mod rpc;
@@ -75,5 +76,6 @@ pub fn build_state_with<S: DecisionSink>(
         sink,
         http,
         public,
+        sessions: legacy::Sessions::default(),
     }))
 }
