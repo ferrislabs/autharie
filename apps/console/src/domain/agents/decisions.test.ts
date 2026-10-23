@@ -8,6 +8,7 @@ import {
   emptyFilters,
   hasFilters,
   isAllow,
+  reasonLabel,
   subjectLabel,
 } from './decisions'
 import type { AgentDecision, AgentPolicy } from './types'
@@ -31,6 +32,19 @@ describe('the decision query', () => {
     expect(buildDecisionQuery({ ...emptyFilters(), decision: 'all' }, NOW)).not.toHaveProperty(
       'decision'
     )
+  })
+
+  it('filters on the agent, trimmed, and leaves it out when blank', () => {
+    expect(buildDecisionQuery({ ...emptyFilters(), agent: ' claude ' }, NOW).agent).toBe('claude')
+    expect(buildDecisionQuery({ ...emptyFilters(), agent: ' ' }, NOW)).not.toHaveProperty('agent')
+    expect(hasFilters({ ...emptyFilters(), agent: 'claude' })).toBe(true)
+  })
+
+  it('labels the refusals the registry causes', () => {
+    expect(reasonLabel('agent_pending')).toBe('Waiting for approval')
+    expect(reasonLabel('agent_blocked')).toBe('Agent blocked')
+    expect(reasonLabel('no_permitting_policy')).toBe('no_permitting_policy')
+    expect(reasonLabel(undefined)).toBe('')
   })
 
   it('trims tool and subject', () => {

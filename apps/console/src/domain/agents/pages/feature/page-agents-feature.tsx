@@ -6,6 +6,7 @@ import { useOrganisationPath } from '@/domain/organisations/hooks/use-organisati
 import { CAN } from '@/domain/organisations/permissions'
 import { emptyFilters, type DecisionFilters } from '../../decisions'
 import { useAgentScope } from '../../hooks/use-agent-scope'
+import { useAgentRegistry, useRegistryActions } from '../../hooks/use-registry'
 import {
   useAgentDecisions,
   useAgentPolicies,
@@ -16,13 +17,17 @@ import {
   useUpdateAgentSettings,
 } from '../../hooks/use-agents'
 import type { PolicyTemplateDraft } from '../../policy-templates'
-import type { AgentPolicy } from '../../types'
+import { knownAgents, pendingCount } from '../../registry'
+import type { AgentClient, AgentPolicy } from '../../types'
+import { AgentRegistryFeature } from './agent-registry-feature'
 import { DeletePolicyDialog } from '../ui/delete-policy-dialog'
 import { PageAgents } from '../ui/page-agents'
+import { KnownAgentsContext } from '../ui/policy-canvas/known-agents'
 import { PolicyCanvas } from '../ui/policy-canvas/policy-canvas'
 import { PolicySheet } from '../ui/policy-sheet'
 
 const NO_POLICIES: AgentPolicy[] = []
+const NO_CLIENTS: AgentClient[] = []
 
 type Editing = { policy: AgentPolicy | null; initial?: PolicyTemplateDraft } | null
 
@@ -38,6 +43,8 @@ function AgentsTab() {
   const updateSettings = useUpdateAgentSettings(scope)
   const savePolicy = useSavePolicy(scope)
   const deletePolicy = useDeletePolicy(scope)
+  const registry = useAgentRegistry(scope)
+  const registryActions = useRegistryActions(scope)
 
   const [filters, setFilters] = useState<DecisionFilters>(emptyFilters)
   const decisions = useAgentDecisions(scope, filters)
@@ -50,6 +57,7 @@ function AgentsTab() {
   const realm = realmDraft ?? current?.realm ?? ''
   const list = policies.data ?? NO_POLICIES
   const canManage = can(CAN.manageInstances)
+  const clients = registry.data?.data ?? NO_CLIENTS
 
   const openEditor = (next: NonNullable<Editing>) => {
     savePolicy.reset()
@@ -90,17 +98,22 @@ function AgentsTab() {
           )
         }
         onOpenOrganisationSettings={() => void navigate({ to: organisationPath('/settings') })}
+        pendingAgents={pendingCount(clients)}
+        onApproveAgent={(clientId) => registryActions.approve.mutate(clientId)}
+        registry={<AgentRegistryFeature scope={scope} canManage={canManage} registry={registry} />}
         accessMap={
-          <PolicyCanvas
-            policies={list}
-            canManage={canManage}
-            publisher={{
-              create: (input) => savePolicy.mutateAsync({ id: null, input }),
-              update: (id, input) => savePolicy.mutateAsync({ id, input }),
-              remove: (id) => deletePolicy.mutateAsync(id),
-            }}
-            onOpenAdvanced={(policy) => openEditor({ policy })}
-          />
+          <KnownAgentsContext.Provider value={knownAgents(clients)}>
+            <PolicyCanvas
+              policies={list}
+              canManage={canManage}
+              publisher={{
+                create: (input) => savePolicy.mutateAsync({ id: null, input }),
+                update: (id, input) => savePolicy.mutateAsync({ id, input }),
+                remove: (id) => deletePolicy.mutateAsync(id),
+              }}
+              onOpenAdvanced={(policy) => openEditor({ policy })}
+            />
+          </KnownAgentsContext.Provider>
         }
         onCreatePolicy={(initial) => openEditor({ policy: null, initial })}
         onEditPolicy={(policy) => openEditor({ policy })}
