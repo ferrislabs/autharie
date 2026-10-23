@@ -415,6 +415,40 @@ mod tests {
     }
 
     #[test]
+    fn spec_ar_3_the_gateway_reads_the_access_the_operator_renders() {
+        use mcp_gateway::access::{Access, AccessMode, Refusal};
+
+        let mut found = upstream("auth.acme.test");
+        found.access = AgentAccessSpec {
+            approval_required: true,
+            approved: vec!["trusted".to_string()],
+            blocked: vec!["banned".to_string()],
+        };
+
+        let parsed = mcp_gateway::config::GatewayConfig::from_toml(&render(&[found]))
+            .expect("the gateway accepts the document");
+
+        let access = parsed.upstreams[0].access.clone();
+        assert_eq!(access.mode, AccessMode::Approval);
+        let access = Access::from(access);
+        assert_eq!(access.check("trusted"), Ok(()));
+        assert_eq!(access.check("newcomer"), Err(Refusal::Pending));
+        assert_eq!(access.check("banned"), Err(Refusal::Blocked));
+    }
+
+    #[test]
+    fn the_gateway_reads_an_open_upstream_as_open() {
+        let parsed =
+            mcp_gateway::config::GatewayConfig::from_toml(&render(&[upstream("auth.acme.test")]))
+                .expect("the gateway accepts the document");
+
+        assert_eq!(
+            parsed.upstreams[0].access.mode,
+            mcp_gateway::access::AccessMode::Open
+        );
+    }
+
+    #[test]
     fn the_access_table_follows_its_upstream_and_a_change_changes_the_document() {
         let open = upstream("auth.acme.test");
         let mut closed = open.clone();

@@ -746,6 +746,7 @@ dependencies = [
  "http 1.5.0",
  "k8s-openapi",
  "kube",
+ "mcp-gateway",
  "mockall",
  "rand 0.8.8",
  "reqwest 0.12.28",

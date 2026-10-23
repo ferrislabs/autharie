@@ -33,6 +33,7 @@ sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio
 
 [dev-dependencies]
 toml = "0.9"
+mcp-gateway = { path = "../../apps/mcp-gateway" }
 mockall = "0.14.0"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 http = "1"

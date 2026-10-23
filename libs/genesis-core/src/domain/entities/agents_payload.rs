@@ -311,7 +311,8 @@ mod tests {
 
     #[test]
     fn an_invalid_registry_payload_is_refused() {
-        let cases: Vec<Box<dyn Fn(&mut Value)>> = vec![
+        type Edit = Box<dyn Fn(&mut Value)>;
+        let cases: Vec<Edit> = vec![
             Box::new(|v| v["access"]["approved"] = json!(["a b"])),
             Box::new(|v| v["deleted_agents"] = json!([""])),
             Box::new(|v| v["autonomous"][0]["client_id"] = json!("")),

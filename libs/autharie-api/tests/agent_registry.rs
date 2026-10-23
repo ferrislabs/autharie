@@ -669,6 +669,10 @@ async fn spec_ar_6_a_credential_not_fetched_within_fifteen_minutes_is_404_and_de
         None,
     )
     .await;
+    AutharieService::new(pool.clone())
+        .purge_expired_agent_credentials()
+        .await
+        .unwrap();
     let rows: i64 =
         sqlx::query_scalar("SELECT count(*) FROM agent_credentials WHERE request_id = $1::uuid")
             .bind(&request_id)

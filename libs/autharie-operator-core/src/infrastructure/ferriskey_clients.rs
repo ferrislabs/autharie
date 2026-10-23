@@ -212,9 +212,12 @@ mod tests {
     use super::super::ferriskey_webhooks::ApiFailure;
     use super::*;
 
+    type Logged = (Method, String, Vec<(&'static str, String)>, Option<Value>);
+    type Answer = Box<dyn Fn(&ApiRequest) -> Result<Value, ApiFailure> + Send + Sync>;
+
     struct Recorded {
-        log: Mutex<Vec<(Method, String, Vec<(&'static str, String)>, Option<Value>)>>,
-        answer: Box<dyn Fn(&ApiRequest) -> Result<Value, ApiFailure> + Send + Sync>,
+        log: Mutex<Vec<Logged>>,
+        answer: Answer,
     }
 
     impl Recorded {
@@ -227,7 +230,7 @@ mod tests {
             }
         }
 
-        fn calls(&self) -> Vec<(Method, String, Vec<(&'static str, String)>, Option<Value>)> {
+        fn calls(&self) -> Vec<Logged> {
             self.log.lock().expect("not poisoned").clone()
         }
     }
