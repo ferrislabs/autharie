@@ -1,5 +1,6 @@
 use autharie_crds::v1alpha::identity_instance::{
-    AgentPolicySpec, AgentServerSpec, AgentsSpec, IdentityInstance,
+    AgentAccessSpec, AgentPolicySpec, AgentServerSpec, AgentsSpec, AutonomousAgentSpec,
+    IdentityInstance, SealingKeySpec,
 };
 use kube::api::{Patch, PatchParams};
 use kube::{Api, Client};
@@ -7,7 +8,7 @@ use serde_json::json;
 use tracing::info;
 
 use crate::domain::entities::agents_payload::{
-    AgentPolicyDefinition, AgentServerDefinition, AgentsPayloadV1,
+    AgentPolicyDefinition, AgentServerDefinition, AgentsPayloadV1, AutonomousAgentPayload,
 };
 use crate::domain::entities::identity_instance::IdentityInstanceRef;
 use crate::domain::error::GenesisError;
@@ -99,6 +100,21 @@ fn to_policy(definition: &AgentPolicyDefinition) -> AgentPolicySpec {
     }
 }
 
+fn to_autonomous(agent: &AutonomousAgentPayload) -> AutonomousAgentSpec {
+    AutonomousAgentSpec {
+        client_id: agent.client_id.clone(),
+        name: agent.name.clone(),
+        request_id: agent.request_id.map(|id| id.to_string()),
+        rotate_request_id: agent.rotate_request_id.map(|id| id.to_string()),
+        sealing_key: agent.sealing_key.as_ref().map(|key| SealingKeySpec {
+            kty: key.kty.clone(),
+            n: key.n.clone(),
+            e: key.e.clone(),
+            alg: key.alg.clone(),
+        }),
+    }
+}
+
 fn to_server(definition: &AgentServerDefinition) -> AgentServerSpec {
     AgentServerSpec {
         id: definition.id.to_string(),
@@ -117,6 +133,13 @@ pub fn to_spec(desired: &AgentsPayloadV1) -> AgentsSpec {
         realm: desired.realm.clone(),
         policies: desired.policies.iter().map(to_policy).collect(),
         policies_revision: desired.revision,
+        access: AgentAccessSpec {
+            approval_required: desired.access.approval_required,
+            approved: desired.access.approved.clone(),
+            blocked: desired.access.blocked.clone(),
+        },
+        autonomous: desired.autonomous.iter().map(to_autonomous).collect(),
+        deleted_agents: desired.deleted_agents.clone(),
         servers: desired.servers.iter().map(to_server).collect(),
     }
 }
@@ -131,6 +154,13 @@ pub fn agents_patch(desired: &AgentsPayloadV1) -> serde_json::Value {
                 "realm": spec.realm,
                 "policies": spec.policies,
                 "policiesRevision": spec.policies_revision,
+                "access": {
+                    "approvalRequired": spec.access.approval_required,
+                    "approved": spec.access.approved,
+                    "blocked": spec.access.blocked,
+                },
+                "autonomous": spec.autonomous,
+                "deletedAgents": spec.deleted_agents,
                 "servers": spec.servers,
             }
         }
@@ -177,10 +207,55 @@ mod tests {
                         "cedar": "permit (principal, action, resource);",
                     }],
                     "policiesRevision": 7,
+                    "access": { "approvalRequired": false, "approved": [], "blocked": [] },
+                    "autonomous": [],
+                    "deletedAgents": [],
                     "servers": [],
                 } }
             })
         );
+    }
+
+    #[test]
+    fn the_registry_work_reaches_the_spec_in_camel_case() {
+        let request = Uuid::from_u128(9);
+        let desired = AgentsPayloadV1::from_value(&json!({
+            "deployment_id": DEPLOYMENT,
+            "namespace": "tenant-a",
+            "enabled": true,
+            "realm": "acme",
+            "revision": 7,
+            "access": { "approval_required": true, "approved": ["a"], "blocked": ["b"] },
+            "autonomous": [{
+                "client_id": "agent-x-abc123", "name": "X", "request_id": request,
+                "sealing_key": { "kty": "RSA", "n": "AA", "e": "AQAB", "alg": "RSA-OAEP-256" }
+            }],
+            "deleted_agents": ["old"],
+        }))
+        .expect("valid");
+
+        let patch = agents_patch(&desired);
+
+        assert_eq!(
+            patch["spec"]["agents"]["access"],
+            json!({ "approvalRequired": true, "approved": ["a"], "blocked": ["b"] })
+        );
+        assert_eq!(
+            patch["spec"]["agents"]["autonomous"],
+            json!([{
+                "clientId": "agent-x-abc123", "name": "X", "requestId": request.to_string(),
+                "sealingKey": { "kty": "RSA", "n": "AA", "e": "AQAB", "alg": "RSA-OAEP-256" }
+            }])
+        );
+        assert_eq!(patch["spec"]["agents"]["deletedAgents"], json!(["old"]));
+    }
+
+    #[test]
+    fn a_settled_registry_clears_what_was_asked_before() {
+        let patch = agents_patch(&desired(true, json!([])));
+
+        assert_eq!(patch["spec"]["agents"]["autonomous"], json!([]));
+        assert_eq!(patch["spec"]["agents"]["deletedAgents"], json!([]));
     }
 
     #[test]
@@ -255,6 +330,16 @@ mod tests {
 
         assert_eq!(spec.policies[0].id, POLICY.to_string());
         assert_eq!(spec.policies_revision, 7);
+    }
+
+    #[test]
+    fn an_emptied_access_list_is_written_out_so_the_merge_clears_it() {
+        let patch = agents_patch(&desired(true, json!([])));
+
+        assert_eq!(
+            patch["spec"]["agents"]["access"],
+            json!({ "approvalRequired": false, "approved": [], "blocked": [] })
+        );
     }
 
     #[test]

@@ -111,6 +111,7 @@ export interface DecisionQuery {
   decision?: 'allow' | 'deny'
   tool?: string
   subject?: string
+  agent?: string
   limit?: number
 }
 

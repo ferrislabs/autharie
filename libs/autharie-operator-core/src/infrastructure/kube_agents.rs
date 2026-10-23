@@ -141,6 +141,10 @@ pub fn agents_status_patch(status: &AgentsStatus) -> Value {
                 "mcpUrl": status.mcp_url,
                 "message": status.message,
                 "policies": status.policies,
+                "clients": status.clients,
+                "clientsTruncated": status.clients_truncated,
+                "credentials": status.credentials,
+                "disabledClients": status.disabled_clients,
                 "servers": status.servers,
             }
         }
@@ -423,9 +427,7 @@ mod tests {
         instance.spec.agents = Some(AgentsSpec {
             enabled: true,
             realm: "acme".to_string(),
-            policies: Vec::new(),
-            policies_revision: 0,
-            servers: Vec::new(),
+            ..AgentsSpec::default()
         });
         instance
     }
@@ -659,7 +661,7 @@ mod tests {
                 phase: AgentPolicyPhase::Invalid,
                 message: Some("unexpected token".to_string()),
             }],
-            servers: Vec::new(),
+            ..AgentsStatus::default()
         });
 
         assert_eq!(patch["status"]["agents"]["phase"], "Applying");

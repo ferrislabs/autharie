@@ -1,6 +1,9 @@
 pub mod config;
 pub mod plan;
 pub mod ports;
+pub mod registry;
+mod registry_sync;
+pub mod sealing;
 pub mod servers;
 pub mod service;
 
@@ -114,7 +117,7 @@ pub fn settled_off(revision: u64) -> AgentsStatus {
         mcp_url: None,
         message: None,
         policies: Vec::new(),
-        servers: Vec::new(),
+        ..AgentsStatus::default()
     }
 }
 
@@ -235,9 +238,7 @@ mod tests {
         instance.spec.agents = enabled.map(|enabled| AgentsSpec {
             enabled,
             realm: "master".to_string(),
-            policies: Vec::new(),
-            policies_revision: 0,
-            servers: Vec::new(),
+            ..AgentsSpec::default()
         });
         instance.status = status.map(|agents| IdentityInstanceStatus {
             agents: Some(agents),
@@ -306,7 +307,7 @@ mod tests {
                 phase: AgentPolicyPhase::Applied,
                 message: None,
             }],
-            servers: Vec::new(),
+            ..AgentsStatus::default()
         };
 
         assert!(authz_required(&instance(Some(false), Some(pending))));

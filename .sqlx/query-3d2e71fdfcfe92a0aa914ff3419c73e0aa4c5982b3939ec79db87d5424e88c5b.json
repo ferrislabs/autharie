@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT approval_required, approved, blocked, deleted\n            FROM agent_access\n            WHERE deployment_id = $1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "approval_required",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 1,
+        "name": "approved",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 2,
+        "name": "blocked",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 3,
+        "name": "deleted",
+        "type_info": "TextArray"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "3d2e71fdfcfe92a0aa914ff3419c73e0aa4c5982b3939ec79db87d5424e88c5b"
+}

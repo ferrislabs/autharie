@@ -11,6 +11,11 @@ use crate::{
     action::{Action, ports::MockActionRepository},
     agents::{
         ports::{AgentAccess, AgentOutcomeService, AgentRepository, AgentService},
+        registry::{
+            AccessLists, AgentClientId, AutonomousAgent, CredentialRequest, CredentialState,
+            ReportedRegistry, SealedCredential,
+        },
+        registry_ports::AgentRegistryRepository,
         server_ports::AgentServerRepository,
         servers::{CustomerServer, Discovery, ServerId},
         service::{AgentOutcomeServiceImpl, AgentPublisher, AgentServiceImpl},
@@ -34,23 +39,34 @@ use crate::{
     version::Version,
 };
 
-const ORGANISATION: Uuid = Uuid::from_u128(1);
-const DEPLOYMENT: Uuid = Uuid::from_u128(2);
-const DATAPLANE: Uuid = Uuid::from_u128(3);
-const PERMIT: &str = "permit(principal, action, resource);";
+pub(super) const ORGANISATION: Uuid = Uuid::from_u128(1);
+pub(super) const DEPLOYMENT: Uuid = Uuid::from_u128(2);
+pub(super) const DATAPLANE: Uuid = Uuid::from_u128(3);
+pub(super) const PERMIT: &str = "permit(principal, action, resource);";
+
+#[derive(Clone)]
+pub(super) struct StoredRequest {
+    pub(super) request: CredentialRequest,
+    pub(super) sealed: Option<String>,
+    pub(super) delivered: bool,
+}
 
 #[derive(Default)]
-struct State {
+pub(super) struct State {
     settings: Option<AgentSettings>,
     policies: Vec<AgentPolicy>,
+    pub(super) access: AccessLists,
+    pub(super) registry: ReportedRegistry,
+    pub(super) autonomous: Vec<AutonomousAgent>,
+    pub(super) requests: Vec<StoredRequest>,
     servers: Vec<CustomerServer>,
 }
 
 #[derive(Clone, Default)]
-struct Memory(Arc<Mutex<State>>);
+pub(super) struct Memory(pub(super) Arc<Mutex<State>>);
 
 impl Memory {
-    fn read<T>(&self, read: impl FnOnce(&State) -> T) -> T {
+    pub(super) fn read<T>(&self, read: impl FnOnce(&State) -> T) -> T {
         read(&self.0.lock().unwrap())
     }
 
@@ -169,6 +185,169 @@ impl AgentRepository for Memory {
     }
 }
 
+impl AgentRegistryRepository for Memory {
+    async fn access(&self, _: DeploymentId) -> Result<AccessLists, CoreError> {
+        Ok(self.read(|state| state.access.clone()))
+    }
+
+    async fn save_access(
+        &self,
+        _: DeploymentId,
+        access: &AccessLists,
+        _: DateTime<Utc>,
+    ) -> Result<(), CoreError> {
+        self.0.lock().unwrap().access = access.clone();
+        Ok(())
+    }
+
+    async fn registry(&self, _: DeploymentId) -> Result<ReportedRegistry, CoreError> {
+        Ok(self.read(|state| state.registry.clone()))
+    }
+
+    async fn replace_registry(
+        &self,
+        _: DeploymentId,
+        registry: &ReportedRegistry,
+        _: DateTime<Utc>,
+    ) -> Result<(), CoreError> {
+        self.0.lock().unwrap().registry = registry.clone();
+        Ok(())
+    }
+
+    async fn autonomous_agents(&self, _: DeploymentId) -> Result<Vec<AutonomousAgent>, CoreError> {
+        Ok(self.read(|state| state.autonomous.clone()))
+    }
+
+    async fn insert_autonomous_agent(
+        &self,
+        _: DeploymentId,
+        agent: &AutonomousAgent,
+    ) -> Result<(), CoreError> {
+        self.0.lock().unwrap().autonomous.push(agent.clone());
+        Ok(())
+    }
+
+    async fn delete_autonomous_agent(
+        &self,
+        _: DeploymentId,
+        client_id: &AgentClientId,
+    ) -> Result<(), CoreError> {
+        self.0
+            .lock()
+            .unwrap()
+            .autonomous
+            .retain(|agent| &agent.client_id != client_id);
+        Ok(())
+    }
+
+    async fn insert_request(
+        &self,
+        _: DeploymentId,
+        request: &CredentialRequest,
+        _: DateTime<Utc>,
+    ) -> Result<(), CoreError> {
+        self.0.lock().unwrap().requests.push(StoredRequest {
+            request: request.clone(),
+            sealed: None,
+            delivered: false,
+        });
+        Ok(())
+    }
+
+    async fn open_requests(
+        &self,
+        _: DeploymentId,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<CredentialRequest>, CoreError> {
+        Ok(self.read(|state| {
+            state
+                .requests
+                .iter()
+                .filter(|stored| {
+                    stored.sealed.is_none() && !stored.delivered && stored.request.expires_at > now
+                })
+                .map(|stored| stored.request.clone())
+                .collect()
+        }))
+    }
+
+    async fn store_sealed(
+        &self,
+        _: DeploymentId,
+        request_id: Uuid,
+        client_id: &AgentClientId,
+        sealed: &str,
+        now: DateTime<Utc>,
+    ) -> Result<bool, CoreError> {
+        let mut state = self.0.lock().unwrap();
+        match state.requests.iter_mut().find(|stored| {
+            stored.request.request_id == request_id
+                && &stored.request.client_id == client_id
+                && stored.sealed.is_none()
+                && !stored.delivered
+                && stored.request.expires_at > now
+        }) {
+            Some(stored) => {
+                stored.sealed = Some(sealed.to_string());
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
+    async fn credential_state(
+        &self,
+        _: DeploymentId,
+        request_id: Uuid,
+        now: DateTime<Utc>,
+    ) -> Result<CredentialState, CoreError> {
+        Ok(self.read(|state| {
+            match state
+                .requests
+                .iter()
+                .find(|stored| stored.request.request_id == request_id)
+                .filter(|stored| stored.request.expires_at > now)
+            {
+                None => CredentialState::Missing,
+                Some(stored) if stored.delivered => CredentialState::Delivered,
+                Some(stored) if stored.sealed.is_none() => CredentialState::Pending,
+                Some(_) => CredentialState::Ready,
+            }
+        }))
+    }
+
+    async fn take_sealed(
+        &self,
+        _: DeploymentId,
+        request_id: Uuid,
+        now: DateTime<Utc>,
+    ) -> Result<Option<SealedCredential>, CoreError> {
+        let mut state = self.0.lock().unwrap();
+        let Some(stored) = state.requests.iter_mut().find(|stored| {
+            stored.request.request_id == request_id
+                && !stored.delivered
+                && stored.sealed.is_some()
+                && stored.request.expires_at > now
+        }) else {
+            return Ok(None);
+        };
+        stored.delivered = true;
+        Ok(stored.sealed.take().map(|sealed| SealedCredential {
+            client_id: stored.request.client_id.clone(),
+            sealed,
+        }))
+    }
+
+    async fn purge_expired(&self, now: DateTime<Utc>) -> Result<u64, CoreError> {
+        let mut state = self.0.lock().unwrap();
+        let before = state.requests.len();
+        state
+            .requests
+            .retain(|stored| stored.request.expires_at > now);
+        Ok((before - state.requests.len()) as u64)
+    }
+}
+
 impl AgentServerRepository for Memory {
     async fn list_servers(&self, _: DeploymentId) -> Result<Vec<CustomerServer>, CoreError> {
         Ok(self.read(|state| state.servers.clone()))
@@ -241,8 +420,8 @@ impl AgentServerRepository for Memory {
 }
 
 #[derive(Clone, Copy)]
-struct Access {
-    manage: bool,
+pub(super) struct Access {
+    pub(super) manage: bool,
 }
 
 impl AgentAccess for Access {
@@ -261,7 +440,7 @@ impl AgentAccess for Access {
     }
 }
 
-struct Users;
+pub(super) struct Users;
 
 impl UserRepository for Users {
     async fn upsert_by_email(&self, user: &User) -> Result<User, CoreError> {
@@ -284,7 +463,7 @@ impl UserRepository for Users {
     }
 }
 
-fn caller() -> Identity {
+pub(super) fn caller() -> Identity {
     Identity::User(autharie_auth::User {
         scopes: Vec::new(),
         act: None,
@@ -329,13 +508,13 @@ fn deployment(kind: DeploymentKind) -> Deployment {
 }
 
 #[derive(Clone, Default)]
-struct Written {
-    actions: Arc<Mutex<Vec<Action>>>,
-    audit: Arc<Mutex<Vec<AuditEntry>>>,
+pub(super) struct Written {
+    pub(super) actions: Arc<Mutex<Vec<Action>>>,
+    pub(super) audit: Arc<Mutex<Vec<AuditEntry>>>,
 }
 
 impl Written {
-    fn payloads(&self) -> Vec<Value> {
+    pub(super) fn payloads(&self) -> Vec<Value> {
         self.actions
             .lock()
             .unwrap()
@@ -345,7 +524,7 @@ impl Written {
             .collect()
     }
 
-    fn audited(&self) -> Vec<String> {
+    pub(super) fn audited(&self) -> Vec<String> {
         self.audit
             .lock()
             .unwrap()
@@ -371,7 +550,7 @@ struct World {
     written: Written,
 }
 
-fn deployments_of(kind: DeploymentKind) -> MockDeploymentRepository {
+pub(super) fn deployments_of(kind: DeploymentKind) -> MockDeploymentRepository {
     let mut deployments = MockDeploymentRepository::new();
     deployments.expect_get_by_id().returning(move |_| {
         let found = deployment(kind.clone());
@@ -380,7 +559,7 @@ fn deployments_of(kind: DeploymentKind) -> MockDeploymentRepository {
     deployments
 }
 
-fn actions_into(written: &Written) -> MockActionRepository {
+pub(super) fn actions_into(written: &Written) -> MockActionRepository {
     let mut actions = MockActionRepository::new();
     let held = Arc::clone(&written.actions);
     actions.expect_append().returning(move |action| {
@@ -390,7 +569,7 @@ fn actions_into(written: &Written) -> MockActionRepository {
     actions
 }
 
-fn organisation(mcp_enabled: bool) -> Organisation {
+pub(super) fn organisation(mcp_enabled: bool) -> Organisation {
     let mut organisation = Organisation::new(
         OrganisationName::new("acme").unwrap(),
         OrganisationSlug::new("acme").unwrap(),
@@ -439,15 +618,15 @@ fn ferriskey(mcp_enabled: bool) -> World {
     world(DeploymentKind::Ferriskey, mcp_enabled, true, None)
 }
 
-fn org() -> OrganisationId {
+pub(super) fn org() -> OrganisationId {
     OrganisationId(ORGANISATION)
 }
 
-fn dep() -> DeploymentId {
+pub(super) fn dep() -> DeploymentId {
     DeploymentId(DEPLOYMENT)
 }
 
-fn settings(enabled: bool) -> AgentSettingsInput {
+pub(super) fn settings(enabled: bool) -> AgentSettingsInput {
     AgentSettingsInput::parse(enabled, Some("acme")).unwrap()
 }
 
@@ -478,11 +657,12 @@ async fn add(world: &World, name: &str, enabled: bool) -> AgentPolicy {
         .expect("created")
 }
 
-fn ingest() -> AgentOutcomeServiceImpl<MockDeploymentRepository, MockDataPlaneRepository, Memory> {
+pub(super) fn ingest()
+-> AgentOutcomeServiceImpl<MockDeploymentRepository, MockDataPlaneRepository, Memory> {
     ingest_on(&Memory::default(), DATAPLANE)
 }
 
-fn ingest_on(
+pub(super) fn ingest_on(
     memory: &Memory,
     speaking: Uuid,
 ) -> AgentOutcomeServiceImpl<MockDeploymentRepository, MockDataPlaneRepository, Memory> {
@@ -506,7 +686,7 @@ fn ingest_on(
     )
 }
 
-fn outcome(
+pub(super) fn outcome(
     revision: u64,
     phase: &str,
     policies: Vec<(PolicyId, &str, Option<&str>)>,
@@ -542,6 +722,9 @@ async fn saving_the_settings_sends_the_action_with_the_frozen_fields() {
             "realm": "acme",
             "revision": 1,
             "policies": [],
+            "access": { "approval_required": false, "approved": [], "blocked": [] },
+            "autonomous": [],
+            "deleted_agents": [],
             "servers": [],
         })
     );

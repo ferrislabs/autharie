@@ -10,6 +10,7 @@ export interface DecisionFilters {
   decision: 'all' | 'allow' | 'deny'
   tool: string
   subject: string
+  agent: string
   range: DecisionRange
 }
 
@@ -20,11 +21,16 @@ export const RANGES: { id: DecisionRange; label: string; ms: number }[] = [
 ]
 
 export function emptyFilters(): DecisionFilters {
-  return { decision: 'all', tool: '', subject: '', range: '24h' }
+  return { decision: 'all', tool: '', subject: '', agent: '', range: '24h' }
 }
 
 export function hasFilters(filters: DecisionFilters): boolean {
-  return filters.decision !== 'all' || filters.tool.trim() !== '' || filters.subject.trim() !== ''
+  return (
+    filters.decision !== 'all' ||
+    filters.tool.trim() !== '' ||
+    filters.subject.trim() !== '' ||
+    filters.agent.trim() !== ''
+  )
 }
 
 export function buildDecisionQuery(filters: DecisionFilters, now: Date): DecisionQuery {
@@ -39,6 +45,8 @@ export function buildDecisionQuery(filters: DecisionFilters, now: Date): Decisio
   if (tool !== '') query.tool = tool
   const subject = filters.subject.trim()
   if (subject !== '') query.subject = subject
+  const agent = filters.agent.trim()
+  if (agent !== '') query.agent = agent
   return query
 }
 
@@ -68,4 +76,17 @@ export function policyLabel(name: string, policies: AgentPolicy[]): string {
 // A tool list is one request decided tool by tool, so the request id repeats.
 export function decisionKey(decision: AgentDecision, index: number): string {
   return `${decision.request_id}:${decision.tool ?? decision.method}:${index}`
+}
+
+export const AGENT_PENDING = 'agent_pending'
+export const AGENT_BLOCKED = 'agent_blocked'
+
+export function reasonLabel(reason: string | undefined): string {
+  if (reason === AGENT_PENDING) return 'Waiting for approval'
+  if (reason === AGENT_BLOCKED) return 'Agent blocked'
+  return reason ?? ''
+}
+
+export function awaitsApproval(decision: AgentDecision): boolean {
+  return decision.reason === AGENT_PENDING
 }

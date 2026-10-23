@@ -449,19 +449,30 @@ impl From<CoreError> for ApiError {
             CoreError::Agent(AgentError::InvalidCedar { .. }) => ApiError::Unprocessable {
                 reason: value.to_string(),
             },
-            CoreError::Agent(AgentError::Invalid { .. } | AgentError::Server(_)) => {
-                ApiError::BadRequest {
-                    reason: value.to_string(),
-                }
-            }
             CoreError::Agent(
-                AgentError::PolicyNotFound { .. } | AgentError::ServerNotFound { .. },
+                AgentError::Invalid { .. }
+                | AgentError::InvalidSealingKey { .. }
+                | AgentError::Server(_),
+            ) => ApiError::BadRequest {
+                reason: value.to_string(),
+            },
+            CoreError::Agent(
+                AgentError::PolicyNotFound { .. }
+                | AgentError::AutonomousAgentNotFound { .. }
+                | AgentError::CredentialNotFound { .. }
+                | AgentError::ServerNotFound { .. },
             ) => ApiError::NotFound {
+                reason: value.to_string(),
+            },
+            CoreError::Agent(AgentError::CredentialGone { .. }) => ApiError::Gone {
                 reason: value.to_string(),
             },
             CoreError::Agent(
                 AgentError::UnsupportedKind
                 | AgentError::TooManyPolicies { .. }
+                | AgentError::NotEnabled
+                | AgentError::AddressUnknown
+                | AgentError::TooManyAutonomousAgents { .. }
                 | AgentError::TooManyServers { .. }
                 | AgentError::ServerSlugTaken { .. },
             ) => ApiError::Conflict {

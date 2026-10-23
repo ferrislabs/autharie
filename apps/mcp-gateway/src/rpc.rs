@@ -5,6 +5,7 @@ pub const CODE_PARSE_ERROR: i64 = -32700;
 pub const CODE_INVALID_REQUEST: i64 = -32600;
 pub const CODE_INVALID_PARAMS: i64 = -32602;
 pub const CODE_DENIED: i64 = -32001;
+pub const CODE_AGENT_REFUSED: i64 = -32003;
 pub const CODE_HEADER_MISMATCH: i64 = -32020;
 
 pub const MCP_METHOD: &str = "mcp-method";
@@ -105,6 +106,15 @@ impl Rejection {
             id,
             code: CODE_DENIED,
             message: "denied by policy",
+            http_status: 403,
+        }
+    }
+
+    pub fn agent_refused(id: Value) -> Self {
+        Self {
+            id,
+            code: CODE_AGENT_REFUSED,
+            message: "agent not allowed",
             http_status: 403,
         }
     }
@@ -435,5 +445,14 @@ mod tests {
         assert_eq!(rejection.http_status, 403);
         assert_eq!(rejection.body()["error"]["code"], json!(CODE_DENIED));
         assert_eq!(rejection.body()["id"], json!("x"));
+    }
+
+    #[test]
+    fn an_agent_refusal_is_a_403_with_its_own_code() {
+        let rejection = Rejection::agent_refused(json!(3));
+
+        assert_eq!(rejection.http_status, 403);
+        assert_eq!(rejection.body()["error"]["code"], -32003);
+        assert_eq!(rejection.body()["id"], 3);
     }
 }

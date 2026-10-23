@@ -29,10 +29,10 @@ use serde_json::{Value, json};
 use tracing::{error, info, warn};
 
 use crate::application::OperatorApplication;
-use crate::domain::agents::authz_required;
 use crate::domain::agents::config::AgentsEnvironment;
 use crate::domain::agents::ports::{AgentsOutcome, IdentityInstanceAgents};
 use crate::domain::agents::service::AgentsReconciler;
+use crate::domain::agents::{agents_enabled, authz_required};
 use crate::domain::ports::{
     IdentityInstanceDeployer, IdentityInstanceRepository, IdentityInstanceService,
 };
@@ -1917,6 +1917,7 @@ struct OperatorContext<S, D, W, A> {
 
 const WEBHOOK_RETRY_SECONDS: u64 = 15;
 const AGENTS_RETRY_SECONDS: u64 = 15;
+const AGENTS_WATCH_SECONDS: u64 = 30;
 
 /// A webhook that failed or is waiting brings the next look forward; it never
 /// turns the instance's own reconcile into a failure.
@@ -1941,6 +1942,17 @@ fn with_agents_outcome(outcome: ReconcileOutcome, agents: AgentsOutcome) -> Reco
             ReconcileOutcome::requeue_after(outcome.requeue_after.map_or(soon, |at| at.min(soon)))
         }
     }
+}
+
+fn with_agents_watch(outcome: ReconcileOutcome, instance: &IdentityInstance) -> ReconcileOutcome {
+    if instance.spec.stopped
+        || instance.spec.provider != IdentityProvider::Ferriskey
+        || !agents_enabled(instance)
+    {
+        return outcome;
+    }
+    let soon = Duration::from_secs(AGENTS_WATCH_SECONDS);
+    ReconcileOutcome::requeue_after(outcome.requeue_after.map_or(soon, |at| at.min(soon)))
 }
 
 async fn reconcile<S, D, W, A>(
@@ -1969,9 +1981,9 @@ where
     let outcome = context.service.reconcile((*instance).clone()).await?;
     let webhooks = context.webhooks.reconcile(&instance).await;
     let agents = context.agents.reconcile(&instance).await;
-    Ok(outcome_to_action(with_agents_outcome(
-        with_webhook_outcome(outcome, webhooks),
-        agents,
+    Ok(outcome_to_action(with_agents_watch(
+        with_agents_outcome(with_webhook_outcome(outcome, webhooks), agents),
+        &instance,
     )))
 }
 
@@ -4015,6 +4027,34 @@ mod tests {
     }
 
     #[test]
+    fn an_instance_serving_agents_is_looked_at_again_soon_to_see_who_registered() {
+        let on = agents_instance(true);
+
+        assert_eq!(
+            with_agents_watch(ReconcileOutcome::default(), &on).requeue_after,
+            Some(Duration::from_secs(AGENTS_WATCH_SECONDS))
+        );
+        assert_eq!(
+            with_agents_watch(ReconcileOutcome::requeue_after(Duration::from_secs(5)), &on)
+                .requeue_after,
+            Some(Duration::from_secs(5))
+        );
+    }
+
+    #[test]
+    fn an_instance_without_agents_or_stopped_is_not_polled() {
+        let mut stopped = agents_instance(true);
+        stopped.spec.stopped = true;
+
+        for instance in [agents_instance(false), stopped] {
+            assert_eq!(
+                with_agents_watch(ReconcileOutcome::default(), &instance).requeue_after,
+                None
+            );
+        }
+    }
+
+    #[test]
     fn an_agents_retry_brings_the_next_pass_forward_but_never_pushes_it_back() {
         let steady = ReconcileOutcome::requeue_after(Duration::from_secs(60));
         let soon = ReconcileOutcome::requeue_after(Duration::from_secs(5));
@@ -4039,9 +4079,7 @@ mod tests {
         instance.spec.agents = Some(autharie_crds::v1alpha::identity_instance::AgentsSpec {
             enabled,
             realm: "master".to_string(),
-            policies: Vec::new(),
-            policies_revision: 0,
-            servers: Vec::new(),
+            ..Default::default()
         });
         instance
     }
@@ -4087,7 +4125,7 @@ mod tests {
                     mcp_url: None,
                     message: None,
                     policies: Vec::new(),
-                    servers: Vec::new(),
+                    ..Default::default()
                 }),
                 ..Default::default()
             },

@@ -24,6 +24,7 @@ export namespace Schemas {
     user_id: UserId
   }
   export type AcceptInvitationResponse = { data: Member }
+  export type AccessState = 'approved' | 'pending' | 'blocked'
   export type ActionFailureReason =
     | 'InvalidPayload'
     | 'UnsupportedAction'
@@ -70,6 +71,43 @@ export namespace Schemas {
     target: ActionTarget
     version: ActionVersion
   }
+  export type AgentAccessData = { approval_required: boolean }
+  export type AgentAccessResponse = { data: AgentAccessData }
+  export type AgentClientId = string
+  export type ClientKind = 'delegated' | 'autonomous'
+  export type ClientSource = 'dynamic' | 'metadata_document' | 'autharie' | 'seen'
+  export type AgentClient = {
+    access: AccessState
+    client_id: AgentClientId
+    created_at?: (string | null) | undefined
+    enabled?: (boolean | null) | undefined
+    kind: ClientKind
+    last_seen_at?: (string | null) | undefined
+    name?: (string | null) | undefined
+    source: ClientSource
+  }
+  export type AgentClientReport = {
+    client_id: string
+    created_at?: (string | null) | undefined
+    enabled: boolean
+    kind: string
+    name?: (string | null) | undefined
+    source: string
+  }
+  export type AgentClientsResponse = {
+    approval_required: boolean
+    data: Array<AgentClient>
+    truncated: boolean
+  }
+  export type AgentCredentialReport = { client_id: string; request_id: string; sealed: string }
+  export type DeliveredCredential = {
+    audience: string
+    client_id: AgentClientId
+    sealed: string
+    token_url: string
+  }
+  export type PendingCredential = { status: string }
+  export type AgentCredentialResponse = { data: DeliveredCredential } | { data: PendingCredential }
   export type DecisionVerdict = 'allow' | 'deny'
   export type AgentDecision = {
     agent: string
@@ -382,6 +420,18 @@ export namespace Schemas {
   export type Every = 'all'
   export type ComponentSelection = Every | Array<string>
   export type CostEstimate = { max: Money; min: Money }
+  export type SealingJwk = {
+    alg?: (string | null) | undefined
+    d?: (string | null) | undefined
+    e: string
+    kty: string
+    n: string
+  }
+  export type CreateAutonomousRequest = {
+    description?: (string | null) | undefined
+    name: string
+    sealing_key: SealingJwk
+  }
   export type DataPlaneMode = 'shared' | 'dedicated'
   export type Region = string
   export type CreateDataPlaneRequest = {
@@ -492,6 +542,8 @@ export namespace Schemas {
     permissions: number
   }
   export type CreateRoleResponse = { data: Role }
+  export type CredentialRequestData = { request_id: string }
+  export type CredentialRequestResponse = { data: CredentialRequestData }
   export type CutoverRequest = { demote: string }
   export type CutoverResponseData = { demoted: Deployment; promoted: Deployment }
   export type CutoverResponse = { data: CutoverResponseData }
@@ -870,6 +922,7 @@ export namespace Schemas {
   export type PushLogsRequest = { ending?: (null | Ending) | undefined; lines: Array<LogLine> }
   export type PushLogsResponseData = { listening: boolean; relayed: number }
   export type PushLogsResponse = { data: PushLogsResponseData }
+  export type PutAgentAccessRequest = { approval_required: boolean }
   export type PutAgentsRequest = { enabled: boolean; realm?: (string | null) | undefined }
   export type RegisterAgentServerRequest = {
     enabled?: (boolean | null) | undefined
@@ -923,6 +976,9 @@ export namespace Schemas {
     secret_version?: number | undefined
   }
   export type ReportOutcomeRequest = Partial<{
+    clients: Array<AgentClientReport>
+    clients_truncated: boolean
+    credentials: Array<AgentCredentialReport>
     deployment_id: string | null
     gateway_client_ready: boolean
     kind: string | null
@@ -970,6 +1026,7 @@ export namespace Schemas {
     pilot_organisations?: Array<string> | undefined
     plans?: (Array<string> | null) | undefined
   }
+  export type RotateAutonomousRequest = { sealing_key: SealingJwk }
   export type ServiceIntent = 'draining' | 'disabled' | 'in_service'
   export type SetBackupScheduleRequest = {
     at: string
@@ -1591,6 +1648,93 @@ export namespace Endpoints {
     }
     response: Schemas.AgentsResponse
   }
+  export type put_Put_agent_access_handler = {
+    method: 'PUT'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/agents/access'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string }
+
+      body: Schemas.PutAgentAccessRequest
+    }
+    response: Schemas.AgentAccessResponse
+  }
+  export type post_Create_autonomous_agent_handler = {
+    method: 'POST'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/agents/autonomous'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string }
+
+      body: Schemas.CreateAutonomousRequest
+    }
+    response: Schemas.CredentialRequestResponse
+  }
+  export type post_Rotate_autonomous_secret_handler = {
+    method: 'POST'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/agents/autonomous/{client_id}/rotate'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string; client_id: string }
+
+      body: Schemas.RotateAutonomousRequest
+    }
+    response: Schemas.CredentialRequestResponse
+  }
+  export type get_List_agent_clients_handler = {
+    method: 'GET'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/agents/clients'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string }
+    }
+    response: Schemas.AgentClientsResponse
+  }
+  export type delete_Delete_agent_handler = {
+    method: 'DELETE'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/agents/clients/{client_id}'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string; client_id: string }
+    }
+    response: unknown
+  }
+  export type post_Approve_agent_handler = {
+    method: 'POST'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/agents/clients/{client_id}/approve'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string; client_id: string }
+    }
+    response: unknown
+  }
+  export type post_Block_agent_handler = {
+    method: 'POST'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/agents/clients/{client_id}/block'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string; client_id: string }
+    }
+    response: unknown
+  }
+  export type post_Unblock_agent_handler = {
+    method: 'POST'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/agents/clients/{client_id}/unblock'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string; client_id: string }
+    }
+    response: unknown
+  }
+  export type get_Get_agent_credential_handler = {
+    method: 'GET'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/agents/credentials/{request_id}'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string; request_id: string }
+    }
+    response: Schemas.AgentCredentialResponse
+  }
   export type get_List_agent_decisions_handler = {
     method: 'GET'
     path: '/organisations/{organisation_id}/deployments/{deployment_id}/agents/decisions'
@@ -1602,6 +1746,7 @@ export namespace Endpoints {
         decision: string
         tool: string
         subject: string
+        agent: string
         limit: number
       }>
       path: { organisation_id: string; deployment_id: string }
@@ -2529,6 +2674,11 @@ export type EndpointByMethod = {
     '/organisations/{organisation_id}/cloud-credentials': Endpoints.post_Register_cloud_credential_handler
     '/organisations/{organisation_id}/cluster-profiles/estimate': Endpoints.post_Estimate_cluster_profile_handler
     '/organisations/{organisation_id}/deployments': Endpoints.post_Create_deployment_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/agents/autonomous': Endpoints.post_Create_autonomous_agent_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/agents/autonomous/{client_id}/rotate': Endpoints.post_Rotate_autonomous_secret_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/agents/clients/{client_id}/approve': Endpoints.post_Approve_agent_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/agents/clients/{client_id}/block': Endpoints.post_Block_agent_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/agents/clients/{client_id}/unblock': Endpoints.post_Unblock_agent_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/agents/policies': Endpoints.post_Create_agent_policy_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/agents/servers': Endpoints.post_Register_agent_server_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/agents/servers/{server_id}/discover': Endpoints.post_Discover_agent_server_handler
@@ -2566,6 +2716,8 @@ export type EndpointByMethod = {
     '/organisations/{organisation_id}/deployments/{deployment_id}/actions/{action_id}': Endpoints.get_Get_action_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/active-users': Endpoints.get_Get_active_users_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/agents': Endpoints.get_Get_agents_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/agents/clients': Endpoints.get_List_agent_clients_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/agents/credentials/{request_id}': Endpoints.get_Get_agent_credential_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/agents/decisions': Endpoints.get_List_agent_decisions_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/agents/policies': Endpoints.get_List_agent_policies_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/agents/servers': Endpoints.get_List_agent_servers_handler
@@ -2620,6 +2772,7 @@ export type EndpointByMethod = {
     '/dataplanes/{dataplane_id}': Endpoints.delete_Delete_dataplane_handler
     '/organisations/{organisation_id}/cloud-credentials/{credential_id}': Endpoints.delete_Delete_cloud_credential_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}': Endpoints.delete_Delete_deployment_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/agents/clients/{client_id}': Endpoints.delete_Delete_agent_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/agents/policies/{policy_id}': Endpoints.delete_Delete_agent_policy_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/agents/servers/{server_id}': Endpoints.delete_Remove_agent_server_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/webhooks/{webhook_id}': Endpoints.delete_Delete_webhook_handler
@@ -2632,6 +2785,7 @@ export type EndpointByMethod = {
     '/dataplanes/{dataplane_id}/service': Endpoints.put_Set_service_handler
     '/organisations/{organisation_id}/billing/account': Endpoints.put_Put_billing_account_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/agents': Endpoints.put_Put_agents_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/agents/access': Endpoints.put_Put_agent_access_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/agents/policies/{policy_id}': Endpoints.put_Update_agent_policy_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/agents/servers/{server_id}': Endpoints.put_Update_agent_server_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/backup-schedule': Endpoints.put_Set_backup_schedule_handler

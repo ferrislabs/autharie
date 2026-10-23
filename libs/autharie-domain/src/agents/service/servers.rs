@@ -10,6 +10,7 @@ use crate::{
         AgentError,
         entities::AgentSettings,
         ports::{AgentAccess, AgentRepository},
+        registry_ports::AgentRegistryRepository,
         server_ports::{AgentServerRepository, AgentServerService},
         servers::{CustomerServer, MAX_SERVERS, ServerId, ServerInput},
         service::AgentServiceImpl,
@@ -35,7 +36,7 @@ impl<D, O, G, A, AU, U, P> AgentServiceImpl<D, O, G, A, AU, U, P>
 where
     D: DeploymentRepository,
     O: OrganisationRepository,
-    G: AgentRepository + AgentServerRepository,
+    G: AgentRepository + AgentRegistryRepository + AgentServerRepository,
     A: ActionRepository,
     AU: AuditRepository,
     U: UserRepository,
@@ -69,7 +70,7 @@ impl<D, O, G, A, AU, U, P> AgentServerService for AgentServiceImpl<D, O, G, A, A
 where
     D: DeploymentRepository,
     O: OrganisationRepository,
-    G: AgentRepository + AgentServerRepository,
+    G: AgentRepository + AgentRegistryRepository + AgentServerRepository,
     A: ActionRepository,
     AU: AuditRepository,
     U: UserRepository,

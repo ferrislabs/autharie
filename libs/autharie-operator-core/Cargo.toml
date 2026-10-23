@@ -9,7 +9,6 @@ edition.workspace = true
 reqwest = { version = "0.12.24", default-features = false, features = ["rustls-tls"] }
 autharie-crds = { path = "../autharie-crds" }
 autharie-egress = { path = "../autharie-egress" }
-base64 = "0.22"
 async-trait = "0.1"
 chrono = { version = "0.4.43", features = ["serde"] }
 chrono-tz = { version = "0.10", features = ["serde"] }
@@ -30,9 +29,12 @@ tracing = "0.1.41"
 rand = "0.8.5"
 uuid = { version = "1", features = ["v4"] }
 sha2 = "0.10"
+base64 = "0.22.1"
+rsa = { version = "0.9", features = ["sha2"] }
 sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres"] }
 
 [dev-dependencies]
+toml = "0.9"
 autharie-egress = { path = "../autharie-egress", features = ["test-support"] }
 axum = "0.8.8"
 mcp-gateway = { path = "../../apps/mcp-gateway" }

@@ -1,3 +1,4 @@
+pub mod access;
 pub mod app;
 pub mod authzen;
 pub mod config;

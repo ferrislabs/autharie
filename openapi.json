@@ -3735,6 +3735,1000 @@
         ]
       }
     },
+    "/organisations/{organisation_id}/deployments/{deployment_id}/agents/access": {
+      "put": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "require approval for new agents",
+        "description": "With approval required, only approved agents get past the gateway; blocked agents are always refused. Requires MANAGE_INSTANCES.",
+        "operationId": "put_agent_access_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutAgentAccessRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Stored, and being applied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentAccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not change this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The deployment is not a FerrisKey one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/organisations/{organisation_id}/deployments/{deployment_id}/agents/autonomous": {
+      "post": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "create an autonomous agent",
+        "description": "Asks the data plane to create a client for an autonomous agent (a workflow, a bot) and to seal its secret to the supplied public key. Poll `GET /credentials/{request_id}` for the sealed secret, which is handed out once and kept 15 minutes at most. Requires MANAGE_INSTANCES.",
+        "operationId": "create_autonomous_agent_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAutonomousRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialRequestResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A field or the sealing key is not valid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not change this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Agents are not enabled, or the limit is reached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/organisations/{organisation_id}/deployments/{deployment_id}/agents/autonomous/{client_id}/rotate": {
+      "post": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "rotate an autonomous agent's secret",
+        "description": "FerrisKey cannot regenerate a secret, so the data plane recreates the client under the same client id; the old secret stops working. Poll `GET /credentials/{request_id}` as for a new agent. Requires MANAGE_INSTANCES.",
+        "operationId": "rotate_autonomous_secret_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "client_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RotateAutonomousRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialRequestResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The sealing key is not valid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not change this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment or autonomous agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Agents are not enabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/organisations/{organisation_id}/deployments/{deployment_id}/agents/clients": {
+      "get": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "list the agents connected to a deployment",
+        "description": "The clients the data plane reported as agents (registered through DCR or CIMD, or created by Autharie as autonomous agents), the clients only seen calling the gateway, each with its source, kind, access state and last activity over 30 days. Requires VIEW_INSTANCES.",
+        "operationId": "list_agent_clients_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The registry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentClientsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not view this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The deployment is not a FerrisKey one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/organisations/{organisation_id}/deployments/{deployment_id}/agents/clients/{client_id}": {
+      "delete": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "delete an agent",
+        "description": "Asks the data plane to delete the agent's FerrisKey client, only if it is an agent client, and forgets its access. Requires MANAGE_INSTANCES.",
+        "operationId": "delete_agent_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "client_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted, and being applied"
+          },
+          "400": {
+            "description": "The client id is not valid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not change this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The deployment is not a FerrisKey one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/organisations/{organisation_id}/deployments/{deployment_id}/agents/clients/{client_id}/approve": {
+      "post": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "approve an agent",
+        "description": "Lets the agent past the gateway when approval is required, and lifts a block. Requires MANAGE_INSTANCES.",
+        "operationId": "approve_agent_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "client_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Approved, and being applied"
+          },
+          "400": {
+            "description": "The client id is not valid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not change this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The deployment is not a FerrisKey one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/organisations/{organisation_id}/deployments/{deployment_id}/agents/clients/{client_id}/block": {
+      "post": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "block an agent",
+        "description": "The gateway refuses the agent before asking the PDP, whatever the policies, and its FerrisKey client is disabled. Requires MANAGE_INSTANCES.",
+        "operationId": "block_agent_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "client_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Blocked, and being applied"
+          },
+          "400": {
+            "description": "The client id is not valid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not change this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The deployment is not a FerrisKey one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/organisations/{organisation_id}/deployments/{deployment_id}/agents/clients/{client_id}/unblock": {
+      "post": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "unblock an agent",
+        "description": "Lifts the block and re-enables the FerrisKey client. The agent is approved again only if it was approved before. Requires MANAGE_INSTANCES.",
+        "operationId": "unblock_agent_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "client_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Unblocked, and being applied"
+          },
+          "400": {
+            "description": "The client id is not valid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not change this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The deployment is not a FerrisKey one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/organisations/{organisation_id}/deployments/{deployment_id}/agents/credentials/{request_id}": {
+      "get": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "collect an autonomous agent's sealed secret",
+        "description": "200 with the sealed secret the first time it is ready, then 410; 202 while the data plane has not produced it; 404 when the request is unknown or expired (15 minutes). The secret is sealed with RSA-OAEP-256 to the key sent with the request, base64url. Requires MANAGE_INSTANCES.",
+        "operationId": "get_agent_credential_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The sealed secret",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentCredentialResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Not ready yet",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentCredentialResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not change this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown or expired request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Already delivered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/organisations/{organisation_id}/deployments/{deployment_id}/agents/decisions": {
       "get": {
         "tags": [
@@ -3804,6 +4798,14 @@
             "name": "subject",
             "in": "query",
             "description": "Exact subject id.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "agent",
+            "in": "query",
             "required": false,
             "schema": {
               "type": "string"
@@ -12330,6 +13332,14 @@
           }
         }
       },
+      "AccessState": {
+        "type": "string",
+        "enum": [
+          "approved",
+          "pending",
+          "blocked"
+        ]
+      },
       "AckActionsFailedItem": {
         "type": "object",
         "required": [
@@ -12726,6 +13736,184 @@
         "type": "integer",
         "format": "int32",
         "minimum": 0
+      },
+      "AgentAccessData": {
+        "type": "object",
+        "required": [
+          "approval_required"
+        ],
+        "properties": {
+          "approval_required": {
+            "type": "boolean"
+          }
+        }
+      },
+      "AgentAccessResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AgentAccessData"
+          }
+        }
+      },
+      "AgentClient": {
+        "type": "object",
+        "required": [
+          "client_id",
+          "source",
+          "kind",
+          "access"
+        ],
+        "properties": {
+          "access": {
+            "$ref": "#/components/schemas/AccessState"
+          },
+          "client_id": {
+            "$ref": "#/components/schemas/AgentClientId"
+          },
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ClientKind"
+          },
+          "last_seen_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/ClientSource"
+          }
+        }
+      },
+      "AgentClientId": {
+        "type": "string"
+      },
+      "AgentClientReport": {
+        "type": "object",
+        "required": [
+          "client_id",
+          "source",
+          "kind",
+          "enabled"
+        ],
+        "properties": {
+          "client_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": "string"
+          }
+        }
+      },
+      "AgentClientsResponse": {
+        "type": "object",
+        "required": [
+          "approval_required",
+          "data",
+          "truncated"
+        ],
+        "properties": {
+          "approval_required": {
+            "type": "boolean"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentClient"
+            }
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        }
+      },
+      "AgentCredentialReport": {
+        "type": "object",
+        "required": [
+          "request_id",
+          "client_id",
+          "sealed"
+        ],
+        "properties": {
+          "client_id": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "sealed": {
+            "type": "string"
+          }
+        }
+      },
+      "AgentCredentialResponse": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "data"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/DeliveredCredential"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "data"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/PendingCredential"
+              }
+            }
+          }
+        ]
       },
       "AgentDecision": {
         "type": "object",
@@ -14294,6 +15482,22 @@
           }
         }
       },
+      "ClientKind": {
+        "type": "string",
+        "enum": [
+          "delegated",
+          "autonomous"
+        ]
+      },
+      "ClientSource": {
+        "type": "string",
+        "enum": [
+          "dynamic",
+          "metadata_document",
+          "autharie",
+          "seen"
+        ]
+      },
       "CloudCredentialId": {
         "type": "string",
         "format": "uuid"
@@ -14474,6 +15678,28 @@
           }
         }
       },
+      "CreateAutonomousRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "sealing_key"
+        ],
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "sealing_key": {
+            "$ref": "#/components/schemas/SealingJwk"
+          }
+        },
+        "additionalProperties": false
+      },
       "CreateDataPlaneRequest": {
         "type": "object",
         "required": [
@@ -14621,6 +15847,29 @@
         "properties": {
           "data": {
             "$ref": "#/components/schemas/Role"
+          }
+        }
+      },
+      "CredentialRequestData": {
+        "type": "object",
+        "required": [
+          "request_id"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "CredentialRequestResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/CredentialRequestData"
           }
         }
       },
@@ -14999,6 +16248,29 @@
         "properties": {
           "success": {
             "type": "boolean"
+          }
+        }
+      },
+      "DeliveredCredential": {
+        "type": "object",
+        "required": [
+          "client_id",
+          "sealed",
+          "token_url",
+          "audience"
+        ],
+        "properties": {
+          "audience": {
+            "type": "string"
+          },
+          "client_id": {
+            "$ref": "#/components/schemas/AgentClientId"
+          },
+          "sealed": {
+            "type": "string"
+          },
+          "token_url": {
+            "type": "string"
           }
         }
       },
@@ -17459,6 +18731,17 @@
           "failing"
         ]
       },
+      "PendingCredential": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        }
+      },
       "Plan": {
         "type": "string",
         "description": "Subscription plan for an organisation",
@@ -17704,6 +18987,18 @@
             "minimum": 0
           }
         }
+      },
+      "PutAgentAccessRequest": {
+        "type": "object",
+        "required": [
+          "approval_required"
+        ],
+        "properties": {
+          "approval_required": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
       },
       "PutAgentsRequest": {
         "type": "object",
@@ -18143,6 +19438,21 @@
       "ReportOutcomeRequest": {
         "type": "object",
         "properties": {
+          "clients": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentClientReport"
+            }
+          },
+          "clients_truncated": {
+            "type": "boolean"
+          },
+          "credentials": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentCredentialReport"
+            }
+          },
           "deployment_id": {
             "type": [
               "string",
@@ -18621,6 +19931,49 @@
               "type": "string"
             },
             "description": "Absent means every plan. A named list restricts the percentage to\nthose plans; see the module docs on [`Rollout`] for what widening and\nnarrowing mean here."
+          }
+        }
+      },
+      "RotateAutonomousRequest": {
+        "type": "object",
+        "required": [
+          "sealing_key"
+        ],
+        "properties": {
+          "sealing_key": {
+            "$ref": "#/components/schemas/SealingJwk"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SealingJwk": {
+        "type": "object",
+        "required": [
+          "kty",
+          "n",
+          "e"
+        ],
+        "properties": {
+          "alg": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "d": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "e": {
+            "type": "string"
+          },
+          "kty": {
+            "type": "string"
+          },
+          "n": {
+            "type": "string"
           }
         }
       },

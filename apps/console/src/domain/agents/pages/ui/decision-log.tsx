@@ -20,11 +20,13 @@ import {
 } from '@/components/ui/table'
 import {
   RANGES,
+  awaitsApproval,
   decisionBadge,
   decisionKey,
   emptyFilters,
   hasFilters,
   policyLabel,
+  reasonLabel,
   subjectLabel,
   type DecisionFilters,
   type DecisionRange,
@@ -38,6 +40,7 @@ interface Props {
   error?: string
   filters: DecisionFilters
   onFilters: (filters: DecisionFilters) => void
+  onApprove?: (clientId: string) => void
 }
 
 function formatTime(iso: string): string {
@@ -45,7 +48,15 @@ function formatTime(iso: string): string {
   return Number.isNaN(date.getTime()) ? iso : date.toISOString().replace('T', ' ').slice(0, 19)
 }
 
-export function DecisionLog({ decisions, policies, isLoading, error, filters, onFilters }: Props) {
+export function DecisionLog({
+  decisions,
+  policies,
+  isLoading,
+  error,
+  filters,
+  onFilters,
+  onApprove,
+}: Props) {
   const filtered = hasFilters(filters)
 
   return (
@@ -86,6 +97,13 @@ export function DecisionLog({ decisions, policies, isLoading, error, filters, on
           aria-label='Subject'
           value={filters.subject}
           onChange={(event) => onFilters({ ...filters, subject: event.target.value })}
+        />
+        <Input
+          className='w-48'
+          placeholder='Agent (client id)'
+          aria-label='Agent'
+          value={filters.agent}
+          onChange={(event) => onFilters({ ...filters, agent: event.target.value })}
         />
         <Select
           value={filters.range}
@@ -164,7 +182,17 @@ export function DecisionLog({ decisions, policies, isLoading, error, filters, on
                         : decision.policies.map((name) => policyLabel(name, policies)).join(', ')}
                     </TableCell>
                     <TableCell className='max-w-xs whitespace-normal text-xs text-muted-foreground'>
-                      {decision.reason ?? ''}
+                      <span>{reasonLabel(decision.reason)}</span>
+                      {onApprove && awaitsApproval(decision) && (
+                        <Button
+                          size='sm'
+                          variant='outline'
+                          className='ml-2'
+                          onClick={() => onApprove(decision.agent)}
+                        >
+                          Approve
+                        </Button>
+                      )}
                     </TableCell>
                   </TableRow>
                 )

@@ -127,11 +127,12 @@ describe('the agents tab states', () => {
 })
 
 describe('the tabs', () => {
-  it('lists the four tabs and opens on the overview', () => {
+  it('lists the tabs, with Agents between the access map and the policies, and opens on the overview', () => {
     const html = render()
     for (const label of ['Overview', 'Access map', 'Policies', 'Activity']) {
       expect(html).toContain(`>${label}</button>`)
     }
+    expect(html).toMatch(/Access map<\/button>.*?Agents.*?Policies<\/button>/s)
     expect(html).toContain('Agents on this deployment')
     expect(html).not.toContain('No policies yet')
     expect(html).not.toContain('No decisions yet')
@@ -229,6 +230,76 @@ describe('the decision log', () => {
     expect(html).toContain('policy-9')
     expect(html).toContain('no permit')
     expect(html).toContain('2026-10-22 10:00:00')
+  })
+})
+
+describe('the agents tab', () => {
+  it('shows the given registry', () => {
+    const html = render({ defaultTab: 'agents', registry: <p>the registry</p> })
+
+    expect(html).toContain('the registry')
+    expect(html).not.toContain('not available yet')
+  })
+
+  it('shows a placeholder without a registry', () => {
+    expect(render({ defaultTab: 'agents' })).toContain('The agent registry is not available yet')
+  })
+
+  it('badges the tab with the number of pending agents', () => {
+    const html = render({ pendingAgents: 3 })
+
+    expect(html).toContain('aria-label="3 pending"')
+  })
+
+  it('has no badge when nothing waits for approval', () => {
+    expect(render({ pendingAgents: 0 })).not.toContain('pending"')
+    expect(render()).not.toContain('pending"')
+  })
+})
+
+describe('the activity tab and agent approval', () => {
+  const waiting: AgentDecision = {
+    ...decision,
+    decision: 'deny',
+    reason: 'agent_pending',
+    agent: 'new-agent',
+    policies: [],
+  }
+
+  it('labels a refusal for a pending agent as waiting for approval, with an Approve shortcut', () => {
+    const html = render({
+      defaultTab: 'activity',
+      decisions: [waiting],
+      onApproveAgent: noop,
+    })
+
+    expect(html).toContain('Waiting for approval')
+    expect(html).toContain('>Approve<')
+    expect(html).not.toContain('agent_pending')
+  })
+
+  it('labels a refusal for a blocked agent without an Approve shortcut', () => {
+    const html = render({
+      defaultTab: 'activity',
+      decisions: [{ ...waiting, reason: 'agent_blocked' }],
+      onApproveAgent: noop,
+    })
+
+    expect(html).toContain('Agent blocked')
+    expect(html).not.toContain('>Approve<')
+  })
+
+  it('offers no Approve shortcut to somebody who cannot approve', () => {
+    const html = render({ defaultTab: 'activity', decisions: [waiting] })
+
+    expect(html).toContain('Waiting for approval')
+    expect(html).not.toContain('>Approve<')
+  })
+
+  it('filters the log by agent', () => {
+    const html = render({ defaultTab: 'activity' })
+
+    expect(html).toContain('aria-label="Agent"')
   })
 })
 

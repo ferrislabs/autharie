@@ -9,6 +9,7 @@ use serde_json::Value;
 use url::Url;
 
 use crate::{
+    access::Access,
     authzen::AuthzenPdp,
     config::{Egress, UpstreamConfig},
     exchange::{CachedExchanger, TokenExchanger},
@@ -24,6 +25,7 @@ pub struct Upstream {
     pub issuer: String,
     pub scopes_supported: Vec<String>,
     pub upstream_url: String,
+    pub access: Access,
     pub egress: Egress,
     pub protocol: Option<String>,
     pub verifier: JwksVerifier,
@@ -77,6 +79,7 @@ impl Upstream {
             issuer: config.issuer,
             scopes_supported: config.scopes_supported,
             upstream_url: config.upstream_url,
+            access: config.access.into(),
             egress: config.egress,
             protocol: config.protocol,
             verifier,

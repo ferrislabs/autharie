@@ -14,7 +14,8 @@ import { cn } from '@/lib/utils'
 import type { RuleBox } from '../../../canvas-model'
 import { toggleItem } from '../../../rule-form'
 import type { Effect, When, WhichAgents } from '../../../types'
-import { EditorShell, ListInput, Row, Segmented, TEXTAREA } from './editor-parts'
+import { AgentListInput } from './agent-picker'
+import { EditorShell, Row, Segmented, TEXTAREA } from './editor-parts'
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 const WEEKDAYS = [1, 2, 3, 4, 5]
@@ -213,10 +214,9 @@ export function RuleEditor({
           onChange={(kind) => setAgents(kind === 'any' ? { kind: 'any' } : { kind: 'clients', clientIds: [] })}
         />
         {agents.kind === 'clients' && (
-          <ListInput
+          <AgentListInput
             id='rule-clients'
             values={agents.clientIds}
-            placeholder='Client ids, separated by commas'
             disabled={readOnly}
             onChange={(clientIds) => setAgents({ kind: 'clients', clientIds })}
           />

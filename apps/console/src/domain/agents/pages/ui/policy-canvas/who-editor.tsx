@@ -7,6 +7,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import type { Subject, SubjectType, WhoBox } from '../../../canvas-model'
+import { AgentValueInput } from './agent-picker'
 import { EditorShell, Row, SharedNote } from './editor-parts'
 
 const TYPES: { value: SubjectType; label: string }[] = [
@@ -21,7 +22,7 @@ const PLACEHOLDER: Record<Exclude<SubjectType, 'any'>, string> = {
   group: 'e.g. engineering',
   role: 'e.g. admin',
   user: 'e.g. a user id or username',
-  agent: 'e.g. the agent’s client id',
+  agent: 'Pick an agent by name, or type its client id',
 }
 
 const HINT: Record<Exclude<SubjectType, 'any'>, string> = {
@@ -73,15 +74,25 @@ export function WhoEditor({
       </Row>
       {subject.type !== 'any' && (
         <Row label='Name' htmlFor='who-value' hint={HINT[subject.type]}>
-          <Input
-            id='who-value'
-            autoFocus={!readOnly}
-            value={subject.value}
-            disabled={readOnly}
-            placeholder={PLACEHOLDER[subject.type]}
-            spellCheck={false}
-            onChange={(event) => onChange({ ...box, subject: { type: subject.type, value: event.target.value } as Subject })}
-          />
+          {subject.type === 'agent' ? (
+            <AgentValueInput
+              id='who-value'
+              value={subject.value}
+              disabled={readOnly}
+              placeholder={PLACEHOLDER.agent}
+              onChange={(value) => onChange({ ...box, subject: { type: 'agent', value } })}
+            />
+          ) : (
+            <Input
+              id='who-value'
+              autoFocus={!readOnly}
+              value={subject.value}
+              disabled={readOnly}
+              placeholder={PLACEHOLDER[subject.type]}
+              spellCheck={false}
+              onChange={(event) => onChange({ ...box, subject: { type: subject.type, value: event.target.value } as Subject })}
+            />
+          )}
         </Row>
       )}
       <SharedNote count={usage} what='box' />

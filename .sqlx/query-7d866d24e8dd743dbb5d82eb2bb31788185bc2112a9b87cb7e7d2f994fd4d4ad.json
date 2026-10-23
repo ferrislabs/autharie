@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO agent_access (\n                deployment_id, approval_required, approved, blocked, deleted, updated_at\n            )\n            VALUES ($1, $2, $3, $4, $5, $6)\n            ON CONFLICT (deployment_id) DO UPDATE\n            SET approval_required = $2,\n                approved = $3,\n                blocked = $4,\n                deleted = $5,\n                updated_at = $6\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Bool",
+        "TextArray",
+        "TextArray",
+        "TextArray",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7d866d24e8dd743dbb5d82eb2bb31788185bc2112a9b87cb7e7d2f994fd4d4ad"
+}

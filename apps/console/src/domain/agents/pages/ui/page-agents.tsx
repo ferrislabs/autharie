@@ -11,11 +11,14 @@ import { DecisionLog } from './decision-log'
 import { PoliciesList } from './policies-list'
 import { ServersSection } from './servers-section'
 
-export type AgentsTabId = 'overview' | 'access-map' | 'policies' | 'activity'
+export type AgentsTabId = 'overview' | 'access-map' | 'agents' | 'policies' | 'activity'
 
 interface Props {
   defaultTab?: AgentsTabId
   accessMap?: React.ReactNode
+  registry?: React.ReactNode
+  pendingAgents?: number
+  onApproveAgent?: (clientId: string) => void
   settings?: AgentSettings
   isLoading: boolean
   error?: string
@@ -75,6 +78,17 @@ export function PageAgents(props: Props) {
           <TabsList>
             <TabsTrigger value='overview'>Overview</TabsTrigger>
             <TabsTrigger value='access-map'>Access map</TabsTrigger>
+            <TabsTrigger value='agents'>
+              Agents
+              {props.pendingAgents ? (
+                <span
+                  aria-label={`${props.pendingAgents} pending`}
+                  className='ml-1.5 rounded-full bg-amber-500/15 px-1.5 text-xs font-semibold text-amber-700 dark:text-amber-300'
+                >
+                  {props.pendingAgents}
+                </span>
+              ) : null}
+            </TabsTrigger>
             <TabsTrigger value='policies'>Policies</TabsTrigger>
             <TabsTrigger value='activity'>Activity</TabsTrigger>
           </TabsList>
@@ -115,6 +129,14 @@ export function PageAgents(props: Props) {
             )}
           </TabsContent>
 
+          <TabsContent value='agents'>
+            {props.registry ?? (
+              <p className='text-sm text-muted-foreground'>
+                The agent registry is not available yet.
+              </p>
+            )}
+          </TabsContent>
+
           <TabsContent value='policies'>
             <PoliciesList
               policies={props.policies}
@@ -137,6 +159,7 @@ export function PageAgents(props: Props) {
               error={props.decisionsError}
               filters={props.filters}
               onFilters={props.onFilters}
+              onApprove={props.onApproveAgent}
             />
           </TabsContent>
         </Tabs>

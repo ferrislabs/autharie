@@ -27,7 +27,7 @@ const EVALUATOR_ROLE: &str = "authz-evaluator";
 const EVALUATOR_PERMISSIONS: [&str; 2] = ["evaluate_authorization", "view_authorization"];
 const MINIMAL_SCHEMA: &str = "namespace App {}";
 
-trait Caller: Send + Sync {
+pub(super) trait Caller: Send + Sync {
     fn call(&self, request: &ApiRequest) -> impl Future<Output = Result<Value, ApiFailure>> + Send;
 }
 
@@ -42,17 +42,17 @@ fn failure(failure: ApiFailure) -> AgentsError {
     }
 }
 
-async fn send<C: Caller>(caller: &C, request: ApiRequest) -> Result<Value, AgentsError> {
+pub(super) async fn send<C: Caller>(caller: &C, request: ApiRequest) -> Result<Value, AgentsError> {
     caller.call(&request).await.map_err(failure)
 }
 
-fn malformed(what: &str) -> AgentsError {
+pub(super) fn malformed(what: &str) -> AgentsError {
     AgentsError::Retry {
         message: format!("FerrisKey answered {what} in a shape the operator does not know"),
     }
 }
 
-fn segment(value: &str) -> Result<&str, AgentsError> {
+pub(super) fn segment(value: &str) -> Result<&str, AgentsError> {
     let slug = !value.is_empty()
         && value
             .chars()
@@ -66,7 +66,7 @@ fn segment(value: &str) -> Result<&str, AgentsError> {
     }
 }
 
-fn items(body: &Value) -> Vec<&Value> {
+pub(super) fn items(body: &Value) -> Vec<&Value> {
     body["data"]
         .as_array()
         .or_else(|| body.as_array())
@@ -74,11 +74,11 @@ fn items(body: &Value) -> Vec<&Value> {
         .unwrap_or_default()
 }
 
-fn text<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
+pub(super) fn text<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
     value[key].as_str()
 }
 
-fn id_of(value: &Value, what: &str) -> Result<String, AgentsError> {
+pub(super) fn id_of(value: &Value, what: &str) -> Result<String, AgentsError> {
     text(value, "id")
         .or_else(|| text(&value["data"], "id"))
         .map(ToOwned::to_owned)
@@ -312,7 +312,7 @@ fn parse_client(value: &Value) -> Result<RemoteClient, AgentsError> {
     })
 }
 
-fn client_path(realm: &str, client: &str) -> Result<String, AgentsError> {
+pub(super) fn client_path(realm: &str, client: &str) -> Result<String, AgentsError> {
     Ok(format!(
         "/realms/{}/clients/{}",
         segment(realm)?,
@@ -808,7 +808,7 @@ impl KubeFerriskeyAgents {
         }
     }
 
-    fn bound<'a>(&'a self, instance: &'a IdentityInstance) -> Bound<'a> {
+    pub(super) fn bound<'a>(&'a self, instance: &'a IdentityInstance) -> Bound<'a> {
         Bound {
             owner: self,
             instance,
@@ -816,7 +816,7 @@ impl KubeFerriskeyAgents {
     }
 }
 
-struct Bound<'a> {
+pub(super) struct Bound<'a> {
     owner: &'a KubeFerriskeyAgents,
     instance: &'a IdentityInstance,
 }
