@@ -397,6 +397,38 @@ async fn client_secret<C: Caller>(
         .ok_or_else(|| malformed("a client without a secret"))
 }
 
+/// Earlier operators put the evaluator role on the gateway client. A realm
+/// holds one role per name, so it has to go before the mirror client can get
+/// it.
+async fn remove_misplaced_evaluator_role<C: Caller>(
+    caller: &C,
+    realm: &str,
+    gateway: &RemoteClient,
+    audience: &RemoteClient,
+) -> Result<(), AgentsError> {
+    if gateway.id == audience.id {
+        return Ok(());
+    }
+    let roles_path = format!("{}/roles", client_path(realm, &gateway.id)?);
+    let body = send(caller, ApiRequest::new(Method::GET, roles_path)).await?;
+    let Some(role) = items(&body)
+        .into_iter()
+        .find(|role| text(role, "name") == Some(EVALUATOR_ROLE))
+    else {
+        return Ok(());
+    };
+    let id = id_of(role, "a role")?;
+    send(
+        caller,
+        ApiRequest::new(
+            Method::DELETE,
+            format!("/realms/{}/roles/{}", segment(realm)?, segment(&id)?),
+        ),
+    )
+    .await
+    .map(|_| ())
+}
+
 async fn ensure_evaluator_role<C: Caller>(
     caller: &C,
     realm: &str,
@@ -665,6 +697,7 @@ async fn ensure_gateway_client<C: Caller>(
     let client = ensure_client(caller, realm).await?;
     let secret = client_secret(caller, realm, &client).await?;
     let audience = ensure_audience_client(caller, realm).await?;
+    remove_misplaced_evaluator_role(caller, realm, &client, &audience).await?;
     let role = ensure_evaluator_role(caller, realm, &audience).await?;
     let user = service_account(caller, realm, &client).await?;
     ensure_role_assigned(caller, realm, &user, &role).await?;
@@ -1038,6 +1071,11 @@ mod tests {
             ),
             (
                 Method::GET,
+                "/realms/acme/clients/c1/roles",
+                json!({ "data": [] }),
+            ),
+            (
+                Method::GET,
                 "/realms/acme/clients/c2/roles",
                 json!({ "data": [{
                     "id": "r1", "name": "authz-evaluator",
@@ -1175,7 +1213,84 @@ mod tests {
             .expect("ensured");
 
         assert!(world.read(Method::GET, "/realms/acme/clients/c2/roles"));
-        assert!(!world.read(Method::GET, "/realms/acme/clients/c1/roles"));
+        assert_eq!(world.wrote(Method::POST, "/realms/acme/clients/c1/roles"), None);
+    }
+
+    #[tokio::test]
+    async fn an_evaluator_role_left_on_the_gateway_client_is_moved_to_the_mirror_client() {
+        let world = World::new(vec![
+            (
+                Method::GET,
+                "/realms/master/clients",
+                json!({ "data": [
+                    { "id": "c1", "client_id": "mcp-gateway", "enabled": true, "token_exchange_enabled": true },
+                    { "id": "c2", "client_id": "master-realm", "enabled": true }
+                ] }),
+            ),
+            (
+                Method::GET,
+                "/realms/master/clients/c1/client-secret",
+                json!({ "client_secret": "s" }),
+            ),
+            (
+                Method::GET,
+                "/realms/master/clients/c1/roles",
+                json!({ "data": [{ "id": "old", "name": "authz-evaluator" }] }),
+            ),
+            (Method::DELETE, "/realms/master/roles/old", json!({})),
+            (
+                Method::GET,
+                "/realms/master/clients/c2/roles",
+                json!({ "data": [] }),
+            ),
+            (
+                Method::POST,
+                "/realms/master/clients/c2/roles",
+                json!({ "id": "new", "name": "authz-evaluator" }),
+            ),
+            (
+                Method::GET,
+                "/realms/master/users",
+                json!({ "data": [{ "id": "u1", "username": "service-account-mcp-gateway", "client_id": "c1" }] }),
+            ),
+            (
+                Method::GET,
+                "/realms/master/users/u1/roles",
+                json!({ "data": [] }),
+            ),
+            (Method::POST, "/realms/master/users/u1/roles/new", json!({})),
+            (
+                Method::GET,
+                "/realms/master/clients/c1/token-exchange-policies",
+                json!([{ "id": "x1", "target_audience": "master-realm", "allow_delegation": true }]),
+            ),
+            (
+                Method::GET,
+                "/realms/master/resource-owners",
+                json!({ "data": [{ "uri": CANONICAL, "client_id": "c1" }] }),
+            ),
+        ]);
+
+        ensure_gateway_client(&world, "master", CANONICAL)
+            .await
+            .expect("ensured");
+
+        let writes: Vec<(Method, String)> = world
+            .writes()
+            .into_iter()
+            .map(|(method, path, _)| (method, path))
+            .collect();
+        assert_eq!(
+            writes,
+            vec![
+                (Method::DELETE, "/realms/master/roles/old".to_string()),
+                (Method::POST, "/realms/master/clients/c2/roles".to_string()),
+                (
+                    Method::POST,
+                    "/realms/master/users/u1/roles/new".to_string()
+                ),
+            ]
+        );
     }
 
     #[tokio::test]
@@ -1291,6 +1406,11 @@ mod tests {
                 Method::GET,
                 "/realms/acme/clients/c1/client-secret",
                 json!({ "client_secret": "s" }),
+            ),
+            (
+                Method::GET,
+                "/realms/acme/clients/c1/roles",
+                json!({ "data": [] }),
             ),
             (
                 Method::GET,
