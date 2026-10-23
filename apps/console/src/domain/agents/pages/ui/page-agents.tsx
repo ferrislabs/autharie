@@ -1,13 +1,20 @@
 import { SectionPage } from '@/components/layout/page'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { describeAgents } from '../../agent-state'
 import type { DecisionFilters } from '../../decisions'
+import type { PolicyTemplateDraft } from '../../policy-templates'
 import type { AgentDecision, AgentPolicy, AgentSettings } from '../../types'
 import { AgentsHeader } from './agents-header'
+import { ConnectAgent } from './connect-agent'
 import { DecisionLog } from './decision-log'
 import { PoliciesList } from './policies-list'
 
+export type AgentsTabId = 'overview' | 'access-map' | 'policies' | 'activity'
+
 interface Props {
+  defaultTab?: AgentsTabId
+  accessMap?: React.ReactNode
   settings?: AgentSettings
   isLoading: boolean
   error?: string
@@ -29,7 +36,7 @@ interface Props {
   onToggle: (enabled: boolean) => void
   onSaveRealm: () => void
   onOpenOrganisationSettings: () => void
-  onCreatePolicy: () => void
+  onCreatePolicy: (initial?: PolicyTemplateDraft) => void
   onEditPolicy: (policy: AgentPolicy) => void
   onDeletePolicy: (policy: AgentPolicy) => void
   onTogglePolicy: (policy: AgentPolicy, enabled: boolean) => void
@@ -37,6 +44,8 @@ interface Props {
 
 export function PageAgents(props: Props) {
   if (props.isLoading) return <Skeleton className='h-64 w-full' />
+
+  const state = props.settings ? describeAgents(props.settings, props.canManage) : null
 
   return (
     <SectionPage
@@ -49,45 +58,65 @@ export function PageAgents(props: Props) {
         </p>
       )}
 
-      {props.settings && (
-        <AgentsHeader
-          settings={props.settings}
-          state={describeAgents(props.settings, props.canManage)}
-          realms={props.realms}
-          realm={props.realm}
-          canManage={props.canManage}
-          isSaving={props.isSaving}
-          error={props.saveError}
-          onRealmChange={props.onRealmChange}
-          onToggle={props.onToggle}
-          onSaveRealm={props.onSaveRealm}
-          onOpenOrganisationSettings={props.onOpenOrganisationSettings}
-        />
-      )}
+      {props.settings && state && (
+        <Tabs defaultValue={props.defaultTab ?? 'overview'} className='gap-4'>
+          <TabsList>
+            <TabsTrigger value='overview'>Overview</TabsTrigger>
+            <TabsTrigger value='access-map'>Access map</TabsTrigger>
+            <TabsTrigger value='policies'>Policies</TabsTrigger>
+            <TabsTrigger value='activity'>Activity</TabsTrigger>
+          </TabsList>
 
-      {props.settings && (
-        <>
-          <PoliciesList
-            policies={props.policies}
-            isLoading={props.policiesLoading}
-            error={props.policiesError}
-            canManage={props.canManage}
-            busyId={props.busyPolicyId}
-            onCreate={props.onCreatePolicy}
-            onEdit={props.onEditPolicy}
-            onDelete={props.onDeletePolicy}
-            onToggle={props.onTogglePolicy}
-          />
+          <TabsContent value='overview' className='space-y-6'>
+            <AgentsHeader
+              settings={props.settings}
+              state={state}
+              realms={props.realms}
+              realm={props.realm}
+              canManage={props.canManage}
+              isSaving={props.isSaving}
+              error={props.saveError}
+              onRealmChange={props.onRealmChange}
+              onToggle={props.onToggle}
+              onSaveRealm={props.onSaveRealm}
+              onOpenOrganisationSettings={props.onOpenOrganisationSettings}
+            />
+            <ConnectAgent settings={props.settings} state={state} />
+          </TabsContent>
 
-          <DecisionLog
-            decisions={props.decisions}
-            policies={props.policies}
-            isLoading={props.decisionsLoading}
-            error={props.decisionsError}
-            filters={props.filters}
-            onFilters={props.onFilters}
-          />
-        </>
+          <TabsContent value='access-map'>
+            {props.accessMap ?? (
+              <p className='text-sm text-muted-foreground'>
+                The access map shows which tools each agent can reach. It is not available yet.
+              </p>
+            )}
+          </TabsContent>
+
+          <TabsContent value='policies'>
+            <PoliciesList
+              policies={props.policies}
+              isLoading={props.policiesLoading}
+              error={props.policiesError}
+              canManage={props.canManage}
+              busyId={props.busyPolicyId}
+              onCreate={props.onCreatePolicy}
+              onEdit={props.onEditPolicy}
+              onDelete={props.onDeletePolicy}
+              onToggle={props.onTogglePolicy}
+            />
+          </TabsContent>
+
+          <TabsContent value='activity'>
+            <DecisionLog
+              decisions={props.decisions}
+              policies={props.policies}
+              isLoading={props.decisionsLoading}
+              error={props.decisionsError}
+              filters={props.filters}
+              onFilters={props.onFilters}
+            />
+          </TabsContent>
+        </Tabs>
       )}
     </SectionPage>
   )

@@ -15,12 +15,16 @@ import {
   useSavePolicy,
   useUpdateAgentSettings,
 } from '../../hooks/use-agents'
+import type { PolicyTemplateDraft } from '../../policy-templates'
 import type { AgentPolicy } from '../../types'
 import { DeletePolicyDialog } from '../ui/delete-policy-dialog'
 import { PageAgents } from '../ui/page-agents'
+import { PolicyCanvas } from '../ui/policy-canvas/policy-canvas'
 import { PolicySheet } from '../ui/policy-sheet'
 
-type Editing = { policy: AgentPolicy | null } | null
+const NO_POLICIES: AgentPolicy[] = []
+
+type Editing = { policy: AgentPolicy | null; initial?: PolicyTemplateDraft } | null
 
 function AgentsTab() {
   const scope = useAgentScope()
@@ -44,7 +48,13 @@ function AgentsTab() {
 
   const current = settings.data
   const realm = realmDraft ?? current?.realm ?? ''
-  const list = policies.data ?? []
+  const list = policies.data ?? NO_POLICIES
+  const canManage = can(CAN.manageInstances)
+
+  const openEditor = (next: NonNullable<Editing>) => {
+    savePolicy.reset()
+    setEditing(next)
+  }
 
   return (
     <>
@@ -54,7 +64,7 @@ function AgentsTab() {
         error={settings.error?.message}
         realms={realms.data ?? null}
         realm={realm}
-        canManage={can(CAN.manageInstances)}
+        canManage={canManage}
         isSaving={updateSettings.isPending}
         saveError={updateSettings.error?.message}
         policies={list}
@@ -80,14 +90,20 @@ function AgentsTab() {
           )
         }
         onOpenOrganisationSettings={() => void navigate({ to: organisationPath('/settings') })}
-        onCreatePolicy={() => {
-          savePolicy.reset()
-          setEditing({ policy: null })
-        }}
-        onEditPolicy={(policy) => {
-          savePolicy.reset()
-          setEditing({ policy })
-        }}
+        accessMap={
+          <PolicyCanvas
+            policies={list}
+            canManage={canManage}
+            publisher={{
+              create: (input) => savePolicy.mutateAsync({ id: null, input }),
+              update: (id, input) => savePolicy.mutateAsync({ id, input }),
+              remove: (id) => deletePolicy.mutateAsync(id),
+            }}
+            onOpenAdvanced={(policy) => openEditor({ policy })}
+          />
+        }
+        onCreatePolicy={(initial) => openEditor({ policy: null, initial })}
+        onEditPolicy={(policy) => openEditor({ policy })}
         onDeletePolicy={(policy) => {
           deletePolicy.reset()
           setDeleting(policy)
@@ -109,6 +125,7 @@ function AgentsTab() {
       <PolicySheet
         open={editing !== null}
         policy={editing?.policy ?? null}
+        initial={editing?.initial}
         others={list}
         isSaving={savePolicy.isPending}
         error={savePolicy.error?.message}
