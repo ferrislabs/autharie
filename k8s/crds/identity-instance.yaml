@@ -63,6 +63,32 @@ spec:
                     type: integer
                   realm:
                     type: string
+                  servers:
+                    description: The customer MCP servers agents may reach through the gateway.
+                    items:
+                      properties:
+                        discoveryRequestedAt:
+                          description: When someone asked for the tools to be listed again (RFC 3339).
+                          nullable: true
+                          type: string
+                        enabled:
+                          type: boolean
+                        id:
+                          description: Autharie's id for the server (a UUID).
+                          type: string
+                        slug:
+                          description: 'The server''s short name: it prefixes its tools and its gateway path.'
+                          type: string
+                        url:
+                          description: 'Where the data plane reaches the server: a public `https://` URL.'
+                          type: string
+                      required:
+                      - enabled
+                      - id
+                      - slug
+                      - url
+                      type: object
+                    type: array
                 required:
                 - enabled
                 - realm
@@ -481,6 +507,59 @@ spec:
                       required:
                       - id
                       - phase
+                      type: object
+                    type: array
+                  servers:
+                    items:
+                      properties:
+                        discoveredAt:
+                          description: When the last discovery started (RFC 3339). Absent until one has run.
+                          nullable: true
+                          type: string
+                        dropped:
+                          default: 0
+                          format: uint32
+                          minimum: 0.0
+                          type: integer
+                        id:
+                          type: string
+                        message:
+                          nullable: true
+                          type: string
+                        phase:
+                          enum:
+                          - Ready
+                          - Unreachable
+                          - Refused
+                          - Invalid
+                          type: string
+                        slug:
+                          description: |-
+                            The slug the server had when it was last reconciled, so its audience
+                            client can still be found once the server is gone from the spec.
+                          type: string
+                        tools:
+                          items:
+                            properties:
+                              description:
+                                nullable: true
+                                type: string
+                              destructive:
+                                default: false
+                                type: boolean
+                              name:
+                                type: string
+                              readOnly:
+                                default: false
+                                type: boolean
+                            required:
+                            - name
+                            type: object
+                          type: array
+                      required:
+                      - id
+                      - phase
+                      - slug
                       type: object
                     type: array
                 required:

@@ -269,7 +269,7 @@ async fn the_database_itself_refuses_a_reserved_or_malformed_slug() {
         return;
     };
 
-    for slug in ["ferriskey", "autharie", "Bad", "a", "1abc"] {
+    for slug in ["ferriskey", "autharie", "gateway", "Bad", "a", "1abc"] {
         let refused: Result<(), CoreError> = in_scratch_tx(&pool, db_error, async |tx| {
             let dep = seeded(&tx, "servers-d").await?;
             let mut guard = tx.lock().await;

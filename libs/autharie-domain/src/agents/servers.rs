@@ -17,7 +17,7 @@ pub const MAX_DISCOVERY_MESSAGE_CHARS: usize = 300;
 
 const MAX_NAME_CHARS: usize = 100;
 const MAX_URL_BYTES: usize = 2048;
-const RESERVED_SLUGS: [&str; 2] = ["ferriskey", "autharie"];
+const RESERVED_SLUGS: [&str; 3] = ["ferriskey", "autharie", "gateway"];
 const INTERNAL_SUFFIXES: [&str; 6] = [
     ".local",
     ".localhost",
@@ -507,8 +507,8 @@ mod tests {
     }
 
     #[test]
-    fn the_names_of_the_built_in_servers_are_reserved() {
-        for reserved in ["ferriskey", "autharie"] {
+    fn the_names_of_the_built_in_servers_and_of_the_gateway_client_are_reserved() {
+        for reserved in ["ferriskey", "autharie", "gateway"] {
             assert_eq!(
                 ServerSlug::try_from(reserved),
                 Err(ServerError::SlugReserved(reserved.to_string()))

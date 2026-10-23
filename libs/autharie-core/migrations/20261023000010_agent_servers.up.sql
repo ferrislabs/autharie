@@ -1,7 +1,7 @@
 CREATE TABLE agent_servers (
     id UUID PRIMARY KEY,
     deployment_id UUID NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
-    slug TEXT NOT NULL CHECK (slug ~ '^[a-z][a-z0-9-]{1,30}$' AND slug NOT IN ('ferriskey', 'autharie')),
+    slug TEXT NOT NULL CHECK (slug ~ '^[a-z][a-z0-9-]{1,30}$' AND slug NOT IN ('ferriskey', 'autharie', 'gateway')),
     name TEXT NOT NULL CHECK (char_length(name) BETWEEN 1 AND 100),
     url TEXT NOT NULL CHECK (char_length(url) BETWEEN 1 AND 2048),
     enabled BOOLEAN NOT NULL,
