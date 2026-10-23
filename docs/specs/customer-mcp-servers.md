@@ -13,9 +13,9 @@ Glossary
   Tool discovery: the data plane listing a customer server's tools (`tools/list`) and reporting them to the control plane.
 
 Invariants
-  - A customer server URL is `https://`, has no userinfo, and its host is a DNS name or a public IP; the control plane refuses anything else at registration.  [type: `CustomerServerUrl::try_from`]
+  - A customer server URL is `https://`, has no userinfo or fragment, and its host is a dotted DNS name (not `.local`, `.internal`, `.lan`…) or a public IP; the control plane refuses anything else at registration.  [type: `CustomerServerUrl::try_from`]
   - The data plane never connects to a customer server whose resolved addresses include a private, loopback, link-local, CGNAT, multicast, unspecified or cloud-metadata address, and connects to the address it checked (no second resolution). Redirects are not followed. Applies to the gateway and to discovery.  [test]
-  - A slug matches `^[a-z][a-z0-9-]{1,30}$` and is never `ferriskey` or `autharie`; unique per deployment.  [type + DB unique index]
+  - A slug matches `^[a-z][a-z0-9-]{1,30}$` and is never `ferriskey`, `autharie` or `gateway`; unique per deployment.  [type + DB unique index]
   - A customer server never receives the agent's token: the gateway exchanges it (RFC 8693) for a token whose audience is that server's audience client, with the agent in `act`. Same rule as every other tool server.  [test]
   - Default deny holds for customer tools exactly as for FerrisKey tools; a tool missing from the last discovery is still decided by the PDP (the catalogue is a hint for the console, not an allow-list).  [test]
   - Discovery results are bounded: at most 200 tools per server, names `^[A-Za-z0-9_.-]{1,64}$` (others dropped and counted), descriptions cut to 512 characters, response body capped at 1 MiB, 10 s timeout.  [test]
@@ -31,7 +31,7 @@ Out of scope
 
 Design
   Domain (libs/autharie-domain/src/agents/servers.rs)
-    CustomerServer { id: ServerId(Uuid), deployment_id, slug: ServerSlug, name, url: CustomerServerUrl, enabled, revision, discovery: Option<Discovery>, created_at, updated_at }
+    CustomerServer { id: ServerId(Uuid), deployment_id, slug: ServerSlug, name, url: CustomerServerUrl, enabled, discovery: Option<Discovery>, created_at, updated_at }
     Discovery { phase: Ready | Unreachable | Refused | Invalid, tools: Vec<DiscoveredTool>, dropped: u32, message?, discovered_at }
     DiscoveredTool { name, description?, read_only: bool, destructive: bool }  // from MCP tool annotations readOnlyHint / destructiveHint
     ServerSlug, CustomerServerUrl: newtypes with TryFrom carrying the invariants above.
@@ -39,12 +39,12 @@ Design
   Ports: AgentServerRepository (postgres adapter). Static dispatch like the existing agents ports.
   Persistence: migration `agent_servers` (id, deployment_id FK, slug, name, url, enabled, discovery jsonb, discovery_requested_at, created_at, updated_at, unique(deployment_id, slug)).
   Action payload `deployment.agents` gains `servers: [{ id, slug, url, enabled, discovery_requested_at? }]`.
-  CRD IdentityInstance: spec.agents.servers[{ id, slug, url, enabled, discoveryRequestedAt? }]; status.agents.servers[{ id, phase, tools[], dropped, message?, discoveredAt? }]. Outcome `deployment.agents` carries `servers` the same way; the control plane stores it.
+  CRD IdentityInstance: spec.agents.servers[{ id, slug, url, enabled, discoveryRequestedAt? }]; status.agents.servers[{ id, slug, phase, tools[], dropped, message?, discoveredAt?, discoveryRequestedAt? }]. Outcome `deployment.agents` carries `servers` the same way (without `slug`); the control plane stores it.
   Operator (libs/autharie-operator-core, agents)
     - Per enabled customer server: ensure an audience client `mcp-<slug>` in the realm (like `ensure_audience_client` for `<realm>-realm`), a token-exchange policy from the gateway client to it, the canonical URI `https://<deployment host>/mcp/<slug>` in the realm's allowed_resources and resource-owners.
     - Render one gateway upstream per customer server: canonical_uri as above, same issuer/pdp as the FerrisKey upstream, exchange.audience = `mcp-<slug>`, upstream_url = the customer URL, server_name = slug.
     - HTTPRoute: `/mcp/<slug>` and `/.well-known/oauth-protected-resource/mcp/<slug>` on the deployment host → the gateway.
-    - Discovery: on spec change, when `discoveryRequestedAt` is newer than the last discovery, and every 6 h: client-credentials token for the gateway client with audience `mcp-<slug>`, then MCP `initialize` + `tools/list` (follow `nextCursor` up to the 200-tool bound) through a guarded HTTP client (address check, pinned connect, no redirects, limits). Result goes to status.
+    - Discovery: on spec change, when `discoveryRequestedAt` is newer than the one the last discovery answered, every 6 h (30 min after a failure): client-credentials token for the gateway client with audience `mcp-<slug>` (exchanged, RFC 8693, when the issued token does not carry it), then MCP `initialize` + `tools/list` (follow `nextCursor` up to the 200-tool bound) through a guarded HTTP client (address check, pinned connect, no redirects, limits). Result goes to status.
   Guarded HTTP client: one module shared by the gateway and the operator (new small crate `libs/autharie-egress`), so the SSRF rule has a single implementation and one test suite.
   Gateway: no new concept. It already routes by canonical URI; it must use the guarded client for upstreams whose host is not in-cluster (flag on the upstream config: `egress = "public"`).
   Control plane API (under /organisations/{org}/deployments/{dep}/agents)
@@ -82,7 +82,7 @@ Workstreams
 Frozen contracts
   CustomerServer (API) = { id, slug, name, url, enabled, mcp_url?, discovery?: { phase, tools: [{ name, description?, read_only, destructive }], dropped, message?, discovered_at }, created_at, updated_at }
   spec.agents.servers[] = { id, slug, url, enabled, discoveryRequestedAt? }
-  status.agents.servers[] = { id, phase: "Ready"|"Unreachable"|"Refused"|"Invalid", tools[], dropped, message?, discoveredAt? }
+  status.agents.servers[] = { id, slug, phase: "Ready"|"Unreachable"|"Refused"|"Invalid", tools[], dropped, message?, discoveredAt?, discoveryRequestedAt? }
   Gateway UpstreamConfig gains `egress: "cluster" | "public"` (default "cluster").
 
 Risks / open questions
@@ -96,3 +96,9 @@ Verify (exit)
   cd apps/console && pnpm lint && pnpm exec tsc -b --noEmit && pnpm vitest run
   helm lint charts/autharie-dataplane
   End to end on k3d: @spec-ms-2..7 with a small MCP server on a public test host or a resolver override documented in the test.
+
+Amended: 2026-10-23 the slug `gateway` is reserved too: `mcp-gateway` is the gateway's own client, and a server `gateway` would have its audience client be that client, which removal would delete.
+Amended: 2026-10-23 `CustomerServer` carries no `revision`: the agents revision belongs to the deployment, and a server's own staleness is judged by `discovery_requested_at`.
+Amended: 2026-10-23 hosts without a dot and `.local`, `.localhost`, `.localdomain`, `.internal`, `.intranet`, `.lan` are refused at registration (they only resolve inside a network); fragments are refused as well.
+Amended: 2026-10-23 `status.agents.servers[]` also carries `slug` (so the operator can still find the audience client of a server already gone from the spec) and `discoveryRequestedAt` (the spec's request this discovery answers, so the control plane and the operator compare control plane times with each other and never with the data plane clock); the report to the control plane carries the latter as `discovery_requested_at`.
+Amended: 2026-10-23 FerrisKey's client-credentials grant is not known to honour `audience`, so discovery checks the `aud` of the token it gets and, if `mcp-<slug>` is missing, exchanges it (subject and actor both the gateway's own token).
