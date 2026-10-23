@@ -87,7 +87,7 @@ describe('an invitation link', () => {
 describe('movedSettingsPath', () => {
   it('names the tab each settings page became', () => {
     expect(movedSettingsPath('org-1', 'dep-1', 'network-access')).toBe(`${DEPLOYMENT}/security`)
-    expect(movedSettingsPath('org-1', 'dep-1', 'branding')).toBe(`${DEPLOYMENT}/customization`)
+    expect(movedSettingsPath('org-1', 'dep-1', 'branding')).toBe(`${DEPLOYMENT}/branding/universal-login`)
     expect(movedSettingsPath('org-1', 'dep-1', 'backups')).toBe(`${DEPLOYMENT}/backups`)
   })
 })

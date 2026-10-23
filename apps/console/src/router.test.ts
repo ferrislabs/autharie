@@ -51,7 +51,7 @@ describe('the route tree', () => {
       '/settings/version',
       '/backups',
       '/security',
-      '/customization',
+      '/branding/universal-login',
     ]) {
       const shells = shellsFor(`${DEPLOYMENT}${path}`)
 
@@ -99,7 +99,7 @@ describe('the route tree', () => {
     expect(shellsFor(`${DEPLOYMENT}/settings`)).toContain('DeploymentSettingsLayout')
     expect(shellsFor(`${DEPLOYMENT}/settings/resources`)).toContain('DeploymentSettingsLayout')
     expect(shellsFor(`${DEPLOYMENT}/observability`)).not.toContain('DeploymentSettingsLayout')
-    for (const path of ['/backups', '/security', '/customization']) {
+    for (const path of ['/backups', '/security', '/branding/universal-login']) {
       expect(shellsFor(`${DEPLOYMENT}${path}`), path).not.toContain('DeploymentSettingsLayout')
     }
   })
@@ -195,12 +195,20 @@ describe('the settings pages that became tabs', () => {
   it('puts each tab on its own page', () => {
     expect(shellsFor(`${DEPLOYMENT}/backups`)).toContain('PageBackupsFeature')
     expect(shellsFor(`${DEPLOYMENT}/security`)).toContain('PageNetworkAccessFeature')
-    expect(shellsFor(`${DEPLOYMENT}/customization`)).toContain('PageBrandingFeature')
+  })
+
+  it('puts Universal login under the Branding side navigation', () => {
+    const shells = shellsFor(`${DEPLOYMENT}/branding/universal-login`)
+
+    expect(shells).toContain('DeploymentBrandingLayout')
+    expect(shells).toContain('PageBrandingFeature')
   })
 
   it.each([
     ['/settings/network-access', '/security'],
-    ['/settings/branding', '/customization'],
+    ['/settings/branding', '/branding/universal-login'],
+    ['/customization', '/branding/universal-login'],
+    ['/branding', '/branding/universal-login'],
     ['/settings/backups', '/backups'],
   ])('sends the old address %s to %s', (from, to) => {
     const { foundRoute } = router.getMatchedRoutes(`${DEPLOYMENT}${from}`)
