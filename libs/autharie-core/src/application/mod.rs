@@ -43,6 +43,7 @@ mod platform;
 mod reachability;
 mod role;
 mod signals;
+pub mod smtp;
 mod traces;
 mod upgrade;
 mod user;

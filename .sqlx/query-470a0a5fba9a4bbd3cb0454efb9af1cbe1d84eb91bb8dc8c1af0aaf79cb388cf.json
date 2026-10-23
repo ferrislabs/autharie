@@ -1,0 +1,119 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT deployment_id, realm, host, port, encryption, username, from_email, from_name,\n                   password_ciphertext, password_nonce, password_wrapped_dek,\n                   password_key_provider, password_key_name, password_key_version,\n                   phase, message, updated_at\n            FROM deployment_smtp_configs\n            WHERE deployment_id = $1 AND realm = $2\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "deployment_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "realm",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "host",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "port",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 4,
+        "name": "encryption",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "username",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "from_email",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "from_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "password_ciphertext",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 9,
+        "name": "password_nonce",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 10,
+        "name": "password_wrapped_dek",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "password_key_provider",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "password_key_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 13,
+        "name": "password_key_version",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 14,
+        "name": "phase",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 15,
+        "name": "message",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 16,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "470a0a5fba9a4bbd3cb0454efb9af1cbe1d84eb91bb8dc8c1af0aaf79cb388cf"
+}

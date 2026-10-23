@@ -3,6 +3,7 @@ use autharie_core::{
     action::{Action, ActionId, ports::ActionService},
     deployments::ports::DeploymentService,
     organisation::OrganisationId,
+    smtp::redacted as redacted_smtp,
     webhooks::redacted,
 };
 use axum::extract::{Extension, State};
@@ -65,7 +66,7 @@ pub async fn get_action_handler(
         })?;
 
     Ok(Response::OK(GetActionResponse {
-        data: redacted(action),
+        data: redacted_smtp(redacted(action)),
     }))
 }
 

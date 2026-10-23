@@ -1,6 +1,6 @@
 use autharie_core::{
     CoreError, agents::AgentError, backups::keys::KeyError, billing::BillingError,
-    dataplane::credential::CredentialError, webhooks::WebhookError,
+    dataplane::credential::CredentialError, smtp::SmtpError, webhooks::WebhookError,
 };
 use axum::{Json, http::StatusCode, response::IntoResponse};
 use serde::Serialize;
@@ -446,6 +446,17 @@ impl From<CoreError> for ApiError {
             CoreError::Webhook(WebhookError::UnsupportedKind) => ApiError::Conflict {
                 reason: value.to_string(),
             },
+            CoreError::Smtp(SmtpError::Invalid { .. } | SmtpError::PasswordRequired) => {
+                ApiError::BadRequest {
+                    reason: value.to_string(),
+                }
+            }
+            CoreError::Smtp(SmtpError::NotFound { .. }) => ApiError::NotFound {
+                reason: value.to_string(),
+            },
+            CoreError::Smtp(SmtpError::UnsupportedKind) => ApiError::Conflict {
+                reason: value.to_string(),
+            },
             CoreError::Agent(AgentError::InvalidCedar { .. }) => ApiError::Unprocessable {
                 reason: value.to_string(),
             },
@@ -554,6 +565,31 @@ mod tests {
 
     /// The other half of the rule: an internal fault stays opaque. Its message
     /// may name a table, a query or a host, and none of that is the caller's.
+    #[test]
+    fn the_email_provider_refusals_get_the_status_that_means_something() {
+        let status_of = |error: SmtpError| {
+            ApiError::from(CoreError::Smtp(error))
+                .into_response()
+                .status()
+        };
+
+        assert_eq!(
+            status_of(SmtpError::invalid("bad host")),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            status_of(SmtpError::PasswordRequired),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            status_of(SmtpError::NotFound {
+                realm: "master".to_string()
+            }),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(status_of(SmtpError::UnsupportedKind), StatusCode::CONFLICT);
+    }
+
     #[test]
     fn an_internal_error_does_not_leak_its_message() {
         let error = ApiError::from(CoreError::DatabaseError {

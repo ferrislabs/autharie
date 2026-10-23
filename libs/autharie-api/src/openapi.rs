@@ -214,6 +214,8 @@ fn served_paths() -> Vec<&'static str> {
         <deployments::agent_servers::AgentServersRoute as TypedPath>::PATH,
         <deployments::agent_servers::AgentServerRoute as TypedPath>::PATH,
         <deployments::agent_servers::AgentServerDiscoverRoute as TypedPath>::PATH,
+        <deployments::smtp::SmtpRoute as TypedPath>::PATH,
+        <deployments::smtp::BrandingRealmsRoute as TypedPath>::PATH,
         <cloud_credentials::register_credential::CloudCredentialsRoute as TypedPath>::PATH,
         <cloud_credentials::delete_credential::CloudCredentialRoute as TypedPath>::PATH,
         <cloud_credentials::list_offers::ProviderOffersRoute as TypedPath>::PATH,

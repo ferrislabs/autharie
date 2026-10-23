@@ -59,6 +59,11 @@ use crate::{
         },
         read_logs::{__path_read_logs_handler, read_logs_handler},
         resize_cluster::{__path_resize_cluster_handler, resize_cluster_handler},
+        smtp::{
+            __path_delete_smtp_handler, __path_get_smtp_handler,
+            __path_list_branding_realms_handler, __path_put_smtp_handler, delete_smtp_handler,
+            get_smtp_handler, list_branding_realms_handler, put_smtp_handler,
+        },
         subscription::{
             __path_get_subscription_handler, __path_put_subscription_handler,
             get_subscription_handler, put_subscription_handler,
@@ -100,6 +105,7 @@ pub mod network_access;
 pub mod power;
 pub mod read_logs;
 pub mod resize_cluster;
+pub mod smtp;
 pub mod subscription;
 pub mod update_deployment;
 pub mod upgrade_deployment;
@@ -167,6 +173,10 @@ pub mod webhooks;
         update_agent_server_handler,
         remove_agent_server_handler,
         discover_agent_server_handler,
+        get_smtp_handler,
+        put_smtp_handler,
+        delete_smtp_handler,
+        list_branding_realms_handler,
     ),
     tags(
         (name = "deployments", description = "Deployment management endpoints scoped to organisations.")
@@ -231,6 +241,10 @@ pub fn deployment_routes(app_state: AppState) -> Router<AppState> {
         .typed_put(update_agent_server_handler)
         .typed_delete(remove_agent_server_handler)
         .typed_post(discover_agent_server_handler)
+        .typed_get(get_smtp_handler)
+        .typed_put(put_smtp_handler)
+        .typed_delete(delete_smtp_handler)
+        .typed_get(list_branding_realms_handler)
         .typed_get(get_deployment_handler)
         .typed_patch(update_deployment_handler)
         .typed_delete(delete_deployment_handler)

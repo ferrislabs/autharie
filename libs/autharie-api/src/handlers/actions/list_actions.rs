@@ -3,6 +3,7 @@ use autharie_core::{
     action::{Action, ActionCursor, commands::FetchActionsCommand},
     deployments::ports::DeploymentService,
     organisation::OrganisationId,
+    smtp::redacted as redacted_smtp,
     webhooks::redacted,
 };
 use axum::{
@@ -76,7 +77,11 @@ pub async fn list_actions_handler(
     let batch = state.service.fetch_actions(command).await?;
 
     Ok(Response::OK(ListActionsResponse {
-        data: batch.actions.into_iter().map(redacted).collect(),
+        data: batch
+            .actions
+            .into_iter()
+            .map(|action| redacted_smtp(redacted(action)))
+            .collect(),
         next_cursor: batch.next_cursor.map(|cursor| cursor.0),
     }))
 }

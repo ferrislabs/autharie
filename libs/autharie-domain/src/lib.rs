@@ -23,6 +23,7 @@ pub mod organisation;
 pub mod platform;
 pub mod role;
 pub mod signals;
+pub mod smtp;
 pub mod traces;
 pub mod upgrades;
 pub mod user;
@@ -276,6 +277,9 @@ pub enum CoreError {
 
     #[error(transparent)]
     Agent(#[from] crate::agents::AgentError),
+
+    #[error(transparent)]
+    Smtp(#[from] crate::smtp::SmtpError),
 
     #[error(transparent)]
     Profile(#[from] crate::dataplane::cluster_profile::ProfileError),

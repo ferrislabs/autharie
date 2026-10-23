@@ -52,6 +52,9 @@ pub mod role;
 pub mod signals;
 
 #[cfg_attr(coverage_nightly, coverage(off))]
+pub mod smtp;
+
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub mod upgrades;
 
 #[cfg_attr(coverage_nightly, coverage(off))]
@@ -104,6 +107,7 @@ pub mod registry {
         pub struct Metrics;
         pub struct Release;
         pub struct Signal;
+        pub struct Smtp;
         pub struct Statement;
         pub struct Subscription;
         pub struct Tier;
@@ -170,6 +174,7 @@ mod registry_completeness {
         assert_registered::<domain::Organisation>();
         assert_registered::<domain::Release>();
         assert_registered::<domain::Signal>();
+        assert_registered::<domain::Smtp>();
         assert_registered::<domain::UpgradeRun>();
         assert_registered::<domain::Role>();
         assert_registered::<domain::User>();

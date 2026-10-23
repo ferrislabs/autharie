@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO deployment_smtp_configs (\n                deployment_id, realm, host, port, encryption, username, from_email, from_name,\n                password_ciphertext, password_nonce, password_wrapped_dek,\n                password_key_provider, password_key_name, password_key_version,\n                phase, message, updated_at\n            )\n            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)\n            ON CONFLICT (deployment_id, realm) DO UPDATE\n            SET host = EXCLUDED.host,\n                port = EXCLUDED.port,\n                encryption = EXCLUDED.encryption,\n                username = EXCLUDED.username,\n                from_email = EXCLUDED.from_email,\n                from_name = EXCLUDED.from_name,\n                password_ciphertext = EXCLUDED.password_ciphertext,\n                password_nonce = EXCLUDED.password_nonce,\n                password_wrapped_dek = EXCLUDED.password_wrapped_dek,\n                password_key_provider = EXCLUDED.password_key_provider,\n                password_key_name = EXCLUDED.password_key_name,\n                password_key_version = EXCLUDED.password_key_version,\n                phase = EXCLUDED.phase,\n                message = EXCLUDED.message,\n                updated_at = EXCLUDED.updated_at\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Int4",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Bytea",
+        "Bytea",
+        "Text",
+        "Text",
+        "Text",
+        "Int4",
+        "Text",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "fb44eac11b8ba89347e04f9527f72633e34b7609fd2f30e59af0d30275a85786"
+}
