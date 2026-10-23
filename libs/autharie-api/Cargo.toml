@@ -38,6 +38,7 @@ serde_json = "1.0.145"
 
 [dev-dependencies]
 # Driving the router in a test, to assert what it does and does not serve.
+base64 = "0.22.1"
 tower = { version = "0.5", features = ["util"] }
 uuid = { version = "1.19.0", features = ["v4"] }
 sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "postgres"] }

@@ -1,9 +1,15 @@
+use std::collections::BTreeMap;
+
 use autharie_core::{
     CoreError,
-    agents::{AgentDecision, DecisionQuery, DecisionVerdict, decision::AgentDecisionIndex},
+    agents::{
+        AgentDecision, DecisionQuery, DecisionVerdict, decision::AgentDecisionIndex,
+        registry::MAX_LISTED_CLIENTS, registry_ports::AgentActivityIndex,
+    },
+    deployments::DeploymentId,
     organisation::OrganisationId,
 };
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 use reqwest::StatusCode;
 use serde::Deserialize;
 
@@ -65,6 +71,9 @@ fn build_query(query: &DecisionQuery) -> String {
     if let Some(subject) = &query.subject {
         clauses.push(format!("subject_id:{}", as_phrase(subject)));
     }
+    if let Some(agent) = &query.agent {
+        clauses.push(format!("agent:{}", as_phrase(agent)));
+    }
 
     clauses.join(" AND ")
 }
@@ -84,6 +93,7 @@ fn decisions(hits: Vec<DecisionHit>, query: &DecisionQuery) -> Vec<AgentDecision
                 .as_ref()
                 .is_none_or(|subject| &hit.subject_id == subject)
         })
+        .filter(|hit| query.agent.as_ref().is_none_or(|agent| &hit.agent == agent))
         .filter_map(|hit| {
             let decision = DecisionVerdict::parse(&hit.decision)?;
             if query.decision.is_some_and(|wanted| wanted != decision) {
@@ -117,6 +127,131 @@ fn decisions(hits: Vec<DecisionHit>, query: &DecisionQuery) -> Vec<AgentDecision
     });
     found.truncate(query.limit);
     found
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ActivityMax {
+    #[serde(default)]
+    value: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ActivityBucket {
+    key: String,
+    #[serde(default)]
+    last: ActivityMax,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ActivityBuckets {
+    #[serde(default)]
+    buckets: Vec<ActivityBucket>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ActivityAggregations {
+    #[serde(default)]
+    by_agent: ActivityBuckets,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ActivityResponse {
+    #[serde(default)]
+    aggregations: ActivityAggregations,
+}
+
+fn activity_query(deployment_id: DeploymentId) -> String {
+    format!(
+        "kind:agent_decision AND deployment_id:{}",
+        as_phrase(&deployment_id.0.to_string())
+    )
+}
+
+fn instant(value: f64) -> Option<DateTime<Utc>> {
+    let magnitude = value.abs();
+    let nanos = if magnitude >= 1e17 {
+        value
+    } else if magnitude >= 1e14 {
+        value * 1e3
+    } else if magnitude >= 1e11 {
+        value * 1e6
+    } else {
+        value * 1e9
+    };
+    Utc.timestamp_nanos(nanos as i64).into()
+}
+
+fn last_seen(response: ActivityResponse) -> BTreeMap<String, DateTime<Utc>> {
+    response
+        .aggregations
+        .by_agent
+        .buckets
+        .into_iter()
+        .filter(|bucket| !bucket.key.is_empty())
+        .filter_map(|bucket| Some((bucket.key, instant(bucket.last.value?)?)))
+        .collect()
+}
+
+impl AgentActivityIndex for QuickwitLogSearchIndex {
+    async fn last_seen(
+        &self,
+        organisation_id: OrganisationId,
+        deployment_id: DeploymentId,
+        since: DateTime<Utc>,
+    ) -> Result<BTreeMap<String, DateTime<Utc>>, CoreError> {
+        let body = serde_json::json!({
+            "query": activity_query(deployment_id),
+            "start_timestamp": since.timestamp(),
+            "max_hits": 0,
+            "aggs": {
+                "by_agent": {
+                    "terms": { "field": "agent", "size": MAX_LISTED_CLIENTS },
+                    "aggs": { "last": { "max": { "field": "timestamp" } } }
+                }
+            }
+        });
+
+        let response = self
+            .client
+            .post(self.search_url(organisation_id))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|err| {
+                CoreError::InternalError(format!("failed to read the agents' activity: {err}"))
+            })?;
+
+        if response.status() == StatusCode::NOT_FOUND {
+            return Ok(BTreeMap::new());
+        }
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(CoreError::InternalError(format!(
+                "quickwit aggregation failed with status {status}: {body}"
+            )));
+        }
+
+        let parsed: ActivityResponse = response.json().await.map_err(|err| {
+            CoreError::InternalError(format!("failed to parse quickwit's aggregation: {err}"))
+        })?;
+
+        Ok(last_seen(parsed))
+    }
+}
+
+impl AgentActivityIndex for &QuickwitLogSearchIndex {
+    async fn last_seen(
+        &self,
+        organisation_id: OrganisationId,
+        deployment_id: DeploymentId,
+        since: DateTime<Utc>,
+    ) -> Result<BTreeMap<String, DateTime<Utc>>, CoreError> {
+        (*self)
+            .last_seen(organisation_id, deployment_id, since)
+            .await
+    }
 }
 
 impl AgentDecisionIndex for QuickwitLogSearchIndex {
@@ -198,6 +333,7 @@ mod tests {
             decision: None,
             tool: None,
             subject: None,
+            agent: None,
             from: None,
             to: None,
             limit: 50,
@@ -228,6 +364,61 @@ mod tests {
         assert!(text.starts_with("kind:agent_decision AND "));
         assert!(text.contains(&format!("deployment_id:\"{}\"", Uuid::from_u128(1))));
         assert!(!text.contains("decision:"));
+    }
+
+    #[test]
+    fn the_agent_filter_is_one_exact_clause_and_drops_near_matches() {
+        let mut wanted = query();
+        wanted.agent = Some("claude".to_string());
+
+        assert!(build_query(&wanted).contains("AND agent:\"claude\""));
+        let mut other = hit("x", "allow", "t", "u", 1);
+        other.agent = "claude-2".to_string();
+        let found = decisions(vec![hit("a", "allow", "t", "u", 1), other], &wanted);
+
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].request_id, "a");
+    }
+
+    #[test]
+    fn spec_ar_7_the_activity_aggregation_is_a_terms_on_agent_with_the_newest_timestamp() {
+        let text = activity_query(DeploymentId(Uuid::from_u128(1)));
+
+        assert!(text.starts_with("kind:agent_decision AND deployment_id:"));
+        let parsed: ActivityResponse = serde_json::from_value(json!({
+            "aggregations": { "by_agent": { "buckets": [
+                { "key": "claude", "doc_count": 3, "last": { "value": 1_800_000_000_000.0 } },
+                { "key": "cursor", "doc_count": 1, "last": { "value": 1_800_000_100.0 } },
+                { "key": "empty", "doc_count": 1, "last": { "value": null } },
+                { "key": "", "doc_count": 1, "last": { "value": 1_800_000_000_000.0 } }
+            ] } }
+        }))
+        .unwrap();
+
+        let seen = last_seen(parsed);
+
+        assert_eq!(seen.len(), 2);
+        assert_eq!(seen["claude"].timestamp(), 1_800_000_000);
+        assert_eq!(seen["cursor"].timestamp(), 1_800_000_100);
+    }
+
+    #[test]
+    fn a_timestamp_in_nanoseconds_or_microseconds_is_read_too() {
+        assert_eq!(
+            instant(1_800_000_000_000_000_000.0).unwrap().timestamp(),
+            1_800_000_000
+        );
+        assert_eq!(
+            instant(1_800_000_000_000_000.0).unwrap().timestamp(),
+            1_800_000_000
+        );
+    }
+
+    #[test]
+    fn a_response_without_aggregations_is_no_activity() {
+        let parsed: ActivityResponse = serde_json::from_value(json!({ "num_hits": 0 })).unwrap();
+
+        assert!(last_seen(parsed).is_empty());
     }
 
     #[test]

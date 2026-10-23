@@ -536,6 +536,7 @@ dependencies = [
  "axum",
  "axum-extra",
  "axum-server",
+ "base64 0.22.1",
  "chrono",
  "chrono-tz",
  "clap",

@@ -521,12 +521,11 @@ where
             CredentialState::Pending => Ok(CredentialFetch::Pending),
             CredentialState::Ready => {
                 let settings = self.settings(deployment_id).await?;
-                let audience = self.mcp_url(&deployment, &settings).ok_or_else(|| {
-                    AgentError::invalid("the deployment's public address is not known yet")
-                })?;
-                let token_url = token_url(&audience, &settings.realm).ok_or_else(|| {
-                    AgentError::invalid("the deployment's public address is not known yet")
-                })?;
+                let audience = self
+                    .mcp_url(&deployment, &settings)
+                    .ok_or(AgentError::AddressUnknown)?;
+                let token_url =
+                    token_url(&audience, &settings.realm).ok_or(AgentError::AddressUnknown)?;
 
                 let taken = agents
                     .take_sealed(deployment_id, request_id, now)

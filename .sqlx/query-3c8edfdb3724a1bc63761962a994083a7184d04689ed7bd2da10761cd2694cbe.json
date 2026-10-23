@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT sealed IS NOT NULL AS \"ready!\", delivered_at IS NOT NULL AS \"delivered!\"\n            FROM agent_credentials\n            WHERE request_id = $1 AND deployment_id = $2 AND expires_at > $3\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "ready!",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 1,
+        "name": "delivered!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "3c8edfdb3724a1bc63761962a994083a7184d04689ed7bd2da10761cd2694cbe"
+}

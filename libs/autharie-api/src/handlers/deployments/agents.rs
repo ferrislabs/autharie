@@ -110,6 +110,8 @@ pub struct AgentDecisionsQuery {
     pub tool: Option<String>,
     /// Exact subject id.
     pub subject: Option<String>,
+    /// Exact agent (client) id.
+    pub agent: Option<String>,
     /// At most 200, 50 when left out.
     pub limit: Option<usize>,
 }
@@ -132,7 +134,8 @@ fn decision_query(query: AgentDecisionsQuery) -> Result<DecisionQuery, ApiError>
         query.from,
         query.to,
         query.limit,
-    )?)
+    )?
+    .with_agent(query.agent.as_deref()))
 }
 
 #[utoipa::path(
@@ -495,6 +498,7 @@ mod tests {
             decision: Some("maybe".to_string()),
             tool: None,
             subject: None,
+            agent: None,
             limit: None,
         })
         .expect_err("refused");

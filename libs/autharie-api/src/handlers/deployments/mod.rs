@@ -4,6 +4,16 @@ use utoipa::OpenApi;
 
 use crate::{
     handlers::deployments::{
+        agent_registry::{
+            __path_approve_agent_handler, __path_block_agent_handler,
+            __path_create_autonomous_agent_handler, __path_delete_agent_handler,
+            __path_get_agent_credential_handler, __path_list_agent_clients_handler,
+            __path_put_agent_access_handler, __path_rotate_autonomous_secret_handler,
+            __path_unblock_agent_handler, approve_agent_handler, block_agent_handler,
+            create_autonomous_agent_handler, delete_agent_handler, get_agent_credential_handler,
+            list_agent_clients_handler, put_agent_access_handler, rotate_autonomous_secret_handler,
+            unblock_agent_handler,
+        },
         agents::{
             __path_create_agent_policy_handler, __path_delete_agent_policy_handler,
             __path_get_agents_handler, __path_list_agent_decisions_handler,
@@ -66,6 +76,7 @@ use crate::{
     state::AppState,
 };
 
+pub mod agent_registry;
 pub mod agents;
 pub mod availability;
 pub mod backups;
@@ -134,6 +145,15 @@ pub mod webhooks;
         update_agent_policy_handler,
         delete_agent_policy_handler,
         list_agent_decisions_handler,
+        list_agent_clients_handler,
+        put_agent_access_handler,
+        approve_agent_handler,
+        block_agent_handler,
+        unblock_agent_handler,
+        delete_agent_handler,
+        create_autonomous_agent_handler,
+        rotate_autonomous_secret_handler,
+        get_agent_credential_handler,
     ),
     tags(
         (name = "deployments", description = "Deployment management endpoints scoped to organisations.")
@@ -184,6 +204,15 @@ pub fn deployment_routes(app_state: AppState) -> Router<AppState> {
         .typed_put(update_agent_policy_handler)
         .typed_delete(delete_agent_policy_handler)
         .typed_get(list_agent_decisions_handler)
+        .typed_get(list_agent_clients_handler)
+        .typed_put(put_agent_access_handler)
+        .typed_post(approve_agent_handler)
+        .typed_post(block_agent_handler)
+        .typed_post(unblock_agent_handler)
+        .typed_delete(delete_agent_handler)
+        .typed_post(create_autonomous_agent_handler)
+        .typed_post(rotate_autonomous_secret_handler)
+        .typed_get(get_agent_credential_handler)
         .typed_get(get_deployment_handler)
         .typed_patch(update_deployment_handler)
         .typed_delete(delete_deployment_handler)

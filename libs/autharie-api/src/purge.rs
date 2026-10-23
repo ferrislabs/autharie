@@ -68,3 +68,21 @@ pub async fn purge_deleted_deployments(state: AppState) {
         }
     }
 }
+
+const CREDENTIALS_EVERY: Duration = Duration::from_secs(60);
+
+/// A sealed credential is kept 15 minutes at most. Reads already ignore an
+/// expired one; this is what actually deletes it when nobody asks again.
+pub async fn purge_expired_agent_credentials(state: AppState) {
+    let mut ticker = interval(CREDENTIALS_EVERY);
+
+    loop {
+        ticker.tick().await;
+
+        match state.service.purge_expired_agent_credentials().await {
+            Ok(0) => {}
+            Ok(purged) => info!(purged, "removed agent credentials past their lifetime"),
+            Err(err) => error!(%err, "failed to purge agent credentials"),
+        }
+    }
+}

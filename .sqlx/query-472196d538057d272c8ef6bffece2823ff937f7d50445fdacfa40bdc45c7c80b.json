@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE agent_credentials\n            SET sealed = $4\n            WHERE request_id = $1\n              AND deployment_id = $2\n              AND client_id = $3\n              AND sealed IS NULL\n              AND delivered_at IS NULL\n              AND expires_at > $5\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "472196d538057d272c8ef6bffece2823ff937f7d50445fdacfa40bdc45c7c80b"
+}

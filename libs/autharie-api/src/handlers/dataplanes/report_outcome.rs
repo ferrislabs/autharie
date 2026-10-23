@@ -1,6 +1,11 @@
 use autharie_auth::Identity;
 use autharie_core::{
-    agents::{AgentError, commands::AgentsOutcome, ports::AgentOutcomeService},
+    agents::{
+        AgentError,
+        commands::AgentsOutcome,
+        ports::AgentOutcomeService,
+        registry::{ReportedClient, ReportedCredential, ReportedRegistry},
+    },
     dataplane::{credential::SecretString, ports::DataPlaneService, value_objects::DataPlaneId},
     deployments::{DeploymentId, commands::ReportDeploymentOutcomeCommand},
     webhooks::{
@@ -59,6 +64,27 @@ pub struct AgentPolicyReport {
 }
 
 #[derive(Deserialize, ToSchema)]
+pub struct AgentClientReport {
+    pub client_id: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    /// `dynamic`, `metadata_document` or `autharie`.
+    pub source: String,
+    /// `delegated` or `autonomous`.
+    pub kind: String,
+    pub enabled: bool,
+    #[serde(default)]
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct AgentCredentialReport {
+    pub request_id: Uuid,
+    pub client_id: String,
+    pub sealed: String,
+}
+
+#[derive(Deserialize, ToSchema)]
 pub struct ReportOutcomeRequest {
     /// `webhooks` for a report of a deployment's webhooks, `deployment.agents`
     /// for a report of its agents; absent for the outcome of the deployment
@@ -94,6 +120,19 @@ pub struct ReportOutcomeRequest {
     /// What became of each enabled policy. Only with `kind: deployment.agents`.
     #[serde(default)]
     pub policies: Vec<AgentPolicyReport>,
+
+    /// The agent clients the data plane found in the realm, newest first, at most 500.
+    /// Only with `kind: deployment.agents`.
+    #[serde(default)]
+    pub clients: Vec<AgentClientReport>,
+
+    /// Whether the realm holds more agent clients than `clients` lists.
+    #[serde(default)]
+    pub clients_truncated: bool,
+
+    /// Secrets sealed for the browsers that asked, each for one request.
+    #[serde(default)]
+    pub credentials: Vec<AgentCredentialReport>,
 
     /// What the data plane observed: `running`, `failed` or `deleted`.
     /// Not sent with `kind: webhooks` or `kind: deployment.agents`.
@@ -230,7 +269,35 @@ fn agents_outcome(
         reason: "an agents report needs a phase".to_string(),
     })?;
 
-    AgentsOutcome::parse(
+    let bad = |error: AgentError| ApiError::BadRequest {
+        reason: error.to_string(),
+    };
+
+    let clients = request
+        .clients
+        .iter()
+        .map(|report| {
+            ReportedClient::parse(
+                &report.client_id,
+                report.name.as_deref(),
+                &report.source,
+                &report.kind,
+                report.enabled,
+                report.created_at,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(bad)?;
+    let credentials = request
+        .credentials
+        .iter()
+        .map(|report| {
+            ReportedCredential::parse(report.request_id, &report.client_id, &report.sealed)
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(bad)?;
+
+    let outcome = AgentsOutcome::parse(
         revision,
         &phase,
         request.gateway_client_ready,
@@ -242,9 +309,15 @@ fn agents_outcome(
             .map(|report| (report.id, report.phase, report.message))
             .collect(),
     )
-    .map_err(|error: AgentError| ApiError::BadRequest {
-        reason: error.to_string(),
-    })
+    .map_err(bad)?;
+
+    Ok(outcome.with_registry(
+        ReportedRegistry {
+            clients,
+            truncated: request.clients_truncated,
+        },
+        credentials,
+    ))
 }
 
 #[utoipa::path(
@@ -351,6 +424,70 @@ mod tests {
 
         assert!(body.kind.is_none());
         assert_eq!(body.outcome, "running");
+    }
+
+    #[test]
+    fn an_agents_report_carries_the_registry_and_the_sealed_credentials() {
+        let deployment = DeploymentId(Uuid::new_v4());
+        let waiting = Uuid::new_v4();
+        let outcome = agents_outcome(
+            deployment,
+            request(serde_json::json!({
+                "deployment_id": deployment.0,
+                "kind": "deployment.agents",
+                "revision": 2,
+                "phase": "Ready",
+                "clients": [
+                    { "client_id": "dcr", "source": "dynamic", "kind": "delegated", "enabled": true },
+                    { "client_id": "agent-a-abc123", "name": "A", "source": "autharie",
+                      "kind": "autonomous", "enabled": false, "created_at": "2026-10-23T10:00:00Z" }
+                ],
+                "clients_truncated": true,
+                "credentials": [
+                    { "request_id": waiting, "client_id": "agent-a-abc123", "sealed": "c2VhbGVk" }
+                ]
+            })),
+        )
+        .expect("accepted");
+
+        assert_eq!(outcome.registry.clients.len(), 2);
+        assert!(outcome.registry.truncated);
+        assert_eq!(outcome.credentials[0].request_id, waiting);
+    }
+
+    #[test]
+    fn an_agents_report_without_clients_is_an_empty_registry() {
+        let deployment = DeploymentId(Uuid::new_v4());
+        let outcome = agents_outcome(
+            deployment,
+            request(serde_json::json!({
+                "kind": "deployment.agents", "revision": 1, "phase": "Ready"
+            })),
+        )
+        .expect("accepted");
+
+        assert!(outcome.registry.clients.is_empty());
+        assert!(!outcome.registry.truncated);
+        assert!(outcome.credentials.is_empty());
+    }
+
+    #[test]
+    fn an_agents_report_with_an_unknown_source_or_a_malformed_secret_is_a_400() {
+        let deployment = DeploymentId(Uuid::new_v4());
+
+        for body in [
+            serde_json::json!({ "kind": "deployment.agents", "revision": 1, "phase": "Ready",
+                "clients": [{ "client_id": "x", "source": "admin", "kind": "delegated", "enabled": true }] }),
+            serde_json::json!({ "kind": "deployment.agents", "revision": 1, "phase": "Ready",
+                "clients": [{ "client_id": "x", "source": "seen", "kind": "delegated", "enabled": true }] }),
+            serde_json::json!({ "kind": "deployment.agents", "revision": 1, "phase": "Ready",
+                "credentials": [{ "request_id": Uuid::new_v4(), "client_id": "x", "sealed": "not base64 !" }] }),
+        ] {
+            assert!(matches!(
+                agents_outcome(deployment, request(body)),
+                Err(ApiError::BadRequest { .. })
+            ));
+        }
     }
 
     #[test]

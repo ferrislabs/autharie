@@ -61,12 +61,21 @@ pub struct DecisionQuery {
     pub decision: Option<DecisionVerdict>,
     pub tool: Option<String>,
     pub subject: Option<String>,
+    pub agent: Option<String>,
     pub from: Option<DateTime<Utc>>,
     pub to: Option<DateTime<Utc>>,
     pub limit: usize,
 }
 
 impl DecisionQuery {
+    pub fn with_agent(mut self, agent: Option<&str>) -> Self {
+        self.agent = agent
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(str::to_string);
+        self
+    }
+
     pub fn parse(
         decision: Option<&str>,
         tool: Option<&str>,
@@ -105,6 +114,7 @@ impl DecisionQuery {
             decision,
             tool: text(tool),
             subject: text(subject),
+            agent: None,
             from,
             to,
             limit: limit.unwrap_or(DEFAULT_DECISIONS).min(MAX_DECISIONS),
@@ -140,6 +150,18 @@ mod tests {
         assert!(DecisionQuery::parse(Some("maybe"), None, None, None, None, None).is_err());
         assert!(DecisionQuery::parse(None, None, None, Some(now), Some(now), None).is_err());
         assert!(DecisionQuery::parse(None, None, None, None, None, Some(0)).is_err());
+    }
+
+    #[test]
+    fn an_agent_filter_is_trimmed_and_a_blank_one_is_none() {
+        let base = || DecisionQuery::parse(None, None, None, None, None, None).unwrap();
+
+        assert_eq!(
+            base().with_agent(Some(" claude ")).agent.as_deref(),
+            Some("claude")
+        );
+        assert_eq!(base().with_agent(Some(" ")).agent, None);
+        assert_eq!(base().with_agent(None).agent, None);
     }
 
     #[test]

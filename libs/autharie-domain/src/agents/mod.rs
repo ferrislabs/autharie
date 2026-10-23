@@ -60,6 +60,9 @@ pub enum AgentError {
     #[error("agents are not enabled on this deployment")]
     NotEnabled,
 
+    #[error("the deployment's public address is not known yet")]
+    AddressUnknown,
+
     #[error("no autonomous agent {client_id} on this deployment")]
     AutonomousAgentNotFound { client_id: String },
 

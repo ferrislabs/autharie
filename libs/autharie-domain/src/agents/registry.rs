@@ -278,6 +278,7 @@ pub struct AgentClient {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct RegistryView {
+    pub approval_required: bool,
     pub data: Vec<AgentClient>,
     pub truncated: bool,
 }
@@ -364,6 +365,7 @@ pub fn assemble(
     data.truncate(MAX_LISTED_CLIENTS);
 
     RegistryView {
+        approval_required: access.approval_required,
         data,
         truncated: reported.truncated,
     }
@@ -907,6 +909,18 @@ mod tests {
         assert_eq!(view.data[0].source, ClientSource::Autharie);
         assert_eq!(view.data[0].kind, ClientKind::Autonomous);
         assert_eq!(view.data[0].name.as_deref(), Some("n8n"));
+    }
+
+    #[test]
+    fn the_approval_mode_is_part_of_the_view() {
+        let lists = AccessLists {
+            approval_required: true,
+            ..AccessLists::default()
+        };
+
+        assert!(
+            assemble(&ReportedRegistry::default(), &[], &lists, &BTreeMap::new()).approval_required
+        );
     }
 
     #[test]
