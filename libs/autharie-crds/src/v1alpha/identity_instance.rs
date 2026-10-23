@@ -115,6 +115,47 @@ pub struct IdentityInstanceSpec {
     /// `<instance>-smtp` Secret, under the realm's name.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub smtp: Vec<SmtpSpec>,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub portal_themes: Vec<PortalThemeSpec>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PortalThemeSpec {
+    pub realm: String,
+
+    pub revision: u64,
+
+    #[schemars(schema_with = "free_form_object")]
+    pub config: serde_json::Value,
+}
+
+fn free_form_object(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({
+        "type": "object",
+        "x-kubernetes-preserve-unknown-fields": true
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum PortalThemePhase {
+    Pending,
+    Applied,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PortalThemeStatus {
+    pub realm: String,
+
+    pub revision: u64,
+
+    pub phase: PortalThemePhase,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -504,6 +545,9 @@ pub struct IdentityInstanceStatus {
     /// What became of each of `spec.smtp`, in the same order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub smtp: Vec<SmtpStatus>,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub portal_themes: Vec<PortalThemeStatus>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -930,8 +974,8 @@ mod tests {
     use crate::v1alpha::identity_instance::{
         DatabaseConfig, DatabaseMode, IdentityInstance, IdentityInstanceSpec,
         IdentityInstanceStatus, IdentityProvider, ManagedClusterConfig, ManagedClusterStorage,
-        SmtpEncryption, SmtpPhase, SmtpSpec, WebhookPhase, WebhookRequestKind, WebhookRequestPhase,
-        WebhookSpec,
+        PortalThemePhase, PortalThemeSpec, SmtpEncryption, SmtpPhase, SmtpSpec, WebhookPhase,
+        WebhookRequestKind, WebhookRequestPhase, WebhookSpec,
     };
     use kube::core::ObjectMeta;
 
@@ -976,6 +1020,7 @@ mod tests {
             webhook_requests: Vec::new(),
             agents: None,
             smtp: Vec::new(),
+            portal_themes: Vec::new(),
         };
 
         assert_eq!(spec.provider, IdentityProvider::Keycloak);
@@ -1509,6 +1554,112 @@ mod tests {
     }
 
     #[test]
+    fn a_spec_without_portal_themes_stays_valid_and_serialises_without_them() {
+        let spec: IdentityInstanceSpec = serde_json::from_value(spec_json()).unwrap();
+
+        assert!(spec.portal_themes.is_empty());
+        assert!(
+            serde_json::to_value(&spec)
+                .unwrap()
+                .get("portalThemes")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn portal_themes_round_trip_with_their_config_untouched() {
+        let mut value = spec_json();
+        value["portalThemes"] = json!([
+            {
+                "realm": "acme",
+                "revision": 3,
+                "config": {
+                    "colors": { "primaryButton": "#112233" },
+                    "fonts": { "baseSize": 16 },
+                    "somethingNew": [1, 2, { "deep": true }]
+                }
+            },
+            { "realm": "master", "revision": 9, "config": {} }
+        ]);
+
+        let spec: IdentityInstanceSpec = serde_json::from_value(value.clone()).unwrap();
+
+        assert_eq!(spec.portal_themes[0].realm, "acme");
+        assert_eq!(spec.portal_themes[0].revision, 3);
+        assert_eq!(
+            spec.portal_themes[0].config["colors"]["primaryButton"],
+            "#112233"
+        );
+        assert_eq!(spec.portal_themes[1].config, json!({}));
+        assert_eq!(
+            serde_json::to_value(&spec).unwrap()["portalThemes"],
+            value["portalThemes"]
+        );
+    }
+
+    #[test]
+    fn a_portal_theme_needs_its_realm_revision_and_config() {
+        for entry in [
+            json!({ "revision": 1, "config": {} }),
+            json!({ "realm": "acme", "config": {} }),
+            json!({ "realm": "acme", "revision": 1 }),
+        ] {
+            assert!(serde_json::from_value::<PortalThemeSpec>(entry).is_err());
+        }
+    }
+
+    #[test]
+    fn portal_theme_status_round_trips_in_the_frozen_shape() {
+        let status: IdentityInstanceStatus = serde_json::from_value(json!({
+            "portalThemes": [
+                { "realm": "acme", "revision": 3, "phase": "Applied" },
+                { "realm": "beta", "revision": 1, "phase": "Failed", "message": "bad colour" },
+                { "realm": "gamma", "revision": 2, "phase": "Pending", "message": "unreachable" }
+            ]
+        }))
+        .unwrap();
+
+        assert_eq!(status.portal_themes[0].phase, PortalThemePhase::Applied);
+        assert_eq!(status.portal_themes[1].phase, PortalThemePhase::Failed);
+        assert_eq!(status.portal_themes[2].phase, PortalThemePhase::Pending);
+        assert_eq!(
+            status.portal_themes[1].message.as_deref(),
+            Some("bad colour")
+        );
+        let back = serde_json::to_value(&status).unwrap();
+        assert!(back["portalThemes"][0].get("message").is_none());
+        assert_eq!(back["portalThemes"][2]["revision"], json!(2));
+        assert!(
+            serde_json::to_value(IdentityInstanceStatus::default())
+                .unwrap()
+                .get("portalThemes")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn the_schema_keeps_the_theme_config_free_form() {
+        use kube::CustomResourceExt;
+
+        let crd = serde_json::to_value(IdentityInstance::crd()).unwrap();
+        let schema = &crd["spec"]["versions"][0]["schema"]["openAPIV3Schema"]["properties"];
+        let entry = &schema["spec"]["properties"]["portalThemes"]["items"];
+        let config = &entry["properties"]["config"];
+
+        assert_eq!(entry["required"], json!(["config", "realm", "revision"]));
+        assert_eq!(config["type"], json!("object"));
+        assert_eq!(config["x-kubernetes-preserve-unknown-fields"], json!(true));
+        assert_eq!(entry["properties"]["revision"]["type"], json!("integer"));
+
+        let reported = &schema["status"]["properties"]["portalThemes"]["items"];
+        assert_eq!(reported["required"], json!(["phase", "realm", "revision"]));
+        assert_eq!(
+            reported["properties"]["phase"]["enum"],
+            json!(["Pending", "Applied", "Failed"])
+        );
+    }
+
+    #[test]
     fn the_schema_describes_smtp_with_its_constraints() {
         use kube::CustomResourceExt;
 
@@ -1684,6 +1835,7 @@ mod tests {
                 webhook_requests: Vec::new(),
                 agents: None,
                 smtp: Vec::new(),
+                portal_themes: Vec::new(),
                 restore: None,
                 iam: None,
                 organisation_id: "org-123".to_string(),
@@ -1718,6 +1870,7 @@ mod tests {
                 webhook_requests: Vec::new(),
                 agents: None,
                 smtp: Vec::new(),
+                portal_themes: Vec::new(),
                 phase: Some(Phase::Running),
                 ready: true,
                 endpoint: Some("https://auth.acme.com".to_string()),
@@ -1748,6 +1901,7 @@ mod tests {
                 webhook_requests: Vec::new(),
                 agents: None,
                 smtp: Vec::new(),
+                portal_themes: Vec::new(),
                 restore: None,
                 iam: None,
                 organisation_id: "org-123".to_string(),

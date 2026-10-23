@@ -38,6 +38,7 @@ const DESCRIPTIONS: Record<string, { title: string; icon: React.ComponentType<{ 
   'deployment.upgrade': { title: 'Upgraded', icon: ArrowUpCircle },
   'deployment.network_access': { title: 'Network access changed', icon: Network },
   'deployment.iam_settings': { title: 'Branding updated', icon: Palette },
+  'deployment.portal_theme': { title: 'Login theme updated', icon: Palette },
   'deployment.smtp': { title: 'Email provider updated', icon: Mail },
   'deployment.backup': { title: 'Backup taken', icon: DatabaseBackup },
   'deployment.restore': { title: 'Restored from a backup', icon: RotateCcw },

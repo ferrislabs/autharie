@@ -17,6 +17,10 @@ describe('the activity feed', () => {
     expect(render('deployment.smtp')).toContain('Email provider updated')
   })
 
+  it('names a login theme change', () => {
+    expect(render('deployment.portal_theme')).toContain('Login theme updated')
+  })
+
   it('falls back to the action type for one it does not know', () => {
     expect(render('deployment.unheard_of')).toContain('deployment.unheard_of')
   })

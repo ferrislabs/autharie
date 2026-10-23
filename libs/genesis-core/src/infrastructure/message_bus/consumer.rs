@@ -405,6 +405,11 @@ mod tests {
     }
 
     #[test]
+    fn the_portal_theme_action_is_bound() {
+        assert!(is_bound("deployment.portal_theme"));
+    }
+
+    #[test]
     fn the_webhook_actions_are_bound() {
         assert!(is_bound("deployment.webhooks"));
         assert!(is_bound("deployment.webhook.rotate_secret"));

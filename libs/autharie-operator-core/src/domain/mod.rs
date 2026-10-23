@@ -1,6 +1,7 @@
 pub mod agents;
 pub mod dataplane_upgrade;
 pub mod identity_instance;
+pub mod portal_themes;
 pub mod ports;
 pub mod shared_database;
 pub mod smtp;

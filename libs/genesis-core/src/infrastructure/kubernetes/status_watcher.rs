@@ -18,10 +18,15 @@ use crate::domain::entities::identity_instance::IdentityInstanceRef;
 use crate::domain::entities::outcome::DeploymentOutcomeReport;
 use crate::domain::error::GenesisError;
 use crate::domain::ports::{
-    AgentsOutcomePublisher, OutcomePublisher, SmtpOutcomePublisher, WebhookOutcomePublisher,
+    AgentsOutcomePublisher, OutcomePublisher, PortalThemeOutcomePublisher, SmtpOutcomePublisher,
+    WebhookOutcomePublisher,
 };
 use crate::infrastructure::kubernetes::agents_status::{
     AgentsTracker, Observation as AgentsObservation, build_report as build_agents_report,
+};
+use crate::infrastructure::kubernetes::portal_theme_status::{
+    Observation as PortalThemeObservation, PortalThemeTracker,
+    build_report as build_portal_theme_report,
 };
 use crate::infrastructure::kubernetes::smtp_status::{
     Observation as SmtpObservation, SmtpTracker, build_report as build_smtp_report,
@@ -62,8 +67,12 @@ pub struct IdentityInstanceStatusWatcher<W> {
     webhook_outcomes: Arc<W>,
 }
 
-impl<W: WebhookOutcomePublisher + AgentsOutcomePublisher + SmtpOutcomePublisher>
-    IdentityInstanceStatusWatcher<W>
+impl<
+    W: WebhookOutcomePublisher
+        + AgentsOutcomePublisher
+        + SmtpOutcomePublisher
+        + PortalThemeOutcomePublisher,
+> IdentityInstanceStatusWatcher<W>
 {
     pub fn new(
         client: Client,
@@ -182,6 +191,37 @@ impl<W: WebhookOutcomePublisher + AgentsOutcomePublisher + SmtpOutcomePublisher>
         }
     }
 
+    async fn report_portal_themes(
+        &self,
+        instance: &IdentityInstance,
+        deployment_id: Uuid,
+        tracker: &mut PortalThemeTracker,
+    ) {
+        let observation = PortalThemeObservation::of(instance.status.as_ref());
+
+        tracker.retain_observed(deployment_id, &observation);
+
+        let due: Vec<_> = tracker
+            .due(deployment_id, &observation)
+            .into_iter()
+            .map(|status| (status, build_portal_theme_report(deployment_id, status)))
+            .collect();
+
+        let mut published = Vec::new();
+        for (status, report) in &due {
+            match self.webhook_outcomes.publish_portal_theme(report).await {
+                Ok(()) => published.push(*status),
+                Err(err) => {
+                    warn!(%err, %deployment_id, realm = %status.realm, "failed to publish a portal theme outcome");
+                }
+            }
+        }
+
+        for status in published {
+            tracker.record(deployment_id, status);
+        }
+    }
+
     async fn read_secrets(&self, instance: &str, namespace: &str) -> BTreeMap<String, String> {
         let api: Api<Secret> = Api::namespaced(self.client.clone(), namespace);
 
@@ -222,6 +262,7 @@ impl<W: WebhookOutcomePublisher + AgentsOutcomePublisher + SmtpOutcomePublisher>
         let mut webhooks = WebhookTracker::default();
         let mut agents = AgentsTracker::default();
         let mut smtp = SmtpTracker::default();
+        let mut portal_themes = PortalThemeTracker::default();
 
         info!("watching IdentityInstance status");
 
@@ -252,6 +293,8 @@ impl<W: WebhookOutcomePublisher + AgentsOutcomePublisher + SmtpOutcomePublisher>
             self.report_agents(&instance, deployment_id, &mut agents)
                 .await;
             self.report_smtp(&instance, deployment_id, &mut smtp).await;
+            self.report_portal_themes(&instance, deployment_id, &mut portal_themes)
+                .await;
 
             let Some(outcome) = outcome_for(instance.status.as_ref()) else {
                 forget_unsettled(&mut reported, deployment_id);

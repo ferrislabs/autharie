@@ -24,6 +24,7 @@ pub mod platform;
 pub mod role;
 pub mod signals;
 pub mod smtp;
+pub mod themes;
 pub mod traces;
 pub mod upgrades;
 pub mod user;
@@ -280,6 +281,9 @@ pub enum CoreError {
 
     #[error(transparent)]
     Smtp(#[from] crate::smtp::SmtpError),
+
+    #[error(transparent)]
+    Theme(#[from] crate::themes::ThemeError),
 
     #[error(transparent)]
     Profile(#[from] crate::dataplane::cluster_profile::ProfileError),

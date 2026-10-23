@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Schemas } from '@/api/api.client'
-import { isBrandingOpen } from '../../branding'
+import { describeUnavailable, isBrandingOpen } from './branding-plan'
 
 const features = (branding: boolean): Schemas.DeploymentFeature[] => [
   { feature: 'mfa', open: true },
@@ -22,5 +22,22 @@ describe('branding on a deployment', () => {
 
   it('is closed while the features are unknown', () => {
     expect(isBrandingOpen(undefined)).toBe(false)
+  })
+})
+
+describe('saying why branding is closed', () => {
+  it('names the tier', () => {
+    expect(describeUnavailable('Free')).toBe(
+      'Branding is not included in the Free tier of this deployment.'
+    )
+  })
+
+  it('does without a tier', () => {
+    expect(describeUnavailable(undefined)).toBe(
+      'Branding is not included in the tier of this deployment.'
+    )
+    expect(describeUnavailable(null)).toBe(
+      'Branding is not included in the tier of this deployment.'
+    )
   })
 })

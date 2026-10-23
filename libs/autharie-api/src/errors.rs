@@ -1,6 +1,7 @@
 use autharie_core::{
     CoreError, agents::AgentError, backups::keys::KeyError, billing::BillingError,
-    dataplane::credential::CredentialError, smtp::SmtpError, webhooks::WebhookError,
+    dataplane::credential::CredentialError, smtp::SmtpError, themes::ThemeError,
+    webhooks::WebhookError,
 };
 use axum::{Json, http::StatusCode, response::IntoResponse};
 use serde::Serialize;
@@ -457,6 +458,20 @@ impl From<CoreError> for ApiError {
             CoreError::Smtp(SmtpError::UnsupportedKind) => ApiError::Conflict {
                 reason: value.to_string(),
             },
+            CoreError::Theme(ThemeError::Invalid { .. }) => ApiError::BadRequest {
+                reason: value.to_string(),
+            },
+            CoreError::Theme(ThemeError::NotFound { .. }) => ApiError::NotFound {
+                reason: value.to_string(),
+            },
+            CoreError::Theme(
+                ThemeError::ThemeLimit
+                | ThemeError::NameTaken { .. }
+                | ThemeError::ActiveTheme
+                | ThemeError::UnsupportedKind,
+            ) => ApiError::Conflict {
+                reason: value.to_string(),
+            },
             CoreError::Agent(AgentError::InvalidCedar { .. }) => ApiError::Unprocessable {
                 reason: value.to_string(),
             },
@@ -588,6 +603,37 @@ mod tests {
             StatusCode::NOT_FOUND
         );
         assert_eq!(status_of(SmtpError::UnsupportedKind), StatusCode::CONFLICT);
+    }
+
+    #[test]
+    fn the_theme_refusals_get_the_status_that_means_something() {
+        let status_of = |error: ThemeError| {
+            ApiError::from(CoreError::Theme(error))
+                .into_response()
+                .status()
+        };
+
+        assert_eq!(
+            status_of(ThemeError::invalid("colors.links: bad")),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            status_of(ThemeError::NotFound {
+                id: "x".to_string(),
+                realm: "master".to_string()
+            }),
+            StatusCode::NOT_FOUND
+        );
+        for conflict in [
+            ThemeError::ThemeLimit,
+            ThemeError::NameTaken {
+                name: "Autumn".to_string(),
+            },
+            ThemeError::ActiveTheme,
+            ThemeError::UnsupportedKind,
+        ] {
+            assert_eq!(status_of(conflict), StatusCode::CONFLICT);
+        }
     }
 
     #[test]

@@ -9,6 +9,8 @@ use crate::domain::entities::identity_instance::{
     DesiredIdentityInstance, DesiredUpgrade, IdentityInstanceRef, InFlightUpgrade, UpgradeRef,
 };
 use crate::domain::entities::outcome::DeploymentOutcomeReport;
+use crate::domain::entities::portal_theme_outcome::PortalThemeOutcomeReport;
+use crate::domain::entities::portal_theme_payload::PortalThemePayloadV1;
 use crate::domain::entities::smtp_outcome::SmtpOutcomeReport;
 use crate::domain::entities::smtp_payload::{PasswordChange, SmtpPayloadV1};
 use crate::domain::entities::webhooks_outcome::WebhooksOutcomeReport;
@@ -252,5 +254,26 @@ pub trait SmtpPort: Send + Sync {
         &'a self,
         reference: &'a IdentityInstanceRef,
         desired: &'a SmtpPayloadV1,
+    ) -> impl Future<Output = Result<(), GenesisError>> + Send + 'a;
+}
+
+pub trait PortalThemeOutcomePublisher: Send + Sync {
+    fn publish_portal_theme<'a>(
+        &'a self,
+        report: &'a PortalThemeOutcomeReport,
+    ) -> impl Future<Output = Result<(), GenesisError>> + Send + 'a;
+}
+
+pub trait PortalThemePort: Send + Sync {
+    fn revision<'a>(
+        &'a self,
+        reference: &'a IdentityInstanceRef,
+        realm: &'a str,
+    ) -> impl Future<Output = Result<Option<u64>, GenesisError>> + Send + 'a;
+
+    fn apply<'a>(
+        &'a self,
+        reference: &'a IdentityInstanceRef,
+        desired: &'a PortalThemePayloadV1,
     ) -> impl Future<Output = Result<(), GenesisError>> + Send + 'a;
 }
