@@ -33,7 +33,7 @@ export function connectionTargets(
   servers: { slug: string; name: string; enabled: boolean; mcp_url?: string }[],
 ): ConnectionTarget[] {
   const own: ConnectionTarget[] = deploymentUrl
-    ? [{ id: '', label: 'This deployment (FerrisKey)', mcpUrl: deploymentUrl, serverName: FALLBACK_SERVER_NAME }]
+    ? [{ id: 'ferriskey', label: 'This deployment (FerrisKey)', mcpUrl: deploymentUrl, serverName: FALLBACK_SERVER_NAME }]
     : []
 
   return [

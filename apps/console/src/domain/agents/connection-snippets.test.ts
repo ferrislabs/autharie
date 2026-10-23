@@ -71,6 +71,12 @@ describe('connectionTargets', () => {
     expect(targets[1]).toMatchObject({ id: 'crm', label: 'CRM', serverName: 'crm' })
   })
 
+  it('gives every target a non-empty id, as a select item needs one', () => {
+    const targets = connectionTargets(URL, [crm])
+
+    expect(targets.map((target) => target.id)).toEqual(['ferriskey', 'crm'])
+  })
+
   it('skips a server that is off or has no address yet', () => {
     const targets = connectionTargets(URL, [
       { ...crm, enabled: false },
