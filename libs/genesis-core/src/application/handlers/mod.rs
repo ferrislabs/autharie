@@ -5,6 +5,7 @@ pub mod deployment;
 pub mod drill;
 pub mod iam_settings;
 pub mod network_access;
+pub mod portal_theme;
 pub mod smtp;
 pub mod upgrade;
 pub mod webhooks;

@@ -5,12 +5,13 @@ use tracing::info;
 
 use crate::domain::entities::agents_outcome::AgentsOutcomeReport;
 use crate::domain::entities::outcome::DeploymentOutcomeReport;
+use crate::domain::entities::portal_theme_outcome::PortalThemeOutcomeReport;
 use crate::domain::entities::smtp_outcome::SmtpOutcomeReport;
 use crate::domain::entities::webhooks_outcome::WebhooksOutcomeReport;
 use crate::domain::error::GenesisError;
 use crate::domain::ports::{
-    AgentsOutcomePublisher, BoxFuture, OutcomePublisher, SmtpOutcomePublisher,
-    WebhookOutcomePublisher,
+    AgentsOutcomePublisher, BoxFuture, OutcomePublisher, PortalThemeOutcomePublisher,
+    SmtpOutcomePublisher, WebhookOutcomePublisher,
 };
 
 /// Publishes outcomes to the outcomes topic, where every Herald reads them.
@@ -145,6 +146,26 @@ impl SmtpOutcomePublisher for IggyOutcomePublisher {
             revision = report.revision,
             realm = %report.realm,
             "reporting smtp outcome"
+        );
+
+        self.send(payload).await
+    }
+}
+
+impl PortalThemeOutcomePublisher for IggyOutcomePublisher {
+    async fn publish_portal_theme<'a>(
+        &'a self,
+        report: &'a PortalThemeOutcomeReport,
+    ) -> Result<(), GenesisError> {
+        let payload = to_vec(report).map_err(|e| GenesisError::MessageBus {
+            message: format!("failed to serialise outcome: {e}"),
+        })?;
+
+        info!(
+            deployment_id = %report.deployment_id,
+            revision = report.revision,
+            realm = %report.realm,
+            "reporting portal theme outcome"
         );
 
         self.send(payload).await

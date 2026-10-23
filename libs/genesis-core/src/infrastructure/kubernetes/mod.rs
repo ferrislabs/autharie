@@ -3,6 +3,8 @@ pub mod agents_status;
 pub mod dataplane_upgrade;
 pub mod identity_instance;
 pub mod identity_instance_upgrade;
+pub mod portal_theme;
+pub mod portal_theme_status;
 pub mod smtp;
 pub mod smtp_status;
 pub mod status_watcher;

@@ -9,6 +9,8 @@ pub mod iam_settings_payload;
 pub mod identity_instance;
 pub mod network_access_payload;
 pub mod outcome;
+pub mod portal_theme_outcome;
+pub mod portal_theme_payload;
 pub mod smtp_outcome;
 pub mod smtp_payload;
 pub mod upgrade_payload;

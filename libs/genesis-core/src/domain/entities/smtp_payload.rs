@@ -120,7 +120,7 @@ impl SmtpPayloadV1 {
     }
 }
 
-fn is_secret_key(realm: &str) -> bool {
+pub(crate) fn is_secret_key(realm: &str) -> bool {
     !realm.is_empty()
         && realm.len() <= 253
         && realm
