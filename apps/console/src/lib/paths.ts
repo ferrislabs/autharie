@@ -15,7 +15,7 @@ export function organisationPathFor(organisationId: string, path = ''): string {
 
 const MOVED_SETTINGS: Record<string, string> = {
   'network-access': 'security',
-  branding: 'customization',
+  branding: 'branding/universal-login',
   backups: 'backups',
 }
 

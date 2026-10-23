@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, useRouterState } from '@tanstack/react-router'
 import { ChevronDown } from 'lucide-react'
+import { StatusBadge } from '@/components/ui/status-badge'
 import { cn } from '@/lib/utils'
 import { isUnder } from '@/lib/paths'
 
@@ -9,6 +10,8 @@ export interface SideNavItem {
   to: string
   icon?: React.ComponentType<{ className?: string }>
   exact?: boolean
+  /** Announced but not there yet: shown with a badge and not a link. */
+  soon?: boolean
 }
 
 export interface SideNavGroup {
@@ -34,6 +37,22 @@ function itemClasses(active: boolean) {
 
 function Entry({ item, pathname }: { item: SideNavItem; pathname: string }) {
   const Icon = item.icon
+
+  if (item.soon) {
+    return (
+      <span
+        aria-disabled='true'
+        className={cn(itemClasses(false), 'cursor-not-allowed opacity-60 hover:bg-transparent')}
+      >
+        {Icon && <Icon className='h-4 w-4 shrink-0' />}
+        <span className='flex-1 truncate'>{item.label}</span>
+        <StatusBadge tone='neutral' dot={false}>
+          Soon
+        </StatusBadge>
+      </span>
+    )
+  }
+
   const active = isUnder(pathname, item.to, item.exact)
 
   return (

@@ -4,6 +4,7 @@ import { AppShell } from './components/layout/app-shell'
 import { AppLayout } from './components/layout/main-layout'
 import { DeploymentLayout } from './components/layout/deployment-layout'
 import { DeploymentObservabilityLayout } from './components/layout/deployment-observability-layout'
+import { DeploymentBrandingLayout } from './components/layout/deployment-branding-layout'
 import { DeploymentSettingsLayout } from './components/layout/deployment-settings-layout'
 import { DeploymentTabLayout } from './components/layout/deployment-tab-layout'
 import { OnboardingLayout } from './components/layout/onboarding-layout'
@@ -153,7 +154,7 @@ const deploymentObservabilityUsageRoute = createRoute({
   component: PageUsageFeature,
 })
 
-// Backups, security and customization are top tabs of their own, each one
+// Backups and security are top tabs of their own, each one
 // page inside the same padded frame rather than a side nav of one entry.
 const deploymentTabLayoutRoute = createRoute({
   getParentRoute: () => deploymentLayoutRoute,
@@ -173,10 +174,39 @@ const deploymentSecurityRoute = createRoute({
   component: PageNetworkAccessFeature,
 })
 
-const deploymentCustomizationRoute = createRoute({
-  getParentRoute: () => deploymentTabLayoutRoute,
-  path: '/customization',
+// What an end user sees: login pages, emails. See DeploymentBrandingLayout.
+// The bare address lands on Universal login, the first entry.
+const deploymentBrandingLayoutRoute = createRoute({
+  getParentRoute: () => deploymentLayoutRoute,
+  path: '/branding',
+  component: DeploymentBrandingLayout,
+})
+
+const deploymentBrandingIndexRoute = createRoute({
+  getParentRoute: () => deploymentBrandingLayoutRoute,
+  path: '/',
+  beforeLoad: ({ params }) => {
+    throw redirect({
+      to: movedSettingsPath(params.organisationId, params.deploymentId, 'branding'),
+    })
+  },
+})
+
+const deploymentUniversalLoginRoute = createRoute({
+  getParentRoute: () => deploymentBrandingLayoutRoute,
+  path: '/universal-login',
   component: PageBrandingFeature,
+})
+
+// "Customization" was this tab's name before it grew into Branding.
+const deploymentCustomizationRedirect = createRoute({
+  getParentRoute: () => deploymentLayoutRoute,
+  path: '/customization',
+  beforeLoad: ({ params }) => {
+    throw redirect({
+      to: movedSettingsPath(params.organisationId, params.deploymentId, 'branding'),
+    })
+  },
 })
 
 const deploymentWebhooksRoute = createRoute({
@@ -404,10 +434,14 @@ const routeTree = rootRoute.addChildren([
       deploymentBackupsRedirect,
       deploymentDangerRoute,
     ]),
+    deploymentBrandingLayoutRoute.addChildren([
+      deploymentBrandingIndexRoute,
+      deploymentUniversalLoginRoute,
+    ]),
+    deploymentCustomizationRedirect,
     deploymentTabLayoutRoute.addChildren([
       deploymentBackupsRoute,
       deploymentSecurityRoute,
-      deploymentCustomizationRoute,
       deploymentWebhooksRoute,
       deploymentWebhookNewRoute,
       deploymentWebhookDetailRoute,

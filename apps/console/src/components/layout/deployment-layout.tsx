@@ -45,7 +45,7 @@ export function DeploymentLayout() {
       ? [{ label: 'Backups', to: deploymentPath('/backups'), icon: DatabaseBackup }]
       : []),
     { label: 'Security', to: deploymentPath('/security'), icon: ShieldCheck },
-    { label: 'Customization', to: deploymentPath('/customization'), icon: Palette },
+    { label: 'Branding', to: deploymentPath('/branding'), icon: Palette },
     ...(deployment.data?.data.kind === 'ferriskey'
       ? [{ label: 'Webhooks', to: deploymentPath('/webhooks'), icon: Webhook }]
       : []),

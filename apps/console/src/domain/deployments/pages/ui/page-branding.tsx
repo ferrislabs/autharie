@@ -68,7 +68,7 @@ export function PageBranding({
   if (!feature?.open) {
     return (
       <SectionPage
-        title='Customization'
+        title='Universal login'
         description='Colors and corner radius of the login portal of this instance.'
       >
         <EmptyState
@@ -84,7 +84,7 @@ export function PageBranding({
 
   return (
     <SectionPage
-      title='Customization'
+      title='Universal login'
       description='Colors and corner radius of the login portal of this instance.'
     >
       <BrandingEditor
