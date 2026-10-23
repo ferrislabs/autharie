@@ -6,12 +6,17 @@ vi.mock('@/api/api.fetch', () => ({ fetcher: (...args: unknown[]) => fetcher(...
 
 import {
   createPolicy,
+  createServer,
   deletePolicy,
+  deleteServer,
+  discoverServer,
   getSettings,
   listDecisions,
   listPolicies,
   listRealms,
+  listServers,
   updatePolicy,
+  updateServer,
   updateSettings,
 } from './agents.service'
 
@@ -84,5 +89,33 @@ describe('the agents service', () => {
   it('lets a refusal through', async () => {
     fetcher.mockRejectedValue(new Error('nope'))
     await expect(getSettings(scope)).rejects.toThrow('nope')
+  })
+
+  it('lists the customer servers', async () => {
+    fetcher.mockResolvedValue(answer({ data: [{ id: 's1', slug: 'crm' }] }))
+    expect(await listServers(scope)).toEqual([{ id: 's1', slug: 'crm' }])
+    expect(fetcher).toHaveBeenCalledWith('get', `${BASE}/agents/servers`, {})
+  })
+
+  it('registers a server', async () => {
+    fetcher.mockResolvedValue(answer({ data: { id: 's1' } }))
+    const input = { slug: 'crm', name: 'CRM', url: 'https://tools.example.com/mcp' }
+    await createServer(scope, input)
+    expect(fetcher).toHaveBeenCalledWith('post', `${BASE}/agents/servers`, { body: input })
+  })
+
+  it('changes a server by id, escaping it', async () => {
+    fetcher.mockResolvedValue(answer({ data: { id: 'a/b' } }))
+    const input = { name: 'CRM', url: 'https://tools.example.com/mcp', enabled: false }
+    await updateServer(scope, 'a/b', input)
+    expect(fetcher).toHaveBeenCalledWith('put', `${BASE}/agents/servers/a%2Fb`, { body: input })
+  })
+
+  it('removes a server and asks for a new discovery', async () => {
+    fetcher.mockResolvedValue(answer(undefined, 204))
+    await deleteServer(scope, 's1')
+    await discoverServer(scope, 's1')
+    expect(fetcher).toHaveBeenCalledWith('delete', `${BASE}/agents/servers/s1`, {})
+    expect(fetcher).toHaveBeenCalledWith('post', `${BASE}/agents/servers/s1/discover`, {})
   })
 })

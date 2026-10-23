@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::Value;
 use uuid::Uuid;
@@ -13,6 +14,48 @@ pub struct AgentPolicyDefinition {
     pub cedar: String,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+pub struct AgentAccessPayload {
+    #[serde(default)]
+    pub approval_required: bool,
+    #[serde(default)]
+    pub approved: Vec<String>,
+    #[serde(default)]
+    pub blocked: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct SealingKeyPayload {
+    pub kty: String,
+    pub n: String,
+    pub e: String,
+    pub alg: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AutonomousAgentPayload {
+    pub client_id: String,
+    pub name: String,
+    #[serde(default)]
+    pub request_id: Option<Uuid>,
+    #[serde(default)]
+    pub rotate_request_id: Option<Uuid>,
+    #[serde(default)]
+    pub sealing_key: Option<SealingKeyPayload>,
+}
+
+const MAX_SERVERS: usize = 10;
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AgentServerDefinition {
+    pub id: Uuid,
+    pub slug: String,
+    pub url: String,
+    pub enabled: bool,
+    #[serde(default)]
+    pub discovery_requested_at: Option<DateTime<Utc>>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct AgentsPayloadV1 {
     pub deployment_id: Uuid,
@@ -22,6 +65,14 @@ pub struct AgentsPayloadV1 {
     pub revision: u64,
     #[serde(default)]
     pub policies: Vec<AgentPolicyDefinition>,
+    #[serde(default)]
+    pub access: AgentAccessPayload,
+    #[serde(default)]
+    pub autonomous: Vec<AutonomousAgentPayload>,
+    #[serde(default)]
+    pub deleted_agents: Vec<String>,
+    #[serde(default)]
+    pub servers: Vec<AgentServerDefinition>,
 }
 
 impl AgentsPayloadV1 {
@@ -51,8 +102,88 @@ impl AgentsPayloadV1 {
             }
         }
 
+        for id in self
+            .access
+            .approved
+            .iter()
+            .chain(&self.access.blocked)
+            .chain(&self.deleted_agents)
+        {
+            if !is_client_id(id) {
+                return Err(invalid("an agent access list names an invalid client id"));
+            }
+        }
+
+        let mut clients = BTreeSet::new();
+        for agent in &self.autonomous {
+            if !is_client_id(&agent.client_id) || !clients.insert(agent.client_id.as_str()) {
+                return Err(invalid(
+                    "an autonomous agent has an invalid or repeated client id",
+                ));
+            }
+            if agent.name.trim().is_empty() {
+                return Err(invalid("an autonomous agent needs a name"));
+            }
+            if agent.request_id.is_some() && agent.rotate_request_id.is_some() {
+                return Err(invalid(
+                    "an autonomous agent cannot be created and rotated at once",
+                ));
+            }
+            let asked = agent.request_id.or(agent.rotate_request_id).is_some();
+            if asked != agent.sealing_key.is_some() {
+                return Err(invalid(
+                    "an autonomous agent request needs its sealing key, and only then",
+                ));
+            }
+            if agent
+                .sealing_key
+                .as_ref()
+                .is_some_and(|key| key.kty != "RSA" || key.alg != "RSA-OAEP-256")
+            {
+                return Err(invalid("a sealing key must be an RSA-OAEP-256 key"));
+            }
+        }
+
+        self.validate_servers()
+    }
+
+    fn validate_servers(&self) -> Result<(), GenesisError> {
+        if self.servers.len() > MAX_SERVERS {
+            return Err(invalid(format!("more than {MAX_SERVERS} servers")));
+        }
+
+        let mut ids = BTreeSet::new();
+        let mut slugs = BTreeSet::new();
+        for server in &self.servers {
+            if !is_server_slug(&server.slug) {
+                return Err(invalid(format!("server {} has an invalid slug", server.id)));
+            }
+            if !server.url.starts_with("https://") {
+                return Err(invalid(format!("server {} needs an https URL", server.id)));
+            }
+            if !ids.insert(server.id) || !slugs.insert(server.slug.as_str()) {
+                return Err(invalid(format!("server {} appears twice", server.id)));
+            }
+        }
+
         Ok(())
     }
+}
+
+fn is_client_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.chars().count() <= 512
+        && id
+            .chars()
+            .all(|c| !c.is_control() && !c.is_whitespace() && c != '"' && c != '\\')
+}
+
+fn is_server_slug(slug: &str) -> bool {
+    let mut chars = slug.chars();
+    (2..=31).contains(&slug.len())
+        && chars.next().is_some_and(|c| c.is_ascii_lowercase())
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && !matches!(slug, "ferriskey" | "autharie" | "gateway")
 }
 
 fn is_realm_name(realm: &str) -> bool {
@@ -187,6 +318,158 @@ mod tests {
                 .len(),
             2
         );
+    }
+
+    fn registry(mutate: impl FnOnce(&mut Value)) -> Value {
+        with(|value| {
+            value["access"] = json!({
+                "approval_required": true, "approved": ["a"], "blocked": ["b"]
+            });
+            value["autonomous"] = json!([{
+                "client_id": "agent-x-abc123", "name": "X", "request_id": OTHER,
+                "sealing_key": { "kty": "RSA", "n": "AA", "e": "AQAB", "alg": "RSA-OAEP-256" }
+            }]);
+            value["deleted_agents"] = json!(["old"]);
+            mutate(value);
+        })
+    }
+
+    const SERVER: Uuid = Uuid::from_u128(7);
+
+    fn server(slug: &str) -> Value {
+        json!({
+            "id": SERVER,
+            "slug": slug,
+            "url": "https://tools.example.com/mcp",
+            "enabled": true,
+            "discovery_requested_at": "2026-10-23T10:00:00Z",
+        })
+    }
+
+    #[test]
+    fn the_registry_fields_are_decoded() {
+        let parsed = AgentsPayloadV1::from_value(&registry(|_| {})).expect("valid");
+
+        assert!(parsed.access.approval_required);
+        assert_eq!(parsed.access.approved, vec!["a".to_string()]);
+        assert_eq!(parsed.access.blocked, vec!["b".to_string()]);
+        assert_eq!(parsed.autonomous[0].request_id, Some(OTHER));
+        assert_eq!(parsed.deleted_agents, vec!["old".to_string()]);
+    }
+
+    #[test]
+    fn a_payload_without_the_registry_fields_is_open_and_empty() {
+        let parsed = AgentsPayloadV1::from_value(&payload()).expect("valid");
+
+        assert_eq!(parsed.access, AgentAccessPayload::default());
+        assert!(parsed.autonomous.is_empty());
+        assert!(parsed.deleted_agents.is_empty());
+    }
+
+    #[test]
+    fn an_invalid_registry_payload_is_refused() {
+        type Edit = Box<dyn Fn(&mut Value)>;
+        let cases: Vec<Edit> = vec![
+            Box::new(|v| v["access"]["approved"] = json!(["a b"])),
+            Box::new(|v| v["deleted_agents"] = json!([""])),
+            Box::new(|v| v["autonomous"][0]["client_id"] = json!("")),
+            Box::new(|v| v["autonomous"][0]["name"] = json!(" ")),
+            Box::new(|v| {
+                let first = v["autonomous"][0].clone();
+                v["autonomous"].as_array_mut().unwrap().push(first);
+            }),
+            Box::new(|v| v["autonomous"][0]["rotate_request_id"] = json!(POLICY)),
+            Box::new(|v| {
+                v["autonomous"][0]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("sealing_key");
+            }),
+            Box::new(|v| {
+                v["autonomous"][0]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("request_id");
+            }),
+            Box::new(|v| v["autonomous"][0]["sealing_key"]["kty"] = json!("EC")),
+            Box::new(|v| v["autonomous"][0]["sealing_key"]["alg"] = json!("RSA-OAEP")),
+        ];
+
+        for case in cases {
+            assert!(AgentsPayloadV1::from_value(&registry(case)).is_err());
+        }
+    }
+
+    #[test]
+    fn a_settled_autonomous_agent_has_no_request_and_no_key() {
+        let value = registry(|v| {
+            v["autonomous"] = json!([{ "client_id": "agent-x-abc123", "name": "X" }]);
+        });
+
+        assert!(AgentsPayloadV1::from_value(&value).is_ok());
+    }
+
+    #[test]
+    fn a_payload_without_servers_is_valid_and_has_none() {
+        let parsed = AgentsPayloadV1::from_value(&payload()).expect("valid");
+
+        assert!(parsed.servers.is_empty());
+    }
+
+    #[test]
+    fn customer_servers_are_decoded_with_their_discovery_request() {
+        let value = with(|value| {
+            value["servers"] = json!([server("crm"), {
+                "id": Uuid::from_u128(8),
+                "slug": "erp",
+                "url": "https://erp.example.com/mcp",
+                "enabled": false,
+            }]);
+        });
+
+        let parsed = AgentsPayloadV1::from_value(&value).expect("valid");
+
+        assert_eq!(parsed.servers.len(), 2);
+        assert_eq!(parsed.servers[0].id, SERVER);
+        assert_eq!(parsed.servers[0].slug, "crm");
+        assert!(parsed.servers[0].enabled);
+        assert!(parsed.servers[0].discovery_requested_at.is_some());
+        assert_eq!(parsed.servers[1].discovery_requested_at, None);
+        assert!(!parsed.servers[1].enabled);
+    }
+
+    #[test]
+    fn a_server_with_a_bad_slug_a_plain_url_or_a_twin_is_refused() {
+        for slug in ["", "a", "Crm", "1crm", "cr m", "ferriskey", "gateway"] {
+            let value = with(|value| value["servers"] = json!([server(slug)]));
+            assert!(AgentsPayloadV1::from_value(&value).is_err(), "{slug:?}");
+        }
+        let plain = with(|value| {
+            let mut bad = server("crm");
+            bad["url"] = json!("http://tools.example.com/mcp");
+            value["servers"] = json!([bad]);
+        });
+        let twin = with(|value| value["servers"] = json!([server("crm"), server("crm")]));
+
+        assert!(AgentsPayloadV1::from_value(&plain).is_err());
+        assert!(AgentsPayloadV1::from_value(&twin).is_err());
+    }
+
+    #[test]
+    fn more_than_ten_servers_are_refused() {
+        let many: Vec<Value> = (0..11)
+            .map(|index| {
+                json!({
+                    "id": Uuid::from_u128(100 + index),
+                    "slug": format!("srv-{index}"),
+                    "url": "https://tools.example.com/mcp",
+                    "enabled": true,
+                })
+            })
+            .collect();
+        let value = with(|value| value["servers"] = json!(many));
+
+        assert!(AgentsPayloadV1::from_value(&value).is_err());
     }
 
     #[test]

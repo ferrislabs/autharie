@@ -359,6 +359,10 @@ async fn an_owner_enables_agents_and_the_data_plane_is_asked_to_apply_them() {
             "realm": "acme",
             "revision": 1,
             "policies": [],
+            "access": { "approval_required": false, "approved": [], "blocked": [] },
+            "autonomous": [],
+            "deleted_agents": [],
+            "servers": [],
         })
     );
 }

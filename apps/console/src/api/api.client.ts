@@ -24,6 +24,7 @@ export namespace Schemas {
     user_id: UserId
   }
   export type AcceptInvitationResponse = { data: Member }
+  export type AccessState = 'approved' | 'pending' | 'blocked'
   export type ActionFailureReason =
     | 'InvalidPayload'
     | 'UnsupportedAction'
@@ -70,6 +71,43 @@ export namespace Schemas {
     target: ActionTarget
     version: ActionVersion
   }
+  export type AgentAccessData = { approval_required: boolean }
+  export type AgentAccessResponse = { data: AgentAccessData }
+  export type AgentClientId = string
+  export type ClientKind = 'delegated' | 'autonomous'
+  export type ClientSource = 'dynamic' | 'metadata_document' | 'autharie' | 'seen'
+  export type AgentClient = {
+    access: AccessState
+    client_id: AgentClientId
+    created_at?: (string | null) | undefined
+    enabled?: (boolean | null) | undefined
+    kind: ClientKind
+    last_seen_at?: (string | null) | undefined
+    name?: (string | null) | undefined
+    source: ClientSource
+  }
+  export type AgentClientReport = {
+    client_id: string
+    created_at?: (string | null) | undefined
+    enabled: boolean
+    kind: string
+    name?: (string | null) | undefined
+    source: string
+  }
+  export type AgentClientsResponse = {
+    approval_required: boolean
+    data: Array<AgentClient>
+    truncated: boolean
+  }
+  export type AgentCredentialReport = { client_id: string; request_id: string; sealed: string }
+  export type DeliveredCredential = {
+    audience: string
+    client_id: AgentClientId
+    sealed: string
+    token_url: string
+  }
+  export type PendingCredential = { status: string }
+  export type AgentCredentialResponse = { data: DeliveredCredential } | { data: PendingCredential }
   export type DecisionVerdict = 'allow' | 'deny'
   export type AgentDecision = {
     agent: string
@@ -117,6 +155,54 @@ export namespace Schemas {
     rule?: (Record<string, unknown> | null) | undefined
   }
   export type AgentPolicyResponse = { data: AgentPolicy }
+  export type AgentServerDiscoveryAsked = { asked: boolean }
+  export type AgentServerToolReport = {
+    description?: (string | null) | undefined
+    destructive?: boolean | undefined
+    name: string
+    read_only?: boolean | undefined
+  }
+  export type AgentServerReport = {
+    discovered_at?: (string | null) | undefined
+    discovery_requested_at?: (string | null) | undefined
+    dropped?: number | undefined
+    id: string
+    message?: (string | null) | undefined
+    phase: string
+    protocol_version?: (string | null) | undefined
+    tools?: Array<AgentServerToolReport> | undefined
+  }
+  export type DiscoveryPhase = 'Ready' | 'Unreachable' | 'Refused' | 'Invalid'
+  export type DiscoveredTool = {
+    description?: (string | null) | undefined
+    destructive: boolean
+    name: string
+    read_only: boolean
+  }
+  export type Discovery = {
+    discovered_at: string
+    dropped: number
+    message?: (string | null) | undefined
+    phase: DiscoveryPhase
+    protocol_version?: (string | null) | undefined
+    tools: Array<DiscoveredTool>
+  }
+  export type ServerId = string
+  export type ServerSlug = string
+  export type CustomerServerUrl = string
+  export type CustomerServer = {
+    created_at: string
+    discovery?: (null | Discovery) | undefined
+    enabled: boolean
+    id: ServerId
+    mcp_url?: (string | null) | undefined
+    name: string
+    slug: ServerSlug
+    updated_at: string
+    url: CustomerServerUrl
+  }
+  export type AgentServerResponse = { data: CustomerServer }
+  export type AgentServersResponse = { data: Array<CustomerServer> }
   export type AgentsPhase = 'Applying' | 'Ready' | 'Failed'
   export type AgentStatus = {
     gateway_client_ready: boolean
@@ -285,6 +371,7 @@ export namespace Schemas {
     fingerprint: string
     private_key_pem: string
   }
+  export type ChangeAgentServerRequest = { enabled: boolean; name: string; url: string }
   export type ChangeSubscriptionRequest = { tier: string }
   export type ClaimActionsRequest = {
     deployment_ids: Array<DeploymentId>
@@ -333,6 +420,18 @@ export namespace Schemas {
   export type Every = 'all'
   export type ComponentSelection = Every | Array<string>
   export type CostEstimate = { max: Money; min: Money }
+  export type SealingJwk = {
+    alg?: (string | null) | undefined
+    d?: (string | null) | undefined
+    e: string
+    kty: string
+    n: string
+  }
+  export type CreateAutonomousRequest = {
+    description?: (string | null) | undefined
+    name: string
+    sealing_key: SealingJwk
+  }
   export type DataPlaneMode = 'shared' | 'dedicated'
   export type Region = string
   export type CreateDataPlaneRequest = {
@@ -443,6 +542,8 @@ export namespace Schemas {
     permissions: number
   }
   export type CreateRoleResponse = { data: Role }
+  export type CredentialRequestData = { request_id: string }
+  export type CredentialRequestResponse = { data: CredentialRequestData }
   export type CutoverRequest = { demote: string }
   export type CutoverResponseData = { demoted: Deployment; promoted: Deployment }
   export type CutoverResponse = { data: CutoverResponseData }
@@ -821,7 +922,14 @@ export namespace Schemas {
   export type PushLogsRequest = { ending?: (null | Ending) | undefined; lines: Array<LogLine> }
   export type PushLogsResponseData = { listening: boolean; relayed: number }
   export type PushLogsResponse = { data: PushLogsResponseData }
+  export type PutAgentAccessRequest = { approval_required: boolean }
   export type PutAgentsRequest = { enabled: boolean; realm?: (string | null) | undefined }
+  export type RegisterAgentServerRequest = {
+    enabled?: (boolean | null) | undefined
+    name: string
+    slug: string
+    url: string
+  }
   export type RegisterCloudCredentialRequest = { label: string; provider: Provider; secret: string }
   export type RegisteredDataPlaneResponse = DataPlane &
     Partial<{ herald_client_id: string | null; herald_secret: string | null }>
@@ -868,6 +976,9 @@ export namespace Schemas {
     secret_version?: number | undefined
   }
   export type ReportOutcomeRequest = Partial<{
+    clients: Array<AgentClientReport>
+    clients_truncated: boolean
+    credentials: Array<AgentCredentialReport>
     deployment_id: string | null
     gateway_client_ready: boolean
     kind: string | null
@@ -881,6 +992,7 @@ export namespace Schemas {
     requests: Array<WebhookRequestReport>
     revision: number | null
     secrets: Array<WebhookSecretReport>
+    servers: Array<AgentServerReport>
     version: string | null
     webhooks: Array<WebhookStateReport>
   }>
@@ -914,6 +1026,7 @@ export namespace Schemas {
     pilot_organisations?: Array<string> | undefined
     plans?: (Array<string> | null) | undefined
   }
+  export type RotateAutonomousRequest = { sealing_key: SealingJwk }
   export type ServiceIntent = 'draining' | 'disabled' | 'in_service'
   export type SetBackupScheduleRequest = {
     at: string
@@ -1535,6 +1648,93 @@ export namespace Endpoints {
     }
     response: Schemas.AgentsResponse
   }
+  export type put_Put_agent_access_handler = {
+    method: 'PUT'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/agents/access'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string }
+
+      body: Schemas.PutAgentAccessRequest
+    }
+    response: Schemas.AgentAccessResponse
+  }
+  export type post_Create_autonomous_agent_handler = {
+    method: 'POST'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/agents/autonomous'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string }
+
+      body: Schemas.CreateAutonomousRequest
+    }
+    response: Schemas.CredentialRequestResponse
+  }
+  export type post_Rotate_autonomous_secret_handler = {
+    method: 'POST'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/agents/autonomous/{client_id}/rotate'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string; client_id: string }
+
+      body: Schemas.RotateAutonomousRequest
+    }
+    response: Schemas.CredentialRequestResponse
+  }
+  export type get_List_agent_clients_handler = {
+    method: 'GET'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/agents/clients'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string }
+    }
+    response: Schemas.AgentClientsResponse
+  }
+  export type delete_Delete_agent_handler = {
+    method: 'DELETE'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/agents/clients/{client_id}'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string; client_id: string }
+    }
+    response: unknown
+  }
+  export type post_Approve_agent_handler = {
+    method: 'POST'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/agents/clients/{client_id}/approve'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string; client_id: string }
+    }
+    response: unknown
+  }
+  export type post_Block_agent_handler = {
+    method: 'POST'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/agents/clients/{client_id}/block'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string; client_id: string }
+    }
+    response: unknown
+  }
+  export type post_Unblock_agent_handler = {
+    method: 'POST'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/agents/clients/{client_id}/unblock'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string; client_id: string }
+    }
+    response: unknown
+  }
+  export type get_Get_agent_credential_handler = {
+    method: 'GET'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/agents/credentials/{request_id}'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string; request_id: string }
+    }
+    response: Schemas.AgentCredentialResponse
+  }
   export type get_List_agent_decisions_handler = {
     method: 'GET'
     path: '/organisations/{organisation_id}/deployments/{deployment_id}/agents/decisions'
@@ -1546,6 +1746,7 @@ export namespace Endpoints {
         decision: string
         tool: string
         subject: string
+        agent: string
         limit: number
       }>
       path: { organisation_id: string; deployment_id: string }
@@ -1591,6 +1792,55 @@ export namespace Endpoints {
       path: { organisation_id: string; deployment_id: string; policy_id: string }
     }
     response: unknown
+  }
+  export type get_List_agent_servers_handler = {
+    method: 'GET'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/agents/servers'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string }
+    }
+    response: Schemas.AgentServersResponse
+  }
+  export type post_Register_agent_server_handler = {
+    method: 'POST'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/agents/servers'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string }
+
+      body: Schemas.RegisterAgentServerRequest
+    }
+    response: Schemas.AgentServerResponse
+  }
+  export type put_Update_agent_server_handler = {
+    method: 'PUT'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/agents/servers/{server_id}'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string; server_id: string }
+
+      body: Schemas.ChangeAgentServerRequest
+    }
+    response: Schemas.AgentServerResponse
+  }
+  export type delete_Remove_agent_server_handler = {
+    method: 'DELETE'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/agents/servers/{server_id}'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string; server_id: string }
+    }
+    response: unknown
+  }
+  export type post_Discover_agent_server_handler = {
+    method: 'POST'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/agents/servers/{server_id}/discover'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string; server_id: string }
+    }
+    response: Schemas.AgentServerDiscoveryAsked
   }
   export type get_Get_deployment_availability_handler = {
     method: 'GET'
@@ -2424,7 +2674,14 @@ export type EndpointByMethod = {
     '/organisations/{organisation_id}/cloud-credentials': Endpoints.post_Register_cloud_credential_handler
     '/organisations/{organisation_id}/cluster-profiles/estimate': Endpoints.post_Estimate_cluster_profile_handler
     '/organisations/{organisation_id}/deployments': Endpoints.post_Create_deployment_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/agents/autonomous': Endpoints.post_Create_autonomous_agent_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/agents/autonomous/{client_id}/rotate': Endpoints.post_Rotate_autonomous_secret_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/agents/clients/{client_id}/approve': Endpoints.post_Approve_agent_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/agents/clients/{client_id}/block': Endpoints.post_Block_agent_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/agents/clients/{client_id}/unblock': Endpoints.post_Unblock_agent_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/agents/policies': Endpoints.post_Create_agent_policy_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/agents/servers': Endpoints.post_Register_agent_server_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/agents/servers/{server_id}/discover': Endpoints.post_Discover_agent_server_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/backups': Endpoints.post_Ask_for_backup_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/backups/{backup_id}/restore': Endpoints.post_Restore_backup_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/cutover': Endpoints.post_Cutover_handler
@@ -2459,8 +2716,11 @@ export type EndpointByMethod = {
     '/organisations/{organisation_id}/deployments/{deployment_id}/actions/{action_id}': Endpoints.get_Get_action_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/active-users': Endpoints.get_Get_active_users_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/agents': Endpoints.get_Get_agents_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/agents/clients': Endpoints.get_List_agent_clients_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/agents/credentials/{request_id}': Endpoints.get_Get_agent_credential_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/agents/decisions': Endpoints.get_List_agent_decisions_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/agents/policies': Endpoints.get_List_agent_policies_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/agents/servers': Endpoints.get_List_agent_servers_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/availability': Endpoints.get_Get_deployment_availability_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/backup-schedule': Endpoints.get_Get_backup_schedule_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/backups': Endpoints.get_List_backups_handler
@@ -2512,7 +2772,9 @@ export type EndpointByMethod = {
     '/dataplanes/{dataplane_id}': Endpoints.delete_Delete_dataplane_handler
     '/organisations/{organisation_id}/cloud-credentials/{credential_id}': Endpoints.delete_Delete_cloud_credential_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}': Endpoints.delete_Delete_deployment_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/agents/clients/{client_id}': Endpoints.delete_Delete_agent_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/agents/policies/{policy_id}': Endpoints.delete_Delete_agent_policy_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/agents/servers/{server_id}': Endpoints.delete_Remove_agent_server_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/webhooks/{webhook_id}': Endpoints.delete_Delete_webhook_handler
     '/organisations/{organisation_id}/invitations/{invitation_id}': Endpoints.delete_Revoke_invitation_handler
     '/organisations/{organisation_id}/members/{user_id}': Endpoints.delete_Remove_member_handler
@@ -2523,7 +2785,9 @@ export type EndpointByMethod = {
     '/dataplanes/{dataplane_id}/service': Endpoints.put_Set_service_handler
     '/organisations/{organisation_id}/billing/account': Endpoints.put_Put_billing_account_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/agents': Endpoints.put_Put_agents_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/agents/access': Endpoints.put_Put_agent_access_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/agents/policies/{policy_id}': Endpoints.put_Update_agent_policy_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/agents/servers/{server_id}': Endpoints.put_Update_agent_server_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/backup-schedule': Endpoints.put_Set_backup_schedule_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/cluster-profile': Endpoints.put_Resize_cluster_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/iam-settings': Endpoints.put_Set_iam_settings_handler

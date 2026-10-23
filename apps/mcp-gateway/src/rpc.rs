@@ -5,10 +5,30 @@ pub const CODE_PARSE_ERROR: i64 = -32700;
 pub const CODE_INVALID_REQUEST: i64 = -32600;
 pub const CODE_INVALID_PARAMS: i64 = -32602;
 pub const CODE_DENIED: i64 = -32001;
+pub const CODE_AGENT_REFUSED: i64 = -32003;
 pub const CODE_HEADER_MISMATCH: i64 = -32020;
 
 pub const MCP_METHOD: &str = "mcp-method";
 pub const MCP_NAME: &str = "mcp-name";
+
+pub const PROTOCOL_2026: &str = "2026-07-28";
+pub const LEGACY_PROTOCOLS: [&str; 4] = ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
+pub const NEWEST_LEGACY: &str = "2025-11-25";
+
+const META_PREFIX: &str = "io.modelcontextprotocol/";
+const META_PROTOCOL: &str = "io.modelcontextprotocol/protocolVersion";
+const META_CAPABILITIES: &str = "io.modelcontextprotocol/clientCapabilities";
+
+pub fn negotiate(requested: Option<&str>) -> &'static str {
+    requested
+        .and_then(|v| LEGACY_PROTOCOLS.iter().find(|known| **known == v))
+        .copied()
+        .unwrap_or(NEWEST_LEGACY)
+}
+
+pub fn is_legacy_protocol(version: &str) -> bool {
+    LEGACY_PROTOCOLS.contains(&version)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Operation {
@@ -55,9 +75,18 @@ pub struct Message {
     pub id: Value,
     pub method: String,
     pub target: Option<Target>,
+    pub requested_protocol: Option<String>,
 }
 
 impl Message {
+    pub fn is_initialize(&self) -> bool {
+        self.method == "initialize"
+    }
+
+    pub fn is_notification(&self) -> bool {
+        self.method.starts_with("notifications/")
+    }
+
     pub fn is_tools_list(&self) -> bool {
         self.method == "tools/list"
     }
@@ -77,6 +106,15 @@ impl Rejection {
             id,
             code: CODE_DENIED,
             message: "denied by policy",
+            http_status: 403,
+        }
+    }
+
+    pub fn agent_refused(id: Value) -> Self {
+        Self {
+            id,
+            code: CODE_AGENT_REFUSED,
+            message: "agent not allowed",
             http_status: 403,
         }
     }
@@ -136,10 +174,20 @@ pub fn parse(body: &[u8]) -> Result<Message, Rejection> {
             })
         }
     };
+    let requested_protocol = (method == "initialize")
+        .then(|| {
+            object
+                .get("params")
+                .and_then(|p| p.get("protocolVersion"))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .flatten();
     Ok(Message {
         id,
         method: method.to_owned(),
         target,
+        requested_protocol,
     })
 }
 
@@ -151,16 +199,56 @@ pub fn check_headers(headers: &HeaderMap, message: &Message) -> Result<(), Rejec
             "Mcp-Method or Mcp-Name does not match the request body",
         )
     };
-    let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
-    if header(MCP_METHOD) != Some(message.method.as_str()) {
+    let header = |name: &str| headers.get(name).map(|v| v.to_str().ok());
+    if let Some(method) = header(MCP_METHOD)
+        && method != Some(message.method.as_str())
+    {
         return Err(mismatch());
     }
     if let Some(target) = &message.target
-        && header(MCP_NAME) != Some(target.name.as_str())
+        && let Some(name) = header(MCP_NAME)
+        && name != Some(target.name.as_str())
     {
         return Err(mismatch());
     }
     Ok(())
+}
+
+pub fn with_meta(body: &[u8]) -> Option<Vec<u8>> {
+    let mut value: Value = serde_json::from_slice(body).ok()?;
+    let params = value
+        .as_object_mut()?
+        .entry("params")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()?;
+    let meta = params
+        .entry("_meta")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()?;
+    let mut changed = false;
+    for (key, fill) in [
+        (META_PROTOCOL, json!(PROTOCOL_2026)),
+        (META_CAPABILITIES, json!({})),
+    ] {
+        if !meta.contains_key(key) {
+            meta.insert(key.to_owned(), fill);
+            changed = true;
+        }
+    }
+    changed.then(|| value.to_string().into_bytes())
+}
+
+pub fn without_meta(value: &mut Value) {
+    let Some(params) = value.get_mut("params").and_then(Value::as_object_mut) else {
+        return;
+    };
+    let Some(meta) = params.get_mut("_meta").and_then(Value::as_object_mut) else {
+        return;
+    };
+    meta.retain(|key, _| !key.starts_with(META_PREFIX));
+    if meta.is_empty() {
+        params.remove("_meta");
+    }
 }
 
 #[cfg(test)]
@@ -272,9 +360,76 @@ mod tests {
     }
 
     #[test]
-    fn missing_headers_are_refused() {
-        assert!(check_headers(&headers(None, None), &call("t")).is_err());
-        assert!(check_headers(&headers(Some("tools/call"), None), &call("t")).is_err());
+    fn absent_headers_are_taken_from_the_body() {
+        assert!(check_headers(&headers(None, None), &call("t")).is_ok());
+        assert!(check_headers(&headers(Some("tools/call"), None), &call("t")).is_ok());
+    }
+
+    #[test]
+    fn a_present_header_that_disagrees_is_refused_even_when_the_other_is_absent() {
+        assert!(check_headers(&headers(Some("tools/list"), None), &call("t")).is_err());
+        assert!(check_headers(&headers(None, Some("other")), &call("t")).is_err());
+    }
+
+    #[test]
+    fn the_client_protocol_is_kept_when_supported_else_the_newest_legacy() {
+        assert_eq!(negotiate(Some("2025-03-26")), "2025-03-26");
+        assert_eq!(negotiate(Some("2026-07-28")), NEWEST_LEGACY);
+        assert_eq!(negotiate(Some("nonsense")), NEWEST_LEGACY);
+        assert_eq!(negotiate(None), NEWEST_LEGACY);
+        let init = parse(
+            br#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#,
+        )
+        .unwrap();
+        assert!(init.is_initialize());
+        assert_eq!(init.requested_protocol.as_deref(), Some("2025-06-18"));
+    }
+
+    #[test]
+    fn notifications_are_recognised_by_method() {
+        let note = parse(br#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#).unwrap();
+        assert!(note.is_notification());
+        assert!(!call("t").is_notification());
+    }
+
+    #[test]
+    fn the_2026_meta_is_added_when_missing_and_left_alone_when_present() {
+        let body = br#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
+        let added: Value = serde_json::from_slice(&with_meta(body).unwrap()).unwrap();
+        assert_eq!(
+            added["params"]["_meta"][META_PROTOCOL],
+            json!(PROTOCOL_2026)
+        );
+        assert_eq!(added["params"]["_meta"][META_CAPABILITIES], json!({}));
+        assert!(with_meta(added.to_string().as_bytes()).is_none());
+    }
+
+    #[test]
+    fn a_partial_meta_is_completed_without_losing_the_clients_keys() {
+        let body = json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"t","_meta":{
+            META_CAPABILITIES: {"sampling": {}}, "progressToken": 3}}});
+        let out: Value =
+            serde_json::from_slice(&with_meta(body.to_string().as_bytes()).unwrap()).unwrap();
+        assert_eq!(
+            out["params"]["_meta"][META_CAPABILITIES],
+            json!({"sampling": {}})
+        );
+        assert_eq!(out["params"]["_meta"]["progressToken"], json!(3));
+        assert_eq!(out["params"]["_meta"][META_PROTOCOL], json!(PROTOCOL_2026));
+        assert_eq!(out["params"]["name"], json!("t"));
+    }
+
+    #[test]
+    fn the_2026_meta_keys_are_dropped_and_others_kept() {
+        let mut value = json!({"params":{"name":"t","_meta":{META_PROTOCOL: "x", META_CAPABILITIES: {}, "progressToken": 1}}});
+        without_meta(&mut value);
+        assert_eq!(value["params"]["_meta"], json!({"progressToken": 1}));
+        let mut only = json!({"params":{"_meta":{META_PROTOCOL: "x"}}});
+        without_meta(&mut only);
+        assert_eq!(only, json!({"params":{}}));
+        let mut none = json!({"method":"ping"});
+        without_meta(&mut none);
+        assert_eq!(none, json!({"method":"ping"}));
     }
 
     #[test]
@@ -290,5 +445,14 @@ mod tests {
         assert_eq!(rejection.http_status, 403);
         assert_eq!(rejection.body()["error"]["code"], json!(CODE_DENIED));
         assert_eq!(rejection.body()["id"], json!("x"));
+    }
+
+    #[test]
+    fn an_agent_refusal_is_a_403_with_its_own_code() {
+        let rejection = Rejection::agent_refused(json!(3));
+
+        assert_eq!(rejection.http_status, 403);
+        assert_eq!(rejection.body()["error"]["code"], -32003);
+        assert_eq!(rejection.body()["id"], 3);
     }
 }

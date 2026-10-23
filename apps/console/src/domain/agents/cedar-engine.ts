@@ -1,6 +1,6 @@
 import type * as CedarModule from '@cedar-policy/cedar-wasm/web'
 import { AGENT_SCHEMA } from './cedar-schema'
-import { findTool, nameOfTool, serverOfTool } from './tool-catalogue'
+import { BUILTIN_CATALOGUE, findTool, nameOfTool, serverOfTool, type Catalogue } from './tool-catalogue'
 
 export type CedarApi = Pick<typeof CedarModule, 'checkParsePolicySet' | 'validate' | 'isAuthorized'>
 
@@ -74,7 +74,7 @@ function uid(type: string, id: string) {
   return { type: `FerrisKey::${type}`, id }
 }
 
-function entities(scenario: Scenario) {
+function entities(scenario: Scenario, catalogue: Catalogue) {
   const server = serverOfTool(scenario.tool)
   const list: unknown[] = [
     { uid: uid('McpServer', server), attrs: { name: server }, parents: [] },
@@ -83,7 +83,7 @@ function entities(scenario: Scenario) {
       attrs: {
         server,
         tool: nameOfTool(scenario.tool),
-        annotations: toolAnnotations(scenario.tool),
+        annotations: toolAnnotations(catalogue, scenario.tool),
       },
       parents: [uid('McpServer', server)],
     },
@@ -115,12 +115,17 @@ function entities(scenario: Scenario) {
   return list
 }
 
-function toolAnnotations(toolId: string) {
-  const tool = findTool(toolId)
+function toolAnnotations(catalogue: Catalogue, toolId: string) {
+  const tool = findTool(catalogue, toolId)
   return { readOnlyHint: tool?.readOnly ?? false, destructiveHint: tool?.destructive ?? false }
 }
 
-export function simulate(api: CedarApi, policies: NamedPolicy[], scenario: Scenario): Outcome {
+export function simulate(
+  api: CedarApi,
+  policies: NamedPolicy[],
+  scenario: Scenario,
+  catalogue: Catalogue = BUILTIN_CATALOGUE,
+): Outcome {
   const set: Record<string, string> = {}
   for (const policy of policies) set[policy.id] = policy.cedar
 
@@ -140,7 +145,7 @@ export function simulate(api: CedarApi, policies: NamedPolicy[], scenario: Scena
     schema: AGENT_SCHEMA,
     validateRequest: true,
     policies: { staticPolicies: set },
-    entities: entities(scenario) as never,
+    entities: entities(scenario, catalogue) as never,
   })
 
   if (answer.type === 'failure') {

@@ -40,6 +40,59 @@ spec:
                 description: The agent settings this deployment should have, whole. FerrisKey only.
                 nullable: true
                 properties:
+                  access:
+                    properties:
+                      approvalRequired:
+                        default: false
+                        type: boolean
+                      approved:
+                        items:
+                          type: string
+                        type: array
+                      blocked:
+                        items:
+                          type: string
+                        type: array
+                    type: object
+                  autonomous:
+                    items:
+                      properties:
+                        clientId:
+                          type: string
+                        name:
+                          type: string
+                        requestId:
+                          nullable: true
+                          type: string
+                        rotateRequestId:
+                          nullable: true
+                          type: string
+                        sealingKey:
+                          nullable: true
+                          properties:
+                            alg:
+                              type: string
+                            e:
+                              type: string
+                            kty:
+                              type: string
+                            n:
+                              type: string
+                          required:
+                          - alg
+                          - e
+                          - kty
+                          - n
+                          type: object
+                      required:
+                      - clientId
+                      - name
+                      type: object
+                    type: array
+                  deletedAgents:
+                    items:
+                      type: string
+                    type: array
                   enabled:
                     type: boolean
                   policies:
@@ -63,6 +116,32 @@ spec:
                     type: integer
                   realm:
                     type: string
+                  servers:
+                    description: The customer MCP servers agents may reach through the gateway.
+                    items:
+                      properties:
+                        discoveryRequestedAt:
+                          description: When someone asked for the tools to be listed again (RFC 3339).
+                          nullable: true
+                          type: string
+                        enabled:
+                          type: boolean
+                        id:
+                          description: Autharie's id for the server (a UUID).
+                          type: string
+                        slug:
+                          description: 'The server''s short name: it prefixes its tools and its gateway path.'
+                          type: string
+                        url:
+                          description: 'Where the data plane reaches the server: a public `https://` URL.'
+                          type: string
+                      required:
+                      - enabled
+                      - id
+                      - slug
+                      - url
+                      type: object
+                    type: array
                 required:
                 - enabled
                 - realm
@@ -445,6 +524,51 @@ spec:
                 description: What became of `spec.agents`. Absent until the operator has had something to do.
                 nullable: true
                 properties:
+                  clients:
+                    items:
+                      properties:
+                        clientId:
+                          type: string
+                        createdAt:
+                          nullable: true
+                          type: string
+                        enabled:
+                          type: boolean
+                        kind:
+                          type: string
+                        name:
+                          nullable: true
+                          type: string
+                        source:
+                          type: string
+                      required:
+                      - clientId
+                      - enabled
+                      - kind
+                      - source
+                      type: object
+                    type: array
+                  clientsTruncated:
+                    type: boolean
+                  credentials:
+                    items:
+                      properties:
+                        clientId:
+                          type: string
+                        requestId:
+                          type: string
+                        sealed:
+                          type: string
+                      required:
+                      - clientId
+                      - requestId
+                      - sealed
+                      type: object
+                    type: array
+                  disabledClients:
+                    items:
+                      type: string
+                    type: array
                   gatewayClientReady:
                     default: false
                     type: boolean
@@ -481,6 +605,73 @@ spec:
                       required:
                       - id
                       - phase
+                      type: object
+                    type: array
+                  servers:
+                    items:
+                      properties:
+                        discoveredAt:
+                          description: When the last discovery started (RFC 3339). Absent until one has run.
+                          nullable: true
+                          type: string
+                        discoveryRequestedAt:
+                          description: |-
+                            The `discoveryRequestedAt` of the spec that this discovery answers, as
+                            written there. It is how the control plane tells a discovery of the
+                            server as it is from one of the server as it was.
+                          nullable: true
+                          type: string
+                        dropped:
+                          default: 0
+                          format: uint32
+                          minimum: 0.0
+                          type: integer
+                        id:
+                          type: string
+                        message:
+                          nullable: true
+                          type: string
+                        phase:
+                          enum:
+                          - Ready
+                          - Unreachable
+                          - Refused
+                          - Invalid
+                          type: string
+                        protocolVersion:
+                          description: |-
+                            The MCP protocol version the server negotiated at discovery. Absent
+                            until one has succeeded; the gateway speaks 2026-07-28 to a server
+                            that is not known to speak anything older.
+                          nullable: true
+                          type: string
+                        slug:
+                          description: |-
+                            The slug the server had when it was last reconciled, so its audience
+                            client can still be found once the server is gone from the spec.
+                          type: string
+                        tools:
+                          items:
+                            properties:
+                              description:
+                                nullable: true
+                                type: string
+                              destructive:
+                                default: false
+                                type: boolean
+                              name:
+                                type: string
+                              readOnly:
+                                default: false
+                                type: boolean
+                            required:
+                            - name
+                            type: object
+                          type: array
+                      required:
+                      - id
+                      - phase
+                      - slug
                       type: object
                     type: array
                 required:

@@ -253,6 +253,9 @@ mod tests {
             format!("/organisations/{ORG}/deployments/{DEP}/agents/policies"),
             format!("/organisations/{ORG}/deployments/{DEP}/agents/policies/{DEP}"),
             format!("/organisations/{ORG}/deployments/{DEP}/agents/decisions"),
+            format!("/organisations/{ORG}/deployments/{DEP}/agents/servers"),
+            format!("/organisations/{ORG}/deployments/{DEP}/agents/servers/{DEP}"),
+            format!("/organisations/{ORG}/deployments/{DEP}/agents/servers/{DEP}/discover"),
         ];
 
         for path in paths {

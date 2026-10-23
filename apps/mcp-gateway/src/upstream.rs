@@ -9,9 +9,11 @@ use serde_json::Value;
 use url::Url;
 
 use crate::{
+    access::Access,
     authzen::AuthzenPdp,
-    config::UpstreamConfig,
+    config::{Egress, UpstreamConfig},
     exchange::{CachedExchanger, TokenExchanger},
+    rpc,
     verifier::JwksVerifier,
 };
 
@@ -23,6 +25,9 @@ pub struct Upstream {
     pub issuer: String,
     pub scopes_supported: Vec<String>,
     pub upstream_url: String,
+    pub access: Access,
+    pub egress: Egress,
+    pub protocol: Option<String>,
     pub verifier: JwksVerifier,
     pub pdp: AuthzenPdp,
     pub exchanger: CachedExchanger,
@@ -74,6 +79,9 @@ impl Upstream {
             issuer: config.issuer,
             scopes_supported: config.scopes_supported,
             upstream_url: config.upstream_url,
+            access: config.access.into(),
+            egress: config.egress,
+            protocol: config.protocol,
             verifier,
             pdp,
             exchanger,
@@ -84,6 +92,10 @@ impl Upstream {
             metadata_path,
             annotations: Mutex::new(HashMap::new()),
         })
+    }
+
+    pub fn legacy_protocol(&self) -> Option<&str> {
+        legacy(self.protocol.as_deref())
     }
 
     pub fn metadata_url(&self) -> &str {
@@ -142,6 +154,10 @@ impl Upstream {
             .cloned()
             .unwrap_or_else(|| Value::Object(Default::default()))
     }
+}
+
+fn legacy(protocol: Option<&str>) -> Option<&str> {
+    protocol.filter(|version| *version != rpc::PROTOCOL_2026)
 }
 
 fn split_host(host: &str) -> (&str, Option<u16>) {
@@ -335,6 +351,13 @@ mod tests {
                 .challenge(true)
                 .starts_with("Bearer error=\"invalid_token\", resource_metadata=")
         );
+    }
+
+    #[test]
+    fn a_protocol_other_than_2026_makes_an_upstream_legacy() {
+        assert_eq!(legacy(None), None);
+        assert_eq!(legacy(Some(rpc::PROTOCOL_2026)), None);
+        assert_eq!(legacy(Some("2025-11-25")), Some("2025-11-25"));
     }
 
     #[test]

@@ -6,9 +6,11 @@ ignore = [
     "RUSTSEC-2026-0369",
     "RUSTSEC-2026-0381",
 ]
-# RUSTSEC-2023-0071
-# Raison: Ne concerne que MySQL via sqlx-macros
-# Nous utilisons uniquement PostgreSQL
+# RUSTSEC-2023-0071 (rsa, Marvin timing attack, no fixed release)
+# Reason: the attack recovers a private key by timing decryptions or
+# signatures. sqlx-macros pulls rsa for MySQL only (we use PostgreSQL), and
+# the operator uses it only to encrypt an autonomous agent's secret to a
+# public key the browser sent (ADR 0013): no private key is ever loaded.
 #
 # RUSTSEC-2026-0367, 0368, 0369 (zip 3.0.0, fixed in 9.0.0)
 # Reason: zip is only a build dependency of utoipa-swagger-ui, whose build

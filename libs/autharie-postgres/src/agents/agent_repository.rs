@@ -12,13 +12,13 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use uuid::Uuid;
 
-fn db(what: &'static str) -> impl FnOnce(sqlx::Error) -> CoreError {
+pub(super) fn db(what: &'static str) -> impl FnOnce(sqlx::Error) -> CoreError {
     move |error| CoreError::DatabaseError {
         message: format!("Failed to {what}: {error}"),
     }
 }
 
-fn corrupt(what: impl std::fmt::Display) -> CoreError {
+pub(super) fn corrupt(what: impl std::fmt::Display) -> CoreError {
     CoreError::InternalError(format!("stored agent data cannot be read: {what}"))
 }
 
@@ -107,13 +107,17 @@ impl PolicyRow {
 #[cfg_attr(coverage_nightly, coverage(off))]
 #[repository(domain = Agent, backend = Postgres)]
 pub struct PostgresAgentRepository<'tx> {
-    tx: SharedTx<'tx>,
+    pub(super) tx: SharedTx<'tx>,
 }
 
 #[cfg_attr(coverage_nightly, coverage(off))]
 impl<'tx> PostgresAgentRepository<'tx> {
     pub fn new(tx: &SharedTx<'tx>) -> Self {
         Self { tx: tx.clone() }
+    }
+
+    pub(super) fn tx(&self) -> &SharedTx<'tx> {
+        &self.tx
     }
 }
 

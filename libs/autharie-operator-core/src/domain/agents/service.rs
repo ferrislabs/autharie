@@ -1,34 +1,42 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use autharie_crds::v1alpha::identity_instance::{
-    AgentPolicyPhase, AgentPolicySpec, AgentPolicyStatus, AgentsPhase, AgentsSpec, AgentsStatus,
-    IdentityInstance, IdentityProvider,
+    AgentPolicyPhase, AgentPolicySpec, AgentPolicyStatus, AgentServerStatus, AgentsPhase,
+    AgentsSpec, AgentsStatus, IdentityInstance, IdentityProvider,
 };
+use chrono::{DateTime, Utc};
 use futures::lock::Mutex;
 
 use super::config::{AgentsEnvironment, render};
 use super::plan::{Change, plan};
 use super::ports::{
     AgentInstances, AgentsEdge, AgentsOutcome, AgentsSecretsPort, AgentsStatusRepository,
-    FerriskeyAgentsPort, GatewayConfigStore, IdentityInstanceAgents,
+    FerriskeyAgentsPort, FerriskeyClientsPort, GatewayConfigStore, IdentityInstanceAgents,
 };
+use super::servers::{self, AgentServersPort};
 use super::{
     AgentsError, ManagedPolicy, PolicyWrite, agents_enabled, managed_id, managed_name,
-    remote_description, settings_with_resource, settings_without_resource, settled_off,
+    remote_description, settings_with_resources, settings_without_resources, settled_off,
 };
 
-pub struct AgentsReconciler<F, S, R, L, G, E> {
-    ferriskey: Arc<F>,
+mod servers_sync;
+
+pub struct AgentsReconciler<F, S, R, L, G, E, V> {
+    pub(super) ferriskey: Arc<F>,
     secrets: Arc<S>,
     status: Arc<R>,
     instances: Arc<L>,
     config: Arc<G>,
     edge: Arc<E>,
+    servers: Arc<V>,
     environment: AgentsEnvironment,
     rebuild: Mutex<()>,
+    clock: fn() -> DateTime<Utc>,
 }
 
-impl<F, S, R, L, G, E> AgentsReconciler<F, S, R, L, G, E> {
+impl<F, S, R, L, G, E, V> AgentsReconciler<F, S, R, L, G, E, V> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         ferriskey: Arc<F>,
         secrets: Arc<S>,
@@ -36,6 +44,7 @@ impl<F, S, R, L, G, E> AgentsReconciler<F, S, R, L, G, E> {
         instances: Arc<L>,
         config: Arc<G>,
         edge: Arc<E>,
+        servers: Arc<V>,
         environment: AgentsEnvironment,
     ) -> Self {
         Self {
@@ -45,20 +54,32 @@ impl<F, S, R, L, G, E> AgentsReconciler<F, S, R, L, G, E> {
             instances,
             config,
             edge,
+            servers,
             environment,
             rebuild: Mutex::new(()),
+            clock: Utc::now,
         }
+    }
+
+    pub fn with_clock(mut self, clock: fn() -> DateTime<Utc>) -> Self {
+        self.clock = clock;
+        self
     }
 }
 
 #[derive(Default)]
-struct Tally {
+pub(super) struct Tally {
     issues: Vec<AgentsError>,
-    retry: bool,
+    pub(super) retry: bool,
+    revisit: Option<Duration>,
 }
 
 impl Tally {
-    fn issue(&mut self, error: AgentsError) {
+    fn revisit_in(&mut self, wait: Duration) {
+        self.revisit = Some(self.revisit.map_or(wait, |known| known.min(wait)));
+    }
+
+    pub(super) fn issue(&mut self, error: AgentsError) {
         tracing::warn!(error = %error.message(), "agent settings could not be applied");
         self.issues.push(error);
     }
@@ -83,14 +104,15 @@ fn serves_agents(instance: &IdentityInstance) -> bool {
         && instance.metadata.deletion_timestamp.is_none()
 }
 
-impl<F, S, R, L, G, E> IdentityInstanceAgents for AgentsReconciler<F, S, R, L, G, E>
+impl<F, S, R, L, G, E, V> IdentityInstanceAgents for AgentsReconciler<F, S, R, L, G, E, V>
 where
-    F: FerriskeyAgentsPort,
+    F: FerriskeyAgentsPort + FerriskeyClientsPort,
     S: AgentsSecretsPort,
     R: AgentsStatusRepository,
     L: AgentInstances,
     G: GatewayConfigStore,
     E: AgentsEdge,
+    V: AgentServersPort,
 {
     async fn reconcile(&self, instance: &IdentityInstance) -> AgentsOutcome {
         if !serves_agents(instance) || instance.spec.stopped || !instance.is_ready() {
@@ -114,31 +136,40 @@ where
         if let Err(error) = self.edge.remove_route(instance).await {
             tracing::warn!(error = %error.message(), "could not remove the MCP route of a deleted instance");
         }
-        if let Err(error) = self.rebuild_gateway_config().await {
+        if let Err(error) = self.rebuild_gateway_config(None).await {
             tracing::warn!(error = %error.message(), "could not rebuild the gateway configuration after a deletion");
         }
     }
 }
 
-impl<F, S, R, L, G, E> AgentsReconciler<F, S, R, L, G, E>
+impl<F, S, R, L, G, E, V> AgentsReconciler<F, S, R, L, G, E, V>
 where
-    F: FerriskeyAgentsPort,
+    F: FerriskeyAgentsPort + FerriskeyClientsPort,
     S: AgentsSecretsPort,
     R: AgentsStatusRepository,
     L: AgentInstances,
     G: GatewayConfigStore,
     E: AgentsEdge,
+    V: AgentServersPort,
 {
     async fn enable(&self, instance: &IdentityInstance, agents: &AgentsSpec) -> AgentsOutcome {
         let canonical = self.environment.canonical_uri(instance);
         let mut tally = Tally::default();
+        let resources = self.server_resources(instance, agents);
 
         let client_ready = self
-            .prepare(instance, &agents.realm, &canonical, &mut tally)
+            .prepare(instance, &agents.realm, &canonical, &resources, &mut tally)
             .await;
         let policies = self.sync_policies(instance, agents, &mut tally).await;
+        let registry = self.sync_registry(instance, agents, &mut tally).await;
+        let servers = self
+            .sync_servers(instance, agents, client_ready, &mut tally)
+            .await;
         if client_ready {
-            if let Err(error) = self.rebuild_gateway_config().await {
+            if let Err(error) = self
+                .rebuild_gateway_config(Some((instance, &servers)))
+                .await
+            {
                 tally.issue(error);
             }
             if let Err(error) = self.edge.apply_route(instance).await {
@@ -153,6 +184,11 @@ where
             mcp_url: Some(canonical),
             message: tally.message(),
             policies,
+            clients: registry.clients,
+            clients_truncated: registry.truncated,
+            credentials: registry.credentials,
+            disabled_clients: registry.disabled,
+            servers,
         };
         self.record(instance, status, tally).await
     }
@@ -162,6 +198,7 @@ where
         instance: &IdentityInstance,
         realm: &str,
         canonical: &str,
+        resources: &[String],
         tally: &mut Tally,
     ) -> bool {
         if let Err(error) = self
@@ -175,7 +212,9 @@ where
 
         match self.ferriskey.realm_settings(instance, realm).await {
             Ok(current) => {
-                if let Some(wanted) = settings_with_resource(&current, canonical)
+                let mut wanted_resources = vec![canonical.to_string()];
+                wanted_resources.extend_from_slice(resources);
+                if let Some(wanted) = settings_with_resources(&current, &wanted_resources)
                     && let Err(error) = self
                         .ferriskey
                         .update_realm_settings(instance, realm, &wanted)
@@ -354,7 +393,7 @@ where
         if let Err(error) = self.secrets.forget(instance).await {
             tally.issue(error);
         }
-        if let Err(error) = self.rebuild_gateway_config().await {
+        if let Err(error) = self.rebuild_gateway_config(None).await {
             tally.issue(error);
         }
 
@@ -382,6 +421,19 @@ where
             Err(error) => tally.issue(error),
         }
 
+        let doomed = self.doomed_servers(instance, agents);
+        for slug in &doomed {
+            let uri = self.environment.server_canonical_uri(instance, slug);
+            match self
+                .servers
+                .remove_server_client(instance, realm, slug, &uri)
+                .await
+            {
+                Ok(()) | Err(AgentsError::NotFound) => {}
+                Err(error) => tally.issue(error),
+            }
+        }
+
         match self
             .ferriskey
             .remove_gateway_client(instance, realm, &canonical)
@@ -391,9 +443,15 @@ where
             Err(error) => tally.issue(error),
         }
 
+        let mut taken_back = vec![canonical.clone()];
+        taken_back.extend(
+            doomed
+                .iter()
+                .map(|slug| self.environment.server_canonical_uri(instance, slug)),
+        );
         match self.ferriskey.realm_settings(instance, realm).await {
             Ok(current) => {
-                if let Some(wanted) = settings_without_resource(&current, &canonical)
+                if let Some(wanted) = settings_without_resources(&current, &taken_back)
                     && let Err(error) = self
                         .ferriskey
                         .update_realm_settings(instance, realm, &wanted)
@@ -412,6 +470,7 @@ where
             AgentsStatus {
                 phase: tally.phase(),
                 message: tally.message(),
+                servers: servers::known(instance).to_vec(),
                 ..settled_off(agents.policies_revision)
             }
         };
@@ -437,13 +496,18 @@ where
         }
 
         if status.phase == AgentsPhase::Ready && !tally.retry {
-            AgentsOutcome::Settled
+            tally
+                .revisit
+                .map_or(AgentsOutcome::Settled, AgentsOutcome::Revisit)
         } else {
             AgentsOutcome::Retry
         }
     }
 
-    async fn rebuild_gateway_config(&self) -> Result<(), AgentsError> {
+    async fn rebuild_gateway_config(
+        &self,
+        fresh: Option<(&IdentityInstance, &[AgentServerStatus])>,
+    ) -> Result<(), AgentsError> {
         let _guard = self.rebuild.lock().await;
 
         let instances = self.instances.list().await?;
@@ -458,6 +522,16 @@ where
             if let Some(upstream) = self.environment.upstream(instance, &secret) {
                 upstreams.push(upstream);
             }
+            let fresh = fresh.filter(|(own, _)| {
+                own.metadata.name == instance.metadata.name
+                    && own.metadata.namespace == instance.metadata.namespace
+            });
+            upstreams.extend(match fresh {
+                Some((_, known)) => self
+                    .environment
+                    .server_upstreams_known(instance, &secret, known),
+                None => self.environment.server_upstreams(instance, &secret),
+            });
         }
 
         let document = render(&upstreams);
@@ -470,15 +544,23 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, HashMap};
+    use std::collections::{BTreeMap, BTreeSet, HashMap};
     use std::sync::Mutex as StdMutex;
 
-    use autharie_crds::v1alpha::identity_instance::{IdentityInstanceSpec, IdentityInstanceStatus};
+    use autharie_crds::v1alpha::identity_instance::{
+        AgentServerPhase, AgentServerSpec, AgentServerTool, IdentityInstanceSpec,
+        IdentityInstanceStatus,
+    };
 
     use super::*;
     use crate::domain::OperatorError;
+    use crate::domain::agents::ports::{ClientSecret, FerriskeyClientsPort};
+    use crate::domain::agents::registry::{AgentClient, AgentClientId, RemoteClient};
+    use crate::domain::agents::sealing::fixtures;
+    use crate::domain::agents::servers::{Discovered, DiscoveryTarget};
     use crate::domain::agents::test_spec;
     use crate::domain::agents::{GatewayClient, RealmSettings, RemotePolicy};
+    use autharie_crds::v1alpha::identity_instance::{AgentAccessSpec, AutonomousAgentSpec};
 
     const POLICY_A: &str = "0b9ad3c4-4a5f-4c3b-8d57-0b2d6d9e1a11";
     const POLICY_B: &str = "7f1c2d3e-0000-4000-8000-00000000000b";
@@ -495,6 +577,9 @@ mod tests {
         next_id: u32,
         fail: HashMap<&'static str, AgentsError>,
         reject_source: Option<(String, AgentsError)>,
+        clients: Vec<RemoteClient>,
+        client_secrets: BTreeMap<String, String>,
+        client_writes: Vec<String>,
     }
 
     #[derive(Default)]
@@ -661,6 +746,117 @@ mod tests {
         }
     }
 
+    impl FakeFerriskey {
+        fn client_writes(&self) -> Vec<String> {
+            self.state
+                .lock()
+                .expect("not poisoned")
+                .client_writes
+                .clone()
+        }
+
+        fn realm_client(&self, client_id: &str) -> Option<RemoteClient> {
+            self.state
+                .lock()
+                .expect("not poisoned")
+                .clients
+                .iter()
+                .find(|client| client.client_id == client_id)
+                .cloned()
+        }
+    }
+
+    impl FerriskeyClientsPort for FakeFerriskey {
+        async fn list_clients(
+            &self,
+            _instance: &IdentityInstance,
+            _realm: &str,
+        ) -> Result<Vec<RemoteClient>, AgentsError> {
+            self.enter("list_clients")?;
+            Ok(self.state.lock().expect("not poisoned").clients.clone())
+        }
+
+        async fn set_client_enabled(
+            &self,
+            _instance: &IdentityInstance,
+            _realm: &str,
+            client: &AgentClient,
+            enabled: bool,
+        ) -> Result<(), AgentsError> {
+            self.enter("set_client_enabled")?;
+            self.with(|state| {
+                state
+                    .client_writes
+                    .push(format!("enabled:{}:{enabled}", client.client_id()));
+                for found in state.clients.iter_mut() {
+                    if found.id == client.remote_id() {
+                        found.enabled = enabled;
+                    }
+                }
+            });
+            Ok(())
+        }
+
+        async fn delete_client(
+            &self,
+            _instance: &IdentityInstance,
+            _realm: &str,
+            client: &AgentClient,
+        ) -> Result<(), AgentsError> {
+            self.enter("delete_client")?;
+            self.with(|state| {
+                state
+                    .client_writes
+                    .push(format!("delete:{}", client.client_id()));
+                state.clients.retain(|found| found.id != client.remote_id());
+            });
+            Ok(())
+        }
+
+        async fn create_autonomous_client(
+            &self,
+            _instance: &IdentityInstance,
+            _realm: &str,
+            id: &AgentClientId,
+            name: &str,
+        ) -> Result<AgentClient, AgentsError> {
+            self.enter("create_autonomous_client")?;
+            let mut state = self.state.lock().expect("not poisoned");
+            state.next_id += 1;
+            let remote = RemoteClient {
+                id: format!("uuid-{}", state.next_id),
+                client_id: id.as_str().to_string(),
+                name: Some(name.to_string()),
+                registration_source: "admin".to_string(),
+                enabled: true,
+                created_at: Some("2026-10-23T12:00:00Z".to_string()),
+            };
+            state
+                .client_secrets
+                .insert(remote.id.clone(), format!("secret-of-{}", remote.id));
+            state.client_writes.push(format!("create:{}", id.as_str()));
+            state.clients.push(remote.clone());
+            Ok(AgentClient::try_from(remote).expect("an agent"))
+        }
+
+        async fn client_secret(
+            &self,
+            _instance: &IdentityInstance,
+            _realm: &str,
+            client: &AgentClient,
+        ) -> Result<ClientSecret, AgentsError> {
+            self.enter("client_secret")?;
+            self.state
+                .lock()
+                .expect("not poisoned")
+                .client_secrets
+                .get(client.remote_id())
+                .cloned()
+                .map(ClientSecret::new)
+                .ok_or(AgentsError::NotFound)
+        }
+    }
+
     #[derive(Default)]
     struct FakeSecrets {
         stored: StdMutex<BTreeMap<String, String>>,
@@ -780,6 +976,102 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct ServersState {
+        calls: Vec<String>,
+        clients: BTreeSet<String>,
+        discovered: Vec<(String, String, String, String)>,
+        answer: Option<Discovered>,
+        fail_ensure: Option<AgentsError>,
+        fail_remove: Option<AgentsError>,
+    }
+
+    #[derive(Default)]
+    struct FakeServers {
+        state: StdMutex<ServersState>,
+    }
+
+    impl FakeServers {
+        fn with(&self, change: impl FnOnce(&mut ServersState)) {
+            change(&mut self.state.lock().expect("not poisoned"));
+        }
+
+        fn calls(&self) -> Vec<String> {
+            self.state.lock().expect("not poisoned").calls.clone()
+        }
+
+        fn discoveries(&self) -> usize {
+            self.state.lock().expect("not poisoned").discovered.len()
+        }
+    }
+
+    impl AgentServersPort for FakeServers {
+        async fn ensure_server_client(
+            &self,
+            _instance: &IdentityInstance,
+            _realm: &str,
+            slug: &str,
+            canonical_uri: &str,
+        ) -> Result<(), AgentsError> {
+            let mut state = self.state.lock().expect("not poisoned");
+            state.calls.push(format!("ensure:{slug}:{canonical_uri}"));
+            if let Some(error) = state.fail_ensure.clone() {
+                return Err(error);
+            }
+            state.clients.insert(slug.to_string());
+            Ok(())
+        }
+
+        async fn remove_server_client(
+            &self,
+            _instance: &IdentityInstance,
+            _realm: &str,
+            slug: &str,
+            _canonical_uri: &str,
+        ) -> Result<(), AgentsError> {
+            let mut state = self.state.lock().expect("not poisoned");
+            state.calls.push(format!("remove:{slug}"));
+            if let Some(error) = state.fail_remove.clone() {
+                return Err(error);
+            }
+            state.clients.remove(slug);
+            Ok(())
+        }
+
+        async fn discover(&self, target: &DiscoveryTarget<'_>) -> Discovered {
+            let mut state = self.state.lock().expect("not poisoned");
+            state.discovered.push((
+                target.url.to_string(),
+                target.audience.to_string(),
+                target.client_secret.to_string(),
+                target.token_url.to_string(),
+            ));
+            state.answer.clone().unwrap_or_else(|| {
+                Discovered::listed(
+                    vec![AgentServerTool {
+                        name: "list_invoices".to_string(),
+                        description: None,
+                        read_only: true,
+                        destructive: false,
+                    }],
+                    0,
+                )
+            })
+        }
+    }
+
+    thread_local! {
+        static NOW: std::cell::Cell<i64> = const { std::cell::Cell::new(1_792_000_000) };
+    }
+
+    fn clock() -> DateTime<Utc> {
+        DateTime::from_timestamp(NOW.with(std::cell::Cell::get), 0).expect("a time")
+    }
+
+    fn later(seconds: i64) {
+        NOW.with(|now| now.set(now.get() + seconds));
+    }
+
     type Reconciler = AgentsReconciler<
         FakeFerriskey,
         FakeSecrets,
@@ -787,6 +1079,7 @@ mod tests {
         FakeInstances,
         FakeConfig,
         FakeEdge,
+        FakeServers,
     >;
 
     struct Harness {
@@ -796,6 +1089,7 @@ mod tests {
         instances: Arc<FakeInstances>,
         config: Arc<FakeConfig>,
         edge: Arc<FakeEdge>,
+        servers: Arc<FakeServers>,
         reconciler: Reconciler,
     }
 
@@ -806,6 +1100,7 @@ mod tests {
         let instances = Arc::new(FakeInstances::default());
         let config = Arc::new(FakeConfig::default());
         let edge = Arc::new(FakeEdge::default());
+        let servers = Arc::new(FakeServers::default());
         let reconciler = AgentsReconciler::new(
             ferriskey.clone(),
             secrets.clone(),
@@ -813,8 +1108,10 @@ mod tests {
             instances.clone(),
             config.clone(),
             edge.clone(),
+            servers.clone(),
             AgentsEnvironment::new("autharie-system", None),
-        );
+        )
+        .with_clock(clock);
         Harness {
             ferriskey,
             secrets,
@@ -822,6 +1119,7 @@ mod tests {
             instances,
             config,
             edge,
+            servers,
             reconciler,
         }
     }
@@ -840,6 +1138,7 @@ mod tests {
             realm: "acme".to_string(),
             policies,
             policies_revision: 3,
+            ..AgentsSpec::default()
         }
     }
 
@@ -1462,5 +1761,984 @@ mod tests {
         );
         assert!(!written_config(&h).contains("[[upstreams]]"));
         assert!(h.ferriskey.calls().is_empty());
+    }
+
+    fn realm_client(id: &str, client_id: &str, source: &str, enabled: bool) -> RemoteClient {
+        RemoteClient {
+            id: id.to_string(),
+            client_id: client_id.to_string(),
+            name: Some(client_id.to_string()),
+            registration_source: source.to_string(),
+            enabled,
+            created_at: Some("2026-10-23T10:00:00Z".to_string()),
+        }
+    }
+
+    fn seed(h: &Harness, clients: Vec<RemoteClient>) {
+        h.ferriskey.with(|state| state.clients = clients);
+    }
+
+    fn registry_spec(
+        access: AgentAccessSpec,
+        autonomous: Vec<AutonomousAgentSpec>,
+        deleted: Vec<&str>,
+    ) -> AgentsSpec {
+        AgentsSpec {
+            access,
+            autonomous,
+            deleted_agents: deleted.into_iter().map(str::to_string).collect(),
+            ..agents(true, Vec::new())
+        }
+    }
+
+    fn blocking(ids: &[&str]) -> AgentAccessSpec {
+        AgentAccessSpec {
+            approval_required: false,
+            approved: Vec::new(),
+            blocked: ids.iter().map(|id| id.to_string()).collect(),
+        }
+    }
+
+    fn asking(client_id: &str, request: &str, rotate: bool) -> AutonomousAgentSpec {
+        let key = fixtures::public_spec();
+        AutonomousAgentSpec {
+            client_id: client_id.to_string(),
+            name: "Nightly sync".to_string(),
+            request_id: (!rotate).then(|| request.to_string()),
+            rotate_request_id: rotate.then(|| request.to_string()),
+            sealing_key: Some(key),
+        }
+    }
+
+    async fn settle(h: &Harness, spec: AgentsSpec) -> AgentsOutcome {
+        let previous = h
+            .status
+            .patches
+            .lock()
+            .expect("not poisoned")
+            .last()
+            .cloned();
+        let mut instance = acme(Some(spec));
+        if let Some(previous) = previous {
+            instance = with_status(instance, previous);
+        }
+        *h.instances.all.lock().expect("not poisoned") = vec![instance.clone()];
+        h.reconciler.reconcile(&instance).await
+    }
+
+    #[tokio::test]
+    async fn spec_ar_1_the_status_lists_dcr_and_cimd_clients_and_never_the_others() {
+        let h = harness();
+        seed(
+            &h,
+            vec![
+                realm_client("u1", "dcr-client", "dynamic", true),
+                realm_client(
+                    "u2",
+                    "https://app.example/client.json",
+                    "metadata_document",
+                    true,
+                ),
+                realm_client("u3", "mcp-gateway", "admin", true),
+                realm_client("u4", "console", "admin", true),
+            ],
+        );
+
+        settle(&h, agents(true, Vec::new())).await;
+
+        let status = last_status(&h);
+        let listed: Vec<_> = status
+            .clients
+            .iter()
+            .map(|c| (c.client_id.as_str(), c.source.as_str(), c.kind.as_str()))
+            .collect();
+        assert_eq!(
+            listed,
+            vec![
+                ("dcr-client", "dynamic", "delegated"),
+                (
+                    "https://app.example/client.json",
+                    "metadata_document",
+                    "delegated"
+                ),
+            ]
+        );
+        assert!(!status.clients_truncated);
+    }
+
+    #[tokio::test]
+    async fn the_reported_registry_is_bounded_to_500_with_a_truncated_flag() {
+        let h = harness();
+        seed(
+            &h,
+            (0..520)
+                .map(|n| realm_client(&format!("u{n}"), &format!("client-{n}"), "dynamic", true))
+                .collect(),
+        );
+
+        settle(&h, agents(true, Vec::new())).await;
+
+        let status = last_status(&h);
+        assert_eq!(status.clients.len(), 500);
+        assert!(status.clients_truncated);
+    }
+
+    #[tokio::test]
+    async fn spec_ar_3_a_blocked_agent_is_disabled_and_remembered_as_disabled_by_us() {
+        let h = harness();
+        seed(&h, vec![realm_client("u1", "dcr-client", "dynamic", true)]);
+
+        settle(
+            &h,
+            registry_spec(blocking(&["dcr-client"]), Vec::new(), Vec::new()),
+        )
+        .await;
+
+        assert_eq!(
+            h.ferriskey.client_writes(),
+            vec!["enabled:dcr-client:false"]
+        );
+        assert!(!h.ferriskey.realm_client("dcr-client").unwrap().enabled);
+        let status = last_status(&h);
+        assert_eq!(status.disabled_clients, vec!["dcr-client".to_string()]);
+        assert!(!status.clients[0].enabled);
+    }
+
+    #[tokio::test]
+    async fn a_blocked_agent_is_not_disabled_again_on_the_next_pass() {
+        let h = harness();
+        seed(&h, vec![realm_client("u1", "dcr-client", "dynamic", true)]);
+        let spec = registry_spec(blocking(&["dcr-client"]), Vec::new(), Vec::new());
+
+        settle(&h, spec.clone()).await;
+        settle(&h, spec).await;
+
+        assert_eq!(h.ferriskey.client_writes().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_client_that_registration_re_enabled_is_disabled_again_while_blocked() {
+        let h = harness();
+        seed(
+            &h,
+            vec![realm_client(
+                "u1",
+                "https://c.example/c.json",
+                "metadata_document",
+                true,
+            )],
+        );
+        let spec = registry_spec(
+            blocking(&["https://c.example/c.json"]),
+            Vec::new(),
+            Vec::new(),
+        );
+        settle(&h, spec.clone()).await;
+        h.ferriskey.with(|state| state.clients[0].enabled = true);
+
+        settle(&h, spec).await;
+
+        assert_eq!(h.ferriskey.client_writes().len(), 2);
+        assert!(
+            !h.ferriskey
+                .realm_client("https://c.example/c.json")
+                .unwrap()
+                .enabled
+        );
+    }
+
+    #[tokio::test]
+    async fn spec_ar_3_unblocking_enables_what_we_disabled_and_leaves_an_admins_choice_alone() {
+        let h = harness();
+        seed(
+            &h,
+            vec![
+                realm_client("u1", "ours", "dynamic", true),
+                realm_client("u2", "theirs", "dynamic", false),
+            ],
+        );
+        settle(
+            &h,
+            registry_spec(blocking(&["ours"]), Vec::new(), Vec::new()),
+        )
+        .await;
+
+        settle(&h, registry_spec(blocking(&[]), Vec::new(), Vec::new())).await;
+
+        assert!(h.ferriskey.realm_client("ours").unwrap().enabled);
+        assert!(!h.ferriskey.realm_client("theirs").unwrap().enabled);
+        assert!(last_status(&h).disabled_clients.is_empty());
+        assert_eq!(
+            h.ferriskey.client_writes(),
+            vec!["enabled:ours:false", "enabled:ours:true"]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_blocked_agent_an_admin_had_already_disabled_is_adopted_without_a_write() {
+        let h = harness();
+        seed(&h, vec![realm_client("u1", "dcr-client", "dynamic", false)]);
+
+        settle(
+            &h,
+            registry_spec(blocking(&["dcr-client"]), Vec::new(), Vec::new()),
+        )
+        .await;
+
+        assert!(h.ferriskey.client_writes().is_empty());
+        assert_eq!(
+            last_status(&h).disabled_clients,
+            vec!["dcr-client".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn spec_ar_8_a_forged_desired_state_never_touches_a_client_outside_the_agent_set() {
+        let h = harness();
+        seed(
+            &h,
+            vec![
+                realm_client("u1", "mcp-gateway", "admin", true),
+                realm_client("u2", "console", "admin", true),
+                realm_client("u3", "agent-lookalike", "federation", true),
+                realm_client("u4", "dcr-client", "dynamic", true),
+            ],
+        );
+        let forged = registry_spec(
+            blocking(&["mcp-gateway", "console", "agent-lookalike"]),
+            vec![
+                asking("mcp-gateway", "r1", true),
+                asking("console", "r2", false),
+            ],
+            vec!["mcp-gateway", "console", "agent-lookalike"],
+        );
+
+        settle(&h, forged).await;
+
+        assert!(h.ferriskey.client_writes().is_empty());
+        for kept in ["mcp-gateway", "console", "agent-lookalike", "dcr-client"] {
+            assert!(h.ferriskey.realm_client(kept).unwrap().enabled, "{kept}");
+        }
+        assert!(last_status(&h).credentials.is_empty());
+    }
+
+    #[tokio::test]
+    async fn deleting_an_agent_deletes_its_client_and_drops_it_from_the_registry() {
+        let h = harness();
+        seed(
+            &h,
+            vec![
+                realm_client("u1", "dcr-client", "dynamic", true),
+                realm_client("u2", "console", "admin", true),
+            ],
+        );
+
+        settle(
+            &h,
+            registry_spec(
+                AgentAccessSpec::default(),
+                Vec::new(),
+                vec!["dcr-client", "console"],
+            ),
+        )
+        .await;
+
+        assert_eq!(h.ferriskey.client_writes(), vec!["delete:dcr-client"]);
+        assert!(h.ferriskey.realm_client("console").is_some());
+        assert!(last_status(&h).clients.is_empty());
+    }
+
+    #[tokio::test]
+    async fn spec_ar_5_an_autonomous_agent_is_created_and_its_secret_sealed_to_the_browsers_key() {
+        let h = harness();
+        let spec = registry_spec(
+            AgentAccessSpec::default(),
+            vec![asking("agent-nightly-abc123", "r1", false)],
+            Vec::new(),
+        );
+
+        let outcome = settle(&h, spec).await;
+
+        assert_eq!(outcome, AgentsOutcome::Settled);
+        let created = h
+            .ferriskey
+            .realm_client("agent-nightly-abc123")
+            .expect("created");
+        assert_eq!(created.registration_source, "admin");
+        let status = last_status(&h);
+        assert_eq!(status.credentials.len(), 1);
+        assert_eq!(status.credentials[0].request_id, "r1");
+        assert_eq!(status.credentials[0].client_id, "agent-nightly-abc123");
+        assert_eq!(
+            fixtures::open(&status.credentials[0].sealed),
+            format!("secret-of-{}", created.id)
+        );
+        assert!(!status.credentials[0].sealed.contains("secret-of"));
+        assert_eq!(status.clients[0].source, "autharie");
+        assert_eq!(status.clients[0].kind, "autonomous");
+    }
+
+    #[tokio::test]
+    async fn an_answered_request_is_not_executed_again_on_the_next_pass() {
+        let h = harness();
+        let spec = registry_spec(
+            AgentAccessSpec::default(),
+            vec![asking("agent-nightly-abc123", "r1", false)],
+            Vec::new(),
+        );
+        settle(&h, spec.clone()).await;
+        let first = last_status(&h).credentials.clone();
+        let writes = h.ferriskey.client_writes();
+        let calls_before = h.ferriskey.calls().len();
+
+        settle(&h, spec).await;
+
+        assert_eq!(h.ferriskey.client_writes(), writes);
+        assert_eq!(last_status(&h).credentials, first);
+        assert!(
+            !h.ferriskey.calls()[calls_before..]
+                .iter()
+                .any(|call| call == "client_secret")
+        );
+    }
+
+    #[tokio::test]
+    async fn the_credential_goes_when_the_control_plane_stops_naming_the_request() {
+        let h = harness();
+        settle(
+            &h,
+            registry_spec(
+                AgentAccessSpec::default(),
+                vec![asking("agent-nightly-abc123", "r1", false)],
+                Vec::new(),
+            ),
+        )
+        .await;
+        assert_eq!(last_status(&h).credentials.len(), 1);
+
+        settle(
+            &h,
+            registry_spec(
+                AgentAccessSpec::default(),
+                vec![AutonomousAgentSpec {
+                    client_id: "agent-nightly-abc123".to_string(),
+                    name: "Nightly sync".to_string(),
+                    request_id: None,
+                    rotate_request_id: None,
+                    sealing_key: None,
+                }],
+                Vec::new(),
+            ),
+        )
+        .await;
+
+        assert!(last_status(&h).credentials.is_empty());
+        assert!(h.ferriskey.realm_client("agent-nightly-abc123").is_some());
+    }
+
+    #[tokio::test]
+    async fn rotating_replaces_the_client_under_the_same_id_and_seals_the_new_secret() {
+        let h = harness();
+        settle(
+            &h,
+            registry_spec(
+                AgentAccessSpec::default(),
+                vec![asking("agent-nightly-abc123", "r1", false)],
+                Vec::new(),
+            ),
+        )
+        .await;
+        let first_secret = fixtures::open(&last_status(&h).credentials[0].sealed);
+
+        settle(
+            &h,
+            registry_spec(
+                AgentAccessSpec::default(),
+                vec![asking("agent-nightly-abc123", "r2", true)],
+                Vec::new(),
+            ),
+        )
+        .await;
+
+        let status = last_status(&h);
+        assert_eq!(status.credentials.len(), 1);
+        assert_eq!(status.credentials[0].request_id, "r2");
+        assert_ne!(fixtures::open(&status.credentials[0].sealed), first_secret);
+        assert_eq!(
+            h.ferriskey.client_writes(),
+            vec![
+                "create:agent-nightly-abc123",
+                "delete:agent-nightly-abc123",
+                "create:agent-nightly-abc123"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn spec_ar_6_a_sealing_key_under_2048_bits_creates_nothing_and_seals_nothing() {
+        let h = harness();
+        let mut weak = asking("agent-nightly-abc123", "r1", false);
+        weak.sealing_key.as_mut().unwrap().n = {
+            use base64::Engine;
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(vec![0xffu8; 255])
+        };
+        let spec = registry_spec(AgentAccessSpec::default(), vec![weak], Vec::new());
+
+        settle(&h, spec).await;
+
+        assert!(h.ferriskey.client_writes().is_empty());
+        let status = last_status(&h);
+        assert!(status.credentials.is_empty());
+        assert_eq!(status.phase, AgentsPhase::Failed);
+        assert!(status.message.unwrap().contains("2048"));
+    }
+
+    #[tokio::test]
+    async fn a_failing_creation_is_retried_and_leaves_no_credential() {
+        let h = harness();
+        h.ferriskey.with(|state| {
+            state.fail.insert(
+                "create_autonomous_client",
+                AgentsError::Retry {
+                    message: "down".to_string(),
+                },
+            );
+        });
+        let spec = registry_spec(
+            AgentAccessSpec::default(),
+            vec![asking("agent-nightly-abc123", "r1", false)],
+            Vec::new(),
+        );
+
+        let outcome = settle(&h, spec).await;
+
+        assert_eq!(outcome, AgentsOutcome::Retry);
+        assert!(last_status(&h).credentials.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_client_listing_that_fails_keeps_the_last_known_registry_and_asks_again() {
+        let h = harness();
+        seed(&h, vec![realm_client("u1", "dcr-client", "dynamic", true)]);
+        settle(&h, agents(true, Vec::new())).await;
+        h.ferriskey.with(|state| {
+            state.fail.insert(
+                "list_clients",
+                AgentsError::Retry {
+                    message: "down".to_string(),
+                },
+            );
+        });
+
+        let outcome = settle(&h, agents(true, Vec::new())).await;
+
+        assert_eq!(outcome, AgentsOutcome::Retry);
+        let status = last_status(&h);
+        assert_eq!(status.clients.len(), 1);
+        assert_eq!(status.phase, AgentsPhase::Applying);
+    }
+
+    #[tokio::test]
+    async fn the_gateway_config_carries_the_access_lists_of_the_instance() {
+        let h = harness();
+        let spec = registry_spec(
+            AgentAccessSpec {
+                approval_required: true,
+                approved: vec!["trusted".to_string()],
+                blocked: vec!["banned".to_string()],
+            },
+            Vec::new(),
+            Vec::new(),
+        );
+
+        settle(&h, spec).await;
+
+        let document = written_config(&h);
+        assert!(document.contains("mode = \"approval\""));
+        assert!(document.contains("approved = [\"trusted\"]"));
+        assert!(document.contains("blocked = [\"banned\"]"));
+    }
+
+    const CRM_ID: &str = "0b9ad3c4-4a5f-4c3b-8d57-0b2d6d9e1a11";
+    const ERP_ID: &str = "7f1c2d3e-0000-4000-8000-00000000000c";
+    const CRM_URI: &str = "https://auth.acme.test/mcp/crm";
+    const ERP_URI: &str = "https://auth.acme.test/mcp/erp";
+
+    fn customer(id: &str, slug: &str, enabled: bool, asked: Option<&str>) -> AgentServerSpec {
+        AgentServerSpec {
+            id: id.to_string(),
+            slug: slug.to_string(),
+            url: format!("https://{slug}.example.com/mcp"),
+            enabled,
+            discovery_requested_at: asked.map(str::to_string),
+        }
+    }
+
+    fn with_customers(servers: Vec<AgentServerSpec>) -> IdentityInstance {
+        let mut spec = agents(true, Vec::new());
+        spec.servers = servers;
+        acme(Some(spec))
+    }
+
+    fn serving(h: &Harness, instance: &IdentityInstance) {
+        *h.instances.all.lock().expect("not poisoned") = vec![instance.clone()];
+    }
+
+    #[tokio::test]
+    async fn spec_ms_2_a_customer_server_gets_its_client_its_resource_its_upstream_and_its_status()
+    {
+        let h = harness();
+        let instance = with_customers(vec![customer(CRM_ID, "crm", true, None)]);
+        serving(&h, &instance);
+
+        let outcome = h.reconciler.reconcile(&instance).await;
+
+        assert_eq!(h.servers.calls(), vec![format!("ensure:crm:{CRM_URI}")]);
+        let state = h.ferriskey.state.lock().expect("not poisoned");
+        assert_eq!(
+            state.settings.allowed_resources,
+            vec![CANONICAL.to_string(), CRM_URI.to_string()]
+        );
+        drop(state);
+        let config = written_config(&h);
+        assert!(config.contains("canonical_uri = \"https://auth.acme.test/mcp/crm\""));
+        assert!(config.contains("server_name = \"crm\""));
+        assert!(config.contains("upstream_url = \"https://crm.example.com/mcp\""));
+        assert!(config.contains("audience = \"mcp-crm\""));
+        assert!(config.contains("egress = \"public\""));
+        assert_eq!(
+            *h.edge.calls.lock().expect("not poisoned"),
+            vec!["apply:deployment-1".to_string()]
+        );
+        let status = last_status(&h);
+        assert_eq!(status.phase, AgentsPhase::Ready);
+        assert_eq!(status.servers.len(), 1);
+        assert_eq!(status.servers[0].id, CRM_ID);
+        assert_eq!(status.servers[0].slug, "crm");
+        assert_eq!(status.servers[0].phase, AgentServerPhase::Ready);
+        assert_eq!(status.servers[0].tools[0].name, "list_invoices");
+        assert!(status.servers[0].discovered_at.is_some());
+        assert_eq!(
+            outcome,
+            AgentsOutcome::Revisit(crate::domain::agents::servers::REDISCOVER_AFTER)
+        );
+    }
+
+    #[tokio::test]
+    async fn the_discovery_is_asked_of_the_server_url_with_the_gateway_secret_and_the_servers_audience()
+     {
+        let h = harness();
+        let instance = with_customers(vec![customer(CRM_ID, "crm", true, None)]);
+        serving(&h, &instance);
+
+        h.reconciler.reconcile(&instance).await;
+
+        let asked = h
+            .servers
+            .state
+            .lock()
+            .expect("not poisoned")
+            .discovered
+            .clone();
+        assert_eq!(
+            asked,
+            vec![(
+                "https://crm.example.com/mcp".to_string(),
+                "mcp-crm".to_string(),
+                "client-secret".to_string(),
+                "http://deployment-1-api.tenant-a.svc:3333/api/realms/acme/protocol/openid-connect/token"
+                    .to_string(),
+            )]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_server_switched_off_gets_no_client_no_upstream_and_no_status() {
+        let h = harness();
+        let instance = with_customers(vec![
+            customer(CRM_ID, "crm", true, None),
+            customer(ERP_ID, "erp", false, None),
+        ]);
+        serving(&h, &instance);
+
+        h.reconciler.reconcile(&instance).await;
+
+        assert_eq!(h.servers.calls(), vec![format!("ensure:crm:{CRM_URI}")]);
+        assert!(!written_config(&h).contains("erp"));
+        let status = last_status(&h);
+        assert_eq!(status.servers.len(), 1);
+        assert_eq!(status.servers[0].slug, "crm");
+    }
+
+    #[tokio::test]
+    async fn a_second_pass_does_not_discover_again_until_it_is_time() {
+        let h = harness();
+        let first = with_customers(vec![customer(CRM_ID, "crm", true, None)]);
+        serving(&h, &first);
+        h.reconciler.reconcile(&first).await;
+        let applied = last_status(&h);
+        let patches = h.status.patches.lock().expect("not poisoned").len();
+        let second = with_status(first, applied);
+
+        later(3600);
+        let outcome = h.reconciler.reconcile(&second).await;
+
+        assert_eq!(h.servers.discoveries(), 1);
+        assert_eq!(
+            h.status.patches.lock().expect("not poisoned").len(),
+            patches
+        );
+        assert!(
+            matches!(outcome, AgentsOutcome::Revisit(wait) if wait <= crate::domain::agents::servers::REDISCOVER_AFTER)
+        );
+    }
+
+    #[tokio::test]
+    async fn after_six_hours_the_tools_are_listed_again() {
+        let h = harness();
+        let first = with_customers(vec![customer(CRM_ID, "crm", true, None)]);
+        serving(&h, &first);
+        h.reconciler.reconcile(&first).await;
+        let second = with_status(first, last_status(&h));
+
+        later(6 * 3600 + 1);
+        h.reconciler.reconcile(&second).await;
+
+        assert_eq!(h.servers.discoveries(), 2);
+        assert_ne!(
+            last_status(&h).servers[0].discovered_at,
+            second
+                .status
+                .as_ref()
+                .unwrap()
+                .agents
+                .as_ref()
+                .unwrap()
+                .servers[0]
+                .discovered_at
+        );
+    }
+
+    #[tokio::test]
+    async fn a_new_request_lists_the_tools_again_at_once_and_is_echoed_in_the_status() {
+        let h = harness();
+        let first = with_customers(vec![customer(
+            CRM_ID,
+            "crm",
+            true,
+            Some("2026-10-23T10:00:00.000Z"),
+        )]);
+        serving(&h, &first);
+        h.reconciler.reconcile(&first).await;
+        let applied = last_status(&h);
+        assert_eq!(
+            applied.servers[0].discovery_requested_at.as_deref(),
+            Some("2026-10-23T10:00:00.000Z")
+        );
+
+        let asked_again = with_status(
+            with_customers(vec![customer(
+                CRM_ID,
+                "crm",
+                true,
+                Some("2026-10-23T10:07:00.000Z"),
+            )]),
+            applied,
+        );
+        later(60);
+        h.reconciler.reconcile(&asked_again).await;
+
+        assert_eq!(h.servers.discoveries(), 2);
+        assert_eq!(
+            last_status(&h).servers[0].discovery_requested_at.as_deref(),
+            Some("2026-10-23T10:07:00.000Z")
+        );
+    }
+
+    #[tokio::test]
+    async fn the_protocol_a_server_negotiated_reaches_the_gateway_configuration_in_the_same_pass() {
+        let h = harness();
+        h.servers.with(|state| {
+            let mut found = Discovered::listed(Vec::new(), 0);
+            found.protocol_version = Some("2025-11-25".to_string());
+            state.answer = Some(found);
+        });
+        let instance = with_customers(vec![customer(CRM_ID, "crm", true, None)]);
+        serving(&h, &instance);
+
+        h.reconciler.reconcile(&instance).await;
+
+        assert!(written_config(&h).contains("egress = \"public\"\nprotocol = \"2025-11-25\"\n"));
+        assert_eq!(
+            last_status(&h).servers[0].protocol_version.as_deref(),
+            Some("2025-11-25")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_discovery_keeps_the_protocol_the_server_negotiated_before() {
+        let h = harness();
+        h.servers.with(|state| {
+            let mut found = Discovered::listed(Vec::new(), 0);
+            found.protocol_version = Some("2025-11-25".to_string());
+            state.answer = Some(found);
+        });
+        let first = with_customers(vec![customer(
+            CRM_ID,
+            "crm",
+            true,
+            Some("2026-10-23T10:00:00.000Z"),
+        )]);
+        serving(&h, &first);
+        h.reconciler.reconcile(&first).await;
+        h.servers.with(|state| {
+            state.answer = Some(Discovered::failed(AgentServerPhase::Unreachable, "down"));
+        });
+
+        let asked_again = with_status(
+            with_customers(vec![customer(
+                CRM_ID,
+                "crm",
+                true,
+                Some("2026-10-23T10:07:00.000Z"),
+            )]),
+            last_status(&h),
+        );
+        later(60);
+        h.reconciler.reconcile(&asked_again).await;
+
+        assert_eq!(
+            last_status(&h).servers[0].phase,
+            AgentServerPhase::Unreachable
+        );
+        assert_eq!(
+            last_status(&h).servers[0].protocol_version.as_deref(),
+            Some("2025-11-25")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_server_that_cannot_be_reached_is_reported_without_failing_the_agents() {
+        let h = harness();
+        h.servers.with(|state| {
+            state.answer = Some(Discovered::failed(
+                AgentServerPhase::Unreachable,
+                "the server could not be reached",
+            ));
+        });
+        let instance = with_customers(vec![customer(CRM_ID, "crm", true, None)]);
+        serving(&h, &instance);
+
+        let outcome = h.reconciler.reconcile(&instance).await;
+
+        let status = last_status(&h);
+        assert_eq!(status.phase, AgentsPhase::Ready);
+        assert_eq!(status.servers[0].phase, AgentServerPhase::Unreachable);
+        assert_eq!(
+            status.servers[0].message.as_deref(),
+            Some("the server could not be reached")
+        );
+        assert_eq!(
+            outcome,
+            AgentsOutcome::Revisit(crate::domain::agents::servers::RETRY_FAILED_AFTER)
+        );
+    }
+
+    #[tokio::test]
+    async fn spec_ms_7_a_server_taken_out_of_the_spec_loses_its_client_its_resource_and_its_upstream()
+     {
+        let h = harness();
+        let both = with_customers(vec![
+            customer(CRM_ID, "crm", true, None),
+            customer(ERP_ID, "erp", true, None),
+        ]);
+        serving(&h, &both);
+        h.reconciler.reconcile(&both).await;
+        let applied = last_status(&h);
+        assert_eq!(applied.servers.len(), 2);
+        h.servers.with(|state| state.calls.clear());
+
+        let only_crm = with_status(
+            with_customers(vec![customer(CRM_ID, "crm", true, None)]),
+            applied,
+        );
+        serving(&h, &only_crm);
+        h.reconciler.reconcile(&only_crm).await;
+
+        assert!(h.servers.calls().contains(&"remove:erp".to_string()));
+        assert!(!h.servers.calls().contains(&"remove:crm".to_string()));
+        let state = h.ferriskey.state.lock().expect("not poisoned");
+        assert_eq!(
+            state.settings.allowed_resources,
+            vec![CANONICAL.to_string(), CRM_URI.to_string()]
+        );
+        drop(state);
+        assert!(!written_config(&h).contains("mcp/erp"));
+        assert!(written_config(&h).contains("mcp/crm"));
+        let status = last_status(&h);
+        assert_eq!(status.servers.len(), 1);
+        assert_eq!(status.servers[0].slug, "crm");
+    }
+
+    #[tokio::test]
+    async fn a_server_switched_off_after_being_on_is_taken_back_like_a_removed_one() {
+        let h = harness();
+        let on = with_customers(vec![customer(CRM_ID, "crm", true, None)]);
+        serving(&h, &on);
+        h.reconciler.reconcile(&on).await;
+        let applied = last_status(&h);
+
+        let off = with_status(
+            with_customers(vec![customer(CRM_ID, "crm", false, None)]),
+            applied,
+        );
+        serving(&h, &off);
+        h.reconciler.reconcile(&off).await;
+
+        assert!(h.servers.calls().contains(&"remove:crm".to_string()));
+        assert!(last_status(&h).servers.is_empty());
+        assert!(!written_config(&h).contains("mcp/crm"));
+    }
+
+    #[tokio::test]
+    async fn a_removal_that_fails_keeps_the_server_in_the_status_so_it_is_tried_again() {
+        let h = harness();
+        let both = with_customers(vec![
+            customer(CRM_ID, "crm", true, None),
+            customer(ERP_ID, "erp", true, None),
+        ]);
+        serving(&h, &both);
+        h.reconciler.reconcile(&both).await;
+        let applied = last_status(&h);
+        h.servers.with(|state| {
+            state.fail_remove = Some(AgentsError::Retry {
+                message: "FerrisKey is unreachable".to_string(),
+            });
+        });
+
+        let only_crm = with_status(
+            with_customers(vec![customer(CRM_ID, "crm", true, None)]),
+            applied,
+        );
+        let outcome = h.reconciler.reconcile(&only_crm).await;
+
+        assert_eq!(outcome, AgentsOutcome::Retry);
+        let slugs: Vec<_> = last_status(&h)
+            .servers
+            .iter()
+            .map(|server| server.slug.clone())
+            .collect();
+        assert!(slugs.contains(&"erp".to_string()));
+        let state = h.ferriskey.state.lock().expect("not poisoned");
+        assert!(
+            state
+                .settings
+                .allowed_resources
+                .contains(&ERP_URI.to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn turning_agents_off_takes_back_every_server_client_and_resource() {
+        let h = harness();
+        let on = with_customers(vec![
+            customer(CRM_ID, "crm", true, None),
+            customer(ERP_ID, "erp", false, None),
+        ]);
+        serving(&h, &on);
+        h.reconciler.reconcile(&on).await;
+        let applied = last_status(&h);
+
+        let mut off_spec = agents(false, Vec::new());
+        off_spec.servers = vec![
+            customer(CRM_ID, "crm", true, None),
+            customer(ERP_ID, "erp", false, None),
+        ];
+        let off = with_status(acme(Some(off_spec)), applied);
+        *h.instances.all.lock().expect("not poisoned") = vec![off.clone()];
+        let outcome = h.reconciler.reconcile(&off).await;
+
+        assert_eq!(outcome, AgentsOutcome::Settled);
+        let calls = h.servers.calls();
+        assert!(calls.contains(&"remove:crm".to_string()));
+        assert!(calls.contains(&"remove:erp".to_string()));
+        let state = h.ferriskey.state.lock().expect("not poisoned");
+        assert!(state.settings.allowed_resources.is_empty());
+        drop(state);
+        assert_eq!(last_status(&h), settled_off(3));
+    }
+
+    #[tokio::test]
+    async fn a_client_that_cannot_be_made_for_a_server_is_reported_and_retried_without_discovering()
+    {
+        let h = harness();
+        h.servers.with(|state| {
+            state.fail_ensure = Some(AgentsError::Retry {
+                message: "FerrisKey is unreachable".to_string(),
+            });
+        });
+        let instance = with_customers(vec![customer(CRM_ID, "crm", true, None)]);
+        serving(&h, &instance);
+
+        let outcome = h.reconciler.reconcile(&instance).await;
+
+        assert_eq!(outcome, AgentsOutcome::Retry);
+        assert_eq!(h.servers.discoveries(), 0);
+        let status = last_status(&h);
+        assert_eq!(status.phase, AgentsPhase::Applying);
+        assert_eq!(status.servers.len(), 1);
+        assert_eq!(status.servers[0].discovered_at, None);
+        assert_eq!(status.message.as_deref(), Some("FerrisKey is unreachable"));
+    }
+
+    #[tokio::test]
+    async fn nothing_is_done_for_servers_while_the_gateway_client_is_not_ready() {
+        let h = harness();
+        h.ferriskey.with(|state| {
+            state.fail.insert(
+                "ensure_gateway_client",
+                AgentsError::Retry {
+                    message: "FerrisKey is unreachable".to_string(),
+                },
+            );
+        });
+        let instance = with_customers(vec![customer(CRM_ID, "crm", true, None)]);
+
+        h.reconciler.reconcile(&instance).await;
+
+        assert!(h.servers.calls().is_empty());
+        assert_eq!(h.servers.discoveries(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_slug_the_gateway_could_confuse_with_its_own_client_is_invalid_and_never_sent_to_ferriskey()
+     {
+        let h = harness();
+        let instance = with_customers(vec![customer(CRM_ID, "gateway", true, None)]);
+        serving(&h, &instance);
+
+        h.reconciler.reconcile(&instance).await;
+
+        assert!(h.servers.calls().is_empty());
+        assert_eq!(last_status(&h).servers[0].phase, AgentServerPhase::Invalid);
+        assert!(!written_config(&h).contains("mcp/gateway"));
+    }
+
+    #[tokio::test]
+    async fn the_servers_of_a_disabled_instance_are_not_in_the_gateway_configuration() {
+        let h = harness();
+        let mut spec = agents(false, Vec::new());
+        spec.servers = vec![customer(CRM_ID, "crm", true, None)];
+        let off = acme(Some(spec));
+        h.secrets
+            .stored
+            .lock()
+            .expect("not poisoned")
+            .insert("deployment-1".to_string(), "s".to_string());
+        serving(&h, &off);
+
+        h.reconciler.reconcile(&off).await;
+
+        assert!(!written_config(&h).contains("[[upstreams]]"));
     }
 }

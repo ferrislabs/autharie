@@ -1,7 +1,9 @@
 use std::future::Future;
+use std::time::Duration;
 
 use autharie_crds::v1alpha::identity_instance::{AgentsStatus, IdentityInstance};
 
+use super::registry::{AgentClient, AgentClientId, RemoteClient};
 use super::{AgentsError, GatewayClient, ManagedPolicy, PolicyWrite, RealmSettings, RemotePolicy};
 use crate::domain::OperatorError;
 
@@ -9,6 +11,7 @@ use crate::domain::OperatorError;
 pub enum AgentsOutcome {
     Settled,
     Retry,
+    Revisit(Duration),
 }
 
 pub trait IdentityInstanceAgents: Send + Sync {
@@ -127,4 +130,61 @@ pub trait AgentsEdge: Send + Sync {
         &self,
         instance: &IdentityInstance,
     ) -> impl Future<Output = Result<(), AgentsError>> + Send;
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct ClientSecret(String);
+
+impl ClientSecret {
+    pub fn new(secret: impl Into<String>) -> Self {
+        Self(secret.into())
+    }
+
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for ClientSecret {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("ClientSecret(<redacted>)")
+    }
+}
+
+pub trait FerriskeyClientsPort: Send + Sync {
+    fn list_clients(
+        &self,
+        instance: &IdentityInstance,
+        realm: &str,
+    ) -> impl Future<Output = Result<Vec<RemoteClient>, AgentsError>> + Send;
+
+    fn set_client_enabled(
+        &self,
+        instance: &IdentityInstance,
+        realm: &str,
+        client: &AgentClient,
+        enabled: bool,
+    ) -> impl Future<Output = Result<(), AgentsError>> + Send;
+
+    fn delete_client(
+        &self,
+        instance: &IdentityInstance,
+        realm: &str,
+        client: &AgentClient,
+    ) -> impl Future<Output = Result<(), AgentsError>> + Send;
+
+    fn create_autonomous_client(
+        &self,
+        instance: &IdentityInstance,
+        realm: &str,
+        id: &AgentClientId,
+        name: &str,
+    ) -> impl Future<Output = Result<AgentClient, AgentsError>> + Send;
+
+    fn client_secret(
+        &self,
+        instance: &IdentityInstance,
+        realm: &str,
+        client: &AgentClient,
+    ) -> impl Future<Output = Result<ClientSecret, AgentsError>> + Send;
 }

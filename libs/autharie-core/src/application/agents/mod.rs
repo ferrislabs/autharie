@@ -15,10 +15,14 @@ use autharie_permission::Permissions;
 pub use autharie_domain::agents::{
     AGENTS_ACTION_TYPE, AgentDecision, AgentError, AgentPolicy, AgentSettings, AgentStatus,
     AgentsPhase, AgentsView, DEFAULT_REALM, DecisionQuery, DecisionVerdict, MAX_DECISIONS,
-    PolicyId, PolicyPhase, commands, decision, entities, ports, service,
+    PolicyId, PolicyPhase, commands, decision, entities, ports, registry, registry_ports,
+    registry_service, server_ports, servers, service,
 };
 
 use crate::{AutharieService, infrastructure::role::permissions_in, policy::PolicyContext};
+
+mod registry_impl;
+mod server_service;
 
 struct InstanceRights<R> {
     permissions: R,

@@ -1,6 +1,10 @@
 pub mod config;
 pub mod plan;
 pub mod ports;
+pub mod registry;
+mod registry_sync;
+pub mod sealing;
+pub mod servers;
 pub mod service;
 
 use autharie_crds::v1alpha::identity_instance::{
@@ -113,6 +117,7 @@ pub fn settled_off(revision: u64) -> AgentsStatus {
         mcp_url: None,
         message: None,
         policies: Vec::new(),
+        ..AgentsStatus::default()
     }
 }
 
@@ -149,6 +154,36 @@ pub fn settings_with_resource(current: &RealmSettings, canonical: &str) -> Optio
         // Registration is the realm owner's choice; agents only need CIMD.
         dcr_enabled: current.dcr_enabled,
     })
+}
+
+pub fn settings_with_resources(
+    current: &RealmSettings,
+    canonicals: &[String],
+) -> Option<RealmSettings> {
+    let mut wanted = current.clone();
+    let mut changed = false;
+    for canonical in canonicals {
+        if let Some(next) = settings_with_resource(&wanted, canonical) {
+            wanted = next;
+            changed = true;
+        }
+    }
+    changed.then_some(wanted)
+}
+
+pub fn settings_without_resources(
+    current: &RealmSettings,
+    canonicals: &[String],
+) -> Option<RealmSettings> {
+    let mut wanted = current.clone();
+    let mut changed = false;
+    for canonical in canonicals {
+        if let Some(next) = settings_without_resource(&wanted, canonical) {
+            wanted = next;
+            changed = true;
+        }
+    }
+    changed.then_some(wanted)
 }
 
 pub fn settings_without_resource(
@@ -203,8 +238,7 @@ mod tests {
         instance.spec.agents = enabled.map(|enabled| AgentsSpec {
             enabled,
             realm: "master".to_string(),
-            policies: Vec::new(),
-            policies_revision: 0,
+            ..AgentsSpec::default()
         });
         instance.status = status.map(|agents| IdentityInstanceStatus {
             agents: Some(agents),
@@ -273,6 +307,7 @@ mod tests {
                 phase: AgentPolicyPhase::Applied,
                 message: None,
             }],
+            ..AgentsStatus::default()
         };
 
         assert!(authz_required(&instance(Some(false), Some(pending))));
@@ -320,6 +355,57 @@ mod tests {
         };
 
         assert_eq!(settings_with_resource(&current, CANONICAL), None);
+    }
+
+    #[test]
+    fn every_canonical_resource_is_added_in_one_change() {
+        let wanted = settings_with_resources(
+            &RealmSettings::default(),
+            &[
+                CANONICAL.to_string(),
+                format!("{CANONICAL}/crm"),
+                format!("{CANONICAL}/erp"),
+            ],
+        )
+        .expect("change");
+
+        assert_eq!(wanted.allowed_resources.len(), 3);
+        assert!(wanted.cimd_enabled);
+        assert_eq!(
+            settings_with_resources(&wanted, &wanted.allowed_resources),
+            None
+        );
+    }
+
+    #[test]
+    fn several_canonical_resources_are_taken_back_and_the_others_kept() {
+        let current = RealmSettings {
+            allowed_resources: vec![
+                "https://other.test/mcp".to_string(),
+                format!("{CANONICAL}/crm"),
+                format!("{CANONICAL}/erp"),
+            ],
+            cimd_enabled: true,
+            dcr_enabled: false,
+        };
+
+        let wanted = settings_without_resources(
+            &current,
+            &[format!("{CANONICAL}/crm"), format!("{CANONICAL}/gone")],
+        )
+        .expect("change");
+
+        assert_eq!(
+            wanted.allowed_resources,
+            vec![
+                "https://other.test/mcp".to_string(),
+                format!("{CANONICAL}/erp")
+            ]
+        );
+        assert_eq!(
+            settings_without_resources(&wanted, &[format!("{CANONICAL}/crm")]),
+            None
+        );
     }
 
     #[test]

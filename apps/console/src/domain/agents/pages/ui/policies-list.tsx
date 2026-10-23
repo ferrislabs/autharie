@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Pencil, Plus, ShieldCheck, Trash2 } from 'lucide-react'
 import { EmptyState, Section } from '@/components/layout/page'
 import { Button } from '@/components/ui/button'
@@ -11,8 +12,11 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import type { PolicyTemplateDraft } from '../../policy-templates'
 import { summarisePolicy } from '../../summary'
 import type { AgentPolicy, PolicyPhase } from '../../types'
+import { NewPolicyDialog } from './new-policy-dialog'
+import { TemplateCards } from './template-cards'
 
 interface Props {
   policies: AgentPolicy[]
@@ -20,7 +24,7 @@ interface Props {
   error?: string
   canManage: boolean
   busyId: string | null
-  onCreate: () => void
+  onCreate: (initial?: PolicyTemplateDraft) => void
   onEdit: (policy: AgentPolicy) => void
   onDelete: (policy: AgentPolicy) => void
   onToggle: (policy: AgentPolicy, enabled: boolean) => void
@@ -56,18 +60,28 @@ export function PoliciesList({
   onDelete,
   onToggle,
 }: Props) {
+  const [choosing, setChoosing] = useState(false)
+
   return (
     <Section
       title='Policies'
       aside={
         canManage && (
-          <Button size='sm' onClick={onCreate}>
+          <Button size='sm' onClick={() => setChoosing(true)}>
             <Plus className='h-3.5 w-3.5' />
             New policy
           </Button>
         )
       }
     >
+      <NewPolicyDialog
+        open={choosing}
+        onClose={() => setChoosing(false)}
+        onPick={(draft) => {
+          setChoosing(false)
+          onCreate(draft)
+        }}
+      />
       {error && (
         <p role='alert' className='text-sm text-destructive'>
           {error}
@@ -81,10 +95,18 @@ export function PoliciesList({
           description='Without a permit policy every agent call is denied. Write a rule to say which agent may call which tool, for whom and when.'
           action={
             canManage ? (
-              <Button onClick={onCreate}>
-                <Plus className='h-3.5 w-3.5' />
-                Create your first policy
-              </Button>
+              <div className='space-y-4'>
+                <div className='text-left'>
+                  <p className='mb-2 text-center text-xs text-muted-foreground'>
+                    Start from a template
+                  </p>
+                  <TemplateCards onPick={onCreate} />
+                </div>
+                <Button variant='outline' onClick={() => onCreate(undefined)}>
+                  <Plus className='h-3.5 w-3.5' />
+                  Create your first policy
+                </Button>
+              </div>
             ) : (
               <p className='text-sm text-muted-foreground'>
                 Ask someone who can manage instances to create one.

@@ -17,7 +17,7 @@ use autharie_api::{
     keys::ensure_wrapping_key,
     objectstore::ensure_archive_bucket,
     operators::{ensure_first_operator, warn_if_nobody_operates},
-    purge::purge_deleted_deployments,
+    purge::{purge_deleted_deployments, purge_expired_agent_credentials},
     router::router,
     run_server,
     state::state,
@@ -47,6 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     warn_if_nobody_operates(app_state.clone()).await;
 
     tokio::spawn(purge_deleted_deployments(app_state.clone()));
+    tokio::spawn(purge_expired_agent_credentials(app_state.clone()));
     tokio::spawn(close_billing_periods(app_state.clone()));
     tokio::spawn(ensure_archive_bucket(args.clone()));
     tokio::spawn(ensure_wrapping_key(args.clone()));

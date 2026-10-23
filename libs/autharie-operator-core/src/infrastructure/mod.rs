@@ -6,6 +6,7 @@ pub mod dumps;
 pub mod edge;
 pub mod ferriskey_admin;
 pub mod ferriskey_agents;
+pub mod ferriskey_clients;
 pub mod ferriskey_theme;
 pub mod ferriskey_webhooks;
 pub mod identity_instance;
@@ -14,6 +15,7 @@ pub mod identity_instance_upgrade;
 pub mod kube_agents;
 pub mod kube_webhooks;
 pub mod manifest_store;
+pub mod server_discovery;
 pub mod shared_database;
 #[cfg(test)]
 pub(crate) mod test_support;

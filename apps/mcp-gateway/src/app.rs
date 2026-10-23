@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use autharie_egress::EgressError;
 use axum::{
     Json, Router,
     body::{Body, Bytes, to_bytes},
@@ -16,7 +17,9 @@ use uuid::Uuid;
 
 use crate::{
     authzen::{self, Decision, PdpError},
+    config::Egress,
     decision::{DecisionRecord, DecisionSink, KIND},
+    legacy::{LegacyError, SessionKey, Sessions, Wire},
     rpc::{self, Operation, Rejection},
     upstream::Routes,
     upstream::Upstream,
@@ -49,6 +52,8 @@ pub struct Gateway<S> {
     pub routes: Routes,
     pub sink: S,
     pub http: Client,
+    pub public: autharie_egress::GuardedClient,
+    pub sessions: Sessions,
 }
 
 pub struct AppState<S>(Arc<Gateway<S>>);
@@ -361,11 +366,28 @@ impl<S: DecisionSink> Call<'_, S> {
         response
     }
 
+    fn request(&self, method: Method) -> Result<reqwest::RequestBuilder, ()> {
+        match self.upstream.egress {
+            Egress::Cluster => Ok(self
+                .gateway
+                .http
+                .request(method, &self.upstream.upstream_url)),
+            Egress::Public => self
+                .gateway
+                .public
+                .request(method, &self.upstream.upstream_url)
+                .map_err(|error| {
+                    warn!(%error, server = %self.upstream.server_name, "upstream refused by the egress rule");
+                }),
+        }
+    }
+
     async fn forward(
         &self,
         parts: &Parts,
         body: Bytes,
         delegated: &str,
+        message: Option<&rpc::Message>,
     ) -> Result<reqwest::Response, ()> {
         let mut outgoing = reqwest::header::HeaderMap::new();
         for (name, value) in &parts.headers {
@@ -381,17 +403,125 @@ impl<S: DecisionSink> Call<'_, S> {
             REQUEST_ID,
             HeaderValue::from_str(self.request_id).map_err(|_| ())?,
         );
-        self.gateway
-            .http
-            .request(parts.method.clone(), &self.upstream.upstream_url)
+        let body = match message {
+            Some(message) => bridge_to_2026(&mut outgoing, message, body),
+            None => body,
+        };
+        self.request(parts.method.clone())?
             .headers(outgoing)
             .body(body)
             .send()
             .await
             .map_err(|error| {
-                warn!(%error, "upstream call failed");
+                warn!(error = %EgressError::classify(&error), server = %self.upstream.server_name, "upstream call failed");
             })
     }
+
+    async fn legacy(
+        &self,
+        version: &str,
+        message: &rpc::Message,
+        body: &[u8],
+        delegated: &str,
+    ) -> Response {
+        let Ok(mut request) = serde_json::from_slice::<Value>(body) else {
+            return generic(StatusCode::BAD_GATEWAY, "upstream unavailable");
+        };
+        rpc::without_meta(&mut request);
+        let wire = Wire {
+            request: || {
+                self.request(Method::POST)
+                    .map_err(|()| LegacyError::Refused)
+            },
+            version,
+            token: delegated,
+            request_id: self.request_id,
+        };
+        let key = SessionKey::new(
+            &self.principal.sub,
+            &self.principal.client_id,
+            &self.upstream.canonical_uri,
+        );
+        let mut answer = match wire.call(&self.gateway.sessions, &key, &request).await {
+            Ok(answer) => answer,
+            Err(error) => return self.legacy_failure(&error),
+        };
+        if message.is_tools_list() {
+            if self.filter_tools(&mut answer).await.is_err() {
+                let mut denied = rejection_response(&Rejection::denied(message.id.clone()));
+                no_store(denied.headers_mut());
+                return denied;
+            }
+            let mut listed = Json(answer).into_response();
+            no_store(listed.headers_mut());
+            return listed;
+        }
+        Json(answer).into_response()
+    }
+
+    fn legacy_failure(&self, error: &LegacyError) -> Response {
+        let server = &self.upstream.server_name;
+        match error {
+            LegacyError::Transport(source) => {
+                warn!(error = %EgressError::classify(source), %server, "legacy upstream call failed");
+            }
+            other => warn!(error = %other, %server, "legacy upstream call failed"),
+        }
+        match error {
+            LegacyError::Status(status) if *status != StatusCode::NOT_FOUND => {
+                generic(*status, "upstream error")
+            }
+            _ => generic(StatusCode::BAD_GATEWAY, "upstream unavailable"),
+        }
+    }
+}
+
+fn bridge_to_2026(
+    outgoing: &mut reqwest::header::HeaderMap,
+    message: &rpc::Message,
+    body: Bytes,
+) -> Bytes {
+    outgoing.remove("mcp-session-id");
+    if let Ok(method) = HeaderValue::from_str(&message.method) {
+        outgoing.insert(rpc::MCP_METHOD, method);
+    }
+    if let Some(target) = &message.target
+        && let Ok(name) = HeaderValue::from_str(&target.name)
+    {
+        outgoing.insert(rpc::MCP_NAME, name);
+    }
+    let from_legacy = outgoing
+        .get("mcp-protocol-version")
+        .and_then(|v| v.to_str().ok())
+        .is_none_or(rpc::is_legacy_protocol);
+    if from_legacy {
+        outgoing.insert(
+            "mcp-protocol-version",
+            HeaderValue::from_static(rpc::PROTOCOL_2026),
+        );
+    }
+    rpc::with_meta(&body).map_or(body, Bytes::from)
+}
+
+fn local_initialize(upstream: &Upstream, message: &rpc::Message) -> Response {
+    let version = rpc::negotiate(message.requested_protocol.as_deref());
+    let mut response = Json(json!({
+        "jsonrpc": "2.0",
+        "id": message.id,
+        "result": {
+            "protocolVersion": version,
+            "capabilities": { "tools": {} },
+            "serverInfo": {
+                "name": upstream.server_name,
+                "version": env!("CARGO_PKG_VERSION"),
+            },
+        },
+    }))
+    .into_response();
+    if let Ok(session) = HeaderValue::from_str(&Uuid::new_v4().simple().to_string()) {
+        response.headers_mut().insert("mcp-session-id", session);
+    }
+    response
 }
 
 fn no_store(headers: &mut HeaderMap) {
@@ -460,6 +590,21 @@ where
                 return rejection_response(&rejection);
             }
         };
+        if let Err(refusal) = upstream.access.check(&principal.client_id) {
+            let tool = message
+                .target
+                .as_ref()
+                .filter(|t| t.operation == Operation::CallTool)
+                .map(|t| t.name.as_str());
+            call.record(
+                &message.method,
+                tool,
+                false,
+                Vec::new(),
+                Some(refusal.reason()),
+            );
+            return rejection_response(&Rejection::agent_refused(message.id));
+        }
         if let Err(rejection) = rpc::check_headers(&parts.headers, &message) {
             let tool = message
                 .target
@@ -475,6 +620,12 @@ where
             );
             return rejection_response(&rejection);
         }
+        if message.is_notification() {
+            return StatusCode::ACCEPTED.into_response();
+        }
+        if message.is_initialize() {
+            return local_initialize(&upstream, &message);
+        }
         if let Some(target) = &message.target {
             let gated = call.gate(&message.id, &message.method, target).await;
             if let Err(rejection) = gated {
@@ -482,7 +633,12 @@ where
             }
         }
         Some(message)
+    } else if upstream.legacy_protocol().is_some() {
+        return generic(StatusCode::METHOD_NOT_ALLOWED, "method not allowed");
     } else {
+        if upstream.access.check(&principal.client_id).is_err() {
+            return generic(StatusCode::FORBIDDEN, "agent not allowed");
+        }
         None
     };
 
@@ -491,7 +647,18 @@ where
         Err(_) => return generic(StatusCode::BAD_GATEWAY, "upstream unavailable"),
     };
 
-    let Ok(upstream_response) = call.forward(&parts, body, &delegated.access_token).await else {
+    if let Some(message) = &message
+        && let Some(version) = upstream.legacy_protocol()
+    {
+        return call
+            .legacy(version, message, &body, &delegated.access_token)
+            .await;
+    }
+
+    let Ok(upstream_response) = call
+        .forward(&parts, body, &delegated.access_token, message.as_ref())
+        .await
+    else {
         return generic(StatusCode::BAD_GATEWAY, "upstream unavailable");
     };
     match message {

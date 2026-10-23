@@ -27,7 +27,7 @@ const EVALUATOR_ROLE: &str = "authz-evaluator";
 const EVALUATOR_PERMISSIONS: [&str; 2] = ["evaluate_authorization", "view_authorization"];
 const MINIMAL_SCHEMA: &str = "namespace App {}";
 
-trait Caller: Send + Sync {
+pub(super) trait Caller: Send + Sync {
     fn call(&self, request: &ApiRequest) -> impl Future<Output = Result<Value, ApiFailure>> + Send;
 }
 
@@ -42,17 +42,17 @@ fn failure(failure: ApiFailure) -> AgentsError {
     }
 }
 
-async fn send<C: Caller>(caller: &C, request: ApiRequest) -> Result<Value, AgentsError> {
+pub(super) async fn send<C: Caller>(caller: &C, request: ApiRequest) -> Result<Value, AgentsError> {
     caller.call(&request).await.map_err(failure)
 }
 
-fn malformed(what: &str) -> AgentsError {
+pub(super) fn malformed(what: &str) -> AgentsError {
     AgentsError::Retry {
         message: format!("FerrisKey answered {what} in a shape the operator does not know"),
     }
 }
 
-fn segment(value: &str) -> Result<&str, AgentsError> {
+pub(super) fn segment(value: &str) -> Result<&str, AgentsError> {
     let slug = !value.is_empty()
         && value
             .chars()
@@ -66,7 +66,7 @@ fn segment(value: &str) -> Result<&str, AgentsError> {
     }
 }
 
-fn items(body: &Value) -> Vec<&Value> {
+pub(super) fn items(body: &Value) -> Vec<&Value> {
     body["data"]
         .as_array()
         .or_else(|| body.as_array())
@@ -74,11 +74,11 @@ fn items(body: &Value) -> Vec<&Value> {
         .unwrap_or_default()
 }
 
-fn text<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
+pub(super) fn text<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
     value[key].as_str()
 }
 
-fn id_of(value: &Value, what: &str) -> Result<String, AgentsError> {
+pub(super) fn id_of(value: &Value, what: &str) -> Result<String, AgentsError> {
     text(value, "id")
         .or_else(|| text(&value["data"], "id"))
         .map(ToOwned::to_owned)
@@ -312,7 +312,7 @@ fn parse_client(value: &Value) -> Result<RemoteClient, AgentsError> {
     })
 }
 
-fn client_path(realm: &str, client: &str) -> Result<String, AgentsError> {
+pub(super) fn client_path(realm: &str, client: &str) -> Result<String, AgentsError> {
     Ok(format!(
         "/realms/{}/clients/{}",
         segment(realm)?,
@@ -548,24 +548,38 @@ async fn ensure_audience_client<C: Caller>(
     caller: &C,
     realm: &str,
 ) -> Result<RemoteClient, AgentsError> {
-    let audience = evaluator_audience(realm);
+    ensure_audience_client_for(
+        caller,
+        realm,
+        &evaluator_audience(realm),
+        &format!("{realm} API"),
+    )
+    .await
+}
+
+async fn ensure_audience_client_for<C: Caller>(
+    caller: &C,
+    realm: &str,
+    audience: &str,
+    name: &str,
+) -> Result<RemoteClient, AgentsError> {
     let body = send(
         caller,
         ApiRequest::new(Method::GET, format!("/realms/{}/clients", segment(realm)?))
-            .query("client_id_exact", audience.as_str())
+            .query("client_id_exact", audience)
             .query("limit", 10),
     )
     .await?;
     if let Some(existing) = items(&body)
         .into_iter()
-        .find(|client| text(client, "client_id") == Some(audience.as_str()))
+        .find(|client| text(client, "client_id") == Some(audience))
     {
         return parse_client(existing);
     }
     let created = send(
         caller,
         ApiRequest::new(Method::POST, format!("/realms/{}/clients", segment(realm)?)).body(json!({
-            "name": format!("{realm} API"),
+            "name": name,
             "client_id": audience,
             "client_type": "confidential",
             "service_account_enabled": false,
@@ -585,7 +599,15 @@ async fn ensure_exchange_policy<C: Caller>(
     realm: &str,
     client: &RemoteClient,
 ) -> Result<(), AgentsError> {
-    let audience = evaluator_audience(realm);
+    ensure_exchange_policy_for(caller, realm, client, &evaluator_audience(realm)).await
+}
+
+async fn ensure_exchange_policy_for<C: Caller>(
+    caller: &C,
+    realm: &str,
+    client: &RemoteClient,
+    audience: &str,
+) -> Result<(), AgentsError> {
     let policies_path = format!(
         "{}/token-exchange-policies",
         client_path(realm, &client.id)?
@@ -593,7 +615,7 @@ async fn ensure_exchange_policy<C: Caller>(
     let body = send(caller, ApiRequest::new(Method::GET, policies_path.clone())).await?;
     let existing = items(&body)
         .into_iter()
-        .find(|policy| text(policy, "target_audience") == Some(audience.as_str()));
+        .find(|policy| text(policy, "target_audience") == Some(audience));
 
     if let Some(policy) = existing {
         if policy["allow_delegation"].as_bool().unwrap_or(false) {
@@ -706,7 +728,7 @@ async fn ensure_gateway_client<C: Caller>(
     Ok(GatewayClient { secret })
 }
 
-async fn remove_gateway_client<C: Caller>(
+async fn release_owner<C: Caller>(
     caller: &C,
     realm: &str,
     canonical: &str,
@@ -719,6 +741,15 @@ async fn remove_gateway_client<C: Caller>(
             .collect();
         replace_owners(caller, realm, &kept).await?;
     }
+    Ok(())
+}
+
+async fn remove_gateway_client<C: Caller>(
+    caller: &C,
+    realm: &str,
+    canonical: &str,
+) -> Result<(), AgentsError> {
+    release_owner(caller, realm, canonical).await?;
 
     if let Some(client) = find_client(caller, realm).await? {
         send(
@@ -736,6 +767,10 @@ async fn all_policies<C: Caller>(
 ) -> Result<Vec<RemotePolicy>, AgentsError> {
     parse_policies(&send(caller, list_policies_request(realm)?).await?)
 }
+
+mod servers;
+
+pub use servers::KubeAgentServers;
 
 pub struct KubeFerriskeyAgents {
     client: Client,
@@ -811,7 +846,7 @@ impl KubeFerriskeyAgents {
         }
     }
 
-    fn bound<'a>(&'a self, instance: &'a IdentityInstance) -> Bound<'a> {
+    pub(super) fn bound<'a>(&'a self, instance: &'a IdentityInstance) -> Bound<'a> {
         Bound {
             owner: self,
             instance,
@@ -819,7 +854,7 @@ impl KubeFerriskeyAgents {
     }
 }
 
-struct Bound<'a> {
+pub(super) struct Bound<'a> {
     owner: &'a KubeFerriskeyAgents,
     instance: &'a IdentityInstance,
 }

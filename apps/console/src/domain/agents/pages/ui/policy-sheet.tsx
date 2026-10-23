@@ -16,11 +16,13 @@ import { useCedar } from '../../hooks/use-cedar'
 import {
   cedarOf,
   draftFromPolicy,
+  draftFromTemplate,
   nameIssue,
   switchToCedar,
   toInput,
   type PolicyDraft,
 } from '../../policy-draft'
+import type { PolicyTemplateDraft } from '../../policy-templates'
 import type { AgentPolicy, AgentPolicyInput } from '../../types'
 import { CedarEditor } from './cedar-editor'
 import { Field, TEXTAREA_CLASS } from './field'
@@ -30,6 +32,7 @@ import { Simulator } from './simulator'
 interface Props {
   open: boolean
   policy: AgentPolicy | null
+  initial?: PolicyTemplateDraft
   others: AgentPolicy[]
   isSaving: boolean
   error?: string
@@ -99,8 +102,18 @@ export function ValidationPanel({
   )
 }
 
-function PolicyForm({ policy, others, isSaving, error, onSave, onClose }: Omit<Props, 'open'>) {
-  const [draft, setDraft] = useState<PolicyDraft>(() => draftFromPolicy(policy))
+function PolicyForm({
+  policy,
+  initial,
+  others,
+  isSaving,
+  error,
+  onSave,
+  onClose,
+}: Omit<Props, 'open'>) {
+  const [draft, setDraft] = useState<PolicyDraft>(() =>
+    policy === null && initial ? draftFromTemplate(initial) : draftFromPolicy(policy),
+  )
   const [touched, setTouched] = useState(false)
   const cedar = useCedar(true)
 

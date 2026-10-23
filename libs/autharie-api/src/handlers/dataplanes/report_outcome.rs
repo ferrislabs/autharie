@@ -1,6 +1,12 @@
 use autharie_auth::Identity;
 use autharie_core::{
-    agents::{AgentError, commands::AgentsOutcome, ports::AgentOutcomeService},
+    agents::{
+        AgentError,
+        commands::AgentsOutcome,
+        ports::AgentOutcomeService,
+        registry::{ReportedClient, ReportedCredential, ReportedRegistry},
+        servers::{DiscoveredTool, ServerOutcome},
+    },
     dataplane::{credential::SecretString, ports::DataPlaneService, value_objects::DataPlaneId},
     deployments::{DeploymentId, commands::ReportDeploymentOutcomeCommand},
     webhooks::{
@@ -11,6 +17,7 @@ use autharie_core::{
 };
 use axum::{Extension, Json, extract::State};
 use axum_extra::routing::TypedPath;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
@@ -59,6 +66,54 @@ pub struct AgentPolicyReport {
 }
 
 #[derive(Deserialize, ToSchema)]
+pub struct AgentClientReport {
+    pub client_id: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    pub source: String,
+    pub kind: String,
+    pub enabled: bool,
+    #[serde(default)]
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct AgentCredentialReport {
+    pub request_id: Uuid,
+    pub client_id: String,
+    pub sealed: String,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct AgentServerToolReport {
+    pub name: String,
+    pub description: Option<String>,
+    #[serde(default)]
+    pub read_only: bool,
+    #[serde(default)]
+    pub destructive: bool,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct AgentServerReport {
+    pub id: Uuid,
+    /// `Ready`, `Unreachable`, `Refused` or `Invalid`.
+    pub phase: String,
+    #[serde(default)]
+    pub tools: Vec<AgentServerToolReport>,
+    #[serde(default)]
+    pub dropped: u32,
+    pub message: Option<String>,
+    /// When the discovery started. Absent until one has run.
+    pub discovered_at: Option<DateTime<Utc>>,
+    /// The `discovery_requested_at` of the server that this discovery answers.
+    pub discovery_requested_at: Option<DateTime<Utc>>,
+    /// The MCP protocol version the server negotiated at discovery.
+    #[serde(default)]
+    pub protocol_version: Option<String>,
+}
+
+#[derive(Deserialize, ToSchema)]
 pub struct ReportOutcomeRequest {
     /// `webhooks` for a report of a deployment's webhooks, `deployment.agents`
     /// for a report of its agents; absent for the outcome of the deployment
@@ -94,6 +149,19 @@ pub struct ReportOutcomeRequest {
     /// What became of each enabled policy. Only with `kind: deployment.agents`.
     #[serde(default)]
     pub policies: Vec<AgentPolicyReport>,
+
+    #[serde(default)]
+    pub clients: Vec<AgentClientReport>,
+
+    #[serde(default)]
+    pub clients_truncated: bool,
+
+    #[serde(default)]
+    pub credentials: Vec<AgentCredentialReport>,
+
+    /// What the data plane discovered on each customer MCP server. Only with `kind: deployment.agents`.
+    #[serde(default)]
+    pub servers: Vec<AgentServerReport>,
 
     /// What the data plane observed: `running`, `failed` or `deleted`.
     /// Not sent with `kind: webhooks` or `kind: deployment.agents`.
@@ -230,7 +298,62 @@ fn agents_outcome(
         reason: "an agents report needs a phase".to_string(),
     })?;
 
-    AgentsOutcome::parse(
+    let bad = |error: AgentError| ApiError::BadRequest {
+        reason: error.to_string(),
+    };
+
+    let clients = request
+        .clients
+        .iter()
+        .map(|report| {
+            ReportedClient::parse(
+                &report.client_id,
+                report.name.as_deref(),
+                &report.source,
+                &report.kind,
+                report.enabled,
+                report.created_at,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(bad)?;
+    let servers = request
+        .servers
+        .into_iter()
+        .map(|report| {
+            let protocol_version = report.protocol_version;
+            ServerOutcome::parse(
+                report.id,
+                &report.phase,
+                report
+                    .tools
+                    .into_iter()
+                    .map(|tool| DiscoveredTool {
+                        name: tool.name,
+                        description: tool.description,
+                        read_only: tool.read_only,
+                        destructive: tool.destructive,
+                    })
+                    .collect(),
+                report.dropped,
+                report.message,
+                report.discovered_at,
+                report.discovery_requested_at,
+            )
+            .map(|outcome| outcome.with_protocol_version(protocol_version))
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(bad)?;
+    let credentials = request
+        .credentials
+        .iter()
+        .map(|report| {
+            ReportedCredential::parse(report.request_id, &report.client_id, &report.sealed)
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(bad)?;
+
+    let outcome = AgentsOutcome::parse(
         revision,
         &phase,
         request.gateway_client_ready,
@@ -242,9 +365,17 @@ fn agents_outcome(
             .map(|report| (report.id, report.phase, report.message))
             .collect(),
     )
-    .map_err(|error: AgentError| ApiError::BadRequest {
-        reason: error.to_string(),
-    })
+    .map_err(bad)?;
+
+    Ok(outcome
+        .with_registry(
+            ReportedRegistry {
+                clients,
+                truncated: request.clients_truncated,
+            },
+            credentials,
+        )
+        .with_servers(servers))
 }
 
 #[utoipa::path(
@@ -354,6 +485,70 @@ mod tests {
     }
 
     #[test]
+    fn an_agents_report_carries_the_registry_and_the_sealed_credentials() {
+        let deployment = DeploymentId(Uuid::new_v4());
+        let waiting = Uuid::new_v4();
+        let outcome = agents_outcome(
+            deployment,
+            request(serde_json::json!({
+                "deployment_id": deployment.0,
+                "kind": "deployment.agents",
+                "revision": 2,
+                "phase": "Ready",
+                "clients": [
+                    { "client_id": "dcr", "source": "dynamic", "kind": "delegated", "enabled": true },
+                    { "client_id": "agent-a-abc123", "name": "A", "source": "autharie",
+                      "kind": "autonomous", "enabled": false, "created_at": "2026-10-23T10:00:00Z" }
+                ],
+                "clients_truncated": true,
+                "credentials": [
+                    { "request_id": waiting, "client_id": "agent-a-abc123", "sealed": "c2VhbGVk" }
+                ]
+            })),
+        )
+        .expect("accepted");
+
+        assert_eq!(outcome.registry.clients.len(), 2);
+        assert!(outcome.registry.truncated);
+        assert_eq!(outcome.credentials[0].request_id, waiting);
+    }
+
+    #[test]
+    fn an_agents_report_without_clients_is_an_empty_registry() {
+        let deployment = DeploymentId(Uuid::new_v4());
+        let outcome = agents_outcome(
+            deployment,
+            request(serde_json::json!({
+                "kind": "deployment.agents", "revision": 1, "phase": "Ready"
+            })),
+        )
+        .expect("accepted");
+
+        assert!(outcome.registry.clients.is_empty());
+        assert!(!outcome.registry.truncated);
+        assert!(outcome.credentials.is_empty());
+    }
+
+    #[test]
+    fn an_agents_report_with_an_unknown_source_or_a_malformed_secret_is_a_400() {
+        let deployment = DeploymentId(Uuid::new_v4());
+
+        for body in [
+            serde_json::json!({ "kind": "deployment.agents", "revision": 1, "phase": "Ready",
+                "clients": [{ "client_id": "x", "source": "admin", "kind": "delegated", "enabled": true }] }),
+            serde_json::json!({ "kind": "deployment.agents", "revision": 1, "phase": "Ready",
+                "clients": [{ "client_id": "x", "source": "seen", "kind": "delegated", "enabled": true }] }),
+            serde_json::json!({ "kind": "deployment.agents", "revision": 1, "phase": "Ready",
+                "credentials": [{ "request_id": Uuid::new_v4(), "client_id": "x", "sealed": "not base64 !" }] }),
+        ] {
+            assert!(matches!(
+                agents_outcome(deployment, request(body)),
+                Err(ApiError::BadRequest { .. })
+            ));
+        }
+    }
+
+    #[test]
     fn a_webhooks_report_is_read_with_its_secrets_and_requests() {
         let deployment = DeploymentId(Uuid::new_v4());
         let webhook = Uuid::new_v4();
@@ -444,6 +639,64 @@ mod tests {
             outcome.policies[0].message.as_deref(),
             Some("unexpected token")
         );
+    }
+
+    #[test]
+    fn an_agents_report_carries_what_each_customer_server_offered() {
+        let deployment = DeploymentId(Uuid::new_v4());
+        let server = Uuid::new_v4();
+
+        let outcome = agents_outcome(
+            deployment,
+            request(serde_json::json!({
+                "kind": "deployment.agents",
+                "revision": 4,
+                "phase": "Ready",
+                "servers": [
+                    {
+                        "id": server,
+                        "phase": "Ready",
+                        "tools": [
+                            { "name": "list_invoices", "read_only": true },
+                            { "name": "delete_invoice", "destructive": true, "description": "removes" }
+                        ],
+                        "dropped": 1,
+                        "discovered_at": "2026-10-23T10:00:00Z",
+                        "discovery_requested_at": "2026-10-23T09:59:59.500Z",
+                        "protocol_version": "2025-11-25"
+                    },
+                    { "id": Uuid::new_v4(), "phase": "Unreachable", "message": "timed out" }
+                ]
+            })),
+        )
+        .expect("accepted");
+
+        assert_eq!(outcome.servers.len(), 2);
+        let discovery = outcome.servers[0].discovery.as_ref().expect("discovered");
+        assert_eq!(discovery.tools.len(), 2);
+        assert!(discovery.tools[0].read_only);
+        assert!(discovery.tools[1].destructive);
+        assert_eq!(discovery.dropped, 1);
+        assert_eq!(discovery.protocol_version.as_deref(), Some("2025-11-25"));
+        assert!(outcome.servers[0].answers.is_some());
+        assert_eq!(outcome.servers[1].discovery, None);
+    }
+
+    #[test]
+    fn a_server_report_with_an_unknown_phase_is_refused() {
+        let deployment = DeploymentId(Uuid::new_v4());
+
+        let refused = agents_outcome(
+            deployment,
+            request(serde_json::json!({
+                "kind": "deployment.agents",
+                "revision": 1,
+                "phase": "Ready",
+                "servers": [{ "id": Uuid::new_v4(), "phase": "Exploded" }]
+            })),
+        );
+
+        assert!(matches!(refused, Err(ApiError::BadRequest { .. })));
     }
 
     #[test]

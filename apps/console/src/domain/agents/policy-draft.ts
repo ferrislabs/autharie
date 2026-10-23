@@ -1,4 +1,5 @@
 import { compileRule } from './compile-rule'
+import type { PolicyTemplateDraft } from './policy-templates'
 import { emptyForm, formToRule, ruleToForm, type RuleForm } from './rule-form'
 import type { AgentPolicy, AgentPolicyInput } from './types'
 
@@ -23,6 +24,17 @@ export function draftFromPolicy(policy: AgentPolicy | null): PolicyDraft {
     mode: policy.rule ? 'builder' : 'cedar',
     form: policy.rule ? ruleToForm(policy.rule) : emptyForm(),
     cedar: policy.cedar,
+  }
+}
+
+export function draftFromTemplate(initial: PolicyTemplateDraft): PolicyDraft {
+  return {
+    name: initial.name,
+    description: initial.description,
+    enabled: true,
+    mode: 'builder',
+    form: ruleToForm(initial.rule),
+    cedar: '',
   }
 }
 
