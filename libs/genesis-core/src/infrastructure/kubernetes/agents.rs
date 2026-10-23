@@ -1,6 +1,6 @@
 use autharie_crds::v1alpha::identity_instance::{
-    AgentAccessSpec, AgentPolicySpec, AgentsSpec, AutonomousAgentSpec, IdentityInstance,
-    SealingKeySpec,
+    AgentAccessSpec, AgentPolicySpec, AgentServerSpec, AgentsSpec, AutonomousAgentSpec,
+    IdentityInstance, SealingKeySpec,
 };
 use kube::api::{Patch, PatchParams};
 use kube::{Api, Client};
@@ -8,7 +8,7 @@ use serde_json::json;
 use tracing::info;
 
 use crate::domain::entities::agents_payload::{
-    AgentPolicyDefinition, AgentsPayloadV1, AutonomousAgentPayload,
+    AgentPolicyDefinition, AgentServerDefinition, AgentsPayloadV1, AutonomousAgentPayload,
 };
 use crate::domain::entities::identity_instance::IdentityInstanceRef;
 use crate::domain::error::GenesisError;
@@ -115,6 +115,18 @@ fn to_autonomous(agent: &AutonomousAgentPayload) -> AutonomousAgentSpec {
     }
 }
 
+fn to_server(definition: &AgentServerDefinition) -> AgentServerSpec {
+    AgentServerSpec {
+        id: definition.id.to_string(),
+        slug: definition.slug.clone(),
+        url: definition.url.clone(),
+        enabled: definition.enabled,
+        discovery_requested_at: definition
+            .discovery_requested_at
+            .map(|at| at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
+    }
+}
+
 pub fn to_spec(desired: &AgentsPayloadV1) -> AgentsSpec {
     AgentsSpec {
         enabled: desired.enabled,
@@ -128,6 +140,7 @@ pub fn to_spec(desired: &AgentsPayloadV1) -> AgentsSpec {
         },
         autonomous: desired.autonomous.iter().map(to_autonomous).collect(),
         deleted_agents: desired.deleted_agents.clone(),
+        servers: desired.servers.iter().map(to_server).collect(),
     }
 }
 
@@ -148,6 +161,7 @@ pub fn agents_patch(desired: &AgentsPayloadV1) -> serde_json::Value {
                 },
                 "autonomous": spec.autonomous,
                 "deletedAgents": spec.deleted_agents,
+                "servers": spec.servers,
             }
         }
     })
@@ -196,6 +210,7 @@ mod tests {
                     "access": { "approvalRequired": false, "approved": [], "blocked": [] },
                     "autonomous": [],
                     "deletedAgents": [],
+                    "servers": [],
                 } }
             })
         );
@@ -244,10 +259,57 @@ mod tests {
     }
 
     #[test]
+    fn the_servers_travel_in_the_patch_with_their_discovery_request() {
+        let payload = AgentsPayloadV1::from_value(&json!({
+            "deployment_id": DEPLOYMENT,
+            "namespace": "tenant-a",
+            "enabled": true,
+            "realm": "acme",
+            "revision": 7,
+            "policies": [],
+            "servers": [{
+                "id": Uuid::from_u128(9),
+                "slug": "crm",
+                "url": "https://tools.example.com/mcp",
+                "enabled": true,
+                "discovery_requested_at": "2026-10-23T10:00:00Z",
+            }, {
+                "id": Uuid::from_u128(10),
+                "slug": "erp",
+                "url": "https://erp.example.com/mcp",
+                "enabled": false,
+            }],
+        }))
+        .expect("valid");
+
+        let patch = agents_patch(&payload);
+
+        assert_eq!(
+            patch["spec"]["agents"]["servers"],
+            json!([
+                {
+                    "id": Uuid::from_u128(9).to_string(),
+                    "slug": "crm",
+                    "url": "https://tools.example.com/mcp",
+                    "enabled": true,
+                    "discoveryRequestedAt": "2026-10-23T10:00:00.000Z",
+                },
+                {
+                    "id": Uuid::from_u128(10).to_string(),
+                    "slug": "erp",
+                    "url": "https://erp.example.com/mcp",
+                    "enabled": false,
+                }
+            ])
+        );
+    }
+
+    #[test]
     fn an_emptied_policy_list_is_named_so_the_old_one_is_cleared() {
         let patch = agents_patch(&desired(false, json!([])));
 
         assert_eq!(patch["spec"]["agents"]["policies"], json!([]));
+        assert_eq!(patch["spec"]["agents"]["servers"], json!([]));
         assert_eq!(patch["spec"]["agents"]["enabled"], json!(false));
     }
 

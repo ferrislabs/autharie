@@ -1,5 +1,6 @@
 import { compileRule } from './compile-rule'
 import type { PolicyTemplate } from './policy-templates'
+import type { Catalogue } from './tool-catalogue'
 import type {
   AgentPolicy,
   AgentPolicyInput,
@@ -581,8 +582,12 @@ export interface DroppedTemplate {
   ruleId: string
 }
 
-export function ruleFromTemplate(template: PolicyTemplate, doc: CanvasDoc = emptyDoc()): DroppedTemplate {
-  const draft = template.build()
+export function ruleFromTemplate(
+  template: PolicyTemplate,
+  catalogue: Catalogue,
+  doc: CanvasDoc = emptyDoc(),
+): DroppedTemplate {
+  const draft = template.build(catalogue)
   const rule = newRuleBox(doc)
   const box: RuleBox = {
     ...ruleBoxOf(rule.id, null, draft.rule, draft.name, draft.description, true),
@@ -602,8 +607,13 @@ export function ruleFromTemplate(template: PolicyTemplate, doc: CanvasDoc = empt
   return { boxes, links, ruleId: box.id }
 }
 
-export function addTemplate(doc: CanvasDoc, template: PolicyTemplate, at: Point): CanvasDoc {
-  const dropped = ruleFromTemplate(template, doc)
+export function addTemplate(
+  doc: CanvasDoc,
+  template: PolicyTemplate,
+  at: Point,
+  catalogue: Catalogue,
+): CanvasDoc {
+  const dropped = ruleFromTemplate(template, catalogue, doc)
   let whoRow = 0
   const positions = { ...doc.positions }
   for (const box of dropped.boxes) {

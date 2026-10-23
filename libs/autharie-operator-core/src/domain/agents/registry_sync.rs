@@ -30,7 +30,7 @@ fn rejected(message: impl Into<String>) -> AgentsError {
     }
 }
 
-impl<F, S, R, L, G, E> AgentsReconciler<F, S, R, L, G, E>
+impl<F, S, R, L, G, E, V> AgentsReconciler<F, S, R, L, G, E, V>
 where
     F: FerriskeyAgentsPort + FerriskeyClientsPort,
     S: AgentsSecretsPort,

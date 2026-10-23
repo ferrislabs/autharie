@@ -121,6 +121,9 @@ pub struct AgentsSpec {
     #[serde(default, skip_serializing_if = "is_zero")]
     pub policies_revision: u64,
 
+    /// The customer MCP servers agents may reach through the gateway.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub servers: Vec<AgentServerSpec>,
     #[serde(default, skip_serializing_if = "AgentAccessSpec::is_open")]
     pub access: AgentAccessSpec,
 
@@ -173,6 +176,25 @@ pub struct SealingKeySpec {
     pub n: String,
     pub e: String,
     pub alg: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentServerSpec {
+    /// Autharie's id for the server (a UUID).
+    pub id: String,
+
+    /// The server's short name: it prefixes its tools and its gateway path.
+    pub slug: String,
+
+    /// Where the data plane reaches the server: a public `https://` URL.
+    pub url: String,
+
+    pub enabled: bool,
+
+    /// When someone asked for the tools to be listed again (RFC 3339).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discovery_requested_at: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -454,6 +476,9 @@ pub struct AgentsStatus {
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub disabled_clients: Vec<String>,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub servers: Vec<AgentServerStatus>,
 }
 
 impl Default for AgentsStatus {
@@ -469,8 +494,17 @@ impl Default for AgentsStatus {
             clients_truncated: false,
             credentials: Vec::new(),
             disabled_clients: Vec::new(),
+            servers: Vec::new(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum AgentServerPhase {
+    Ready,
+    Unreachable,
+    Refused,
+    Invalid,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -510,6 +544,58 @@ impl std::fmt::Debug for AgentCredentialStatus {
             .field("sealed", &"<sealed>")
             .finish()
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentServerTool {
+    pub name: String,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+
+    #[serde(default)]
+    pub read_only: bool,
+
+    #[serde(default)]
+    pub destructive: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentServerStatus {
+    pub id: String,
+
+    /// The slug the server had when it was last reconciled, so its audience
+    /// client can still be found once the server is gone from the spec.
+    pub slug: String,
+
+    pub phase: AgentServerPhase,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<AgentServerTool>,
+
+    #[serde(default)]
+    pub dropped: u32,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+
+    /// When the last discovery started (RFC 3339). Absent until one has run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discovered_at: Option<String>,
+
+    /// The `discoveryRequestedAt` of the spec that this discovery answers, as
+    /// written there. It is how the control plane tells a discovery of the
+    /// server as it is from one of the server as it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discovery_requested_at: Option<String>,
+
+    /// The MCP protocol version the server negotiated at discovery. Absent
+    /// until one has succeeded; the gateway speaks 2026-07-28 to a server
+    /// that is not known to speak anything older.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol_version: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -764,7 +850,7 @@ impl IdentityInstance {
 mod tests {
     use serde_json::json;
 
-    use super::{AgentPolicyPhase, AgentsPhase, AgentsSpec};
+    use super::{AgentPolicyPhase, AgentServerPhase, AgentsPhase, AgentsSpec};
     use crate::common::types::{Phase, ResourceList, ResourceRequirements};
     use crate::v1alpha::identity_instance::{
         DatabaseConfig, DatabaseMode, IdentityInstance, IdentityInstanceSpec,
@@ -1094,6 +1180,105 @@ mod tests {
         let back = serde_json::to_value(&status).unwrap();
         assert_eq!(back["agents"]["policies"][1]["message"], "unexpected token");
         assert!(back["agents"].get("message").is_none());
+    }
+
+    #[test]
+    fn customer_servers_round_trip_in_the_frozen_spec_shape() {
+        let mut value = spec_json();
+        value["agents"] = json!({
+            "enabled": true,
+            "realm": "master",
+            "servers": [
+                {
+                    "id": "0b9ad3c4-4a5f-4c3b-8d57-0b2d6d9e1a11",
+                    "slug": "crm",
+                    "url": "https://tools.example.com/mcp",
+                    "enabled": true,
+                    "discoveryRequestedAt": "2026-10-23T10:00:00Z"
+                },
+                {
+                    "id": "7f1c2d3e-0000-4000-8000-00000000000b",
+                    "slug": "erp",
+                    "url": "https://erp.example.com/mcp",
+                    "enabled": false
+                }
+            ]
+        });
+
+        let spec: IdentityInstanceSpec = serde_json::from_value(value.clone()).unwrap();
+
+        let servers = &spec.agents.as_ref().unwrap().servers;
+        assert_eq!(servers[0].slug, "crm");
+        assert_eq!(
+            servers[0].discovery_requested_at.as_deref(),
+            Some("2026-10-23T10:00:00Z")
+        );
+        assert_eq!(servers[1].discovery_requested_at, None);
+        assert_eq!(
+            serde_json::to_value(&spec).unwrap()["agents"],
+            value["agents"]
+        );
+    }
+
+    #[test]
+    fn agents_without_servers_serialise_without_the_field() {
+        let agents: AgentsSpec =
+            serde_json::from_value(json!({ "enabled": true, "realm": "master" })).unwrap();
+
+        assert!(agents.servers.is_empty());
+        assert!(
+            serde_json::to_value(&agents)
+                .unwrap()
+                .get("servers")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn server_status_round_trips_with_its_tools_and_hints() {
+        let status: IdentityInstanceStatus = serde_json::from_value(json!({
+            "agents": {
+                "phase": "Ready",
+                "observedRevision": 4,
+                "servers": [{
+                    "id": "0b9ad3c4-4a5f-4c3b-8d57-0b2d6d9e1a11",
+                    "slug": "crm",
+                    "phase": "Ready",
+                    "tools": [
+                        { "name": "list_invoices", "readOnly": true },
+                        { "name": "delete_invoice", "description": "removes", "destructive": true }
+                    ],
+                    "dropped": 2,
+                    "discoveredAt": "2026-10-23T10:00:01Z",
+                    "discoveryRequestedAt": "2026-10-23T10:00:00.000Z"
+                }, {
+                    "id": "7f1c2d3e-0000-4000-8000-00000000000b",
+                    "slug": "erp",
+                    "phase": "Refused",
+                    "message": "not a public address"
+                }]
+            }
+        }))
+        .unwrap();
+
+        let servers = &status.agents.as_ref().unwrap().servers;
+        assert_eq!(servers[0].phase, AgentServerPhase::Ready);
+        assert!(servers[0].tools[0].read_only);
+        assert!(!servers[0].tools[0].destructive);
+        assert!(servers[0].tools[1].destructive);
+        assert_eq!(servers[0].dropped, 2);
+        assert_eq!(
+            servers[0].discovery_requested_at.as_deref(),
+            Some("2026-10-23T10:00:00.000Z")
+        );
+        assert_eq!(servers[1].phase, AgentServerPhase::Refused);
+        assert!(servers[1].tools.is_empty());
+        let back = serde_json::to_value(&status).unwrap();
+        assert_eq!(back["agents"]["servers"][1].get("discoveredAt"), None);
+        assert_eq!(
+            back["agents"]["servers"][0]["tools"][1]["destructive"],
+            true
+        );
     }
 
     #[test]

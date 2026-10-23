@@ -17,7 +17,7 @@ import {
 } from 'lucide-react'
 import type { Subject, Target } from '../../../canvas-model'
 import { POLICY_TEMPLATES, type PolicyTemplate } from '../../../policy-templates'
-import { SERVERS } from '../../../tool-catalogue'
+import type { Catalogue } from '../../../tool-catalogue'
 import type { MenuItem } from './canvas-context-menu'
 
 export type Restrict = 'all' | 'rule' | 'what'
@@ -53,7 +53,7 @@ function whoItems(actions: AddActions): MenuItem[] {
   ]
 }
 
-export function whatItems(actions: AddActions): MenuItem[] {
+export function whatItems(actions: AddActions, catalogue: Catalogue): MenuItem[] {
   return [
     {
       id: 'what:read-only',
@@ -61,7 +61,7 @@ export function whatItems(actions: AddActions): MenuItem[] {
       icon: Eye,
       onSelect: () => actions.addWhat({ type: 'read-only', server: null }, false),
     },
-    ...SERVERS.map((server) => ({
+    ...catalogue.servers.map((server) => ({
       id: `what:read-only:${server.id}`,
       label: `Read-only on ${server.label}`,
       icon: Eye,
@@ -71,7 +71,7 @@ export function whatItems(actions: AddActions): MenuItem[] {
       id: 'what:server',
       label: 'Whole server',
       icon: Server,
-      items: SERVERS.map((server) => ({
+      items: catalogue.servers.map((server) => ({
         id: `what:server:${server.id}`,
         label: server.label,
         onSelect: () => actions.addWhat({ type: 'server', server: server.id }, false),
@@ -86,13 +86,13 @@ export function whatItems(actions: AddActions): MenuItem[] {
   ]
 }
 
-export function paneMenu(actions: AddActions, restrict: Restrict): MenuItem[] {
+export function paneMenu(actions: AddActions, restrict: Restrict, catalogue: Catalogue): MenuItem[] {
   if (restrict === 'rule') return [{ id: 'rule:new', label: 'New rule', icon: Plus, onSelect: actions.newRule }]
-  if (restrict === 'what') return whatItems(actions)
+  if (restrict === 'what') return whatItems(actions, catalogue)
   return [
     { id: 'rule:new', label: 'New rule', icon: Plus, onSelect: actions.newRule },
     { id: 'who', label: 'Add who', icon: Users, items: whoItems(actions), separatorBefore: true },
-    { id: 'what', label: 'Add what', icon: Wrench, items: whatItems(actions) },
+    { id: 'what', label: 'Add what', icon: Wrench, items: whatItems(actions, catalogue) },
     { id: 'template', label: 'From template', icon: FileText, items: templateItems(actions), separatorBefore: true },
   ]
 }

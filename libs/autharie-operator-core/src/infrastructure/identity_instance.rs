@@ -48,7 +48,7 @@ use crate::infrastructure::edge::{
     Backend, Edge, allowed_ranges, build_route, build_security_policy, exposed,
     httproute_api_resource, route_is_ready, security_policy_api_resource,
 };
-use crate::infrastructure::ferriskey_agents::KubeFerriskeyAgents;
+use crate::infrastructure::ferriskey_agents::{KubeAgentServers, KubeFerriskeyAgents};
 use crate::infrastructure::ferriskey_theme::KubeInstanceTheme;
 use crate::infrastructure::ferriskey_webhooks::KubeFerriskeyWebhooks;
 use crate::infrastructure::kube_agents::{
@@ -1934,6 +1934,9 @@ fn with_webhook_outcome(outcome: ReconcileOutcome, webhooks: WebhookOutcome) -> 
 fn with_agents_outcome(outcome: ReconcileOutcome, agents: AgentsOutcome) -> ReconcileOutcome {
     match agents {
         AgentsOutcome::Settled => outcome,
+        AgentsOutcome::Revisit(later) => {
+            ReconcileOutcome::requeue_after(outcome.requeue_after.map_or(later, |at| at.min(later)))
+        }
         AgentsOutcome::Retry => {
             let soon = Duration::from_secs(AGENTS_RETRY_SECONDS);
             ReconcileOutcome::requeue_after(outcome.requeue_after.map_or(soon, |at| at.min(soon)))
@@ -2063,8 +2066,18 @@ pub async fn run() -> Result<(), OperatorError> {
         Arc::new(KubeWebhookSecrets::new(client.clone())),
         Arc::new(KubeWebhookDeliveries::new(client.clone())),
     ));
+    let ferriskey_agents = Arc::new(KubeFerriskeyAgents::new(client.clone()));
+    let agent_servers = Arc::new(
+        KubeAgentServers::new(Arc::clone(&ferriskey_agents)).map_err(|error| {
+            OperatorError::Configuration {
+                message: format!(
+                    "the HTTP client for customer MCP servers cannot be built: {error}"
+                ),
+            }
+        })?,
+    );
     let agents = Arc::new(AgentsReconciler::new(
-        Arc::new(KubeFerriskeyAgents::new(client.clone())),
+        ferriskey_agents,
         Arc::new(KubeAgentsSecrets::new(client.clone())),
         Arc::new(KubeAgentsStatus::new(client.clone())),
         Arc::new(KubeAgentInstances::new(client.clone())),
@@ -2077,6 +2090,7 @@ pub async fn run() -> Result<(), OperatorError> {
             edge.clone(),
             GatewayService::from_env(),
         )),
+        agent_servers,
         AgentsEnvironment::new(edge.gateway_namespace.clone(), public_https_port),
     ));
     let deployer = Arc::new(KubeIdentityInstanceDeployer::new(
@@ -2128,6 +2142,7 @@ pub async fn run() -> Result<(), OperatorError> {
                     KubeAgentInstances,
                     KubeGatewayConfig,
                     KubeAgentsEdge,
+                    KubeAgentServers,
                 >,
             >,
             error_policy::<
@@ -2150,6 +2165,7 @@ pub async fn run() -> Result<(), OperatorError> {
                     KubeAgentInstances,
                     KubeGatewayConfig,
                     KubeAgentsEdge,
+                    KubeAgentServers,
                 >,
             >,
             context,

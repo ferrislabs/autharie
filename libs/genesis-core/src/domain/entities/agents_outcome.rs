@@ -42,6 +42,31 @@ impl std::fmt::Debug for AgentCredentialReport {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentServerToolOutcome {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub read_only: bool,
+    pub destructive: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentServerOutcome {
+    pub id: String,
+    pub phase: String,
+    pub tools: Vec<AgentServerToolOutcome>,
+    pub dropped: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discovered_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discovery_requested_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol_version: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentsOutcomeReport {
     pub deployment_id: Uuid,
     kind: String,
@@ -59,6 +84,8 @@ pub struct AgentsOutcomeReport {
     pub clients_truncated: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub credentials: Vec<AgentCredentialReport>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub servers: Vec<AgentServerOutcome>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -66,6 +93,11 @@ fn is_false(value: &bool) -> bool {
 }
 
 impl AgentsOutcomeReport {
+    pub fn with_servers(mut self, servers: Vec<AgentServerOutcome>) -> Self {
+        self.servers = servers;
+        self
+    }
+
     pub fn new(
         deployment_id: Uuid,
         revision: u64,
@@ -87,6 +119,7 @@ impl AgentsOutcomeReport {
             clients: Vec::new(),
             clients_truncated: false,
             credentials: Vec::new(),
+            servers: Vec::new(),
         }
     }
 
@@ -183,6 +216,62 @@ mod tests {
             json!([{ "request_id": "r1", "client_id": "agent-x-abc123", "sealed": "c2VhbGVk" }])
         );
         assert!(!format!("{report:?}").contains("c2VhbGVk"));
+    }
+
+    #[test]
+    fn a_report_names_what_each_server_offers() {
+        let report = AgentsOutcomeReport::new(DEPLOYMENT, 3, "Ready", true, None, None, Vec::new())
+            .with_servers(vec![
+                AgentServerOutcome {
+                    id: "s1".to_string(),
+                    phase: "Ready".to_string(),
+                    tools: vec![AgentServerToolOutcome {
+                        name: "list_invoices".to_string(),
+                        description: None,
+                        read_only: true,
+                        destructive: false,
+                    }],
+                    dropped: 1,
+                    message: None,
+                    discovered_at: Some("2026-10-23T10:00:00Z".to_string()),
+                    discovery_requested_at: Some("2026-10-23T09:59:59.000Z".to_string()),
+                    protocol_version: Some("2025-11-25".to_string()),
+                },
+                AgentServerOutcome {
+                    id: "s2".to_string(),
+                    phase: "Refused".to_string(),
+                    tools: Vec::new(),
+                    dropped: 0,
+                    message: Some("not a public address".to_string()),
+                    discovered_at: None,
+                    discovery_requested_at: None,
+                    protocol_version: None,
+                },
+            ]);
+
+        let value = serde_json::to_value(&report).expect("serialises");
+
+        assert_eq!(
+            value["servers"],
+            json!([
+                {
+                    "id": "s1",
+                    "phase": "Ready",
+                    "tools": [{ "name": "list_invoices", "read_only": true, "destructive": false }],
+                    "dropped": 1,
+                    "discovered_at": "2026-10-23T10:00:00Z",
+                    "discovery_requested_at": "2026-10-23T09:59:59.000Z",
+                    "protocol_version": "2025-11-25",
+                },
+                {
+                    "id": "s2",
+                    "phase": "Refused",
+                    "tools": [],
+                    "dropped": 0,
+                    "message": "not a public address",
+                }
+            ])
+        );
     }
 
     #[test]

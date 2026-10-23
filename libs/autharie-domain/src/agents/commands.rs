@@ -8,6 +8,7 @@ use crate::agents::{
     AgentError, DEFAULT_REALM, MAX_CEDAR_BYTES, MAX_RULE_BYTES,
     entities::{AgentsPhase, PolicyId, PolicyPhase},
     registry::{ReportedCredential, ReportedRegistry},
+    servers::ServerOutcome,
 };
 
 const MAX_NAME_CHARS: usize = 100;
@@ -126,6 +127,7 @@ pub struct AgentsOutcome {
     pub policies: Vec<PolicyOutcome>,
     pub registry: ReportedRegistry,
     pub credentials: Vec<ReportedCredential>,
+    pub servers: Vec<ServerOutcome>,
 }
 
 impl AgentsOutcome {
@@ -136,6 +138,11 @@ impl AgentsOutcome {
     ) -> Self {
         self.registry = registry;
         self.credentials = credentials;
+        self
+    }
+
+    pub fn with_servers(mut self, servers: Vec<ServerOutcome>) -> Self {
+        self.servers = servers;
         self
     }
 
@@ -177,6 +184,7 @@ impl AgentsOutcome {
             policies,
             registry: ReportedRegistry::default(),
             credentials: Vec::new(),
+            servers: Vec::new(),
         })
     }
 }

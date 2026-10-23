@@ -16,6 +16,7 @@ use crate::{
             RequestKind, SealingKey, assemble, token_url,
         },
         registry_ports::{AgentActivityIndex, AgentRegistryRepository, AgentRegistryService},
+        server_ports::AgentServerRepository,
         service::AgentPublisher,
     },
     audit::{
@@ -67,7 +68,7 @@ where
     ) -> Self
     where
         D: DeploymentRepository,
-        G: AgentRepository + AgentRegistryRepository,
+        G: AgentRepository + AgentRegistryRepository + AgentServerRepository,
     {
         Self {
             publisher: AgentPublisher::new(deployments, agents, actions),
@@ -84,7 +85,7 @@ impl<D, O, G, A, AU, U, P> AgentRegistryServiceImpl<D, O, G, A, AU, U, P>
 where
     D: DeploymentRepository,
     O: OrganisationRepository,
-    G: AgentRepository + AgentRegistryRepository,
+    G: AgentRepository + AgentRegistryRepository + AgentServerRepository,
     A: ActionRepository,
     AU: AuditRepository,
     U: UserRepository,
@@ -240,7 +241,7 @@ impl<D, O, G, A, AU, U, P> AgentRegistryService for AgentRegistryServiceImpl<D, 
 where
     D: DeploymentRepository,
     O: OrganisationRepository,
-    G: AgentRepository + AgentRegistryRepository,
+    G: AgentRepository + AgentRegistryRepository + AgentServerRepository,
     A: ActionRepository,
     AU: AuditRepository,
     U: UserRepository,

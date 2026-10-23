@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { RequiresPermission } from '@/components/layout/requires-permission'
 import { useMyPermissions } from '@/domain/organisations/hooks/use-my-permissions'
@@ -11,25 +11,36 @@ import {
   useAgentDecisions,
   useAgentPolicies,
   useAgentRealms,
+  useAgentServers,
   useAgentSettings,
   useDeletePolicy,
+  useDeleteServer,
+  useDiscoverServer,
   useSavePolicy,
+  useSaveServer,
   useUpdateAgentSettings,
 } from '../../hooks/use-agents'
 import type { PolicyTemplateDraft } from '../../policy-templates'
 import { knownAgents, pendingCount } from '../../registry'
-import type { AgentClient, AgentPolicy } from '../../types'
+import { policiesReferring } from '../../server-status'
+import { catalogueOf } from '../../tool-catalogue'
+import type { AgentClient, AgentPolicy, AgentServer } from '../../types'
 import { AgentRegistryFeature } from './agent-registry-feature'
+import { CatalogueContext } from '../ui/catalogue-context'
 import { DeletePolicyDialog } from '../ui/delete-policy-dialog'
 import { PageAgents } from '../ui/page-agents'
 import { KnownAgentsContext } from '../ui/policy-canvas/known-agents'
 import { PolicyCanvas } from '../ui/policy-canvas/policy-canvas'
 import { PolicySheet } from '../ui/policy-sheet'
+import { RemoveServerDialog } from '../ui/remove-server-dialog'
+import { ServerDialog } from '../ui/server-dialog'
 
 const NO_POLICIES: AgentPolicy[] = []
 const NO_CLIENTS: AgentClient[] = []
+const NO_SERVERS: AgentServer[] = []
 
 type Editing = { policy: AgentPolicy | null; initial?: PolicyTemplateDraft } | null
+type EditingServer = { server: AgentServer | null } | null
 
 function AgentsTab() {
   const scope = useAgentScope()
@@ -45,6 +56,10 @@ function AgentsTab() {
   const deletePolicy = useDeletePolicy(scope)
   const registry = useAgentRegistry(scope)
   const registryActions = useRegistryActions(scope)
+  const servers = useAgentServers(scope)
+  const saveServer = useSaveServer(scope)
+  const deleteServer = useDeleteServer(scope)
+  const discoverServer = useDiscoverServer(scope)
 
   const [filters, setFilters] = useState<DecisionFilters>(emptyFilters)
   const decisions = useAgentDecisions(scope, filters)
@@ -52,12 +67,16 @@ function AgentsTab() {
   const [realmDraft, setRealmDraft] = useState<string | null>(null)
   const [editing, setEditing] = useState<Editing>(null)
   const [deleting, setDeleting] = useState<AgentPolicy | null>(null)
+  const [editingServer, setEditingServer] = useState<EditingServer>(null)
+  const [removingServer, setRemovingServer] = useState<AgentServer | null>(null)
 
   const current = settings.data
   const realm = realmDraft ?? current?.realm ?? ''
   const list = policies.data ?? NO_POLICIES
   const canManage = can(CAN.manageInstances)
   const clients = registry.data?.data ?? NO_CLIENTS
+  const serverList = servers.data ?? NO_SERVERS
+  const catalogue = useMemo(() => catalogueOf(serverList, servers.isSuccess), [serverList, servers.isSuccess])
 
   const openEditor = (next: NonNullable<Editing>) => {
     savePolicy.reset()
@@ -65,7 +84,7 @@ function AgentsTab() {
   }
 
   return (
-    <>
+    <CatalogueContext.Provider value={catalogue}>
       <PageAgents
         settings={current}
         isLoading={settings.isLoading}
@@ -101,6 +120,23 @@ function AgentsTab() {
         pendingAgents={pendingCount(clients)}
         onApproveAgent={(clientId) => registryActions.approve.mutate(clientId)}
         registry={<AgentRegistryFeature scope={scope} canManage={canManage} registry={registry} />}
+        servers={serverList}
+        serversLoading={servers.isLoading}
+        serversError={servers.error?.message ?? discoverServer.error?.message}
+        busyServerId={discoverServer.isPending ? (discoverServer.variables ?? null) : null}
+        onAddServer={() => {
+          saveServer.reset()
+          setEditingServer({ server: null })
+        }}
+        onEditServer={(server) => {
+          saveServer.reset()
+          setEditingServer({ server })
+        }}
+        onRemoveServer={(server) => {
+          deleteServer.reset()
+          setRemovingServer(server)
+        }}
+        onRefreshServer={(server) => discoverServer.mutate(server.id)}
         accessMap={
           <KnownAgentsContext.Provider value={knownAgents(clients)}>
             <PolicyCanvas
@@ -160,7 +196,30 @@ function AgentsTab() {
           if (deleting) deletePolicy.mutate(deleting.id, { onSuccess: () => setDeleting(null) })
         }}
       />
-    </>
+
+      <ServerDialog
+        open={editingServer !== null}
+        server={editingServer?.server ?? null}
+        taken={serverList.map((server) => server.slug)}
+        isSaving={saveServer.isPending}
+        error={saveServer.error?.message}
+        onClose={() => setEditingServer(null)}
+        onSave={(save) => saveServer.mutate(save, { onSuccess: () => setEditingServer(null) })}
+      />
+
+      <RemoveServerDialog
+        server={removingServer}
+        referring={removingServer ? policiesReferring(list, removingServer.slug) : NO_POLICIES}
+        isRemoving={deleteServer.isPending}
+        error={deleteServer.error?.message}
+        onCancel={() => setRemovingServer(null)}
+        onConfirm={() => {
+          if (removingServer) {
+            deleteServer.mutate(removingServer.id, { onSuccess: () => setRemovingServer(null) })
+          }
+        }}
+      />
+    </CatalogueContext.Provider>
   )
 }
 

@@ -1,4 +1,5 @@
 use std::future::Future;
+use std::time::Duration;
 
 use autharie_crds::v1alpha::identity_instance::{AgentsStatus, IdentityInstance};
 
@@ -10,6 +11,7 @@ use crate::domain::OperatorError;
 pub enum AgentsOutcome {
     Settled,
     Retry,
+    Revisit(Duration),
 }
 
 pub trait IdentityInstanceAgents: Send + Sync {

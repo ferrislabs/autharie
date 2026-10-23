@@ -2,12 +2,14 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use autharie_crds::v1alpha::identity_instance::{
-    AgentPolicyPhase, AgentsPhase, AgentsStatus, IdentityInstanceStatus,
+    AgentPolicyPhase, AgentServerPhase, AgentServerStatus, AgentsPhase, AgentsStatus,
+    IdentityInstanceStatus,
 };
 use uuid::Uuid;
 
 use crate::domain::entities::agents_outcome::{
-    AgentClientReport, AgentCredentialReport, AgentPolicyOutcome, AgentsOutcomeReport,
+    AgentClientReport, AgentCredentialReport, AgentPolicyOutcome, AgentServerOutcome,
+    AgentServerToolOutcome, AgentsOutcomeReport,
 };
 
 pub const REPORT_AGAIN_AFTER: Duration = Duration::from_secs(300);
@@ -68,6 +70,34 @@ impl AgentsTracker {
     }
 }
 
+fn server_outcome(server: &AgentServerStatus) -> AgentServerOutcome {
+    AgentServerOutcome {
+        id: server.id.clone(),
+        phase: match server.phase {
+            AgentServerPhase::Ready => "Ready",
+            AgentServerPhase::Unreachable => "Unreachable",
+            AgentServerPhase::Refused => "Refused",
+            AgentServerPhase::Invalid => "Invalid",
+        }
+        .to_string(),
+        tools: server
+            .tools
+            .iter()
+            .map(|tool| AgentServerToolOutcome {
+                name: tool.name.clone(),
+                description: tool.description.clone(),
+                read_only: tool.read_only,
+                destructive: tool.destructive,
+            })
+            .collect(),
+        dropped: server.dropped,
+        message: server.message.clone(),
+        discovered_at: server.discovered_at.clone(),
+        discovery_requested_at: server.discovery_requested_at.clone(),
+        protocol_version: server.protocol_version.clone(),
+    }
+}
+
 pub fn build_report(deployment_id: Uuid, observation: &Observation) -> Option<AgentsOutcomeReport> {
     let status = observation.status.as_ref()?;
 
@@ -122,7 +152,8 @@ pub fn build_report(deployment_id: Uuid, observation: &Observation) -> Option<Ag
             status.message.clone(),
             policies,
         )
-        .with_registry(clients, status.clients_truncated, credentials),
+        .with_registry(clients, status.clients_truncated, credentials)
+        .with_servers(status.servers.iter().map(server_outcome).collect()),
     )
 }
 
@@ -278,6 +309,88 @@ mod tests {
         }];
 
         assert!(is_due(Some((&before, Duration::ZERO)), &observed(grown)));
+    }
+
+    #[test]
+    fn the_report_carries_each_servers_tools_and_when_they_were_listed() {
+        use autharie_crds::v1alpha::identity_instance::AgentServerTool;
+
+        let mut with_servers = status(AgentsPhase::Ready, true);
+        with_servers.servers = vec![
+            AgentServerStatus {
+                id: "s1".to_string(),
+                slug: "crm".to_string(),
+                phase: AgentServerPhase::Ready,
+                tools: vec![AgentServerTool {
+                    name: "list_invoices".to_string(),
+                    description: Some("lists".to_string()),
+                    read_only: true,
+                    destructive: false,
+                }],
+                dropped: 3,
+                message: None,
+                discovered_at: Some("2026-10-23T10:00:00Z".to_string()),
+                discovery_requested_at: Some("2026-10-23T09:59:59.000Z".to_string()),
+                protocol_version: Some("2025-11-25".to_string()),
+            },
+            AgentServerStatus {
+                id: "s2".to_string(),
+                slug: "erp".to_string(),
+                phase: AgentServerPhase::Refused,
+                tools: Vec::new(),
+                dropped: 0,
+                message: Some("not a public address".to_string()),
+                discovered_at: Some("2026-10-23T10:00:02Z".to_string()),
+                discovery_requested_at: None,
+                protocol_version: None,
+            },
+        ];
+
+        let report = build_report(DEPLOYMENT, &observed(with_servers)).expect("a report");
+
+        assert_eq!(report.servers.len(), 2);
+        assert_eq!(report.servers[0].id, "s1");
+        assert_eq!(report.servers[0].phase, "Ready");
+        assert_eq!(report.servers[0].tools[0].name, "list_invoices");
+        assert!(report.servers[0].tools[0].read_only);
+        assert_eq!(report.servers[0].dropped, 3);
+        assert_eq!(
+            report.servers[0].discovery_requested_at.as_deref(),
+            Some("2026-10-23T09:59:59.000Z")
+        );
+        assert_eq!(
+            report.servers[0].protocol_version.as_deref(),
+            Some("2025-11-25")
+        );
+        assert_eq!(report.servers[1].phase, "Refused");
+        assert_eq!(
+            report.servers[1].message.as_deref(),
+            Some("not a public address")
+        );
+    }
+
+    #[test]
+    fn a_new_discovery_makes_the_observation_due_again() {
+        let mut before = status(AgentsPhase::Ready, true);
+        before.servers = vec![AgentServerStatus {
+            id: "s1".to_string(),
+            slug: "crm".to_string(),
+            phase: AgentServerPhase::Unreachable,
+            tools: Vec::new(),
+            dropped: 0,
+            message: Some("timed out".to_string()),
+            discovered_at: Some("2026-10-23T10:00:00Z".to_string()),
+            discovery_requested_at: None,
+            protocol_version: None,
+        }];
+        let mut after = before.clone();
+        after.servers[0].phase = AgentServerPhase::Ready;
+        after.servers[0].message = None;
+
+        assert!(is_due(
+            Some((&observed(before), Duration::ZERO)),
+            &observed(after)
+        ));
     }
 
     #[test]

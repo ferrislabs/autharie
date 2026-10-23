@@ -10,6 +10,8 @@ pub mod registry_ports;
 pub mod registry_service;
 #[cfg(test)]
 mod registry_tests;
+pub mod server_ports;
+pub mod servers;
 pub mod service;
 #[cfg(test)]
 mod service_tests;
@@ -30,6 +32,9 @@ pub const AGENTS_UPDATED_AUDIT: &str = "deployment.agents.updated";
 pub const AGENT_POLICY_CREATED_AUDIT: &str = "deployment.agent_policy.created";
 pub const AGENT_POLICY_UPDATED_AUDIT: &str = "deployment.agent_policy.updated";
 pub const AGENT_POLICY_DELETED_AUDIT: &str = "deployment.agent_policy.deleted";
+pub const AGENT_SERVER_CREATED_AUDIT: &str = "deployment.agent_server.created";
+pub const AGENT_SERVER_UPDATED_AUDIT: &str = "deployment.agent_server.updated";
+pub const AGENT_SERVER_DELETED_AUDIT: &str = "deployment.agent_server.deleted";
 
 pub const DEFAULT_REALM: &str = "master";
 pub const MAX_POLICIES: usize = 100;
@@ -74,6 +79,17 @@ pub enum AgentError {
 
     #[error("the credential of request {request_id} was already delivered")]
     CredentialGone { request_id: Uuid },
+    #[error(transparent)]
+    Server(#[from] servers::ServerError),
+
+    #[error("MCP server {id} not found")]
+    ServerNotFound { id: Uuid },
+
+    #[error("a deployment holds at most {max} MCP servers")]
+    TooManyServers { max: usize },
+
+    #[error("the slug '{slug}' is already used by another MCP server of this deployment")]
+    ServerSlugTaken { slug: String },
 }
 
 impl AgentError {

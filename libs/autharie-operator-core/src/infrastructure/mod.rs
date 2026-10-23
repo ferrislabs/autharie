@@ -15,6 +15,7 @@ pub mod identity_instance_upgrade;
 pub mod kube_agents;
 pub mod kube_webhooks;
 pub mod manifest_store;
+pub mod server_discovery;
 pub mod shared_database;
 #[cfg(test)]
 pub(crate) mod test_support;

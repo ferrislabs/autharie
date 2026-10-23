@@ -1,12 +1,13 @@
 import type { Subject, Target } from './canvas-model'
 import { summariseHours, summariseWeekdays } from './summary'
-import { findTool, nameOfTool, SERVERS } from './tool-catalogue'
+import { findServer, findTool, isUnknownServer, nameOfTool, type Catalogue } from './tool-catalogue'
 import type { When } from './types'
 
 export const PREVIEW_ABOVE = 3
 
-export function serverLabel(id: string): string {
-  return SERVERS.find((server) => server.id === id)?.label ?? id
+export function serverLabel(catalogue: Catalogue, id: string): string {
+  const label = findServer(catalogue, id)?.label ?? id
+  return isUnknownServer(catalogue, id) ? `${label} (unknown server)` : label
 }
 
 export function subjectLabel(subject: Subject): string {
@@ -26,12 +27,14 @@ export function subjectCaption(subject: Subject): string {
   }
 }
 
-export function targetLabel(target: Target): string {
+export function targetLabel(target: Target, catalogue: Catalogue): string {
   switch (target.type) {
     case 'read-only':
-      return target.server === null ? 'Read-only tools' : `Read-only on ${serverLabel(target.server)}`
+      return target.server === null
+        ? 'Read-only tools'
+        : `Read-only on ${serverLabel(catalogue, target.server)}`
     case 'server':
-      return target.server.length === 0 ? 'Pick a server' : serverLabel(target.server)
+      return target.server.length === 0 ? 'Pick a server' : serverLabel(catalogue, target.server)
     case 'tools':
       if (target.tools.length === 0) return 'No tools yet'
       return target.tools.length === 1 ? nameOfTool(target.tools[0]) : `${target.tools.length} tools`
@@ -52,13 +55,27 @@ export function targetCaption(target: Target): string {
   }
 }
 
-export function destructiveCount(target: Target): number {
+export function destructiveCount(target: Target, catalogue: Catalogue): number {
   if (target.type !== 'tools') return 0
-  return target.tools.filter((tool) => findTool(tool)?.destructive ?? false).length
+  return target.tools.filter((tool) => findTool(catalogue, tool)?.destructive ?? false).length
 }
 
-export function isDestructiveTarget(target: Target): boolean {
-  return target.type === 'tools' && target.tools.length > 0 && destructiveCount(target) === target.tools.length
+export function isDestructiveTarget(target: Target, catalogue: Catalogue): boolean {
+  return (
+    target.type === 'tools' &&
+    target.tools.length > 0 &&
+    destructiveCount(target, catalogue) === target.tools.length
+  )
+}
+
+export function unknownServers(target: Target, catalogue: Catalogue): string[] {
+  const named =
+    target.type === 'tools'
+      ? target.tools.map((tool) => tool.slice(0, Math.max(tool.indexOf('/'), 0)))
+      : target.server === null
+        ? []
+        : [target.server]
+  return [...new Set(named)].filter((server) => isUnknownServer(catalogue, server))
 }
 
 export function conditionLabel(when: When | null): string | null {

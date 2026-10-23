@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::Value;
 use uuid::Uuid;
@@ -43,6 +44,18 @@ pub struct AutonomousAgentPayload {
     pub sealing_key: Option<SealingKeyPayload>,
 }
 
+const MAX_SERVERS: usize = 10;
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AgentServerDefinition {
+    pub id: Uuid,
+    pub slug: String,
+    pub url: String,
+    pub enabled: bool,
+    #[serde(default)]
+    pub discovery_requested_at: Option<DateTime<Utc>>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct AgentsPayloadV1 {
     pub deployment_id: Uuid,
@@ -58,6 +71,8 @@ pub struct AgentsPayloadV1 {
     pub autonomous: Vec<AutonomousAgentPayload>,
     #[serde(default)]
     pub deleted_agents: Vec<String>,
+    #[serde(default)]
+    pub servers: Vec<AgentServerDefinition>,
 }
 
 impl AgentsPayloadV1 {
@@ -129,6 +144,28 @@ impl AgentsPayloadV1 {
             }
         }
 
+        self.validate_servers()
+    }
+
+    fn validate_servers(&self) -> Result<(), GenesisError> {
+        if self.servers.len() > MAX_SERVERS {
+            return Err(invalid(format!("more than {MAX_SERVERS} servers")));
+        }
+
+        let mut ids = BTreeSet::new();
+        let mut slugs = BTreeSet::new();
+        for server in &self.servers {
+            if !is_server_slug(&server.slug) {
+                return Err(invalid(format!("server {} has an invalid slug", server.id)));
+            }
+            if !server.url.starts_with("https://") {
+                return Err(invalid(format!("server {} needs an https URL", server.id)));
+            }
+            if !ids.insert(server.id) || !slugs.insert(server.slug.as_str()) {
+                return Err(invalid(format!("server {} appears twice", server.id)));
+            }
+        }
+
         Ok(())
     }
 }
@@ -139,6 +176,14 @@ fn is_client_id(id: &str) -> bool {
         && id
             .chars()
             .all(|c| !c.is_control() && !c.is_whitespace() && c != '"' && c != '\\')
+}
+
+fn is_server_slug(slug: &str) -> bool {
+    let mut chars = slug.chars();
+    (2..=31).contains(&slug.len())
+        && chars.next().is_some_and(|c| c.is_ascii_lowercase())
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && !matches!(slug, "ferriskey" | "autharie" | "gateway")
 }
 
 fn is_realm_name(realm: &str) -> bool {
@@ -289,6 +334,18 @@ mod tests {
         })
     }
 
+    const SERVER: Uuid = Uuid::from_u128(7);
+
+    fn server(slug: &str) -> Value {
+        json!({
+            "id": SERVER,
+            "slug": slug,
+            "url": "https://tools.example.com/mcp",
+            "enabled": true,
+            "discovery_requested_at": "2026-10-23T10:00:00Z",
+        })
+    }
+
     #[test]
     fn the_registry_fields_are_decoded() {
         let parsed = AgentsPayloadV1::from_value(&registry(|_| {})).expect("valid");
@@ -350,6 +407,69 @@ mod tests {
         });
 
         assert!(AgentsPayloadV1::from_value(&value).is_ok());
+    }
+
+    #[test]
+    fn a_payload_without_servers_is_valid_and_has_none() {
+        let parsed = AgentsPayloadV1::from_value(&payload()).expect("valid");
+
+        assert!(parsed.servers.is_empty());
+    }
+
+    #[test]
+    fn customer_servers_are_decoded_with_their_discovery_request() {
+        let value = with(|value| {
+            value["servers"] = json!([server("crm"), {
+                "id": Uuid::from_u128(8),
+                "slug": "erp",
+                "url": "https://erp.example.com/mcp",
+                "enabled": false,
+            }]);
+        });
+
+        let parsed = AgentsPayloadV1::from_value(&value).expect("valid");
+
+        assert_eq!(parsed.servers.len(), 2);
+        assert_eq!(parsed.servers[0].id, SERVER);
+        assert_eq!(parsed.servers[0].slug, "crm");
+        assert!(parsed.servers[0].enabled);
+        assert!(parsed.servers[0].discovery_requested_at.is_some());
+        assert_eq!(parsed.servers[1].discovery_requested_at, None);
+        assert!(!parsed.servers[1].enabled);
+    }
+
+    #[test]
+    fn a_server_with_a_bad_slug_a_plain_url_or_a_twin_is_refused() {
+        for slug in ["", "a", "Crm", "1crm", "cr m", "ferriskey", "gateway"] {
+            let value = with(|value| value["servers"] = json!([server(slug)]));
+            assert!(AgentsPayloadV1::from_value(&value).is_err(), "{slug:?}");
+        }
+        let plain = with(|value| {
+            let mut bad = server("crm");
+            bad["url"] = json!("http://tools.example.com/mcp");
+            value["servers"] = json!([bad]);
+        });
+        let twin = with(|value| value["servers"] = json!([server("crm"), server("crm")]));
+
+        assert!(AgentsPayloadV1::from_value(&plain).is_err());
+        assert!(AgentsPayloadV1::from_value(&twin).is_err());
+    }
+
+    #[test]
+    fn more_than_ten_servers_are_refused() {
+        let many: Vec<Value> = (0..11)
+            .map(|index| {
+                json!({
+                    "id": Uuid::from_u128(100 + index),
+                    "slug": format!("srv-{index}"),
+                    "url": "https://tools.example.com/mcp",
+                    "enabled": true,
+                })
+            })
+            .collect();
+        let value = with(|value| value["servers"] = json!(many));
+
+        assert!(AgentsPayloadV1::from_value(&value).is_err());
     }
 
     #[test]

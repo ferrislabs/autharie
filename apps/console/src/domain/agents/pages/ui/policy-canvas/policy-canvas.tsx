@@ -51,6 +51,7 @@ import {
   type CanvasNode,
 } from './flow-elements'
 import { boxMenu, linkMenu, paneMenu, templateItems, type AddActions, type Restrict } from './menu-items'
+import { useCatalogue } from '../catalogue-context'
 import { useColorMode } from './use-color-mode'
 import { useCanvasDraft, type Publisher } from './use-canvas-draft'
 
@@ -106,6 +107,7 @@ function CustomCedar({ policies, onOpen }: { policies: AgentPolicy[]; onOpen: (p
 function CanvasEditor({ policies, canManage, publisher, onOpenAdvanced }: Props) {
   const readOnly = !canManage
   const colorMode = useColorMode()
+  const catalogue = useCatalogue()
   const { screenToFlowPosition, fitView } = useReactFlow()
   const draft = useCanvasDraft(policies, publisher)
   const { doc, pending } = draft
@@ -185,7 +187,9 @@ function CanvasEditor({ policies, canManage, publisher, onOpenAdvanced }: Props)
       addWho: (subject, openEditor) => place(newWhoBox(doc, subject), openEditor),
       addWhat: (target, openEditor) => place(newWhatBox(doc, target), openEditor),
       fromTemplate: (template) => {
-        change((current) => addTemplate(current, template, { x: 0, y: Math.max(0, Math.round(flowPoint.y - 40)) }))
+        change((current) =>
+          addTemplate(current, template, { x: 0, y: Math.max(0, Math.round(flowPoint.y - 40)) }, catalogue),
+        )
         setEditingId(null)
       },
     }
@@ -193,7 +197,7 @@ function CanvasEditor({ policies, canManage, publisher, onOpenAdvanced }: Props)
 
   function openPaneMenu(clientX: number, clientY: number, restrict: Restrict, linkFrom: string | null) {
     const flowPoint = screenToFlowPosition({ x: clientX, y: clientY })
-    openMenu(clientX, clientY, 'Add to the canvas', paneMenu(addActions(flowPoint, linkFrom), restrict))
+    openMenu(clientX, clientY, 'Add to the canvas', paneMenu(addActions(flowPoint, linkFrom), restrict, catalogue))
   }
 
   function removeBoxes(ids: string[], links: string[] = []) {

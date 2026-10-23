@@ -21,6 +21,34 @@ export const FALLBACK_SERVER_NAME = 'autharie'
 export const SIGN_IN_STEP =
   'Sign in in the browser when asked. The agent then only gets what your policies allow; watch the Activity tab.'
 
+export interface ConnectionTarget {
+  id: string
+  label: string
+  mcpUrl: string
+  serverName: string
+}
+
+export function connectionTargets(
+  deploymentUrl: string | undefined,
+  servers: { slug: string; name: string; enabled: boolean; mcp_url?: string }[],
+): ConnectionTarget[] {
+  const own: ConnectionTarget[] = deploymentUrl
+    ? [{ id: 'ferriskey', label: 'This deployment (FerrisKey)', mcpUrl: deploymentUrl, serverName: FALLBACK_SERVER_NAME }]
+    : []
+
+  return [
+    ...own,
+    ...servers
+      .filter((server) => server.enabled && server.mcp_url !== undefined)
+      .map((server) => ({
+        id: server.slug,
+        label: server.name,
+        mcpUrl: server.mcp_url ?? '',
+        serverName: server.slug,
+      })),
+  ]
+}
+
 export function safeServerName(name: string): string {
   const slug = name
     .toLowerCase()

@@ -640,6 +640,7 @@ name = "autharie-domain"
 version = "0.1.0"
 dependencies = [
  "autharie-auth",
+ "autharie-egress",
  "autharie-permission",
  "base64 0.22.1",
  "cedar-policy",
@@ -655,6 +656,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tracing",
+ "url",
  "utoipa",
  "uuid",
  "zeroize",
@@ -680,6 +682,18 @@ dependencies = [
  "tokio",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "autharie-egress"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "bytes",
+ "reqwest 0.12.28",
+ "thiserror 2.0.20",
+ "tokio",
+ "url",
 ]
 
 [[package]]
@@ -736,9 +750,11 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "autharie-crds",
+ "autharie-egress",
  "aws-config",
  "aws-credential-types",
  "aws-sdk-s3",
+ "axum",
  "base64 0.22.1",
  "chrono",
  "chrono-tz",
@@ -4400,6 +4416,7 @@ checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 name = "mcp-gateway"
 version = "0.1.0"
 dependencies = [
+ "autharie-egress",
  "axum",
  "bytes",
  "chrono",

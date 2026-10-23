@@ -450,14 +450,17 @@ impl From<CoreError> for ApiError {
                 reason: value.to_string(),
             },
             CoreError::Agent(
-                AgentError::Invalid { .. } | AgentError::InvalidSealingKey { .. },
+                AgentError::Invalid { .. }
+                | AgentError::InvalidSealingKey { .. }
+                | AgentError::Server(_),
             ) => ApiError::BadRequest {
                 reason: value.to_string(),
             },
             CoreError::Agent(
                 AgentError::PolicyNotFound { .. }
                 | AgentError::AutonomousAgentNotFound { .. }
-                | AgentError::CredentialNotFound { .. },
+                | AgentError::CredentialNotFound { .. }
+                | AgentError::ServerNotFound { .. },
             ) => ApiError::NotFound {
                 reason: value.to_string(),
             },
@@ -469,7 +472,9 @@ impl From<CoreError> for ApiError {
                 | AgentError::TooManyPolicies { .. }
                 | AgentError::NotEnabled
                 | AgentError::AddressUnknown
-                | AgentError::TooManyAutonomousAgents { .. },
+                | AgentError::TooManyAutonomousAgents { .. }
+                | AgentError::TooManyServers { .. }
+                | AgentError::ServerSlugTaken { .. },
             ) => ApiError::Conflict {
                 reason: value.to_string(),
             },
