@@ -10,6 +10,7 @@ use autharie_core::{
     dataplane::{credential::SecretString, ports::DataPlaneService, value_objects::DataPlaneId},
     deployments::{DeploymentId, commands::ReportDeploymentOutcomeCommand},
     smtp::{SmtpError, commands::SmtpOutcome, ports::SmtpOutcomeService},
+    themes::{ThemeError, commands::ThemeOutcome, ports::ThemeOutcomeService},
     webhooks::{
         RequestPhase, WebhookId,
         commands::{RequestReport, SecretReport, WebhookReport, WebhooksOutcome},
@@ -125,12 +126,14 @@ pub struct OutcomeItemReport {
 pub struct ReportOutcomeRequest {
     /// `webhooks` for a report of a deployment's webhooks, `deployment.agents`
     /// for a report of its agents, `smtp` for a report of a realm's email
-    /// provider; absent for the outcome of the deployment itself.
+    /// provider, `portal_theme` for a report of a realm's login theme; absent
+    /// for the outcome of the deployment itself.
     #[serde(default)]
     pub kind: Option<String>,
 
-    /// The revision of the `deployment.webhooks`, `deployment.agents` or
-    /// `deployment.smtp` action this report reflects. Required with every kind.
+    /// The revision of the `deployment.webhooks`, `deployment.agents`,
+    /// `deployment.smtp` or `deployment.portal_theme` action this report
+    /// reflects. Required with every kind.
     #[serde(default)]
     pub revision: Option<u64>,
 
@@ -170,16 +173,18 @@ pub struct ReportOutcomeRequest {
     /// What the data plane discovered on each customer MCP server. Only with `kind: deployment.agents`.
     #[serde(default)]
     pub servers: Vec<AgentServerReport>,
-    /// The realm the report is about. Only with `kind: smtp`.
+    /// The realm the report is about. Only with `kind: smtp` or `kind: portal_theme`.
     #[serde(default)]
     pub realm: Option<String>,
 
-    /// What became of the realm's email provider: exactly one item. Only with `kind: smtp`.
+    /// What became of the realm's email provider or login theme: exactly one
+    /// item. Only with `kind: smtp` or `kind: portal_theme`.
     #[serde(default)]
     pub items: Vec<OutcomeItemReport>,
 
     /// What the data plane observed: `running`, `failed` or `deleted`.
-    /// Not sent with `kind: webhooks`, `kind: deployment.agents` or `kind: smtp`.
+    /// Not sent with `kind: webhooks`, `kind: deployment.agents`, `kind: smtp` or
+    /// `kind: portal_theme`.
     ///
     /// All three are things a component saw rather than inferred -- the
     /// operator wrote `Running`/`ready` or `Failed` onto the resource, and
@@ -393,6 +398,40 @@ fn agents_outcome(
         .with_servers(servers))
 }
 
+fn portal_theme_outcome(
+    deployment_id: DeploymentId,
+    request: ReportOutcomeRequest,
+) -> Result<ThemeOutcome, ApiError> {
+    if request
+        .deployment_id
+        .is_some_and(|reported| reported != deployment_id.0)
+    {
+        return Err(ApiError::BadRequest {
+            reason: "the report names another deployment than the route".to_string(),
+        });
+    }
+
+    let revision = request.revision.ok_or_else(|| ApiError::BadRequest {
+        reason: "a portal_theme report needs the revision it reflects".to_string(),
+    })?;
+    let realm = request.realm.ok_or_else(|| ApiError::BadRequest {
+        reason: "a portal_theme report needs the realm it is about".to_string(),
+    })?;
+
+    ThemeOutcome::parse(
+        revision,
+        &realm,
+        request
+            .items
+            .into_iter()
+            .map(|item| (item.phase, item.message))
+            .collect(),
+    )
+    .map_err(|error: ThemeError| ApiError::BadRequest {
+        reason: error.to_string(),
+    })
+}
+
 fn smtp_outcome(
     deployment_id: DeploymentId,
     request: ReportOutcomeRequest,
@@ -438,7 +477,8 @@ fn smtp_outcome(
                    the deployment's webhooks, new signing secrets, its realms and the result \
                    of rotation and retry requests instead; with `kind: deployment.agents` it \
                    records the status of the deployment's agents and the phase of each policy; \
-                   with `kind: smtp` it records the state of one realm's email provider. \
+                   with `kind: smtp` it records the state of one realm's email provider; \
+                   with `kind: portal_theme` it records the state of one realm's login theme. \
                    A report older than the one already applied changes nothing.",
     params(ReportOutcomeRoute),
     request_body = ReportOutcomeRequest,
@@ -497,6 +537,14 @@ pub async fn report_outcome_handler(
             state
                 .service
                 .report_smtp_outcome(identity, deployment_id, outcome)
+                .await?
+        }
+        Some("portal_theme") => {
+            let outcome = portal_theme_outcome(deployment_id, request)?;
+
+            state
+                .service
+                .report_theme_outcome(identity, deployment_id, outcome)
                 .await?
         }
         Some(other) => {
@@ -698,6 +746,57 @@ mod tests {
         ] {
             assert!(matches!(
                 smtp_outcome(deployment, request(body)),
+                Err(ApiError::BadRequest { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn a_portal_theme_report_is_read_as_the_data_plane_sends_it() {
+        let deployment = DeploymentId(Uuid::new_v4());
+
+        let outcome = portal_theme_outcome(
+            deployment,
+            request(serde_json::json!({
+                "deployment_id": deployment.0,
+                "kind": "portal_theme",
+                "revision": 4,
+                "realm": "customers",
+                "items": [{ "phase": "Failed", "message": "404 portal themes" }]
+            })),
+        )
+        .expect("accepted");
+
+        assert_eq!(outcome.revision, 4);
+        assert_eq!(outcome.realm.as_str(), "customers");
+        assert_eq!(
+            outcome.state,
+            autharie_core::themes::ThemeState::Failed {
+                message: "404 portal themes".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn a_portal_theme_report_needs_a_revision_a_realm_one_known_item_and_its_own_deployment() {
+        let deployment = DeploymentId(Uuid::new_v4());
+        let item = serde_json::json!([{ "phase": "Applied" }]);
+
+        for body in [
+            serde_json::json!({ "kind": "portal_theme", "realm": "master", "items": item }),
+            serde_json::json!({ "kind": "portal_theme", "revision": 1, "items": item }),
+            serde_json::json!({ "kind": "portal_theme", "revision": 1, "realm": "master" }),
+            serde_json::json!({ "kind": "portal_theme", "revision": 1, "realm": "master",
+                "items": [{ "phase": "Applied" }, { "phase": "Applied" }] }),
+            serde_json::json!({ "kind": "portal_theme", "revision": 1, "realm": "master",
+                "items": [{ "phase": "Exploded" }] }),
+            serde_json::json!({ "kind": "portal_theme", "revision": 1, "realm": "bad realm",
+                "items": item }),
+            serde_json::json!({ "kind": "portal_theme", "revision": 1, "realm": "master",
+                "items": item, "deployment_id": Uuid::new_v4() }),
+        ] {
+            assert!(matches!(
+                portal_theme_outcome(deployment, request(body)),
                 Err(ApiError::BadRequest { .. })
             ));
         }

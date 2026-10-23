@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO deployment_portal_theme_sync (deployment_id, realm, revision, phase, message)\n            VALUES ($1, $2, 1, 'pending', NULL)\n            ON CONFLICT (deployment_id, realm) DO UPDATE\n            SET revision = deployment_portal_theme_sync.revision + 1,\n                phase = 'pending',\n                message = NULL,\n                updated_at = now()\n            RETURNING revision\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "revision",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "26b31c4b2887fb1fce14dc201f131d569b3842ad970152ba93ab05b9432c8dca"
+}

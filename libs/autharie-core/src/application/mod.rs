@@ -44,6 +44,7 @@ mod reachability;
 mod role;
 mod signals;
 pub mod smtp;
+pub mod themes;
 mod traces;
 mod upgrade;
 mod user;

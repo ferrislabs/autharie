@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE deployment_portal_theme_sync\n            SET phase = $3, message = $4, updated_at = now()\n            WHERE deployment_id = $1 AND realm = $2\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "58d1cac9ff40ea06b529126101b37b612ceaec7b25264c32a1c97c4d8e62408f"
+}

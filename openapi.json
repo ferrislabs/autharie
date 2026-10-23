@@ -1091,7 +1091,7 @@
           "dataplanes"
         ],
         "summary": "report what a data plane did with a deployment",
-        "description": "Records an outcome the data plane observed directly. This is the only path by which the control plane learns what happened to a deployment after it was handed over. With `kind: webhooks` it records the state of the deployment's webhooks, new signing secrets, its realms and the result of rotation and retry requests instead; with `kind: deployment.agents` it records the status of the deployment's agents and the phase of each policy; with `kind: smtp` it records the state of one realm's email provider. A report older than the one already applied changes nothing.",
+        "description": "Records an outcome the data plane observed directly. This is the only path by which the control plane learns what happened to a deployment after it was handed over. With `kind: webhooks` it records the state of the deployment's webhooks, new signing secrets, its realms and the result of rotation and retry requests instead; with `kind: deployment.agents` it records the status of the deployment's agents and the phase of each policy; with `kind: smtp` it records the state of one realm's email provider; with `kind: portal_theme` it records the state of one realm's login theme. A report older than the one already applied changes nothing.",
         "operationId": "report_outcome_handler",
         "parameters": [
           {
@@ -6870,6 +6870,722 @@
           },
           "404": {
             "description": "No such deployment, or the realm has no email provider",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The deployment is not a FerrisKey one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/organisations/{organisation_id}/deployments/{deployment_id}/branding/{realm}/themes": {
+      "get": {
+        "tags": [
+          "branding"
+        ],
+        "summary": "list a realm's themes",
+        "description": "The themes of the realm, oldest first, and `state`: what became of the tokens last sent to FerrisKey (`Pending`, `Applied` or `Failed`, with the `revision` of that send), or null when none was ever sent. Allowed whatever the plan.",
+        "operationId": "list_themes_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "realm",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The realm's themes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThemesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The realm is not valid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not view this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "branding"
+        ],
+        "summary": "create a theme",
+        "description": "Stores a new, inactive theme. Nothing is sent to the data plane until it is activated. A realm holds at most 10 themes and a name is unique in a realm whatever its case. Needs the branding feature. FerrisKey deployments only.",
+        "operationId": "create_theme_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "realm",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateThemeBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The theme was created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThemeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The name, a token (named in the message) or the realm is not valid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not change this deployment, or its plan does not open branding",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The realm already holds 10 themes, the name is taken, or the deployment is not a FerrisKey one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/organisations/{organisation_id}/deployments/{deployment_id}/branding/{realm}/themes/deactivate": {
+      "post": {
+        "tags": [
+          "branding"
+        ],
+        "summary": "use FerrisKey's default look",
+        "description": "Leaves the realm with no active theme and asks the data plane to apply empty tokens, which is FerrisKey's own default. Needs the branding feature.",
+        "operationId": "deactivate_themes_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "realm",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "No theme is active, and the default is being applied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThemesDeactivated"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The realm is not valid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not change this deployment, or its plan does not open branding",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The deployment is not a FerrisKey one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/organisations/{organisation_id}/deployments/{deployment_id}/branding/{realm}/themes/{theme_id}": {
+      "put": {
+        "tags": [
+          "branding"
+        ],
+        "summary": "change a theme",
+        "description": "Renames the theme, replaces its tokens, or both. The data plane hears of it only when the theme is the active one and its tokens change. Needs the branding feature.",
+        "operationId": "update_theme_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "realm",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "theme_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateThemeBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The theme as it is now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThemeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Nothing to change, or the name, a token (named in the message) or the realm is not valid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not change this deployment, or its plan does not open branding",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment or theme",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The name is taken, or the deployment is not a FerrisKey one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "branding"
+        ],
+        "summary": "delete a theme",
+        "description": "Forgets a theme that is not active. Nothing is sent to the data plane. Needs the branding feature.",
+        "operationId": "delete_theme_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "realm",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "theme_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The theme was deleted"
+          },
+          "400": {
+            "description": "The realm is not valid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not change this deployment, or its plan does not open branding",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment or theme",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The theme is the active one, or the deployment is not a FerrisKey one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/organisations/{organisation_id}/deployments/{deployment_id}/branding/{realm}/themes/{theme_id}/activate": {
+      "post": {
+        "tags": [
+          "branding"
+        ],
+        "summary": "activate a theme",
+        "description": "Makes the theme the realm's only active one and asks the data plane to apply its tokens as FerrisKey's active theme. `state` of the list is `Pending` until the data plane reports. Needs the branding feature.",
+        "operationId": "activate_theme_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "realm",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "theme_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Active, and being applied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThemeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The realm is not valid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not change this deployment, or its plan does not open branding",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment or theme",
             "content": {
               "application/json": {
                 "schema": {
@@ -16292,6 +17008,25 @@
           }
         }
       },
+      "CreateThemeBody": {
+        "type": "object",
+        "required": [
+          "name",
+          "tokens"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "example": "Autumn",
+            "maxLength": 80,
+            "minLength": 1
+          },
+          "tokens": {
+            "$ref": "#/components/schemas/ThemeTokens"
+          }
+        },
+        "additionalProperties": false
+      },
       "CredentialRequestData": {
         "type": "object",
         "required": [
@@ -17900,6 +18635,11 @@
       },
       "HexColor": {
         "type": "string"
+      },
+      "HexColour": {
+        "type": "string",
+        "example": "#635dff",
+        "pattern": "^#[0-9a-fA-F]{6}$"
       },
       "Hosting": {
         "type": "string",
@@ -19937,14 +20677,14 @@
             "items": {
               "$ref": "#/components/schemas/OutcomeItemReport"
             },
-            "description": "What became of the realm's email provider: exactly one item. Only with `kind: smtp`."
+            "description": "What became of the realm's email provider or login theme: exactly one\nitem. Only with `kind: smtp` or `kind: portal_theme`."
           },
           "kind": {
             "type": [
               "string",
               "null"
             ],
-            "description": "`webhooks` for a report of a deployment's webhooks, `deployment.agents`\nfor a report of its agents, `smtp` for a report of a realm's email\nprovider; absent for the outcome of the deployment itself."
+            "description": "`webhooks` for a report of a deployment's webhooks, `deployment.agents`\nfor a report of its agents, `smtp` for a report of a realm's email\nprovider, `portal_theme` for a report of a realm's login theme; absent\nfor the outcome of the deployment itself."
           },
           "mcp_url": {
             "type": [
@@ -19962,7 +20702,7 @@
           },
           "outcome": {
             "type": "string",
-            "description": "What the data plane observed: `running`, `failed` or `deleted`.\nNot sent with `kind: webhooks`, `kind: deployment.agents` or `kind: smtp`.\n\nAll three are things a component saw rather than inferred -- the\noperator wrote `Running`/`ready` or `Failed` onto the resource, and\ndeletion is reported by whatever removed it. None of them is a timeout,\nwhich is why none needs a policy about when to give up."
+            "description": "What the data plane observed: `running`, `failed` or `deleted`.\nNot sent with `kind: webhooks`, `kind: deployment.agents`, `kind: smtp` or\n`kind: portal_theme`.\n\nAll three are things a component saw rather than inferred -- the\noperator wrote `Running`/`ready` or `Failed` onto the resource, and\ndeletion is reported by whatever removed it. None of them is a timeout,\nwhich is why none needs a policy about when to give up."
           },
           "phase": {
             "type": [
@@ -19983,7 +20723,7 @@
               "string",
               "null"
             ],
-            "description": "The realm the report is about. Only with `kind: smtp`."
+            "description": "The realm the report is about. Only with `kind: smtp` or `kind: portal_theme`."
           },
           "realms": {
             "type": "array",
@@ -20010,7 +20750,7 @@
               "null"
             ],
             "format": "int64",
-            "description": "The revision of the `deployment.webhooks`, `deployment.agents` or\n`deployment.smtp` action this report reflects. Required with every kind.",
+            "description": "The revision of the `deployment.webhooks`, `deployment.agents`,\n`deployment.smtp` or `deployment.portal_theme` action this report\nreflects. Required with every kind.",
             "minimum": 0
           },
           "secrets": {
@@ -21339,6 +22079,666 @@
           }
         }
       },
+      "ThemeBorders": {
+        "type": "object",
+        "properties": {
+          "buttonBorderWeight": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "maximum": 64,
+            "minimum": 0
+          },
+          "buttonRadius": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "maximum": 64,
+            "minimum": 0
+          },
+          "inputBorderWeight": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "maximum": 64,
+            "minimum": 0
+          },
+          "inputRadius": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "maximum": 64,
+            "minimum": 0
+          },
+          "magicLinkButtonBorderWeight": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "maximum": 64,
+            "minimum": 0
+          },
+          "passkeyButtonBorderWeight": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "maximum": 64,
+            "minimum": 0
+          },
+          "socialButtonBorderWeight": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "maximum": 64,
+            "minimum": 0
+          },
+          "widgetBorderWeight": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "maximum": 64,
+            "minimum": 0
+          },
+          "widgetRadius": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "maximum": 64,
+            "minimum": 0
+          },
+          "widgetShadow": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ThemeShadow"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "ThemeColors": {
+        "type": "object",
+        "properties": {
+          "bodyText": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HexColour"
+              }
+            ]
+          },
+          "error": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HexColour"
+              }
+            ]
+          },
+          "links": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HexColour"
+              }
+            ]
+          },
+          "magicLinkButtonBackground": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HexColour"
+              }
+            ]
+          },
+          "magicLinkButtonBorder": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HexColour"
+              }
+            ]
+          },
+          "magicLinkButtonLabel": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HexColour"
+              }
+            ]
+          },
+          "pageBackground": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HexColour"
+              }
+            ]
+          },
+          "passkeyButtonBackground": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HexColour"
+              }
+            ]
+          },
+          "passkeyButtonBorder": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HexColour"
+              }
+            ]
+          },
+          "passkeyButtonLabel": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HexColour"
+              }
+            ]
+          },
+          "primaryButton": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HexColour"
+              }
+            ]
+          },
+          "primaryButtonLabel": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HexColour"
+              }
+            ]
+          },
+          "secondaryButton": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HexColour"
+              }
+            ]
+          },
+          "secondaryButtonLabel": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HexColour"
+              }
+            ]
+          },
+          "socialButtonBackground": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HexColour"
+              }
+            ]
+          },
+          "socialButtonBorder": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HexColour"
+              }
+            ]
+          },
+          "socialButtonLabel": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HexColour"
+              }
+            ]
+          },
+          "widgetBackground": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HexColour"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "ThemeFontStyle": {
+        "type": "object",
+        "required": [
+          "weight",
+          "sizePct"
+        ],
+        "properties": {
+          "sizePct": {
+            "type": "number",
+            "format": "double",
+            "maximum": 300,
+            "minimum": 50
+          },
+          "weight": {
+            "type": "integer",
+            "format": "int32",
+            "multipleOf": 100,
+            "maximum": 900,
+            "minimum": 100
+          }
+        },
+        "additionalProperties": false
+      },
+      "ThemeFonts": {
+        "type": "object",
+        "properties": {
+          "baseSize": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "maximum": 24,
+            "minimum": 10
+          },
+          "body": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ThemeFontStyle"
+              }
+            ]
+          },
+          "buttons": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ThemeFontStyle"
+              }
+            ]
+          },
+          "inputLabels": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ThemeFontStyle"
+              }
+            ]
+          },
+          "links": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ThemeLinkFont"
+              }
+            ]
+          },
+          "subtitle": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ThemeFontStyle"
+              }
+            ]
+          },
+          "title": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ThemeFontStyle"
+              }
+            ]
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "https://fonts.example.com/inter.css",
+            "maxLength": 2048
+          }
+        },
+        "additionalProperties": false
+      },
+      "ThemeId": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "ThemeLinkFont": {
+        "type": "object",
+        "required": [
+          "weight",
+          "sizePct",
+          "style"
+        ],
+        "properties": {
+          "sizePct": {
+            "type": "number",
+            "format": "double",
+            "maximum": 300,
+            "minimum": 50
+          },
+          "style": {
+            "$ref": "#/components/schemas/ThemeLinkStyle"
+          },
+          "weight": {
+            "type": "integer",
+            "format": "int32",
+            "multipleOf": 100,
+            "maximum": 900,
+            "minimum": 100
+          }
+        },
+        "additionalProperties": false
+      },
+      "ThemeLinkStyle": {
+        "type": "string",
+        "enum": [
+          "normal",
+          "underline"
+        ]
+      },
+      "ThemeName": {
+        "type": "string",
+        "example": "Autumn"
+      },
+      "ThemeResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ThemeView"
+          }
+        }
+      },
+      "ThemeShadow": {
+        "type": "string",
+        "enum": [
+          "none",
+          "small",
+          "large"
+        ]
+      },
+      "ThemeSpacing": {
+        "type": "object",
+        "properties": {
+          "fieldGap": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "maximum": 128,
+            "minimum": 0
+          },
+          "sectionGap": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "maximum": 128,
+            "minimum": 0
+          },
+          "widgetPadding": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "maximum": 128,
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "ThemeState": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "phase"
+            ],
+            "properties": {
+              "phase": {
+                "type": "string",
+                "enum": [
+                  "Pending"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "phase"
+            ],
+            "properties": {
+              "phase": {
+                "type": "string",
+                "enum": [
+                  "Applied"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "message",
+              "phase"
+            ],
+            "properties": {
+              "message": {
+                "type": "string"
+              },
+              "phase": {
+                "type": "string",
+                "enum": [
+                  "Failed"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ThemeSync": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ThemeState"
+          },
+          {
+            "type": "object",
+            "required": [
+              "revision"
+            ],
+            "properties": {
+              "revision": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              }
+            }
+          }
+        ]
+      },
+      "ThemeTokens": {
+        "type": "object",
+        "properties": {
+          "borders": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ThemeBorders"
+              }
+            ]
+          },
+          "colors": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ThemeColors"
+              }
+            ]
+          },
+          "fonts": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ThemeFonts"
+              }
+            ]
+          },
+          "spacing": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ThemeSpacing"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "ThemeView": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "tokens",
+          "active",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "active": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "$ref": "#/components/schemas/ThemeId"
+          },
+          "name": {
+            "$ref": "#/components/schemas/ThemeName"
+          },
+          "tokens": {
+            "$ref": "#/components/schemas/ThemeTokens"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ThemesDeactivated": {
+        "type": "object"
+      },
+      "ThemesResponse": {
+        "type": "object",
+        "required": [
+          "data",
+          "state"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ThemeView"
+            }
+          },
+          "state": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ThemeSync"
+              }
+            ]
+          }
+        }
+      },
       "TierCode": {
         "type": "string",
         "example": "legacy-standard"
@@ -21591,6 +22991,30 @@
             "$ref": "#/components/schemas/Role"
           }
         }
+      },
+      "UpdateThemeBody": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 80,
+            "minLength": 1
+          },
+          "tokens": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ThemeTokens"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
       },
       "UpgradeDataplanesRequest": {
         "type": "object",
