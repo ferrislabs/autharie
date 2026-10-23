@@ -39,6 +39,14 @@ pub struct ExchangeConfig {
     pub audience: String,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Egress {
+    #[default]
+    Cluster,
+    Public,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct UpstreamConfig {
     pub canonical_uri: String,
@@ -51,6 +59,8 @@ pub struct UpstreamConfig {
     pub server_name: String,
     #[serde(default)]
     pub scopes_supported: Vec<String>,
+    #[serde(default)]
+    pub egress: Egress,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -286,6 +296,32 @@ mod tests {
         let doubled = format!("{ONE}\n{ONE}");
         let error = GatewayConfig::from_toml(&doubled).unwrap_err();
         assert!(matches!(error, ConfigError::Duplicate(_)));
+    }
+
+    #[test]
+    fn an_upstream_reaches_the_cluster_unless_it_says_public() {
+        let config = GatewayConfig::from_toml(ONE).unwrap();
+        assert_eq!(config.upstreams[0].egress, Egress::Cluster);
+
+        let public = ONE.replace(
+            "server_name = \"autharie\"",
+            "server_name = \"autharie\"\negress = \"public\"",
+        );
+        let config = GatewayConfig::from_toml(&public).unwrap();
+        assert_eq!(config.upstreams[0].egress, Egress::Public);
+    }
+
+    #[test]
+    fn an_egress_that_is_neither_cluster_nor_public_is_refused() {
+        let broken = ONE.replace(
+            "server_name = \"autharie\"",
+            "server_name = \"autharie\"\negress = \"anywhere\"",
+        );
+
+        assert!(matches!(
+            GatewayConfig::from_toml(&broken),
+            Err(ConfigError::Parse(_))
+        ));
     }
 
     #[test]

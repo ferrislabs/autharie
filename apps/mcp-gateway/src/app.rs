@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use autharie_egress::EgressError;
 use axum::{
     Json, Router,
     body::{Body, Bytes, to_bytes},
@@ -16,6 +17,7 @@ use uuid::Uuid;
 
 use crate::{
     authzen::{self, Decision, PdpError},
+    config::Egress,
     decision::{DecisionRecord, DecisionSink, KIND},
     rpc::{self, Operation, Rejection},
     upstream::Routes,
@@ -49,6 +51,7 @@ pub struct Gateway<S> {
     pub routes: Routes,
     pub sink: S,
     pub http: Client,
+    pub public: autharie_egress::GuardedClient,
 }
 
 pub struct AppState<S>(Arc<Gateway<S>>);
@@ -381,15 +384,26 @@ impl<S: DecisionSink> Call<'_, S> {
             REQUEST_ID,
             HeaderValue::from_str(self.request_id).map_err(|_| ())?,
         );
-        self.gateway
-            .http
-            .request(parts.method.clone(), &self.upstream.upstream_url)
+        let request = match self.upstream.egress {
+            Egress::Cluster => self
+                .gateway
+                .http
+                .request(parts.method.clone(), &self.upstream.upstream_url),
+            Egress::Public => self
+                .gateway
+                .public
+                .request(parts.method.clone(), &self.upstream.upstream_url)
+                .map_err(|error| {
+                    warn!(%error, server = %self.upstream.server_name, "upstream refused by the egress rule");
+                })?,
+        };
+        request
             .headers(outgoing)
             .body(body)
             .send()
             .await
             .map_err(|error| {
-                warn!(%error, "upstream call failed");
+                warn!(error = %EgressError::classify(&error), server = %self.upstream.server_name, "upstream call failed");
             })
     }
 }

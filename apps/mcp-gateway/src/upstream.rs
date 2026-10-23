@@ -10,7 +10,7 @@ use url::Url;
 
 use crate::{
     authzen::AuthzenPdp,
-    config::UpstreamConfig,
+    config::{Egress, UpstreamConfig},
     exchange::{CachedExchanger, TokenExchanger},
     verifier::JwksVerifier,
 };
@@ -23,6 +23,7 @@ pub struct Upstream {
     pub issuer: String,
     pub scopes_supported: Vec<String>,
     pub upstream_url: String,
+    pub egress: Egress,
     pub verifier: JwksVerifier,
     pub pdp: AuthzenPdp,
     pub exchanger: CachedExchanger,
@@ -74,6 +75,7 @@ impl Upstream {
             issuer: config.issuer,
             scopes_supported: config.scopes_supported,
             upstream_url: config.upstream_url,
+            egress: config.egress,
             verifier,
             pdp,
             exchanger,

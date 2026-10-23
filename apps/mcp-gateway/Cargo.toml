@@ -13,6 +13,7 @@ name = "mcp-gateway"
 path = "src/main.rs"
 
 [dependencies]
+autharie-egress = { path = "../../libs/autharie-egress" }
 axum = "0.8.8"
 bytes = "1"
 chrono = "0.4.42"
@@ -32,4 +33,5 @@ url = "2.5.8"
 uuid = { version = "1.19.0", features = ["v4"] }
 
 [dev-dependencies]
+autharie-egress = { path = "../../libs/autharie-egress", features = ["test-support"] }
 tokio = { version = "1.49.0", features = ["macros", "rt-multi-thread", "net", "time", "sync"] }
