@@ -64,6 +64,7 @@ mod tests {
                 webhooks_revision: 0,
                 webhook_requests: Vec::new(),
                 agents: None,
+                smtp: Vec::new(),
                 restore: None,
                 organisation_id: "org-1".to_string(),
                 provider: IdentityProvider::Keycloak,

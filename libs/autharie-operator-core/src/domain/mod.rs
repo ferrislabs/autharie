@@ -3,6 +3,7 @@ pub mod dataplane_upgrade;
 pub mod identity_instance;
 pub mod ports;
 pub mod shared_database;
+pub mod smtp;
 pub mod webhooks;
 
 use std::time::Duration;

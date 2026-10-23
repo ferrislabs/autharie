@@ -108,7 +108,7 @@ fn located(instance: &IdentityInstance) -> Result<(&str, &str), WebhookError> {
     })
 }
 
-fn is_not_found(error: &kube::Error) -> bool {
+pub(super) fn is_not_found(error: &kube::Error) -> bool {
     matches!(error, kube::Error::Api(response) if response.code == 404)
 }
 
@@ -125,7 +125,7 @@ fn kube_error(error: kube::Error) -> WebhookError {
 }
 
 /// Keys set to null are removed by a merge patch.
-fn removal_patch(ids: &[String]) -> Value {
+pub(super) fn removal_patch(ids: &[String]) -> Value {
     let removed: serde_json::Map<String, Value> =
         ids.iter().map(|id| (id.clone(), Value::Null)).collect();
     json!({ "data": removed })

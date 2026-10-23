@@ -1018,6 +1018,7 @@ mod tests {
                 webhooks,
                 webhooks_revision: 1,
                 webhook_requests: requests,
+                smtp: Vec::new(),
             },
             status: Some(IdentityInstanceStatus {
                 phase: Some(Phase::Running),

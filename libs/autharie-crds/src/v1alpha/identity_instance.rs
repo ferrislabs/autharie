@@ -106,6 +106,77 @@ pub struct IdentityInstanceSpec {
     /// The agent settings this deployment should have, whole. FerrisKey only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agents: Option<AgentsSpec>,
+
+    /// The outgoing mail settings of each realm that has some. FerrisKey only.
+    ///
+    /// One entry per realm, each with its own revision. A removal stays as an
+    /// entry with `remove: true`, so an older save delivered late cannot bring
+    /// the provider back. The password is not here: it is in the
+    /// `<instance>-smtp` Secret, under the realm's name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub smtp: Vec<SmtpSpec>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SmtpSpec {
+    pub realm: String,
+
+    /// Grows with every save of this realm's settings; the operator acts on an
+    /// entry whose revision it has not reported yet.
+    pub revision: u64,
+
+    /// The realm has no mail provider. The other fields are then not read.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub remove: bool,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(range(min = 1, max = 65535))]
+    pub port: Option<u16>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encryption: Option<SmtpEncryption>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_email: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum SmtpEncryption {
+    Tls,
+    Starttls,
+    None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum SmtpPhase {
+    Pending,
+    Applied,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SmtpStatus {
+    pub realm: String,
+
+    /// The revision of `spec.smtp` this entry reports on.
+    pub revision: u64,
+
+    pub phase: SmtpPhase,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -429,6 +500,10 @@ pub struct IdentityInstanceStatus {
     /// What became of `spec.agents`. Absent until the operator has had something to do.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agents: Option<AgentsStatus>,
+
+    /// What became of each of `spec.smtp`, in the same order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub smtp: Vec<SmtpStatus>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -855,7 +930,8 @@ mod tests {
     use crate::v1alpha::identity_instance::{
         DatabaseConfig, DatabaseMode, IdentityInstance, IdentityInstanceSpec,
         IdentityInstanceStatus, IdentityProvider, ManagedClusterConfig, ManagedClusterStorage,
-        WebhookPhase, WebhookRequestKind, WebhookRequestPhase, WebhookSpec,
+        SmtpEncryption, SmtpPhase, SmtpSpec, WebhookPhase, WebhookRequestKind, WebhookRequestPhase,
+        WebhookSpec,
     };
     use kube::core::ObjectMeta;
 
@@ -899,6 +975,7 @@ mod tests {
             webhooks_revision: 0,
             webhook_requests: Vec::new(),
             agents: None,
+            smtp: Vec::new(),
         };
 
         assert_eq!(spec.provider, IdentityProvider::Keycloak);
@@ -1331,6 +1408,139 @@ mod tests {
     }
 
     #[test]
+    fn a_spec_without_smtp_stays_valid_and_serialises_without_it() {
+        let spec: IdentityInstanceSpec = serde_json::from_value(spec_json()).unwrap();
+
+        assert!(spec.smtp.is_empty());
+        assert!(serde_json::to_value(&spec).unwrap().get("smtp").is_none());
+    }
+
+    #[test]
+    fn smtp_entries_round_trip_in_the_frozen_shape() {
+        let mut value = spec_json();
+        value["smtp"] = json!([
+            {
+                "realm": "acme",
+                "revision": 3,
+                "host": "smtp.example.com",
+                "port": 587,
+                "encryption": "starttls",
+                "username": "mailer",
+                "fromEmail": "no-reply@example.com",
+                "fromName": "Acme"
+            },
+            { "realm": "master", "revision": 9, "remove": true }
+        ]);
+
+        let spec: IdentityInstanceSpec = serde_json::from_value(value.clone()).unwrap();
+
+        assert_eq!(spec.smtp[0].port, Some(587));
+        assert_eq!(spec.smtp[0].encryption, Some(SmtpEncryption::Starttls));
+        assert_eq!(
+            spec.smtp[0].from_email.as_deref(),
+            Some("no-reply@example.com")
+        );
+        assert!(!spec.smtp[0].remove);
+        assert!(spec.smtp[1].remove);
+        assert_eq!(spec.smtp[1].host, None);
+        assert_eq!(serde_json::to_value(&spec).unwrap()["smtp"], value["smtp"]);
+    }
+
+    #[test]
+    fn encryption_is_spelled_in_lowercase() {
+        for (encryption, spelled) in [
+            (SmtpEncryption::Tls, "tls"),
+            (SmtpEncryption::Starttls, "starttls"),
+            (SmtpEncryption::None, "none"),
+        ] {
+            assert_eq!(serde_json::to_value(encryption).unwrap(), json!(spelled));
+            assert_eq!(
+                serde_json::from_value::<SmtpEncryption>(json!(spelled)).unwrap(),
+                encryption
+            );
+        }
+        assert!(serde_json::from_value::<SmtpEncryption>(json!("TLS")).is_err());
+    }
+
+    #[test]
+    fn a_tombstone_serialises_without_the_settings() {
+        let entry = SmtpSpec {
+            realm: "acme".to_string(),
+            revision: 4,
+            remove: true,
+            host: None,
+            port: None,
+            encryption: None,
+            username: None,
+            from_email: None,
+            from_name: None,
+        };
+
+        assert_eq!(
+            serde_json::to_value(&entry).unwrap(),
+            json!({ "realm": "acme", "revision": 4, "remove": true })
+        );
+    }
+
+    #[test]
+    fn smtp_status_round_trips_in_the_frozen_shape() {
+        let status: IdentityInstanceStatus = serde_json::from_value(json!({
+            "smtp": [
+                { "realm": "acme", "revision": 3, "phase": "Applied" },
+                { "realm": "beta", "revision": 1, "phase": "Failed", "message": "no password" },
+                { "realm": "gamma", "revision": 2, "phase": "Pending", "message": "unreachable" }
+            ]
+        }))
+        .unwrap();
+
+        assert_eq!(status.smtp[0].phase, SmtpPhase::Applied);
+        assert_eq!(status.smtp[1].phase, SmtpPhase::Failed);
+        assert_eq!(status.smtp[2].phase, SmtpPhase::Pending);
+        assert_eq!(status.smtp[1].message.as_deref(), Some("no password"));
+        let back = serde_json::to_value(&status).unwrap();
+        assert!(back["smtp"][0].get("message").is_none());
+        assert_eq!(back["smtp"][2]["revision"], json!(2));
+        assert!(
+            serde_json::to_value(IdentityInstanceStatus::default())
+                .unwrap()
+                .get("smtp")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn the_schema_describes_smtp_with_its_constraints() {
+        use kube::CustomResourceExt;
+
+        let crd = serde_json::to_value(IdentityInstance::crd()).unwrap();
+        let schema = &crd["spec"]["versions"][0]["schema"]["openAPIV3Schema"]["properties"];
+        let entry = &schema["spec"]["properties"]["smtp"]["items"];
+        let properties = &entry["properties"];
+
+        assert_eq!(entry["required"], json!(["realm", "revision"]));
+        assert_eq!(properties["port"]["minimum"].as_f64(), Some(1.0));
+        assert_eq!(properties["port"]["maximum"].as_f64(), Some(65535.0));
+        let encryptions: Vec<_> = properties["encryption"]["enum"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect();
+        assert_eq!(encryptions, ["tls", "starttls", "none"]);
+        assert_eq!(properties["revision"]["type"], json!("integer"));
+        for key in ["remove", "host", "username", "fromEmail", "fromName"] {
+            assert!(properties.get(key).is_some(), "{key}");
+        }
+
+        let reported = &schema["status"]["properties"]["smtp"]["items"];
+        assert_eq!(reported["required"], json!(["phase", "realm", "revision"]));
+        assert_eq!(
+            reported["properties"]["phase"]["enum"],
+            json!(["Pending", "Applied", "Failed"])
+        );
+    }
+
+    #[test]
     fn replicas_default_to_one_when_absent_and_round_trip() {
         let spec: IdentityInstanceSpec = serde_json::from_value(spec_json()).unwrap();
         assert_eq!(spec.replicas, 1);
@@ -1473,6 +1683,7 @@ mod tests {
                 webhooks_revision: 0,
                 webhook_requests: Vec::new(),
                 agents: None,
+                smtp: Vec::new(),
                 restore: None,
                 iam: None,
                 organisation_id: "org-123".to_string(),
@@ -1506,6 +1717,7 @@ mod tests {
                 realms: Vec::new(),
                 webhook_requests: Vec::new(),
                 agents: None,
+                smtp: Vec::new(),
                 phase: Some(Phase::Running),
                 ready: true,
                 endpoint: Some("https://auth.acme.com".to_string()),
@@ -1535,6 +1747,7 @@ mod tests {
                 webhooks_revision: 0,
                 webhook_requests: Vec::new(),
                 agents: None,
+                smtp: Vec::new(),
                 restore: None,
                 iam: None,
                 organisation_id: "org-123".to_string(),
