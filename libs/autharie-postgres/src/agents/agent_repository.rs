@@ -107,7 +107,7 @@ impl PolicyRow {
 #[cfg_attr(coverage_nightly, coverage(off))]
 #[repository(domain = Agent, backend = Postgres)]
 pub struct PostgresAgentRepository<'tx> {
-    tx: SharedTx<'tx>,
+    pub(super) tx: SharedTx<'tx>,
 }
 
 #[cfg_attr(coverage_nightly, coverage(off))]

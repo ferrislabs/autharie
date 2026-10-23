@@ -7,6 +7,7 @@ use uuid::Uuid;
 use crate::agents::{
     AgentError, DEFAULT_REALM, MAX_CEDAR_BYTES, MAX_RULE_BYTES,
     entities::{AgentsPhase, PolicyId, PolicyPhase},
+    servers::ServerOutcome,
 };
 
 const MAX_NAME_CHARS: usize = 100;
@@ -123,9 +124,15 @@ pub struct AgentsOutcome {
     pub mcp_url: Option<String>,
     pub message: Option<String>,
     pub policies: Vec<PolicyOutcome>,
+    pub servers: Vec<ServerOutcome>,
 }
 
 impl AgentsOutcome {
+    pub fn with_servers(mut self, servers: Vec<ServerOutcome>) -> Self {
+        self.servers = servers;
+        self
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn parse(
         revision: u64,
@@ -162,6 +169,7 @@ impl AgentsOutcome {
             mcp_url,
             message,
             policies,
+            servers: Vec::new(),
         })
     }
 }

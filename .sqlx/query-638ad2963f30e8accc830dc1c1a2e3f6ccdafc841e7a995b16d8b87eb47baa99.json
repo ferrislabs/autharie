@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE agent_servers\n            SET discovery = $3\n            WHERE deployment_id = $1\n              AND id = $2\n              AND (discovery_requested_at IS NULL OR $4 >= discovery_requested_at)\n              AND (discovery IS NULL OR $4 > (discovery ->> 'discovered_at')::timestamptz)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Jsonb",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "638ad2963f30e8accc830dc1c1a2e3f6ccdafc841e7a995b16d8b87eb47baa99"
+}

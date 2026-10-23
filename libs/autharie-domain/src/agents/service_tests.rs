@@ -11,6 +11,8 @@ use crate::{
     action::{Action, ports::MockActionRepository},
     agents::{
         ports::{AgentAccess, AgentOutcomeService, AgentRepository, AgentService},
+        server_ports::AgentServerRepository,
+        servers::{CustomerServer, Discovery, ServerId},
         service::{AgentOutcomeServiceImpl, AgentPublisher, AgentServiceImpl},
     },
     audit::{AuditEntry, ports::MockAuditRepository},
@@ -41,6 +43,7 @@ const PERMIT: &str = "permit(principal, action, resource);";
 struct State {
     settings: Option<AgentSettings>,
     policies: Vec<AgentPolicy>,
+    servers: Vec<CustomerServer>,
 }
 
 #[derive(Clone, Default)]
@@ -163,6 +166,73 @@ impl AgentRepository for Memory {
             }
             None => Ok(false),
         }
+    }
+}
+
+impl AgentServerRepository for Memory {
+    async fn list_servers(&self, _: DeploymentId) -> Result<Vec<CustomerServer>, CoreError> {
+        Ok(self.read(|state| state.servers.clone()))
+    }
+
+    async fn get_server(
+        &self,
+        _: DeploymentId,
+        id: ServerId,
+    ) -> Result<Option<CustomerServer>, CoreError> {
+        Ok(self.read(|state| state.servers.iter().find(|s| s.id == id).cloned()))
+    }
+
+    async fn insert_server(&self, server: &CustomerServer) -> Result<(), CoreError> {
+        let mut state = self.0.lock().unwrap();
+        if state.servers.iter().any(|s| s.slug == server.slug) {
+            return Err(AgentError::ServerSlugTaken {
+                slug: server.slug.to_string(),
+            }
+            .into());
+        }
+        state.servers.push(server.clone());
+        Ok(())
+    }
+
+    async fn update_server(&self, server: &CustomerServer) -> Result<bool, CoreError> {
+        let mut state = self.0.lock().unwrap();
+        match state.servers.iter_mut().find(|s| s.id == server.id) {
+            Some(slot) => {
+                *slot = server.clone();
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
+    async fn delete_server(&self, _: DeploymentId, id: ServerId) -> Result<bool, CoreError> {
+        let mut state = self.0.lock().unwrap();
+        let before = state.servers.len();
+        state.servers.retain(|s| s.id != id);
+        Ok(state.servers.len() != before)
+    }
+
+    async fn record_discovery(
+        &self,
+        _: DeploymentId,
+        id: ServerId,
+        discovery: &Discovery,
+    ) -> Result<bool, CoreError> {
+        let mut state = self.0.lock().unwrap();
+        let Some(server) = state.servers.iter_mut().find(|s| s.id == id) else {
+            return Ok(false);
+        };
+        let fresh = server
+            .discovery_requested_at
+            .is_none_or(|asked| discovery.discovered_at >= asked)
+            && server
+                .discovery
+                .as_ref()
+                .is_none_or(|known| discovery.discovered_at > known.discovered_at);
+        if fresh {
+            server.discovery = Some(discovery.clone());
+        }
+        Ok(fresh)
     }
 }
 
@@ -468,6 +538,7 @@ async fn saving_the_settings_sends_the_action_with_the_frozen_fields() {
             "realm": "acme",
             "revision": 1,
             "policies": [],
+            "servers": [],
         })
     );
     assert_eq!(world.written.audited(), vec![AGENTS_UPDATED_AUDIT]);
@@ -836,3 +907,5 @@ async fn the_switch_skips_a_deployment_that_never_had_agent_settings() {
     assert_eq!(sent, 0);
     assert!(written.payloads().is_empty());
 }
+
+mod server_service_tests;
