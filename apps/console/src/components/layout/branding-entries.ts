@@ -30,7 +30,6 @@ export function brandingEntries(deploymentPath: (path: string) => string): SideN
       label: 'Email provider',
       to: deploymentPath('/branding/email-provider'),
       icon: MailPlus,
-      soon: true,
     },
     {
       label: 'Phone templates',

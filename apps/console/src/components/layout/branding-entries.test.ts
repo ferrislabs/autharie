@@ -15,13 +15,17 @@ describe('the Branding side navigation', () => {
     ])
   })
 
-  it('opens Universal login and announces the rest', () => {
+  it('opens Universal login and Email provider and announces the rest', () => {
     const open = entries.filter((entry) => !('soon' in entry && entry.soon))
 
-    expect(open.map((entry) => entry.label)).toEqual(['Universal login'])
+    expect(open.map((entry) => entry.label)).toEqual([
+      'Universal login',
+      'Email provider',
+    ])
   })
 
   it('builds each address from the deployment path', () => {
     expect(entries[0]).toMatchObject({ to: '/d/branding/universal-login' })
+    expect(entries[3]).toMatchObject({ to: '/d/branding/email-provider' })
   })
 })

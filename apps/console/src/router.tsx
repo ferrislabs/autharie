@@ -29,6 +29,8 @@ import PageRolesFeature from './domain/organisations/pages/feature/page-roles-fe
 import PageOrganisationSettingsFeature from './domain/organisations/pages/feature/page-organisation-settings-feature'
 import PageBillingFeature from './domain/billing/pages/feature/page-billing-feature'
 import PageBrandingFeature from './domain/deployments/pages/feature/page-branding-feature'
+import PageEmailProviderFeature from './domain/branding/pages/feature/page-email-provider-feature'
+import { validateRealmSearch } from './domain/branding/use-branding-realm'
 import PageNetworkAccessFeature from './domain/deployments/pages/feature/page-network-access-feature'
 import PageWebhooksFeature from './domain/webhooks/pages/feature/page-webhooks-feature'
 import PageWebhookFormFeature from './domain/webhooks/pages/feature/page-webhook-form-feature'
@@ -196,6 +198,13 @@ const deploymentUniversalLoginRoute = createRoute({
   getParentRoute: () => deploymentBrandingLayoutRoute,
   path: '/universal-login',
   component: PageBrandingFeature,
+})
+
+const deploymentEmailProviderRoute = createRoute({
+  getParentRoute: () => deploymentBrandingLayoutRoute,
+  path: '/email-provider',
+  component: PageEmailProviderFeature,
+  validateSearch: validateRealmSearch,
 })
 
 // "Customization" was this tab's name before it grew into Branding.
@@ -437,6 +446,7 @@ const routeTree = rootRoute.addChildren([
     deploymentBrandingLayoutRoute.addChildren([
       deploymentBrandingIndexRoute,
       deploymentUniversalLoginRoute,
+      deploymentEmailProviderRoute,
     ]),
     deploymentCustomizationRedirect,
     deploymentTabLayoutRoute.addChildren([

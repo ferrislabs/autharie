@@ -52,6 +52,7 @@ describe('the route tree', () => {
       '/backups',
       '/security',
       '/branding/universal-login',
+      '/branding/email-provider',
     ]) {
       const shells = shellsFor(`${DEPLOYMENT}${path}`)
 
@@ -202,6 +203,24 @@ describe('the settings pages that became tabs', () => {
 
     expect(shells).toContain('DeploymentBrandingLayout')
     expect(shells).toContain('PageBrandingFeature')
+  })
+
+  it('puts Email provider under the Branding side navigation', () => {
+    const shells = shellsFor(`${DEPLOYMENT}/branding/email-provider`)
+
+    expect(shells).toContain('DeploymentBrandingLayout')
+    expect(shells).toContain('PageEmailProviderFeature')
+  })
+
+  it('carries the realm being edited in the url, master unless told otherwise', () => {
+    const { foundRoute } = router.getMatchedRoutes(`${DEPLOYMENT}/branding/email-provider`)
+    const validate = foundRoute?.options.validateSearch as
+      | ((search: Record<string, unknown>) => unknown)
+      | undefined
+
+    expect(validate).toBeDefined()
+    expect(validate?.({})).toEqual({ realm: 'master' })
+    expect(validate?.({ realm: 'acme' })).toEqual({ realm: 'acme' })
   })
 
   it.each([
