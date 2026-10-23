@@ -369,7 +369,7 @@ pub fn assemble(
     }
 }
 
-#[derive(Debug, Clone, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SealingJwk {
     pub kty: String,
     pub n: String,
@@ -380,7 +380,7 @@ pub struct SealingJwk {
     pub d: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SealingKey {
     kty: String,
     n: String,

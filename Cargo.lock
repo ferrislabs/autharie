@@ -796,6 +796,7 @@ dependencies = [
  "autharie-domain",
  "autharie-macros",
  "autharie-persistence",
+ "base64 0.22.1",
  "chrono",
  "chrono-tz",
  "serde",
