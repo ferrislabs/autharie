@@ -59,6 +59,12 @@ Design
     - Overview tab: "Your MCP servers" section: list (name, URL, status chip, tool count, last discovery, Refresh), Add/Edit dialog (slug derived from name, editable; URL validated client-side with the same rule), Remove with confirmation naming the policies that refer to it. Connection guide shows each server's own MCP URL `https://<host>/mcp/<slug>`.
     - Canvas: "Add what ▸ Whole server ▸" and the tool picker list customer servers; tools carry their read-only/destructive hints.
 
+  Protocol bridging (added 2026-10-23, found end to end against a real server)
+    Most MCP servers and many clients still speak 2025 revisions (session-based: `initialize`, `Mcp-Session-Id`, no `Mcp-Method` headers, possibly SSE responses). The gateway keeps speaking 2026-07-28 to agents and bridges both ways:
+    - Upstream side: discovery records the protocol version the server negotiated (`protocolVersion` in status and in the API's discovery). The operator renders it on the upstream (`protocol = "<version>"`, absent = 2026-07-28). For a legacy upstream the gateway opens a session itself (`initialize` with the exchanged token, then `notifications/initialized`), keeps it per (subject, agent, upstream) in memory with a 10-minute idle TTL and a bounded size, sends each call with `Mcp-Session-Id` and `MCP-Protocol-Version: <negotiated>`, drops the 2026-only `_meta` keys, reads a JSON or single-event SSE response, and on 404 (session gone) re-initializes once and retries. Each replica keeps its own sessions; nothing is shared.
+    - Agent side: a request without `Mcp-Method`/`Mcp-Name` is accepted and those values are taken from the body (a header that is present and disagrees is still refused, -32020). A 2025 client's `initialize` is answered by the gateway itself (server capabilities: tools; protocol version: the client's if supported, else the newest supported 2025 revision; an opaque `Mcp-Session-Id` the gateway does not need back); `notifications/initialized` gets 202. Toward a 2026 upstream the gateway adds the `_meta` the 2026 server requires.
+    - Authorization is unchanged: the same token checks, PDP decision, `tools/list` filtering and decision record for every call, whatever the versions.
+
 Acceptance (Gherkin)
   @spec-ms-1  Registering `http://…`, `https://10.0.0.5/mcp`, `https://user:pw@x.example/` or a slug `ferriskey` is refused with a field error; `https://tools.example.com/mcp` with slug `crm` is accepted and bumps the agents revision.
   @spec-ms-2  The operator, given a customer server in spec, creates the audience client `mcp-crm`, the exchange policy, the allowed resource, the HTTPRoute, and a gateway upstream with server_name `crm`.
@@ -68,6 +74,10 @@ Acceptance (Gherkin)
   @spec-ms-6  A canvas rule "support may call read-only tools on crm" compiles to Cedar on `resource.server == "crm"` and changes the next decision.
   @spec-ms-7  Removing the server removes upstream, route and audience client; its policies remain and the canvas marks the server unknown.
   @spec-ms-8  A server returning 500 tools, a 2 MiB body or a 30 s response yields a bounded or Unreachable discovery, never a crash.
+
+  @spec-ms-9   A 2026 agent calls a tool on a server that only speaks 2025-11-25 and answers in SSE: the gateway initializes a session, forwards the call with the session id, and returns the result as 2026 JSON; a second call reuses the session.
+  @spec-ms-10  The server forgets the session (404): the gateway re-initializes once and the call succeeds; a second 404 is returned as an upstream error.
+  @spec-ms-11  A 2025 client (no Mcp-Method header) sends initialize, notifications/initialized, tools/list and tools/call to the gateway in front of a 2026 server: it gets a session id, only the tools it may call, and the call result; a request whose Mcp-Method header disagrees with its body is still refused.
 
 Simulation
   No: per-request, stateless; discovery is a bounded request with a timeout.
@@ -102,3 +112,4 @@ Amended: 2026-10-23 `CustomerServer` carries no `revision`: the agents revision 
 Amended: 2026-10-23 hosts without a dot and `.local`, `.localhost`, `.localdomain`, `.internal`, `.intranet`, `.lan` are refused at registration (they only resolve inside a network); fragments are refused as well.
 Amended: 2026-10-23 `status.agents.servers[]` also carries `slug` (so the operator can still find the audience client of a server already gone from the spec) and `discoveryRequestedAt` (the spec's request this discovery answers, so the control plane and the operator compare control plane times with each other and never with the data plane clock); the report to the control plane carries the latter as `discovery_requested_at`.
 Amended: 2026-10-23 FerrisKey's client-credentials grant is not known to honour `audience`, so discovery checks the `aud` of the token it gets and, if `mcp-<slug>` is missing, exchanges it (subject and actor both the gateway's own token).
+Amended: 2026-10-23 protocol bridging between 2025 and 2026 MCP revisions; DeepWiki (2025-11-25 only) refused calls the gateway forwarded as 2026-07-28.
