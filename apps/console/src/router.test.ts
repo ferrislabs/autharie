@@ -265,6 +265,41 @@ describe('the Identity space', () => {
     expect(foundRoute?.options.validateSearch).toBeUndefined()
   })
 
+  it('opens the Applications list under the Identity shell, in the realm of the path', () => {
+    const path = `${IDENTITY}/realms/acme/applications`
+    const shells = shellsFor(path)
+
+    expect(shells).toContain('IdentityLayout')
+    expect(shells).toContain('PageApplicationsFeature')
+    expect(shells).not.toContain('PageApplicationDetailFeature')
+    expect(shells).not.toContain('DeploymentLayout')
+    expect(shells).not.toContain('DeploymentBrandingLayout')
+    expect(router.getMatchedRoutes(path).routeParams).toMatchObject({ realm: 'acme' })
+    expect(redirectOf(path)).toBeNull()
+  })
+
+  it('opens one application under the Identity shell, with the realm and the id from the path', () => {
+    const path = `${IDENTITY}/realms/acme/applications/0b9ad3c4-4a5f-4c3b-8d57-0b2d6d9e1a22`
+    const shells = shellsFor(path)
+
+    expect(shells).toContain('IdentityLayout')
+    expect(shells).toContain('PageApplicationDetailFeature')
+    expect(shells).not.toContain('PageApplicationsFeature')
+    expect(shells).not.toContain('DeploymentLayout')
+    expect(router.getMatchedRoutes(path).routeParams).toMatchObject({
+      realm: 'acme',
+      applicationId: '0b9ad3c4-4a5f-4c3b-8d57-0b2d6d9e1a22',
+    })
+  })
+
+  it('reads the applications from the path and from nothing else', () => {
+    const list = router.getMatchedRoutes(`${IDENTITY}/realms/acme/applications`).foundRoute
+    const detail = router.getMatchedRoutes(`${IDENTITY}/realms/acme/applications/a-1`).foundRoute
+
+    expect(list?.options.validateSearch).toBeUndefined()
+    expect(detail?.options.validateSearch).toBeUndefined()
+  })
+
   it.each(['/webhooks', '/webhooks/new', '/webhooks/w-1', '/webhooks/w-1/edit', '/agents'])(
     'puts %s under the Identity shell and its tab frame, in no realm',
     (path) => {
