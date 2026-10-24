@@ -229,6 +229,7 @@ export namespace Schemas {
     | { FeatureNotEnabled: { reason: string } }
     | { NotFound: { reason: string } }
     | { Gone: { reason: string } }
+    | { TooManyRequests: { reason: string } }
     | { Unprocessable: { reason: string } }
     | { BadGateway: { reason: string } }
     | { ServiceUnavailable: { reason: string } }
@@ -677,6 +678,7 @@ export namespace Schemas {
   export type Feature = 'customer_cloud'
   export type EnabledFeaturesResponse = { enabled: Array<Feature> }
   export type Ending = 'finished' | 'unreadable'
+  export type Envelope = { alg: string; ct: string; ek: string; iv: string; v: number }
   export type EstateOwner = { id: OrganisationId; name: string }
   export type EstateDeployment = {
     deployment: Deployment
@@ -775,6 +777,24 @@ export namespace Schemas {
     operator_version?: (null | Version) | undefined
   }
   export type Hosting = 'shared' | 'self_hosted' | 'customer_cloud'
+  export type IamOperationBody =
+    | {
+        limit?: (number | null) | undefined
+        page?: (number | null) | undefined
+        search?: (string | null) | undefined
+        type: 'applications.list'
+      }
+    | { id: string; type: 'applications.get' }
+  export type IamPending = { status: string }
+  export type IamRequestData = { request_id: string }
+  export type IamRequestAccepted = { data: IamRequestData }
+  export type IamRequestBody = {
+    operation: IamOperationBody
+    realm: string
+    sealing_key: SealingJwk
+  }
+  export type IamSealedResult = { envelope: Envelope }
+  export type IamResultResponse = { data: IamSealedResult } | { data: IamPending }
   export type IamSettingsRequest = { action_id: ActionId; created_at: string; status: ActionStatus }
   export type IamSettingsState = Partial<{
     branding: null | Branding
@@ -1043,6 +1063,7 @@ export namespace Schemas {
     clients_truncated: boolean
     credentials: Array<AgentCredentialReport>
     deployment_id: string | null
+    envelope: Record<string, unknown> | null
     gateway_client_ready: boolean
     items: Array<OutcomeItemReport>
     kind: string | null
@@ -1054,6 +1075,7 @@ export namespace Schemas {
     realm: string | null
     realms: Array<string>
     reason: string | null
+    request_id: string | null
     requests: Array<WebhookRequestReport>
     revision: number | null
     secrets: Array<WebhookSecretReport>
@@ -2165,6 +2187,26 @@ export namespace Endpoints {
     }
     response: Schemas.IamSettingsResponse
   }
+  export type post_Create_iam_request_handler = {
+    method: 'POST'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/iam/requests'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string }
+
+      body: Schemas.IamRequestBody
+    }
+    response: Schemas.IamRequestAccepted
+  }
+  export type get_Get_iam_request_handler = {
+    method: 'GET'
+    path: '/organisations/{organisation_id}/deployments/{deployment_id}/iam/requests/{request_id}'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; deployment_id: string; request_id: string }
+    }
+    response: Schemas.IamResultResponse
+  }
   export type get_Read_logs_handler = {
     method: 'GET'
     path: '/organisations/{organisation_id}/deployments/{deployment_id}/logs'
@@ -2901,6 +2943,7 @@ export type EndpointByMethod = {
     '/organisations/{organisation_id}/deployments/{deployment_id}/branding/{realm}/themes/deactivate': Endpoints.post_Deactivate_themes_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/branding/{realm}/themes/{theme_id}/activate': Endpoints.post_Activate_theme_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/cutover': Endpoints.post_Cutover_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/iam/requests': Endpoints.post_Create_iam_request_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/start': Endpoints.post_Start_deployment_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/stop': Endpoints.post_Stop_deployment_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/upgrade': Endpoints.post_Upgrade_deployment_handler
@@ -2945,6 +2988,7 @@ export type EndpointByMethod = {
     '/organisations/{organisation_id}/deployments/{deployment_id}/branding/{realm}/themes': Endpoints.get_List_themes_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/features': Endpoints.get_Get_deployment_features_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/iam-settings': Endpoints.get_Get_iam_settings_handler
+    '/organisations/{organisation_id}/deployments/{deployment_id}/iam/requests/{request_id}': Endpoints.get_Get_iam_request_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/logs': Endpoints.get_Read_logs_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/network-access': Endpoints.get_Get_network_access_handler
     '/organisations/{organisation_id}/deployments/{deployment_id}/subscription': Endpoints.get_Get_subscription_handler

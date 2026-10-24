@@ -24,7 +24,7 @@ export function identityTabs({ can, deploymentPath, ferriskey, realm }: Options)
 
   return [
     { label: 'Overview', to: inRealm(''), icon: LayoutGrid, exact: true, soon: true },
-    { label: 'Applications', to: inRealm('/applications'), icon: AppWindow, soon: true },
+    { label: 'Applications', to: inRealm('/applications'), icon: AppWindow },
     { label: 'Users', to: inRealm('/users'), icon: Users, soon: true },
     { label: 'Organisations', to: inRealm('/organisations'), icon: Building2, soon: true },
     { label: 'Roles', to: inRealm('/roles'), icon: KeyRound, soon: true },
