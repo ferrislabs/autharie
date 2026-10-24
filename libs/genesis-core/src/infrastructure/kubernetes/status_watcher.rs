@@ -18,12 +18,13 @@ use crate::domain::entities::identity_instance::IdentityInstanceRef;
 use crate::domain::entities::outcome::DeploymentOutcomeReport;
 use crate::domain::error::GenesisError;
 use crate::domain::ports::{
-    AgentsOutcomePublisher, OutcomePublisher, PortalThemeOutcomePublisher, SmtpOutcomePublisher,
-    WebhookOutcomePublisher,
+    AgentsOutcomePublisher, IamOutcomePublisher, IamPort, IamResultsPort, OutcomePublisher,
+    PortalThemeOutcomePublisher, SmtpOutcomePublisher, WebhookOutcomePublisher,
 };
 use crate::infrastructure::kubernetes::agents_status::{
     AgentsTracker, Observation as AgentsObservation, build_report as build_agents_report,
 };
+use crate::infrastructure::kubernetes::iam_status::{IamTracker, finished, settle};
 use crate::infrastructure::kubernetes::portal_theme_status::{
     Observation as PortalThemeObservation, PortalThemeTracker,
     build_report as build_portal_theme_report,
@@ -61,29 +62,69 @@ const REPORT_AGAIN_AFTER: Duration = Duration::from_secs(300);
 /// serving traffic; `Failed` is the operator saying it gave up. Neither is
 /// inferred from a timeout, which is why this needs no policy about when to
 /// declare a deployment lost.
-pub struct IdentityInstanceStatusWatcher<W> {
+pub struct IdentityInstanceStatusWatcher<W, I> {
     client: Client,
     outcomes: Arc<dyn OutcomePublisher>,
     webhook_outcomes: Arc<W>,
+    iam: Arc<I>,
 }
 
 impl<
     W: WebhookOutcomePublisher
         + AgentsOutcomePublisher
         + SmtpOutcomePublisher
-        + PortalThemeOutcomePublisher,
-> IdentityInstanceStatusWatcher<W>
+        + PortalThemeOutcomePublisher
+        + IamOutcomePublisher,
+    I: IamPort + IamResultsPort,
+> IdentityInstanceStatusWatcher<W, I>
 {
     pub fn new(
         client: Client,
         outcomes: Arc<dyn OutcomePublisher>,
         webhook_outcomes: Arc<W>,
+        iam: Arc<I>,
     ) -> Self {
         Self {
             client,
             outcomes,
             webhook_outcomes,
+            iam,
         }
+    }
+
+    async fn report_iam(
+        &self,
+        instance: &IdentityInstance,
+        deployment_id: Uuid,
+        tracker: &mut IamTracker,
+    ) {
+        let (Some(name), Some(namespace)) = (
+            instance.metadata.name.as_deref(),
+            instance.metadata.namespace.as_deref(),
+        ) else {
+            return;
+        };
+
+        tracker.retain_asked(deployment_id, &instance.spec.iam_requests);
+
+        let ready = finished(&instance.spec.iam_requests, instance.status.as_ref());
+        if ready.is_empty() {
+            return;
+        }
+
+        let reference = IdentityInstanceRef {
+            name: name.to_string(),
+            namespace: namespace.to_string(),
+        };
+        settle(
+            self.iam.as_ref(),
+            self.webhook_outcomes.as_ref(),
+            &reference,
+            deployment_id,
+            &ready,
+            tracker,
+        )
+        .await;
     }
 
     async fn report_webhooks(
@@ -263,6 +304,7 @@ impl<
         let mut agents = AgentsTracker::default();
         let mut smtp = SmtpTracker::default();
         let mut portal_themes = PortalThemeTracker::default();
+        let mut iam = IamTracker::default();
 
         info!("watching IdentityInstance status");
 
@@ -295,6 +337,7 @@ impl<
             self.report_smtp(&instance, deployment_id, &mut smtp).await;
             self.report_portal_themes(&instance, deployment_id, &mut portal_themes)
                 .await;
+            self.report_iam(&instance, deployment_id, &mut iam).await;
 
             let Some(outcome) = outcome_for(instance.status.as_ref()) else {
                 forget_unsettled(&mut reported, deployment_id);

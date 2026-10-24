@@ -1,6 +1,8 @@
 pub mod agents;
 pub mod agents_status;
 pub mod dataplane_upgrade;
+pub mod iam;
+pub mod iam_status;
 pub mod identity_instance;
 pub mod identity_instance_upgrade;
 pub mod portal_theme;

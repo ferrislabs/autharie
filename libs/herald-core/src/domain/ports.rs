@@ -6,7 +6,7 @@ use crate::domain::entities::dataplane::DataPlaneId;
 use crate::domain::entities::deployment::{Deployment, DeploymentId};
 use crate::domain::entities::logs::{Ending, LogLine, LogStreamRequest, OrganisationId};
 use crate::domain::entities::outcome::{
-    AgentsOutcome, DeploymentOutcomeReport, InboundOutcome, WebhooksOutcome,
+    AgentsOutcome, DeploymentOutcomeReport, InboundOutcome, RelayedOutcome, WebhooksOutcome,
 };
 use crate::domain::entities::usage::{CounterSample, UsagePoint, UsageTarget};
 use crate::domain::error::HeraldError;
@@ -113,6 +113,14 @@ pub trait ControlPlaneRepository: Send + Sync {
         &self,
         dp_id: &DataPlaneId,
         outcome: &AgentsOutcome,
+    ) -> impl Future<Output = Result<(), HeraldError>> + Send;
+
+    /// SMTP, login themes and IAM requests: Herald reads the kind and
+    /// forwards the body to the same endpoint, never interpreting it.
+    fn report_relayed_outcome(
+        &self,
+        dp_id: &DataPlaneId,
+        outcome: &RelayedOutcome,
     ) -> impl Future<Output = Result<(), HeraldError>> + Send;
 
     /// Carries what a drill (#185) proved, or did not.

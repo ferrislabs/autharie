@@ -102,9 +102,13 @@ impl TryFrom<&SealingKeySpec> for SealingKey {
 
 impl SealingKey {
     pub fn seal(&self, secret: &str) -> Result<String, SealingError> {
-        self.0
-            .encrypt(&mut OsRng, Oaep::new::<Sha256>(), secret.as_bytes())
+        self.seal_bytes(secret.as_bytes())
             .map(|sealed| URL_SAFE_NO_PAD.encode(sealed))
+    }
+
+    pub fn seal_bytes(&self, data: &[u8]) -> Result<Vec<u8>, SealingError> {
+        self.0
+            .encrypt(&mut OsRng, Oaep::new::<Sha256>(), data)
             .map_err(|_| SealingError::Failed)
     }
 }
