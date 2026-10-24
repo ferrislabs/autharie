@@ -45,9 +45,11 @@ Design
     - CRD IdentityInstance: `spec.iamRequests[] { requestId, realm, operation, sealingKey, expiresAt }`; `status.iam.requests[] { requestId, phase, message? }`. No content in the resource.
     - Genesis: handler writes the request entry; the status watcher, when a request finishes, reads the sealed result from Secret `<instance>-iam-results` (key `<requestId>`) and publishes the outcome, then asks for the entry and key to be removed.
     - Operator: runs each unseen request against the admin API (`GET /realms/{realm}/clients?page&limit&search`, `GET /realms/{realm}/clients/{id}`), maps to the result below dropping `secret`, seals it, writes the Secret key, sets the phase. Drops expired entries.
+  Herald (libs/herald-core)
+    - Relays outcomes of kinds `smtp`, `portal_theme` and `iam` whole, as it does for webhooks and agents. Before this, Herald only knew `webhooks` and `deployment.agents` and discarded the others as unreadable, which also left SMTP and login-theme states unreported.
   Console (apps/console/src/domain/identity/iam/, domain/applications/)
     - `sealing`: RSA-OAEP-256 key pair (non-extractable private key, memory only) and the envelope opener.
-    - `useIamRequest(operation)`: generates the key, POSTs, polls every 3 s up to 90 s, decrypts, returns a typed result; shows "this is taking longer than usual" past 20 s.
+    - `useIamRequest(operation)`: generates the key, POSTs, polls every 2 s up to 90 s, decrypts, returns a typed result; shows "this is taking longer than usual" past 20 s.
     - Applications page at `identity/realms/$realm/applications`: table (name, client id, type, enabled, source), search submitted with Enter, next page, a row opens `applications/$id` with the read-only detail. Clients created by Autharie (`agent-*` registered from the Agents tab) carry an "Agent" badge pointing to the Agents tab (to confirm). The Applications tab stops being "Soon".
 
 Acceptance (Gherkin)
@@ -96,6 +98,13 @@ Acceptance (Gherkin)
     When the sealed result would exceed 512 KiB
     Then the request ends Failed with a message, and a page never holds more than 50 objects
 
+  @spec-iam-13  Scenario: Herald relays an IAM outcome
+    When Genesis publishes an outcome of kind "iam"
+    Then Herald forwards it whole to the control plane, never logs its body, and does not drop it as unreadable
+
+  @spec-iam-14  Scenario: the components agree on the contracts
+    Then an action recorded by the control plane is read by Genesis and then by the operator, and an envelope sealed by the operator comes back through Herald and is accepted by the control plane unchanged
+
   @spec-iam-12  Scenario: the console shows the applications
     Given a realm with applications
     When a member opens Identity → Applications
@@ -122,6 +131,8 @@ Frozen contracts
   Outcome JSON, published by Genesis and relayed unchanged by Herald to the report-outcome endpoint = { deployment_id, kind: "iam", request_id, phase: "Done" | "Failed", message?, envelope? }; `phase`, `message` and `deployment_id` are the fields the endpoint already has, `request_id` and `envelope` are new. At-least-once: the control plane ignores an outcome for a request already Done, Failed or Delivered.
   Envelope details: base64url without padding everywhere; `ct` = AES-256-GCM ciphertext followed by its 16-byte tag (what both WebCrypto and the Rust `aes-gcm` crate produce); RSA-OAEP with SHA-256 for both the hash and MGF1, empty label; AAD = the request id as its lowercase hyphenated UUID text, UTF-8.
   CRD: spec.iamRequests[] { requestId, realm, operation (JSON string), sealingKey (JSON string), expiresAt }; status.iam.requests[] { requestId, phase, message? }. Secret `<instance>-iam-results`, key `<requestId>` = envelope JSON.
+
+Amended: 2026-10-24 The console polls every 2 s, not 3. Herald needed a change: it dropped every outcome kind it did not know, including `smtp` and `portal_theme` (@spec-iam-13). `status.iam.phase` became optional in the CRD, because `status.iam` already carries branding state and a requests-only status must be valid. The outcome's `envelope` is a JSON object, not a string. Only the member who asked can collect a result (others get 404).
 
 Risks / open questions
   - Latency: with Herald at 15 s a request takes 15 to 30 s; the chart change to 3 s must land with or before WS-3. Owner: whoever merges WS-2.
