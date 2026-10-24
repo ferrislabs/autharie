@@ -13,9 +13,11 @@ export function organisationPathFor(organisationId: string, path = ''): string {
   return `/organisations/${organisationId}${path}`
 }
 
+export const DEFAULT_REALM = 'master'
+
 const MOVED_SETTINGS: Record<string, string> = {
   'network-access': 'security',
-  branding: 'branding/universal-login',
+  branding: `identity/realms/${DEFAULT_REALM}/branding/universal-login`,
   backups: 'backups',
 }
 
@@ -25,6 +27,40 @@ export function movedSettingsPath(
   page: keyof typeof MOVED_SETTINGS,
 ): string {
   return organisationPathFor(organisationId, `/deployments/${deploymentId}/${MOVED_SETTINGS[page]}`)
+}
+
+/**
+ * Where a deployment page that moved to Identity lives now.
+ *
+ * Branding is the one that belongs to a realm, so it is the only one that
+ * takes it into the path; webhooks and agents are deployment-wide and stay
+ * where they were, one level down. Everything after the section is kept, so a
+ * bookmarked theme or webhook still opens.
+ */
+export function identityAddressFor(
+  deploymentBase: string,
+  section: 'branding' | 'customization' | 'webhooks' | 'agents',
+  rest = '',
+  realm: string = DEFAULT_REALM,
+): string {
+  const identity = `${deploymentBase}/identity`
+
+  if (section === 'webhooks' || section === 'agents') return `${identity}/${section}${rest}`
+
+  const inRealm = `${identity}/realms/${encodeURIComponent(realm)}/branding`
+  return section === 'branding' && rest !== '' ? `${inRealm}${rest}` : `${inRealm}/universal-login`
+}
+
+const REALM_SEGMENT = /(\/identity\/realms\/)[^/]+/
+
+/**
+ * The same page under another realm.
+ *
+ * Choosing a realm from the header should not throw away where you were: the
+ * section, and anything after it, stay.
+ */
+export function swapRealm(pathname: string, realm: string): string {
+  return pathname.replace(REALM_SEGMENT, `$1${encodeURIComponent(realm)}`)
 }
 
 /**

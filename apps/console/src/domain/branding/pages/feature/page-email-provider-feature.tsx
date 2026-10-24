@@ -1,15 +1,16 @@
+import { useEffect } from 'react'
 import { useGetBrandingRealms, useGetSmtp, useRemoveSmtp, useSaveSmtp } from '@/api/smtp.api'
+import { useIdentityRealm } from '@/domain/identity/use-identity-realm'
 import { useMyPermissions } from '@/domain/organisations/hooks/use-my-permissions'
 import { CAN } from '@/domain/organisations/permissions'
 import { toRequest, type SmtpForm } from '../../smtp-form'
 import { isNotFerriskey } from '../../smtp-state'
-import { useBrandingRealm } from '../../use-branding-realm'
 import { useBrandingScope } from '../../use-branding-scope'
 import { PageEmailProvider } from '../ui/page-email-provider'
 
 export default function PageEmailProviderFeature() {
   const scope = useBrandingScope()
-  const [realm, setRealm] = useBrandingRealm()
+  const realm = useIdentityRealm()
   const { can } = useMyPermissions()
 
   const smtp = useGetSmtp(scope, realm)
@@ -37,11 +38,15 @@ export default function PageEmailProviderFeature() {
     remove.mutate({ path })
   }
 
-  const onRealmChange = (next: string) => {
-    save.reset()
-    remove.reset()
-    setRealm(next)
-  }
+  // The realm is in the address, so choosing another one is a navigation and
+  // this page stays mounted: what a save or a removal said about the last
+  // realm must not be read as the answer for the next.
+  const { reset: resetSave } = save
+  const { reset: resetRemove } = remove
+  useEffect(() => {
+    resetSave()
+    resetRemove()
+  }, [realm, resetSave, resetRemove])
 
   return (
     <PageEmailProvider
@@ -49,8 +54,6 @@ export default function PageEmailProviderFeature() {
       unsupported={unsupported}
       error={smtp.error && !unsupported ? smtp.error.message : undefined}
       realm={realm}
-      realms={realms.data?.data ?? []}
-      onRealmChange={onRealmChange}
       smtp={stored}
       canManage={can(CAN.manageInstances)}
       isSaving={save.isPending}

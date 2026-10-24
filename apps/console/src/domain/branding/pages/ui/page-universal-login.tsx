@@ -22,7 +22,6 @@ import { ACTIVE_BADGE, themeStateBadge, themeStateSummary } from '../../theme-st
 import { describeNameProblem, hasLegacyBranding } from '../../theme-tokens'
 import { Alert, Notice } from './components/alert'
 import { ConfirmDialog } from './components/confirm-dialog'
-import { RealmPicker } from './realm-picker'
 
 export const DELETE_ACTIVE_HINT =
   'The active theme cannot be deleted. Activate another theme or use FerrisKey’s default look first.'
@@ -37,8 +36,6 @@ interface Props {
   error?: string
   actionError?: string
   realm: string
-  realms: string[]
-  onRealmChange: (realm: string) => void
   themes: Schemas.ThemeView[]
   state: Schemas.ThemeSync | null
   planOpen: boolean
@@ -62,8 +59,6 @@ export function PageUniversalLogin({
   unsupported,
   error,
   realm,
-  realms,
-  onRealmChange,
   ...body
 }: Props) {
   if (unsupported) {
@@ -79,11 +74,7 @@ export function PageUniversalLogin({
   }
 
   return (
-    <SectionPage
-      title='Universal login'
-      description={DESCRIPTION}
-      actions={<RealmPicker realm={realm} realms={realms} onChange={onRealmChange} />}
-    >
+    <SectionPage title='Universal login' description={DESCRIPTION}>
       {error && <Alert>{error}</Alert>}
 
       {isLoading ? (

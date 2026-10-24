@@ -51,9 +51,6 @@ describe('the route tree', () => {
       '/settings/version',
       '/backups',
       '/security',
-      '/branding/universal-login',
-      '/branding/universal-login/theme-1',
-      '/branding/email-provider',
     ]) {
       const shells = shellsFor(`${DEPLOYMENT}${path}`)
 
@@ -101,7 +98,7 @@ describe('the route tree', () => {
     expect(shellsFor(`${DEPLOYMENT}/settings`)).toContain('DeploymentSettingsLayout')
     expect(shellsFor(`${DEPLOYMENT}/settings/resources`)).toContain('DeploymentSettingsLayout')
     expect(shellsFor(`${DEPLOYMENT}/observability`)).not.toContain('DeploymentSettingsLayout')
-    for (const path of ['/backups', '/security', '/branding/universal-login']) {
+    for (const path of ['/backups', '/security']) {
       expect(shellsFor(`${DEPLOYMENT}${path}`), path).not.toContain('DeploymentSettingsLayout')
     }
   })
@@ -193,114 +190,135 @@ describe('the route tree', () => {
   })
 })
 
+const IDENTITY = `${DEPLOYMENT}/identity`
+
+/** The redirect an address answers with, or null when it renders. */
+function redirectOf(pathname: string, search: Record<string, unknown> = {}): string | null {
+  const { foundRoute, routeParams } = router.getMatchedRoutes(pathname)
+  const options = foundRoute?.options as {
+    beforeLoad?: (context: { params: Record<string, string>; search: unknown }) => void
+    validateSearch?: (search: Record<string, unknown>) => unknown
+  }
+
+  try {
+    options.beforeLoad?.({
+      params: routeParams as Record<string, string>,
+      search: options.validateSearch ? options.validateSearch(search) : search,
+    })
+  } catch (error) {
+    return isRedirect(error) ? (error as { options: { to: string } }).options.to : null
+  }
+  return null
+}
+
 describe('the settings pages that became tabs', () => {
   it('puts each tab on its own page', () => {
     expect(shellsFor(`${DEPLOYMENT}/backups`)).toContain('PageBackupsFeature')
     expect(shellsFor(`${DEPLOYMENT}/security`)).toContain('PageNetworkAccessFeature')
   })
 
-  it('puts Universal login under the Branding side navigation', () => {
-    const shells = shellsFor(`${DEPLOYMENT}/branding/universal-login`)
-
-    expect(shells).toContain('DeploymentBrandingLayout')
-    expect(shells).toContain('PageUniversalLoginFeature')
-  })
-
-  it('opens the theme builder under Universal login, inside the Branding side navigation', () => {
-    const shells = shellsFor(`${DEPLOYMENT}/branding/universal-login/theme-1`)
-
-    expect(shells).toContain('DeploymentLayout')
-    expect(shells).toContain('DeploymentBrandingLayout')
-    expect(shells).toContain('PageThemeBuilderFeature')
-    expect(shells).not.toContain('PageUniversalLoginFeature')
-  })
-
-  it('keeps the list and the builder apart', () => {
-    expect(shellsFor(`${DEPLOYMENT}/branding/universal-login`)).not.toContain('PageThemeBuilderFeature')
-  })
-
-  it('hands the theme id to the builder', () => {
-    const { routeParams } = router.getMatchedRoutes(`${DEPLOYMENT}/branding/universal-login/theme-1`)
-
-    expect(routeParams).toMatchObject({ themeId: 'theme-1' })
-  })
-
-  it.each(['/branding/universal-login', '/branding/universal-login/theme-1'])(
-    'carries the realm in the url of %s, master unless told otherwise',
-    (path) => {
-      const { foundRoute } = router.getMatchedRoutes(`${DEPLOYMENT}${path}`)
-      const validate = foundRoute?.options.validateSearch as
-        | ((search: Record<string, unknown>) => unknown)
-        | undefined
-
-      expect(validate).toBeDefined()
-      expect(validate?.({})).toEqual({ realm: 'master' })
-      expect(validate?.({ realm: 'acme' })).toEqual({ realm: 'acme' })
-    }
-  )
-
-  it('puts Email provider under the Branding side navigation', () => {
-    const shells = shellsFor(`${DEPLOYMENT}/branding/email-provider`)
-
-    expect(shells).toContain('DeploymentBrandingLayout')
-    expect(shells).toContain('PageEmailProviderFeature')
-  })
-
-  it('carries the realm being edited in the url, master unless told otherwise', () => {
-    const { foundRoute } = router.getMatchedRoutes(`${DEPLOYMENT}/branding/email-provider`)
-    const validate = foundRoute?.options.validateSearch as
-      | ((search: Record<string, unknown>) => unknown)
-      | undefined
-
-    expect(validate).toBeDefined()
-    expect(validate?.({})).toEqual({ realm: 'master' })
-    expect(validate?.({ realm: 'acme' })).toEqual({ realm: 'acme' })
-  })
-
   it.each([
-    ['/settings/network-access', '/security'],
-    ['/settings/branding', '/branding/universal-login'],
-    ['/customization', '/branding/universal-login'],
-    ['/branding', '/branding/universal-login'],
-    ['/settings/backups', '/backups'],
-  ])('sends the old address %s to %s', (from, to) => {
-    const { foundRoute } = router.getMatchedRoutes(`${DEPLOYMENT}${from}`)
-    const beforeLoad = foundRoute?.options.beforeLoad as
-      | ((context: { params: Record<string, string> }) => void)
-      | undefined
-
-    let thrown: unknown
-    try {
-      beforeLoad?.({ params: { organisationId: 'org-1', deploymentId: 'dep-1' } })
-    } catch (error) {
-      thrown = error
-    }
-
-    expect(isRedirect(thrown)).toBe(true)
-    expect((thrown as { options: { to: string } }).options.to).toBe(`${DEPLOYMENT}${to}`)
+    ['/settings/network-access', `${DEPLOYMENT}/security`],
+    ['/settings/backups', `${DEPLOYMENT}/backups`],
+    ['/settings/branding', `${IDENTITY}/realms/master/branding/universal-login`],
+  ])('sends the old address %s to its tab', (from, to) => {
+    expect(redirectOf(`${DEPLOYMENT}${from}`)).toBe(to)
   })
 })
 
-describe('the webhooks routes', () => {
-  it.each(['/webhooks', '/webhooks/new', '/webhooks/w-1', '/webhooks/w-1/edit'])(
-    'puts %s inside the deployment shell and its tab frame',
+describe('the Identity space', () => {
+  const branding = `${IDENTITY}/realms/acme/branding`
+
+  /**
+   * Beside the deployment's shell, not inside it: nested, the page would open
+   * with two stacked headers.
+   */
+  it.each([
+    '/branding/universal-login',
+    '/branding/universal-login/theme-1',
+    '/branding/email-provider',
+  ])('puts %s under the Identity shell and the Branding navigation', (path) => {
+    const shells = shellsFor(`${IDENTITY}/realms/acme${path}`)
+
+    expect(shells).toContain('IdentityLayout')
+    expect(shells).toContain('DeploymentBrandingLayout')
+    expect(shells).not.toContain('DeploymentLayout')
+  })
+
+  it('opens each Branding page on its own screen', () => {
+    expect(shellsFor(`${branding}/universal-login`)).toContain('PageUniversalLoginFeature')
+    expect(shellsFor(`${branding}/universal-login`)).not.toContain('PageThemeBuilderFeature')
+    expect(shellsFor(`${branding}/universal-login/theme-1`)).toContain('PageThemeBuilderFeature')
+    expect(shellsFor(`${branding}/universal-login/theme-1`)).not.toContain('PageUniversalLoginFeature')
+    expect(shellsFor(`${branding}/email-provider`)).toContain('PageEmailProviderFeature')
+  })
+
+  it('reads the realm, and the theme, from the path', () => {
+    const { routeParams } = router.getMatchedRoutes(`${branding}/universal-login/theme-1`)
+
+    expect(routeParams).toMatchObject({ realm: 'acme', themeId: 'theme-1' })
+  })
+
+  it('reads the realm from the path and from nothing else', () => {
+    const { foundRoute } = router.getMatchedRoutes(`${branding}/universal-login`)
+
+    expect(foundRoute?.options.validateSearch).toBeUndefined()
+  })
+
+  it.each(['/webhooks', '/webhooks/new', '/webhooks/w-1', '/webhooks/w-1/edit', '/agents'])(
+    'puts %s under the Identity shell and its tab frame, in no realm',
     (path) => {
-      const shells = shellsFor(`${DEPLOYMENT}${path}`)
-      expect(shells).toContain('DeploymentLayout')
+      const shells = shellsFor(`${IDENTITY}${path}`)
+
+      expect(shells).toContain('IdentityLayout')
       expect(shells).toContain('DeploymentTabLayout')
+      expect(shells).not.toContain('DeploymentLayout')
+      expect(router.getMatchedRoutes(`${IDENTITY}${path}`).routeParams).not.toHaveProperty('realm')
     },
   )
 
   it('resolves /webhooks/new to the form rather than to a webhook called new', () => {
-    expect(shellsFor(`${DEPLOYMENT}/webhooks/new`)).toContain('PageWebhookFormFeature')
+    expect(shellsFor(`${IDENTITY}/webhooks/new`)).toContain('PageWebhookFormFeature')
+  })
+
+  it('opens the agents screen', () => {
+    expect(shellsFor(`${IDENTITY}/agents`)).toContain('PageAgentsFeature')
+  })
+
+  /**
+   * Without this the bare addresses render a header and an empty body, which
+   * looks like a page that failed to load.
+   */
+  it('sends the bare addresses somewhere rather than nowhere', () => {
+    expect(redirectOf(IDENTITY)).toBe(`${IDENTITY}/realms/master`)
+    expect(redirectOf(`${IDENTITY}/realms/acme`)).toBe(
+      `${IDENTITY}/realms/acme/branding/universal-login`,
+    )
+    expect(redirectOf(`${IDENTITY}/realms/acme/branding`)).toBe(
+      `${IDENTITY}/realms/acme/branding/universal-login`,
+    )
+  })
+
+  it('leaves the platform section as it was', () => {
+    expect(shellsFor('/platform/dataplanes')).toContain('PlatformLayout')
+    expect(shellsFor('/platform/dataplanes')).not.toContain('IdentityLayout')
   })
 })
 
-describe('the agents route', () => {
-  it('puts /agents inside the deployment shell and its tab frame', () => {
-    const shells = shellsFor(`${DEPLOYMENT}/agents`)
-    expect(shells).toContain('DeploymentLayout')
-    expect(shells).toContain('DeploymentTabLayout')
-    expect(shells).toContain('PageAgentsFeature')
+describe('the addresses from before Identity', () => {
+  it.each([
+    ['/branding', {}, `${IDENTITY}/realms/master/branding/universal-login`],
+    ['/branding', { realm: 'acme' }, `${IDENTITY}/realms/acme/branding/universal-login`],
+    ['/branding/universal-login', { realm: 'acme' }, `${IDENTITY}/realms/acme/branding/universal-login`],
+    ['/branding/universal-login/theme-1', { realm: 'acme' }, `${IDENTITY}/realms/acme/branding/universal-login/theme-1`],
+    ['/branding/email-provider', { realm: 'acme' }, `${IDENTITY}/realms/acme/branding/email-provider`],
+    ['/customization', {}, `${IDENTITY}/realms/master/branding/universal-login`],
+    ['/webhooks', {}, `${IDENTITY}/webhooks`],
+    ['/webhooks/new', {}, `${IDENTITY}/webhooks/new`],
+    ['/webhooks/w-1', {}, `${IDENTITY}/webhooks/w-1`],
+    ['/webhooks/w-1/edit', {}, `${IDENTITY}/webhooks/w-1/edit`],
+    ['/agents', {}, `${IDENTITY}/agents`],
+  ])('sends %s %j to %s', (from, search, to) => {
+    expect(redirectOf(`${DEPLOYMENT}${from}`, search)).toBe(to)
   })
 })

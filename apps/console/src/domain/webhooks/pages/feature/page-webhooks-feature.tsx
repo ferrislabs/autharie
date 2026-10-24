@@ -26,8 +26,8 @@ export default function PageWebhooksFeature() {
       webhooks={list}
       limit={describeLimit(list.length, plan)}
       canManage={can(CAN.manageInstances)}
-      onCreate={() => void navigate({ to: deploymentPath('/webhooks/new') })}
-      onOpen={(webhookId) => void navigate({ to: deploymentPath(`/webhooks/${webhookId}`) })}
+      onCreate={() => void navigate({ to: deploymentPath('/identity/webhooks/new') })}
+      onOpen={(webhookId) => void navigate({ to: deploymentPath(`/identity/webhooks/${webhookId}`) })}
     />
   )
 }

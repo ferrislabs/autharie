@@ -36,7 +36,7 @@ export default function PageWebhookFormFeature() {
 
   const back = () =>
     void navigate({
-      to: deploymentPath(editing ? `/webhooks/${webhookId}` : '/webhooks'),
+      to: deploymentPath(editing ? `/identity/webhooks/${webhookId}` : '/identity/webhooks'),
     })
 
   const submit = (form: WebhookForm) => {
@@ -47,7 +47,7 @@ export default function PageWebhookFormFeature() {
     if (webhookId) {
       update.mutate(
         { path: { ...path, webhook_id: webhookId }, body },
-        { onSuccess: () => void navigate({ to: deploymentPath(`/webhooks/${webhookId}`) }) }
+        { onSuccess: () => void navigate({ to: deploymentPath(`/identity/webhooks/${webhookId}`) }) }
       )
     } else {
       create.mutate(
@@ -55,7 +55,7 @@ export default function PageWebhookFormFeature() {
         {
           onSuccess: async (response) => {
             const { data: created } = await response.json()
-            void navigate({ to: deploymentPath(`/webhooks/${created.id}`) })
+            void navigate({ to: deploymentPath(`/identity/webhooks/${created.id}`) })
           },
         }
       )

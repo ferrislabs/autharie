@@ -1,5 +1,5 @@
 import { createRootRoute, createRoute, createRouter, redirect } from '@tanstack/react-router'
-import { movedSettingsPath, platformPath } from './lib/paths'
+import { identityAddressFor, movedSettingsPath, organisationPathFor, platformPath } from './lib/paths'
 import { AppShell } from './components/layout/app-shell'
 import { AppLayout } from './components/layout/main-layout'
 import { DeploymentLayout } from './components/layout/deployment-layout'
@@ -7,6 +7,7 @@ import { DeploymentObservabilityLayout } from './components/layout/deployment-ob
 import { DeploymentBrandingLayout } from './components/layout/deployment-branding-layout'
 import { DeploymentSettingsLayout } from './components/layout/deployment-settings-layout'
 import { DeploymentTabLayout } from './components/layout/deployment-tab-layout'
+import { IdentityLayout } from './components/layout/identity-layout'
 import { OnboardingLayout } from './components/layout/onboarding-layout'
 import { PlatformLayout } from './components/layout/platform-layout'
 import PageDashboardFeature from './domain/dashboard/pages/feature/page-dashboard-feature'
@@ -31,7 +32,8 @@ import PageBillingFeature from './domain/billing/pages/feature/page-billing-feat
 import PageEmailProviderFeature from './domain/branding/pages/feature/page-email-provider-feature'
 import PageThemeBuilderFeature from './domain/branding/pages/feature/page-theme-builder-feature'
 import PageUniversalLoginFeature from './domain/branding/pages/feature/page-universal-login-feature'
-import { validateRealmSearch } from './domain/branding/use-branding-realm'
+import { legacyRealm } from './domain/identity/legacy-realm'
+import { readRealm } from './domain/identity/realm-memory'
 import PageNetworkAccessFeature from './domain/deployments/pages/feature/page-network-access-feature'
 import PageWebhooksFeature from './domain/webhooks/pages/feature/page-webhooks-feature'
 import PageWebhookFormFeature from './domain/webhooks/pages/feature/page-webhook-form-feature'
@@ -177,85 +179,157 @@ const deploymentSecurityRoute = createRoute({
   component: PageNetworkAccessFeature,
 })
 
-// What an end user sees: login pages, emails. See DeploymentBrandingLayout.
-// The bare address lands on Universal login, the first entry.
-const deploymentBrandingLayoutRoute = createRoute({
-  getParentRoute: () => deploymentLayoutRoute,
+// ------------------------------------------------------------------ identity
+
+const deploymentBaseOf = ({
+  organisationId,
+  deploymentId,
+}: {
+  organisationId: string
+  deploymentId: string
+}) => organisationPathFor(organisationId, `/deployments/${deploymentId}`)
+
+// What a deployment's users live with. A sibling of the deployment's shell and
+// carrying the whole path, for the same reason: nested, two stacked headers.
+const identityLayoutRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/organisations/$organisationId/deployments/$deploymentId/identity',
+  component: IdentityLayout,
+})
+
+// Identity on its own has no page yet: it opens on the realm last looked at.
+const identityIndexRoute = createRoute({
+  getParentRoute: () => identityLayoutRoute,
+  path: '/',
+  beforeLoad: ({ params }) => {
+    const realm = encodeURIComponent(readRealm(params.deploymentId))
+    const to: string = `${deploymentBaseOf(params)}/identity/realms/${realm}`
+    throw redirect({ to })
+  },
+})
+
+const identityRealmRoute = createRoute({
+  getParentRoute: () => identityLayoutRoute,
+  path: '/realms/$realm',
+})
+
+// The realm's own front page is not built yet (it is a "Soon" tab), so the
+// bare address goes to the first page that is.
+const identityRealmIndexRoute = createRoute({
+  getParentRoute: () => identityRealmRoute,
+  path: '/',
+  beforeLoad: ({ params }) => {
+    throw redirect({
+      to: identityAddressFor(deploymentBaseOf(params), 'branding', '', params.realm),
+    })
+  },
+})
+
+// What an end user sees of a realm: login pages, emails. See
+// DeploymentBrandingLayout. The bare address lands on Universal login.
+const identityBrandingLayoutRoute = createRoute({
+  getParentRoute: () => identityRealmRoute,
   path: '/branding',
   component: DeploymentBrandingLayout,
 })
 
-const deploymentBrandingIndexRoute = createRoute({
-  getParentRoute: () => deploymentBrandingLayoutRoute,
+const identityBrandingIndexRoute = createRoute({
+  getParentRoute: () => identityBrandingLayoutRoute,
   path: '/',
   beforeLoad: ({ params }) => {
     throw redirect({
-      to: movedSettingsPath(params.organisationId, params.deploymentId, 'branding'),
+      to: identityAddressFor(deploymentBaseOf(params), 'branding', '', params.realm),
     })
   },
 })
 
-const deploymentUniversalLoginRoute = createRoute({
-  getParentRoute: () => deploymentBrandingLayoutRoute,
+const identityUniversalLoginRoute = createRoute({
+  getParentRoute: () => identityBrandingLayoutRoute,
   path: '/universal-login',
   component: PageUniversalLoginFeature,
-  validateSearch: validateRealmSearch,
 })
 
-const deploymentThemeBuilderRoute = createRoute({
-  getParentRoute: () => deploymentBrandingLayoutRoute,
+const identityThemeBuilderRoute = createRoute({
+  getParentRoute: () => identityBrandingLayoutRoute,
   path: '/universal-login/$themeId',
   component: PageThemeBuilderFeature,
-  validateSearch: validateRealmSearch,
 })
 
-const deploymentEmailProviderRoute = createRoute({
-  getParentRoute: () => deploymentBrandingLayoutRoute,
+const identityEmailProviderRoute = createRoute({
+  getParentRoute: () => identityBrandingLayoutRoute,
   path: '/email-provider',
   component: PageEmailProviderFeature,
-  validateSearch: validateRealmSearch,
 })
 
-// "Customization" was this tab's name before it grew into Branding.
-const deploymentCustomizationRedirect = createRoute({
-  getParentRoute: () => deploymentLayoutRoute,
-  path: '/customization',
-  beforeLoad: ({ params }) => {
-    throw redirect({
-      to: movedSettingsPath(params.organisationId, params.deploymentId, 'branding'),
-    })
-  },
+// Webhooks and agents are the deployment's, not a realm's, so they sit in the
+// Identity space without a realm in their address.
+const identityTabLayoutRoute = createRoute({
+  getParentRoute: () => identityLayoutRoute,
+  id: 'identity-tab',
+  component: DeploymentTabLayout,
 })
 
-const deploymentWebhooksRoute = createRoute({
-  getParentRoute: () => deploymentTabLayoutRoute,
+const identityWebhooksRoute = createRoute({
+  getParentRoute: () => identityTabLayoutRoute,
   path: '/webhooks',
   component: PageWebhooksFeature,
 })
 
-const deploymentWebhookNewRoute = createRoute({
-  getParentRoute: () => deploymentTabLayoutRoute,
+const identityWebhookNewRoute = createRoute({
+  getParentRoute: () => identityTabLayoutRoute,
   path: '/webhooks/new',
   component: PageWebhookFormFeature,
 })
 
-const deploymentWebhookDetailRoute = createRoute({
-  getParentRoute: () => deploymentTabLayoutRoute,
+const identityWebhookDetailRoute = createRoute({
+  getParentRoute: () => identityTabLayoutRoute,
   path: '/webhooks/$webhookId',
   component: PageWebhookDetailFeature,
 })
 
-const deploymentWebhookEditRoute = createRoute({
-  getParentRoute: () => deploymentTabLayoutRoute,
+const identityWebhookEditRoute = createRoute({
+  getParentRoute: () => identityTabLayoutRoute,
   path: '/webhooks/$webhookId/edit',
   component: PageWebhookFormFeature,
 })
 
-const deploymentAgentsRoute = createRoute({
-  getParentRoute: () => deploymentTabLayoutRoute,
+const identityAgentsRoute = createRoute({
+  getParentRoute: () => identityTabLayoutRoute,
   path: '/agents',
   component: PageAgentsFeature,
 })
+
+// Branding, webhooks and agents used to be tabs of the deployment. Whatever
+// somebody bookmarked or was sent still opens: it lands where the page is now,
+// the realm of an old `?realm=` carried into the path.
+const legacyIdentityRoute = (
+  section: 'branding' | 'customization' | 'webhooks' | 'agents',
+  path: string,
+) =>
+  createRoute({
+    getParentRoute: () => deploymentLayoutRoute,
+    path,
+    validateSearch: legacyRealm,
+    beforeLoad: ({ params, search }) => {
+      const rest = (params as { _splat?: string })._splat
+      throw redirect({
+        to: identityAddressFor(
+          deploymentBaseOf(params),
+          section,
+          rest ? `/${rest}` : '',
+          search.realm,
+        ),
+      })
+    },
+  })
+
+const legacyBrandingRoute = legacyIdentityRoute('branding', '/branding')
+const legacyBrandingPagesRoute = legacyIdentityRoute('branding', '/branding/$')
+// "Customization" was this tab's name before it grew into Branding.
+const legacyCustomizationRoute = legacyIdentityRoute('customization', '/customization')
+const legacyWebhooksRoute = legacyIdentityRoute('webhooks', '/webhooks')
+const legacyWebhooksPagesRoute = legacyIdentityRoute('webhooks', '/webhooks/$')
+const legacyAgentsRoute = legacyIdentityRoute('agents', '/agents')
 
 const deploymentSettingsLayoutRoute = createRoute({
   getParentRoute: () => deploymentLayoutRoute,
@@ -452,21 +526,31 @@ const routeTree = rootRoute.addChildren([
       deploymentBackupsRedirect,
       deploymentDangerRoute,
     ]),
-    deploymentBrandingLayoutRoute.addChildren([
-      deploymentBrandingIndexRoute,
-      deploymentUniversalLoginRoute,
-      deploymentThemeBuilderRoute,
-      deploymentEmailProviderRoute,
+    legacyBrandingRoute,
+    legacyBrandingPagesRoute,
+    legacyCustomizationRoute,
+    legacyWebhooksRoute,
+    legacyWebhooksPagesRoute,
+    legacyAgentsRoute,
+    deploymentTabLayoutRoute.addChildren([deploymentBackupsRoute, deploymentSecurityRoute]),
+  ]),
+  identityLayoutRoute.addChildren([
+    identityIndexRoute,
+    identityRealmRoute.addChildren([
+      identityRealmIndexRoute,
+      identityBrandingLayoutRoute.addChildren([
+        identityBrandingIndexRoute,
+        identityUniversalLoginRoute,
+        identityThemeBuilderRoute,
+        identityEmailProviderRoute,
+      ]),
     ]),
-    deploymentCustomizationRedirect,
-    deploymentTabLayoutRoute.addChildren([
-      deploymentBackupsRoute,
-      deploymentSecurityRoute,
-      deploymentWebhooksRoute,
-      deploymentWebhookNewRoute,
-      deploymentWebhookDetailRoute,
-      deploymentWebhookEditRoute,
-      deploymentAgentsRoute,
+    identityTabLayoutRoute.addChildren([
+      identityWebhooksRoute,
+      identityWebhookNewRoute,
+      identityWebhookDetailRoute,
+      identityWebhookEditRoute,
+      identityAgentsRoute,
     ]),
   ]),
   platformLayoutRoute.addChildren([

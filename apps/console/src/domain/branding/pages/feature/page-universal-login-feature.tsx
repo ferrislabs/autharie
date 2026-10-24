@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import type { Schemas } from '@/api/api.client'
 import { useGetDeploymentFeatures } from '@/api/billing.api'
@@ -11,7 +11,7 @@ import {
   useDeleteTheme,
   useGetThemes,
 } from '@/api/themes.api'
-import { useDeploymentPath } from '@/domain/deployments/hooks/use-deployment-path'
+import { useIdentityRealm, useRealmPath } from '@/domain/identity/use-identity-realm'
 import { useMyPermissions } from '@/domain/organisations/hooks/use-my-permissions'
 import { CAN } from '@/domain/organisations/permissions'
 import { isBrandingOpen } from '../../branding-plan'
@@ -26,7 +26,6 @@ import {
   toTokens,
   withDefaults,
 } from '../../theme-tokens'
-import { useBrandingRealm } from '../../use-branding-realm'
 import { useBrandingScope } from '../../use-branding-scope'
 import { PageUniversalLogin } from '../ui/page-universal-login'
 
@@ -42,10 +41,10 @@ function messageOf(error: unknown): string {
 
 export default function PageUniversalLoginFeature() {
   const scope = useBrandingScope()
-  const [realm, setRealm] = useBrandingRealm()
+  const realm = useIdentityRealm()
   const { can } = useMyPermissions()
   const navigate = useNavigate()
-  const deploymentPath = useDeploymentPath()
+  const realmPath = useRealmPath()
 
   const features = useGetDeploymentFeatures(scope.organisationId, scope.deploymentId)
   const themes = useGetThemes(scope, realm)
@@ -58,6 +57,11 @@ export default function PageUniversalLoginFeature() {
 
   const [working, setWorking] = useState(false)
   const [actionError, setActionError] = useState<string>()
+
+  // The realm is in the address, so choosing another one is a navigation and
+  // this page stays mounted: an error about the last realm is not one about
+  // the next.
+  useEffect(() => setActionError(undefined), [realm])
 
   const list = themes.data?.data ?? []
   const unsupported = isNotFerriskey(themes.error) || isNotFerriskey(realms.error)
@@ -81,10 +85,7 @@ export default function PageUniversalLoginFeature() {
   }
 
   const open = (themeId: string) =>
-    void navigate({
-      to: deploymentPath(`/branding/universal-login/${themeId}`),
-      search: { realm },
-    })
+    void navigate({ to: realmPath(`/branding/universal-login/${themeId}`) })
 
   const names = list.map((theme) => theme.name)
 
@@ -135,11 +136,6 @@ export default function PageUniversalLoginFeature() {
       error={themes.error && !unsupported ? themes.error.message : undefined}
       actionError={actionError}
       realm={realm}
-      realms={realms.data?.data ?? []}
-      onRealmChange={(next) => {
-        setActionError(undefined)
-        setRealm(next)
-      }}
       themes={list}
       state={themes.data?.state ?? null}
       planOpen={isBrandingOpen(features.data?.features)}

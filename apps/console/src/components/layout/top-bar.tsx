@@ -26,6 +26,8 @@ export interface Crumb {
   label: string
   to?: string
   icon?: React.ReactNode
+  /** Drawn instead of the label, for a crumb that is a selector. */
+  node?: React.ReactNode
 }
 
 function Initial({ label }: { label: string }) {
@@ -48,9 +50,12 @@ export type TopBarVariant = 'organisation' | 'platform'
 export function TopBar({
   crumbs = [],
   variant = 'organisation',
+  spaces,
 }: {
   crumbs?: Crumb[]
   variant?: TopBarVariant
+  /** The switch between a deployment's spaces, drawn before the search. */
+  spaces?: React.ReactNode
 }) {
   const navigate = useNavigate()
   const { profile } = useAuthStore()
@@ -111,7 +116,9 @@ export function TopBar({
       {crumbs.map((crumb, index) => (
         <div key={index} className='flex min-w-0 items-center gap-3'>
           <span className='text-muted-foreground/60'>/</span>
-          {crumb.to ? (
+          {crumb.node ? (
+            crumb.node
+          ) : crumb.to ? (
             <Link
               to={crumb.to}
               className='flex min-w-0 items-center gap-1.5 text-sm hover:underline'
@@ -129,6 +136,7 @@ export function TopBar({
       ))}
 
       <div className='ml-auto flex items-center gap-2'>
+        {spaces}
         {variant === 'platform' ? (
           <Link
             to={organisationHome}
