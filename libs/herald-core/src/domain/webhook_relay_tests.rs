@@ -202,6 +202,46 @@ async fn a_failed_webhooks_relay_does_not_log_the_payload_either() {
 }
 
 #[tokio::test]
+async fn an_smtp_theme_or_iam_outcome_is_forwarded_verbatim_and_never_logged() {
+    for kind in ["smtp", "portal_theme", "iam"] {
+        let captured = Captured::default();
+        let _logs = capture_logs(&captured);
+        let deployment_id = Uuid::new_v4();
+        let payload = json!({
+            "deployment_id": deployment_id,
+            "kind": kind,
+            "phase": "Done",
+            "envelope": { "ct": SECRET },
+        });
+        let forwarded: Arc<StdMutex<Vec<Value>>> = Arc::default();
+
+        let mut control_plane = control_plane(Vec::new());
+        control_plane.expect_report_outcome().never();
+        control_plane.expect_report_webhooks_outcome().never();
+        let seen = Arc::clone(&forwarded);
+        control_plane
+            .expect_report_relayed_outcome()
+            .times(1)
+            .returning(move |_, outcome| {
+                assert_eq!(outcome.deployment_id(), deployment_id);
+                seen.lock().unwrap().push(outcome.body().clone());
+                Box::pin(async { Ok(()) })
+            });
+
+        let outcome = InboundOutcome::parse(payload.to_string().as_bytes()).unwrap();
+        service(control_plane, queued(vec![outcome]))
+            .sync_all_deployments()
+            .await
+            .expect("cycle succeeds");
+
+        assert_eq!(*forwarded.lock().unwrap(), vec![payload], "{kind}");
+        let logs = captured.text();
+        assert!(logs.contains(kind), "{logs}");
+        assert!(!logs.contains(SECRET), "{logs}");
+    }
+}
+
+#[tokio::test]
 async fn a_legacy_report_still_goes_to_the_lifecycle_endpoint() {
     let deployment_id = Uuid::new_v4();
 

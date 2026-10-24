@@ -7,7 +7,7 @@ use crate::domain::{
         dataplane::DataPlaneId,
         deployment::{Deployment, DeploymentId},
         logs::{Ending, LogLine, LogStreamRequest},
-        outcome::{AgentsOutcome, DeploymentOutcomeReport, WebhooksOutcome},
+        outcome::{AgentsOutcome, DeploymentOutcomeReport, RelayedOutcome, WebhooksOutcome},
         usage::UsagePoint,
     },
     error::HeraldError,
@@ -404,6 +404,27 @@ impl ControlPlaneRepository for HttpControlPlaneRepository {
             })?;
 
         Self::ensure_success(response, "report_agents_outcome").await?;
+
+        Ok(())
+    }
+
+    async fn report_relayed_outcome(
+        &self,
+        dp_id: &DataPlaneId,
+        outcome: &RelayedOutcome,
+    ) -> Result<(), HeraldError> {
+        let response = self
+            .client
+            .post(self.outcome_url(dp_id, &outcome.deployment_id()))
+            .bearer_auth(self.auth.bearer().await?)
+            .json(outcome.body())
+            .send()
+            .await
+            .map_err(|e| HeraldError::ControlPlane {
+                message: format!("report_relayed_outcome request failed: {e}"),
+            })?;
+
+        Self::ensure_success(response, "report_relayed_outcome").await?;
 
         Ok(())
     }
