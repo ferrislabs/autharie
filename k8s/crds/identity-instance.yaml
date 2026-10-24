@@ -76,13 +76,13 @@ spec:
                               type: string
                             kty:
                               type: string
-                            n:
+                            "n":
                               type: string
                           required:
                           - alg
                           - e
                           - kty
-                          - n
+                          - "n"
                           type: object
                       required:
                       - clientId
