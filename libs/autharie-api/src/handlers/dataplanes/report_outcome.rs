@@ -9,6 +9,7 @@ use autharie_core::{
     },
     dataplane::{credential::SecretString, ports::DataPlaneService, value_objects::DataPlaneId},
     deployments::{DeploymentId, commands::ReportDeploymentOutcomeCommand},
+    iam::{IamError, entities::IamOutcome, ports::IamOutcomeService},
     smtp::{SmtpError, commands::SmtpOutcome, ports::SmtpOutcomeService},
     themes::{ThemeError, commands::ThemeOutcome, ports::ThemeOutcomeService},
     webhooks::{
@@ -181,6 +182,13 @@ pub struct ReportOutcomeRequest {
     /// item. Only with `kind: smtp` or `kind: portal_theme`.
     #[serde(default)]
     pub items: Vec<OutcomeItemReport>,
+
+    #[serde(default)]
+    pub request_id: Option<Uuid>,
+
+    #[serde(default)]
+    #[schema(value_type = Option<Object>)]
+    pub envelope: Option<serde_json::Value>,
 
     /// What the data plane observed: `running`, `failed` or `deleted`.
     /// Not sent with `kind: webhooks`, `kind: deployment.agents`, `kind: smtp` or
@@ -466,6 +474,30 @@ fn smtp_outcome(
     })
 }
 
+fn iam_outcome(
+    deployment_id: DeploymentId,
+    request: ReportOutcomeRequest,
+) -> Result<IamOutcome, ApiError> {
+    if request
+        .deployment_id
+        .is_some_and(|reported| reported != deployment_id.0)
+    {
+        return Err(ApiError::BadRequest {
+            reason: "the report names another deployment than the route".to_string(),
+        });
+    }
+
+    IamOutcome::parse(
+        request.request_id,
+        request.phase.as_deref(),
+        request.message,
+        request.envelope,
+    )
+    .map_err(|error: IamError| ApiError::BadRequest {
+        reason: error.to_string(),
+    })
+}
+
 #[utoipa::path(
     post,
     path = "/{dataplane_id}/deployments/{deployment_id}/outcome",
@@ -478,7 +510,10 @@ fn smtp_outcome(
                    of rotation and retry requests instead; with `kind: deployment.agents` it \
                    records the status of the deployment's agents and the phase of each policy; \
                    with `kind: smtp` it records the state of one realm's email provider; \
-                   with `kind: portal_theme` it records the state of one realm's login theme. \
+                   with `kind: portal_theme` it records the state of one realm's login theme; \
+                   with `kind: iam` it records the answer to one IAM request: `request_id`, \
+                   `phase` (`Done` with the sealed `envelope`, or `Failed` with a `message`); \
+                   an answer to a request already answered is ignored. \
                    A report older than the one already applied changes nothing.",
     params(ReportOutcomeRoute),
     request_body = ReportOutcomeRequest,
@@ -537,6 +572,14 @@ pub async fn report_outcome_handler(
             state
                 .service
                 .report_smtp_outcome(identity, deployment_id, outcome)
+                .await?
+        }
+        Some("iam") => {
+            let outcome = iam_outcome(deployment_id, request)?;
+
+            state
+                .service
+                .report_iam_outcome(identity, deployment_id, outcome)
                 .await?
         }
         Some("portal_theme") => {
@@ -797,6 +840,79 @@ mod tests {
         ] {
             assert!(matches!(
                 portal_theme_outcome(deployment, request(body)),
+                Err(ApiError::BadRequest { .. })
+            ));
+        }
+    }
+
+    fn envelope() -> serde_json::Value {
+        use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+
+        serde_json::json!({
+            "v": 1,
+            "alg": "RSA-OAEP-256+A256GCM",
+            "ek": URL_SAFE_NO_PAD.encode([1u8; 256]),
+            "iv": URL_SAFE_NO_PAD.encode([2u8; 12]),
+            "ct": URL_SAFE_NO_PAD.encode([3u8; 40]),
+        })
+    }
+
+    #[test]
+    fn an_iam_report_is_read_as_the_data_plane_sends_it() {
+        let deployment = DeploymentId(Uuid::new_v4());
+        let asked = Uuid::new_v4();
+
+        let done = iam_outcome(
+            deployment,
+            request(serde_json::json!({
+                "deployment_id": deployment.0,
+                "kind": "iam",
+                "request_id": asked,
+                "phase": "Done",
+                "envelope": envelope()
+            })),
+        )
+        .expect("accepted");
+        let failed = iam_outcome(
+            deployment,
+            request(serde_json::json!({
+                "kind": "iam", "request_id": asked, "phase": "Failed", "message": "too large"
+            })),
+        )
+        .expect("accepted");
+
+        assert_eq!(done.request_id, asked);
+        assert!(matches!(
+            done.verdict,
+            autharie_core::iam::IamVerdict::Done(_)
+        ));
+        assert_eq!(
+            failed.verdict,
+            autharie_core::iam::IamVerdict::Failed {
+                message: "too large".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn an_iam_report_needs_an_id_a_known_phase_a_valid_envelope_and_its_own_deployment() {
+        let deployment = DeploymentId(Uuid::new_v4());
+        let asked = Uuid::new_v4();
+
+        for body in [
+            serde_json::json!({ "kind": "iam", "phase": "Failed" }),
+            serde_json::json!({ "kind": "iam", "request_id": asked }),
+            serde_json::json!({ "kind": "iam", "request_id": asked, "phase": "Pending" }),
+            serde_json::json!({ "kind": "iam", "request_id": asked, "phase": "Done" }),
+            serde_json::json!({ "kind": "iam", "request_id": asked, "phase": "Done",
+                "envelope": { "ct": "clear" } }),
+            serde_json::json!({ "kind": "iam", "request_id": asked, "phase": "Done",
+                "envelope": "not an object" }),
+            serde_json::json!({ "kind": "iam", "request_id": asked, "phase": "Failed",
+                "deployment_id": Uuid::new_v4() }),
+        ] {
+            assert!(matches!(
+                iam_outcome(deployment, request(body)),
                 Err(ApiError::BadRequest { .. })
             ));
         }

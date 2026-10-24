@@ -216,6 +216,8 @@ fn served_paths() -> Vec<&'static str> {
         <deployments::agent_servers::AgentServerDiscoverRoute as TypedPath>::PATH,
         <deployments::smtp::SmtpRoute as TypedPath>::PATH,
         <deployments::smtp::BrandingRealmsRoute as TypedPath>::PATH,
+        <deployments::iam::IamRequestsRoute as TypedPath>::PATH,
+        <deployments::iam::IamRequestRoute as TypedPath>::PATH,
         <deployments::themes::ThemesRoute as TypedPath>::PATH,
         <deployments::themes::ThemeRoute as TypedPath>::PATH,
         <deployments::themes::ThemeActivateRoute as TypedPath>::PATH,

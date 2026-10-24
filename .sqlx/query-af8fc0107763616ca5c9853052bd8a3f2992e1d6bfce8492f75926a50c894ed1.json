@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO iam_requests (\n                request_id, deployment_id, realm, operation, actor, phase, created_at, expires_at\n            )\n            SELECT $1, $2, $3, $4, $5, 'pending', $6, $7\n            WHERE (\n                SELECT count(*)\n                FROM iam_requests\n                WHERE deployment_id = $2\n                  AND phase <> 'delivered'\n                  AND expires_at > $6\n            ) < $8\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Timestamptz",
+        "Timestamptz",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "af8fc0107763616ca5c9853052bd8a3f2992e1d6bfce8492f75926a50c894ed1"
+}

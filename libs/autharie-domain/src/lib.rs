@@ -15,6 +15,7 @@ pub mod dataplane;
 pub mod deployments;
 pub mod dns;
 pub mod features;
+pub mod iam;
 pub mod iam_settings;
 pub mod logs;
 pub mod metrics;
@@ -281,6 +282,9 @@ pub enum CoreError {
 
     #[error(transparent)]
     Smtp(#[from] crate::smtp::SmtpError),
+
+    #[error(transparent)]
+    Iam(#[from] crate::iam::IamError),
 
     #[error(transparent)]
     Theme(#[from] crate::themes::ThemeError),

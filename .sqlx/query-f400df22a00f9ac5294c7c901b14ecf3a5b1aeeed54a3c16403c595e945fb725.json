@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            WITH old AS (\n                SELECT request_id, envelope\n                FROM iam_requests\n                WHERE request_id = $1\n                  AND deployment_id = $2\n                  AND phase = 'done'\n                  AND expires_at > $3\n                FOR UPDATE\n            )\n            UPDATE iam_requests AS request\n            SET phase = 'delivered', envelope = NULL\n            FROM old\n            WHERE request.request_id = old.request_id\n            RETURNING old.envelope AS \"envelope!\"\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "envelope!",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "f400df22a00f9ac5294c7c901b14ecf3a5b1aeeed54a3c16403c595e945fb725"
+}
