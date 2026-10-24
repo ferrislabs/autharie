@@ -33,6 +33,8 @@ use crate::domain::agents::config::AgentsEnvironment;
 use crate::domain::agents::ports::{AgentsOutcome, IdentityInstanceAgents};
 use crate::domain::agents::service::AgentsReconciler;
 use crate::domain::agents::{agents_enabled, authz_required};
+use crate::domain::iam::ports::{IamOutcome, IdentityInstanceIam};
+use crate::domain::iam::service::IamReconciler;
 use crate::domain::portal_themes::ports::{IdentityInstancePortalThemes, PortalThemeOutcome};
 use crate::domain::portal_themes::service::PortalThemeReconciler;
 use crate::domain::ports::{
@@ -53,6 +55,7 @@ use crate::infrastructure::edge::{
     httproute_api_resource, route_is_ready, security_policy_api_resource,
 };
 use crate::infrastructure::ferriskey_agents::{KubeAgentServers, KubeFerriskeyAgents};
+use crate::infrastructure::ferriskey_iam::KubeFerriskeyIam;
 use crate::infrastructure::ferriskey_portal_theme::KubeFerriskeyPortalTheme;
 use crate::infrastructure::ferriskey_smtp::KubeFerriskeySmtp;
 use crate::infrastructure::ferriskey_theme::KubeInstanceTheme;
@@ -61,6 +64,7 @@ use crate::infrastructure::kube_agents::{
     GatewayService, KubeAgentInstances, KubeAgentsEdge, KubeAgentsSecrets, KubeAgentsStatus,
     KubeGatewayConfig,
 };
+use crate::infrastructure::kube_iam::{KubeIamResults, KubeIamStatus};
 use crate::infrastructure::kube_portal_themes::KubePortalThemeStatus;
 use crate::infrastructure::kube_smtp::{KubeSmtpSecrets, KubeSmtpStatus};
 use crate::infrastructure::kube_webhooks::{
@@ -98,6 +102,7 @@ fn status_merge_patch(
         for field in ["message", "applied", "observedAt"] {
             iam.entry(field).or_insert(Value::Null);
         }
+        iam.remove("requests");
     }
     patch
 }
@@ -1915,13 +1920,14 @@ impl IdentityProviderHandler for FerriskeyProviderHandler {
 }
 
 #[derive(Clone)]
-struct OperatorContext<S, D, W, A, M, P> {
+struct OperatorContext<S, D, W, A, M, P, I> {
     service: Arc<S>,
     deployer: Arc<D>,
     webhooks: Arc<W>,
     agents: Arc<A>,
     smtp: Arc<M>,
     portal_themes: Arc<P>,
+    iam: Arc<I>,
     client: Client,
 }
 
@@ -1930,6 +1936,7 @@ const AGENTS_RETRY_SECONDS: u64 = 15;
 const AGENTS_WATCH_SECONDS: u64 = 30;
 const SMTP_RETRY_SECONDS: u64 = 15;
 const PORTAL_THEME_RETRY_SECONDS: u64 = 15;
+const IAM_RETRY_SECONDS: u64 = 2;
 
 /// A webhook that failed or is waiting brings the next look forward; it never
 /// turns the instance's own reconcile into a failure.
@@ -1990,9 +1997,19 @@ fn with_portal_theme_outcome(
     }
 }
 
-async fn reconcile<S, D, W, A, M, P>(
+fn with_iam_outcome(outcome: ReconcileOutcome, iam: IamOutcome) -> ReconcileOutcome {
+    match iam {
+        IamOutcome::Settled => outcome,
+        IamOutcome::Retry => {
+            let soon = Duration::from_secs(IAM_RETRY_SECONDS);
+            ReconcileOutcome::requeue_after(outcome.requeue_after.map_or(soon, |at| at.min(soon)))
+        }
+    }
+}
+
+async fn reconcile<S, D, W, A, M, P, I>(
     instance: Arc<IdentityInstance>,
-    context: Arc<OperatorContext<S, D, W, A, M, P>>,
+    context: Arc<OperatorContext<S, D, W, A, M, P, I>>,
 ) -> Result<Action, OperatorError>
 where
     S: IdentityInstanceService,
@@ -2001,6 +2018,7 @@ where
     A: IdentityInstanceAgents,
     M: IdentityInstanceSmtp,
     P: IdentityInstancePortalThemes,
+    I: IdentityInstanceIam,
 {
     if instance.metadata.deletion_timestamp.is_some() {
         return handle_deletion(instance, context).await;
@@ -2016,26 +2034,30 @@ where
     );
 
     let outcome = context.service.reconcile((*instance).clone()).await?;
+    let iam = context.iam.reconcile(&instance).await;
     let webhooks = context.webhooks.reconcile(&instance).await;
     let agents = context.agents.reconcile(&instance).await;
     let smtp = context.smtp.reconcile(&instance).await;
     let portal_themes = context.portal_themes.reconcile(&instance).await;
     Ok(outcome_to_action(with_agents_watch(
-        with_portal_theme_outcome(
-            with_smtp_outcome(
-                with_agents_outcome(with_webhook_outcome(outcome, webhooks), agents),
-                smtp,
+        with_iam_outcome(
+            with_portal_theme_outcome(
+                with_smtp_outcome(
+                    with_agents_outcome(with_webhook_outcome(outcome, webhooks), agents),
+                    smtp,
+                ),
+                portal_themes,
             ),
-            portal_themes,
+            iam,
         ),
         &instance,
     )))
 }
 
-fn error_policy<S, D, W, A, M, P>(
+fn error_policy<S, D, W, A, M, P, I>(
     _instance: Arc<IdentityInstance>,
     error: &OperatorError,
-    _context: Arc<OperatorContext<S, D, W, A, M, P>>,
+    _context: Arc<OperatorContext<S, D, W, A, M, P, I>>,
 ) -> Action {
     error!(error = %error, "Reconcile error");
     error_requeue_action()
@@ -2112,6 +2134,11 @@ pub async fn run() -> Result<(), OperatorError> {
         Arc::new(KubeWebhookDeliveries::new(client.clone())),
     ));
     let ferriskey_agents = Arc::new(KubeFerriskeyAgents::new(client.clone()));
+    let iam = Arc::new(IamReconciler::new(
+        Arc::new(KubeIamStatus::new(client.clone())),
+        Arc::new(KubeFerriskeyIam::new(Arc::clone(&ferriskey_agents))),
+        Arc::new(KubeIamResults::new(client.clone())),
+    ));
     let agent_servers = Arc::new(
         KubeAgentServers::new(Arc::clone(&ferriskey_agents)).map_err(|error| {
             OperatorError::Configuration {
@@ -2171,6 +2198,7 @@ pub async fn run() -> Result<(), OperatorError> {
         agents,
         smtp,
         portal_themes,
+        iam,
         client: client.clone(),
     });
 
@@ -2202,6 +2230,7 @@ pub async fn run() -> Result<(), OperatorError> {
                 >,
                 SmtpReconciler<KubeSmtpStatus, KubeFerriskeySmtp, KubeSmtpSecrets>,
                 PortalThemeReconciler<KubePortalThemeStatus, KubeFerriskeyPortalTheme>,
+                IamReconciler<KubeIamStatus, KubeFerriskeyIam, KubeIamResults>,
             >,
             error_policy::<
                 OperatorApplication<
@@ -2227,6 +2256,7 @@ pub async fn run() -> Result<(), OperatorError> {
                 >,
                 SmtpReconciler<KubeSmtpStatus, KubeFerriskeySmtp, KubeSmtpSecrets>,
                 PortalThemeReconciler<KubePortalThemeStatus, KubeFerriskeyPortalTheme>,
+                IamReconciler<KubeIamStatus, KubeFerriskeyIam, KubeIamResults>,
             >,
             context,
         )
@@ -2273,9 +2303,9 @@ async fn ensure_finalizer(
     Ok(())
 }
 
-async fn handle_deletion<S, D, W, A, M, P>(
+async fn handle_deletion<S, D, W, A, M, P, I>(
     instance: Arc<IdentityInstance>,
-    context: Arc<OperatorContext<S, D, W, A, M, P>>,
+    context: Arc<OperatorContext<S, D, W, A, M, P, I>>,
 ) -> Result<Action, OperatorError>
 where
     S: IdentityInstanceService,
@@ -3993,10 +4023,11 @@ mod tests {
 
         let status = IdentityInstanceStatus {
             iam: Some(IamStatus {
-                phase: IamPhase::Applied,
+                phase: Some(IamPhase::Applied),
                 message: None,
                 applied: None,
                 observed_at: None,
+                requests: Vec::new(),
             }),
             ..Default::default()
         };
@@ -4023,10 +4054,11 @@ mod tests {
 
         let status = IdentityInstanceStatus {
             iam: Some(IamStatus {
-                phase: IamPhase::Pending,
+                phase: Some(IamPhase::Pending),
                 message: Some("waiting".to_string()),
                 applied: Some("{}".to_string()),
                 observed_at: Some("2026-10-03T00:00:00Z".to_string()),
+                requests: Vec::new(),
             }),
             ..Default::default()
         };
@@ -4163,6 +4195,61 @@ mod tests {
     }
 
     #[test]
+    fn the_instance_status_write_never_carries_the_recorded_iam_requests() {
+        use autharie_crds::v1alpha::identity_instance::{
+            IamRequestPhase, IamRequestStatus, IamStatus, IdentityInstanceStatus,
+        };
+
+        let status = IdentityInstanceStatus {
+            iam: Some(IamStatus {
+                phase: None,
+                message: None,
+                applied: None,
+                observed_at: None,
+                requests: vec![IamRequestStatus {
+                    request_id: "r1".to_string(),
+                    phase: IamRequestPhase::Done,
+                    message: None,
+                }],
+            }),
+            ..Default::default()
+        };
+
+        let patch = status_merge_patch(&status);
+
+        assert!(patch["status"]["iam"].get("requests").is_none());
+        assert!(patch["status"]["iam"].get("phase").is_none());
+    }
+
+    #[test]
+    fn a_settled_iam_pass_leaves_the_requeue_alone() {
+        let steady = ReconcileOutcome::requeue_after(Duration::from_secs(60));
+
+        let outcome = with_iam_outcome(steady, IamOutcome::Settled);
+
+        assert_eq!(outcome.requeue_after, Some(Duration::from_secs(60)));
+    }
+
+    #[test]
+    fn a_pending_iam_request_brings_the_next_pass_forward_to_two_seconds() {
+        let steady = ReconcileOutcome::requeue_after(Duration::from_secs(60));
+        let sooner = ReconcileOutcome::requeue_after(Duration::from_secs(1));
+
+        assert_eq!(
+            with_iam_outcome(steady, IamOutcome::Retry).requeue_after,
+            Some(Duration::from_secs(2))
+        );
+        assert_eq!(
+            with_iam_outcome(sooner, IamOutcome::Retry).requeue_after,
+            Some(Duration::from_secs(1))
+        );
+        assert_eq!(
+            with_iam_outcome(ReconcileOutcome::default(), IamOutcome::Retry).requeue_after,
+            Some(Duration::from_secs(2))
+        );
+    }
+
+    #[test]
     fn a_settled_smtp_pass_leaves_the_requeue_alone() {
         let steady = ReconcileOutcome::requeue_after(Duration::from_secs(60));
 
@@ -4287,6 +4374,7 @@ mod tests {
                 agents: None,
                 smtp: Vec::new(),
                 portal_themes: Vec::new(),
+                iam_requests: Vec::new(),
                 restore: None,
                 organisation_id: "org-1".to_string(),
                 provider: IdentityProvider::Keycloak,

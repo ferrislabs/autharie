@@ -294,6 +294,7 @@ mod tests {
                 agents: None,
                 smtp: Vec::new(),
                 portal_themes: Vec::new(),
+                iam_requests: Vec::new(),
                 restore: None,
                 organisation_id: "org-1".to_string(),
                 provider: IdentityProvider::Keycloak,
@@ -728,10 +729,11 @@ mod tests {
 
     fn iam_status(phase: IamPhase, applied: Option<String>) -> IamStatus {
         IamStatus {
-            phase,
+            phase: Some(phase),
             message: None,
             applied,
             observed_at: Some("t".to_string()),
+            requests: Vec::new(),
         }
     }
 
@@ -801,7 +803,7 @@ mod tests {
                 status
                     .iam
                     .as_ref()
-                    .is_some_and(|iam| iam.phase == IamPhase::Applied)
+                    .is_some_and(|iam| iam.phase == Some(IamPhase::Applied))
             })
             .returning(|instance, _| {
                 let instance = instance.clone();
@@ -843,7 +845,7 @@ mod tests {
             .times(1)
             .withf(move |_, status| {
                 status.iam.as_ref().is_some_and(|iam| {
-                    iam.phase == IamPhase::Applied
+                    iam.phase == Some(IamPhase::Applied)
                         && iam.applied.as_deref() == Some(expected.as_str())
                         && iam.message.is_none()
                 })
@@ -911,10 +913,9 @@ mod tests {
             .expect_patch_status()
             .times(1)
             .withf(|_, status| {
-                status
-                    .iam
-                    .as_ref()
-                    .is_some_and(|iam| iam.phase == IamPhase::Applied && iam.applied.is_none())
+                status.iam.as_ref().is_some_and(|iam| {
+                    iam.phase == Some(IamPhase::Applied) && iam.applied.is_none()
+                })
             })
             .returning(|instance, _| {
                 let instance = instance.clone();
@@ -946,7 +947,7 @@ mod tests {
             .times(1)
             .withf(|_, status| {
                 status.iam.as_ref().is_some_and(|iam| {
-                    iam.phase == IamPhase::Pending
+                    iam.phase == Some(IamPhase::Pending)
                         && iam.message.as_deref() == Some("FerrisKey is not answering")
                         && iam.applied.is_none()
                 })
@@ -1010,7 +1011,8 @@ mod tests {
             .times(1)
             .withf(|_, status| {
                 status.iam.as_ref().is_some_and(|iam| {
-                    iam.phase == IamPhase::Failed && iam.message.as_deref() == Some("invalid color")
+                    iam.phase == Some(IamPhase::Failed)
+                        && iam.message.as_deref() == Some("invalid color")
                 })
             })
             .returning(|instance, _| {

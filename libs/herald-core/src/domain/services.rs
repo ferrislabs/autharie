@@ -267,6 +267,26 @@ where
                     }
                     continue;
                 }
+                InboundOutcome::Relayed(outcome) => {
+                    match self
+                        .control_plane
+                        .report_relayed_outcome(&self.dataplane_id, &outcome)
+                        .await
+                    {
+                        Ok(()) => info!(
+                            deployment_id = %outcome.deployment_id(),
+                            kind = outcome.kind(),
+                            "relayed an outcome"
+                        ),
+                        Err(err) => warn!(
+                            %err,
+                            deployment_id = %outcome.deployment_id(),
+                            kind = outcome.kind(),
+                            "failed to report an outcome"
+                        ),
+                    }
+                    continue;
+                }
                 InboundOutcome::Agents(outcome) => {
                     match self
                         .control_plane

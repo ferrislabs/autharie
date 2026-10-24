@@ -410,6 +410,11 @@ mod tests {
     }
 
     #[test]
+    fn the_iam_request_action_is_bound() {
+        assert!(is_bound("deployment.iam.request"));
+    }
+
+    #[test]
     fn the_webhook_actions_are_bound() {
         assert!(is_bound("deployment.webhooks"));
         assert!(is_bound("deployment.webhook.rotate_secret"));
