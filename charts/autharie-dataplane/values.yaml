@@ -92,7 +92,10 @@ herald:
   podDisruptionBudget:
     enabled: false
     minAvailable: 1
-  pollIntervalSeconds: 15
+  # How often Herald asks the control plane for pending actions, and carries
+  # outcomes back. A sweep is one request, so 3 s is cheap; at 15 s an IAM
+  # request from the console waited 15 to 30 s (ADR 0015).
+  pollIntervalSeconds: 3
   claim:
     max: 50
     leaseSeconds: 60
