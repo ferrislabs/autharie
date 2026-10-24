@@ -38,7 +38,6 @@ import {
   type SmtpForm,
 } from '../../smtp-form'
 import { smtpBadge } from '../../smtp-state'
-import { RealmPicker } from './realm-picker'
 
 export const TEST_NOTE =
   'FerrisKey cannot send a test email. Applied means FerrisKey accepted these settings, not that the server delivered anything.'
@@ -50,8 +49,6 @@ interface Props {
   unsupported: boolean
   error?: string
   realm: string
-  realms: string[]
-  onRealmChange: (realm: string) => void
   smtp: Schemas.SmtpView | null
   canManage: boolean
   isSaving: boolean
@@ -67,8 +64,6 @@ export function PageEmailProvider({
   unsupported,
   error,
   realm,
-  realms,
-  onRealmChange,
   smtp,
   canManage,
   isSaving,
@@ -93,11 +88,7 @@ export function PageEmailProvider({
   }
 
   return (
-    <SectionPage
-      title='Email provider'
-      description={description}
-      actions={<RealmPicker realm={realm} realms={realms} onChange={onRealmChange} />}
-    >
+    <SectionPage title='Email provider' description={description}>
       {error && <Alert>{error}</Alert>}
 
       {isLoading ? (

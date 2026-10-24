@@ -11,8 +11,6 @@ function render(over: Partial<React.ComponentProps<typeof PageUniversalLogin>> =
       isLoading={false}
       unsupported={false}
       realm='master'
-      realms={['master', 'acme']}
-      onRealmChange={noop}
       themes={[]}
       state={null}
       planOpen
@@ -55,11 +53,10 @@ function disabled(html: string, label: string): boolean {
 }
 
 describe('the Universal login page', () => {
-  it('says what the page is for and offers the realms', () => {
+  it('says what the page is for', () => {
     const html = render()
 
     expect(html).toContain('Universal login')
-    expect(html).toContain('Realm')
   })
 
   it('explains the default look and offers the first theme when there is none', () => {

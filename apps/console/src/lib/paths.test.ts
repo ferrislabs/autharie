@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { belongsToNoOrganisation, isUnder, movedSettingsPath } from './paths'
+import {
+  belongsToNoOrganisation,
+  identityAddressFor,
+  isUnder,
+  movedSettingsPath,
+  swapRealm,
+} from './paths'
 
 const DEPLOYMENT = '/organisations/org-1/deployments/dep-1'
 
@@ -87,7 +93,49 @@ describe('an invitation link', () => {
 describe('movedSettingsPath', () => {
   it('names the tab each settings page became', () => {
     expect(movedSettingsPath('org-1', 'dep-1', 'network-access')).toBe(`${DEPLOYMENT}/security`)
-    expect(movedSettingsPath('org-1', 'dep-1', 'branding')).toBe(`${DEPLOYMENT}/branding/universal-login`)
+    expect(movedSettingsPath('org-1', 'dep-1', 'branding')).toBe(
+      `${DEPLOYMENT}/identity/realms/master/branding/universal-login`
+    )
     expect(movedSettingsPath('org-1', 'dep-1', 'backups')).toBe(`${DEPLOYMENT}/backups`)
+  })
+})
+
+describe('identityAddressFor', () => {
+  const identity = `${DEPLOYMENT}/identity`
+
+  it.each([
+    ['branding', '', 'master', `${identity}/realms/master/branding/universal-login`],
+    ['branding', '/universal-login', 'acme', `${identity}/realms/acme/branding/universal-login`],
+    ['branding', '/universal-login/theme-1', 'acme', `${identity}/realms/acme/branding/universal-login/theme-1`],
+    ['branding', '/email-provider', 'acme', `${identity}/realms/acme/branding/email-provider`],
+    ['customization', '', 'master', `${identity}/realms/master/branding/universal-login`],
+    ['webhooks', '', 'master', `${identity}/webhooks`],
+    ['webhooks', '/new', 'master', `${identity}/webhooks/new`],
+    ['webhooks', '/wh-1/edit', 'master', `${identity}/webhooks/wh-1/edit`],
+    ['agents', '', 'master', `${identity}/agents`],
+  ] as const)('moves %s%s of realm %s to its Identity address', (section, rest, realm, expected) => {
+    expect(identityAddressFor(DEPLOYMENT, section, rest, realm)).toBe(expected)
+  })
+})
+
+describe('swapRealm', () => {
+  const page = (realm: string) => `${DEPLOYMENT}/identity/realms/${realm}/branding/email-provider`
+
+  it('keeps the section and changes only the realm', () => {
+    expect(swapRealm(page('a'), 'b')).toBe(page('b'))
+  })
+
+  it('keeps what follows the section too', () => {
+    expect(swapRealm(`${DEPLOYMENT}/identity/realms/a/branding/universal-login/theme-1`, 'b')).toBe(
+      `${DEPLOYMENT}/identity/realms/b/branding/universal-login/theme-1`
+    )
+  })
+
+  it('leaves an address that has no realm alone', () => {
+    expect(swapRealm(`${DEPLOYMENT}/identity/agents`, 'b')).toBe(`${DEPLOYMENT}/identity/agents`)
+  })
+
+  it('escapes a realm name rather than splitting the path', () => {
+    expect(swapRealm(page('a'), 'x/y')).toBe(page('x%2Fy'))
   })
 })

@@ -62,7 +62,7 @@ export default function PageWebhookDetailFeature() {
         }
       : null
 
-  const goToList = () => void navigate({ to: deploymentPath('/webhooks') })
+  const goToList = () => void navigate({ to: deploymentPath('/identity/webhooks') })
 
   return (
     <PageWebhookDetail
@@ -131,7 +131,7 @@ export default function PageWebhookDetailFeature() {
         },
       }}
       onBack={goToList}
-      onEdit={() => void navigate({ to: deploymentPath(`/webhooks/${webhookId}/edit`) })}
+      onEdit={() => void navigate({ to: deploymentPath(`/identity/webhooks/${webhookId}/edit`) })}
       onDelete={() => {
         if (!path) return
         remove.mutate({ path }, { onSuccess: goToList })

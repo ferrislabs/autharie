@@ -3,13 +3,12 @@ import { useBlocker, useNavigate, useParams } from '@tanstack/react-router'
 import { useGetDeploymentFeatures } from '@/api/billing.api'
 import { useActivateTheme, useGetThemes, useUpdateTheme } from '@/api/themes.api'
 import { Skeleton } from '@/components/ui/skeleton'
-import { useDeploymentPath } from '@/domain/deployments/hooks/use-deployment-path'
+import { useIdentityRealm, useRealmPath } from '@/domain/identity/use-identity-realm'
 import { useMyPermissions } from '@/domain/organisations/hooks/use-my-permissions'
 import { CAN } from '@/domain/organisations/permissions'
 import { isBrandingOpen } from '../../branding-plan'
 import { isNotFerriskey } from '../../smtp-state'
 import { toTokens, type ThemeDraft } from '../../theme-tokens'
-import { useBrandingRealm } from '../../use-branding-realm'
 import { useBrandingScope } from '../../use-branding-scope'
 import { ConfirmDialog } from '../ui/components/confirm-dialog'
 
@@ -23,11 +22,11 @@ function messageOf(error: unknown): string {
 
 export default function PageThemeBuilderFeature() {
   const scope = useBrandingScope()
-  const [realm] = useBrandingRealm()
+  const realm = useIdentityRealm()
   const { themeId } = useParams({ strict: false }) as { themeId?: string }
   const { can } = useMyPermissions()
   const navigate = useNavigate()
-  const deploymentPath = useDeploymentPath()
+  const realmPath = useRealmPath()
 
   const features = useGetDeploymentFeatures(scope.organisationId, scope.deploymentId)
   const themes = useGetThemes(scope, realm)
@@ -75,7 +74,7 @@ export default function PageThemeBuilderFeature() {
   }
 
   const onBack = () =>
-    void navigate({ to: deploymentPath('/branding/universal-login'), search: { realm } })
+    void navigate({ to: realmPath('/branding/universal-login') })
 
   return (
     <>

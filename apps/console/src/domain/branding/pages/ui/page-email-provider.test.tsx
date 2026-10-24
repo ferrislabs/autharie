@@ -11,8 +11,6 @@ function render(over: Partial<React.ComponentProps<typeof PageEmailProvider>> = 
       isLoading={false}
       unsupported={false}
       realm='master'
-      realms={['master', 'acme']}
-      onRealmChange={noop}
       smtp={null}
       canManage
       isSaving={false}
@@ -42,10 +40,6 @@ describe('the email provider page', () => {
 
     expect(html).toContain('Email provider')
     expect(html).toContain('SMTP server FerrisKey sends this realm')
-  })
-
-  it('offers the realms to choose from', () => {
-    expect(render()).toContain('Realm')
   })
 
   it('explains that without a provider no email is sent and offers to set one up', () => {
