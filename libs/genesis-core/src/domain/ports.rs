@@ -4,6 +4,8 @@ use crate::domain::entities::agents_payload::AgentsPayloadV1;
 use crate::domain::entities::dataplane_upgrade::{
     DataplaneUpgradeRef, DesiredDataplaneUpgrade, ExistingDataplaneUpgrade,
 };
+use crate::domain::entities::iam_outcome::IamOutcomeReport;
+use crate::domain::entities::iam_payload::IamRequestEntry;
 use crate::domain::entities::iam_settings_payload::Branding;
 use crate::domain::entities::identity_instance::{
     DesiredIdentityInstance, DesiredUpgrade, IdentityInstanceRef, InFlightUpgrade, UpgradeRef,
@@ -275,5 +277,40 @@ pub trait PortalThemePort: Send + Sync {
         &'a self,
         reference: &'a IdentityInstanceRef,
         desired: &'a PortalThemePayloadV1,
+    ) -> impl Future<Output = Result<(), GenesisError>> + Send + 'a;
+}
+
+pub trait IamOutcomePublisher: Send + Sync {
+    fn publish_iam<'a>(
+        &'a self,
+        report: &'a IamOutcomeReport,
+    ) -> impl Future<Output = Result<(), GenesisError>> + Send + 'a;
+}
+
+pub trait IamPort: Send + Sync {
+    fn request<'a>(
+        &'a self,
+        reference: &'a IdentityInstanceRef,
+        request: &'a IamRequestEntry,
+    ) -> impl Future<Output = Result<(), GenesisError>> + Send + 'a;
+
+    fn drop_requests<'a>(
+        &'a self,
+        reference: &'a IdentityInstanceRef,
+        request_ids: &'a [&'a str],
+    ) -> impl Future<Output = Result<(), GenesisError>> + Send + 'a;
+}
+
+pub trait IamResultsPort: Send + Sync {
+    fn read<'a>(
+        &'a self,
+        reference: &'a IdentityInstanceRef,
+        request_id: &'a str,
+    ) -> impl Future<Output = Result<Option<serde_json::Value>, GenesisError>> + Send + 'a;
+
+    fn forget<'a>(
+        &'a self,
+        reference: &'a IdentityInstanceRef,
+        request_ids: &'a [&'a str],
     ) -> impl Future<Output = Result<(), GenesisError>> + Send + 'a;
 }

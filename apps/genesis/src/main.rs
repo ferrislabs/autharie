@@ -5,6 +5,7 @@ use genesis_core::application::handlers::backup::BackupEventHandler;
 use genesis_core::application::handlers::dataplane_upgrade::DataplaneUpgradeEventHandler;
 use genesis_core::application::handlers::deployment::DeploymentEventHandler;
 use genesis_core::application::handlers::drill::DrillEventHandler;
+use genesis_core::application::handlers::iam_request::IamRequestEventHandler;
 use genesis_core::application::handlers::iam_settings::IamSettingsEventHandler;
 use genesis_core::application::handlers::network_access::NetworkAccessEventHandler;
 use genesis_core::application::handlers::portal_theme::PortalThemeEventHandler;
@@ -19,6 +20,7 @@ use genesis_core::domain::ports::{
 };
 use genesis_core::infrastructure::kubernetes::agents::KubeAgentsPort;
 use genesis_core::infrastructure::kubernetes::dataplane_upgrade::KubeDataplaneUpgradePort;
+use genesis_core::infrastructure::kubernetes::iam::KubeIamPort;
 use genesis_core::infrastructure::kubernetes::identity_instance::KubeIdentityInstancePort;
 use genesis_core::infrastructure::kubernetes::identity_instance_upgrade::KubeIdentityInstanceUpgradePort;
 use genesis_core::infrastructure::kubernetes::portal_theme::KubePortalThemePort;
@@ -90,6 +92,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let agents_port = Arc::new(KubeAgentsPort::new(kube.clone()));
     let smtp_port = Arc::new(KubeSmtpPort::new(kube.clone()));
     let portal_theme_port = Arc::new(KubePortalThemePort::new(kube.clone()));
+    let iam_port = Arc::new(KubeIamPort::new(kube.clone()));
     let database: Arc<dyn DatabaseProbe> = Arc::new(SqlxDatabaseProbe);
 
     let handlers: Vec<Arc<dyn EventHandler>> = vec![
@@ -117,6 +120,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::new(AgentsEventHandler::new(agents_port)),
         Arc::new(SmtpEventHandler::new(smtp_port)),
         Arc::new(PortalThemeEventHandler::new(portal_theme_port)),
+        Arc::new(IamRequestEventHandler::new(Arc::clone(&iam_port))),
         Arc::new(BackupEventHandler::new(identity_instances.clone())),
         Arc::new(DrillEventHandler::new(
             identity_instances.clone(),
@@ -131,7 +135,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Watching what the operator decided is the other half of Genesis's job,
     // and it is independent of the queue: a broker outage must not stop status
     // being observed, and an empty queue must not mean nothing is watched.
-    let watcher = IdentityInstanceStatusWatcher::new(kube, outcomes, publisher);
+    let watcher = IdentityInstanceStatusWatcher::new(kube, outcomes, publisher, iam_port);
 
     // Either ending is a Genesis that has stopped doing half its work, so
     // neither is survived: the pod exits and Kubernetes restarts it, which is

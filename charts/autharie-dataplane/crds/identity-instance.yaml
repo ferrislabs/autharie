@@ -338,6 +338,27 @@ spec:
                         type: integer
                     type: object
                 type: object
+              iamRequests:
+                items:
+                  properties:
+                    expiresAt:
+                      type: string
+                    operation:
+                      type: string
+                    realm:
+                      type: string
+                    requestId:
+                      type: string
+                    sealingKey:
+                      type: string
+                  required:
+                  - expiresAt
+                  - operation
+                  - realm
+                  - requestId
+                  - sealingKey
+                  type: object
+                type: array
               ingress:
                 description: |-
                   Whether and how an instance is reachable from outside the cluster.
@@ -804,9 +825,27 @@ spec:
                     - Pending
                     - Applied
                     - Failed
+                    - null
+                    nullable: true
                     type: string
-                required:
-                - phase
+                  requests:
+                    items:
+                      properties:
+                        message:
+                          nullable: true
+                          type: string
+                        phase:
+                          enum:
+                          - Done
+                          - Failed
+                          type: string
+                        requestId:
+                          type: string
+                      required:
+                      - phase
+                      - requestId
+                      type: object
+                    type: array
                 type: object
               lastUpdated:
                 description: Last time the status was updated

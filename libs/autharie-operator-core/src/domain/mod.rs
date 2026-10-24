@@ -1,5 +1,6 @@
 pub mod agents;
 pub mod dataplane_upgrade;
+pub mod iam;
 pub mod identity_instance;
 pub mod portal_themes;
 pub mod ports;
