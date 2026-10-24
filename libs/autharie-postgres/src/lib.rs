@@ -37,6 +37,9 @@ pub mod dataplane;
 pub mod features;
 
 #[cfg_attr(coverage_nightly, coverage(off))]
+pub mod iam;
+
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub mod metrics;
 
 #[cfg_attr(coverage_nightly, coverage(off))]
@@ -107,6 +110,7 @@ pub mod registry {
         pub struct FeatureFlag;
         pub struct FleetAudit;
         pub struct Deployment;
+        pub struct Iam;
         pub struct Metrics;
         pub struct Release;
         pub struct Signal;
@@ -174,6 +178,7 @@ mod registry_completeness {
         assert_registered::<domain::FeatureFlag>();
         assert_registered::<domain::FleetAudit>();
         assert_registered::<domain::Deployment>();
+        assert_registered::<domain::Iam>();
         assert_registered::<domain::Metrics>();
         assert_registered::<domain::Organisation>();
         assert_registered::<domain::Release>();

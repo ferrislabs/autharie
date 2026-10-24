@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 mod customer_cloud;
+mod iam_purge;
 
 use autharie_api::{
     action_stuck_signal::run_action_stuck_signal_probe,
@@ -24,6 +25,7 @@ use autharie_api::{
 };
 use clap::Parser;
 use customer_cloud::run_customer_cluster_worker;
+use iam_purge::purge_expired_iam_requests;
 use tracing::{error, info};
 
 #[tokio::main]
@@ -48,6 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tokio::spawn(purge_deleted_deployments(app_state.clone()));
     tokio::spawn(purge_expired_agent_credentials(app_state.clone()));
+    tokio::spawn(purge_expired_iam_requests(app_state.service.clone()));
     tokio::spawn(close_billing_periods(app_state.clone()));
     tokio::spawn(ensure_archive_bucket(args.clone()));
     tokio::spawn(ensure_wrapping_key(args.clone()));

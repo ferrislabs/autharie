@@ -594,6 +594,11 @@ impl ActionRepository for PostgresActionRepository<'_> {
                 payload = CASE action_type
                     WHEN 'deployment.webhooks' THEN payload - 'headers'
                     WHEN 'deployment.smtp' THEN payload #- '{smtp,password}'
+                    WHEN 'deployment.iam.request' THEN jsonb_set(
+                        payload,
+                        '{operation}',
+                        jsonb_build_object('type', payload #> '{operation,type}')
+                    )
                     ELSE payload
                 END
             WHERE deployment_id = $2
@@ -662,6 +667,11 @@ impl ActionRepository for PostgresActionRepository<'_> {
                 payload = CASE action_type
                     WHEN 'deployment.webhooks' THEN payload - 'headers'
                     WHEN 'deployment.smtp' THEN payload #- '{smtp,password}'
+                    WHEN 'deployment.iam.request' THEN jsonb_set(
+                        payload,
+                        '{operation}',
+                        jsonb_build_object('type', payload #> '{operation,type}')
+                    )
                     ELSE payload
                 END
             WHERE deployment_id = $3

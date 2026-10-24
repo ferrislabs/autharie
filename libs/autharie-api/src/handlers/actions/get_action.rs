@@ -2,6 +2,7 @@ use autharie_auth::Identity;
 use autharie_core::{
     action::{Action, ActionId, ports::ActionService},
     deployments::ports::DeploymentService,
+    iam::redacted as redacted_iam,
     organisation::OrganisationId,
     smtp::redacted as redacted_smtp,
     webhooks::redacted,
@@ -66,7 +67,7 @@ pub async fn get_action_handler(
         })?;
 
     Ok(Response::OK(GetActionResponse {
-        data: redacted_smtp(redacted(action)),
+        data: redacted_iam(redacted_smtp(redacted(action))),
     }))
 }
 
