@@ -31,15 +31,15 @@ describe('the tabs of the Identity space', () => {
       .filter((tab) => tab.soon)
       .map((tab) => tab.label)
 
-    expect(soon).toEqual(['Overview', 'Applications', 'Users', 'Organisations', 'Roles'])
+    expect(soon).toEqual(['Overview', 'Users', 'Organisations', 'Roles'])
   })
 
-  it('opens Branding, Agents and Webhooks', () => {
+  it('opens Applications, Branding, Agents and Webhooks', () => {
     const open = tabs([CAN.manageInstances], true)
       .filter((tab) => !tab.soon)
       .map((tab) => tab.label)
 
-    expect(open).toEqual(['Branding', 'Agents', 'Webhooks'])
+    expect(open).toEqual(['Applications', 'Branding', 'Agents', 'Webhooks'])
   })
 
   it('keeps the visibility rules the tabs had before they moved', () => {
@@ -47,6 +47,13 @@ describe('the tabs of the Identity space', () => {
     expect(tabs([], true).map((tab) => tab.label)).toContain('Webhooks')
     expect(tabs([CAN.manageInstances], false).map((tab) => tab.label)).not.toContain('Agents')
     expect(tabs([CAN.manageInstances], false).map((tab) => tab.label)).not.toContain('Webhooks')
+  })
+
+  it('links Applications, which is no longer marked Soon', () => {
+    const applications = tabs([], true, 'acme').find((tab) => tab.label === 'Applications')
+
+    expect(applications?.soon).toBeFalsy()
+    expect(applications?.to).toBe('/d/identity/realms/acme/applications')
   })
 
   it('puts the realm in the address of the pages that belong to one', () => {

@@ -39,6 +39,8 @@ import PageWebhooksFeature from './domain/webhooks/pages/feature/page-webhooks-f
 import PageWebhookFormFeature from './domain/webhooks/pages/feature/page-webhook-form-feature'
 import PageWebhookDetailFeature from './domain/webhooks/pages/feature/page-webhook-detail-feature'
 import PageAgentsFeature from './domain/agents/pages/feature/page-agents-feature'
+import PageApplicationsFeature from './domain/applications/pages/feature/page-applications-feature'
+import PageApplicationDetailFeature from './domain/applications/pages/feature/page-application-detail-feature'
 import PageBackupsFeature from './domain/backups/pages/feature/page-backups-feature'
 import PageEstateFeature from './domain/platform/pages/feature/page-estate-feature'
 import PageOverviewFeature from './domain/platform/pages/feature/page-overview-feature'
@@ -223,6 +225,18 @@ const identityRealmIndexRoute = createRoute({
       to: identityAddressFor(deploymentBaseOf(params), 'branding', '', params.realm),
     })
   },
+})
+
+const identityApplicationsRoute = createRoute({
+  getParentRoute: () => identityRealmRoute,
+  path: '/applications',
+  component: PageApplicationsFeature,
+})
+
+const identityApplicationDetailRoute = createRoute({
+  getParentRoute: () => identityRealmRoute,
+  path: '/applications/$applicationId',
+  component: PageApplicationDetailFeature,
 })
 
 // What an end user sees of a realm: login pages, emails. See
@@ -538,6 +552,8 @@ const routeTree = rootRoute.addChildren([
     identityIndexRoute,
     identityRealmRoute.addChildren([
       identityRealmIndexRoute,
+      identityApplicationsRoute,
+      identityApplicationDetailRoute,
       identityBrandingLayoutRoute.addChildren([
         identityBrandingIndexRoute,
         identityUniversalLoginRoute,
