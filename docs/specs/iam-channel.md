@@ -23,6 +23,8 @@ Invariants
   - Every request leaves an audit entry (who, operation, realm, request id, time) and never the result.  [test]
   - Reading needs VIEW_INSTANCES; an operation whose `access()` is Write will need MANAGE_INSTANCES. Only FerrisKey deployments accept requests.  [test]
   - A request id is executed at most once by the operator, even if its action is redelivered.  [test]
+  - A deployment has at most 10 requests not yet delivered or expired; the 11th is refused with 429.  [test]
+  - A search term is personal data: it is kept out of the audit entry and out of the action listings, and lives in the action row only until the action's own retention ends.  [test]
 
 Out of scope
   - Creating, editing, deleting or rotating an application (next slice, with the secret handling of ADR 0013 reused).
@@ -116,8 +118,9 @@ Frozen contracts
   Result of applications.list = { items: [ApplicationSummary], next_page?: u32 }; applications.get = ApplicationDetail.
   ApplicationSummary = { id, client_id, name, enabled, client_type, public_client, service_account_enabled, protocol, registration_source, created_at }.
   ApplicationDetail = ApplicationSummary + { direct_access_grants_enabled, require_pkce, token_exchange_enabled, consent_required, redirect_uris: [string], access_token_lifetime?, refresh_token_lifetime?, id_token_lifetime?, updated_at }. No `secret`.
-  Action `deployment.iam.request` v1 = { request_id, realm, operation, sealing_key, expires_at }.
-  Outcome = { kind: "iam", request_id, phase: "Done" | "Failed", message?, envelope? }.
+  Action `deployment.iam.request` v1, routing key `deployment.iam.request`, payload JSON = { deployment_id, namespace, request_id, realm, operation: { type: "applications.list", page, limit, search? } | { type: "applications.get", id }, sealing_key: <JWK>, expires_at: RFC 3339 }.
+  Outcome JSON, published by Genesis and relayed unchanged by Herald to the report-outcome endpoint = { deployment_id, kind: "iam", request_id, phase: "Done" | "Failed", message?, envelope? }; `phase`, `message` and `deployment_id` are the fields the endpoint already has, `request_id` and `envelope` are new. At-least-once: the control plane ignores an outcome for a request already Done, Failed or Delivered.
+  Envelope details: base64url without padding everywhere; `ct` = AES-256-GCM ciphertext followed by its 16-byte tag (what both WebCrypto and the Rust `aes-gcm` crate produce); RSA-OAEP with SHA-256 for both the hash and MGF1, empty label; AAD = the request id as its lowercase hyphenated UUID text, UTF-8.
   CRD: spec.iamRequests[] { requestId, realm, operation (JSON string), sealingKey (JSON string), expiresAt }; status.iam.requests[] { requestId, phase, message? }. Secret `<instance>-iam-results`, key `<requestId>` = envelope JSON.
 
 Risks / open questions
