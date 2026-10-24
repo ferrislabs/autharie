@@ -1091,7 +1091,7 @@
           "dataplanes"
         ],
         "summary": "report what a data plane did with a deployment",
-        "description": "Records an outcome the data plane observed directly. This is the only path by which the control plane learns what happened to a deployment after it was handed over. With `kind: webhooks` it records the state of the deployment's webhooks, new signing secrets, its realms and the result of rotation and retry requests instead; with `kind: deployment.agents` it records the status of the deployment's agents and the phase of each policy; with `kind: smtp` it records the state of one realm's email provider; with `kind: portal_theme` it records the state of one realm's login theme. A report older than the one already applied changes nothing.",
+        "description": "Records an outcome the data plane observed directly. This is the only path by which the control plane learns what happened to a deployment after it was handed over. With `kind: webhooks` it records the state of the deployment's webhooks, new signing secrets, its realms and the result of rotation and retry requests instead; with `kind: deployment.agents` it records the status of the deployment's agents and the phase of each policy; with `kind: smtp` it records the state of one realm's email provider; with `kind: portal_theme` it records the state of one realm's login theme; with `kind: iam` it records the answer to one IAM request: `request_id`, `phase` (`Done` with the sealed `envelope`, or `Failed` with a `message`); an answer to a request already answered is ignored. A report older than the one already applied changes nothing.",
         "operationId": "report_outcome_handler",
         "parameters": [
           {
@@ -8130,6 +8130,259 @@
           },
           "404": {
             "description": "No such deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/organisations/{organisation_id}/deployments/{deployment_id}/iam/requests": {
+      "post": {
+        "tags": [
+          "iam"
+        ],
+        "summary": "ask the data plane for one operation on one realm",
+        "description": "Records one named operation (`applications.list`, `applications.get`) on one realm of a FerrisKey deployment and hands it to the data plane, which runs it and reports the answer sealed to `sealing_key`, a public RSA JWK (RSA-OAEP-256, at least 2048 bits) the browser generated for this request. Poll `GET /iam/requests/{request_id}` for the answer. The request is audited (who, operation type, realm, request id), never its parameters or its result. A deployment holds at most 10 requests not yet collected or expired. Requires VIEW_INSTANCES.",
+        "operationId": "create_iam_request_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IamRequestBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IamRequestAccepted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An unknown operation, a field, the realm or the sealing key is not valid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not view this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The deployment is not a FerrisKey one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The deployment already holds 10 requests not yet collected or expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/organisations/{organisation_id}/deployments/{deployment_id}/iam/requests/{request_id}": {
+      "get": {
+        "tags": [
+          "iam"
+        ],
+        "summary": "collect the sealed answer of an IAM request",
+        "description": "202 while the data plane has not answered; 200 with the envelope the first time it is ready, then 410; 404 when the request is unknown, was asked by somebody else, or expired (5 minutes after it was asked); 422 with the data plane's message when the request failed. The envelope is `{ v, alg, ek, iv, ct }`: an AES-256-GCM ciphertext (AAD = the request id) whose key is sealed with RSA-OAEP-256 to the key sent with the request, base64url without padding. Requires VIEW_INSTANCES.",
+        "operationId": "get_iam_request_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The sealed answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IamResultResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Not ready yet",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IamResultResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not view this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown or expired request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Already collected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request failed; `message` says why",
             "content": {
               "application/json": {
                 "schema": {
@@ -15662,6 +15915,25 @@
           {
             "type": "object",
             "required": [
+              "TooManyRequests"
+            ],
+            "properties": {
+              "TooManyRequests": {
+                "type": "object",
+                "required": [
+                  "reason"
+                ],
+                "properties": {
+                  "reason": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
               "Unprocessable"
             ],
             "properties": {
@@ -18025,6 +18297,36 @@
           "unreadable"
         ]
       },
+      "Envelope": {
+        "type": "object",
+        "required": [
+          "v",
+          "alg",
+          "ek",
+          "iv",
+          "ct"
+        ],
+        "properties": {
+          "alg": {
+            "type": "string"
+          },
+          "ct": {
+            "type": "string"
+          },
+          "ek": {
+            "type": "string"
+          },
+          "iv": {
+            "type": "string"
+          },
+          "v": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
       "Environment": {
         "type": "string",
         "enum": [
@@ -18661,6 +18963,160 @@
           "compliance",
           "delegated_admin"
         ]
+      },
+      "IamOperationBody": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "limit": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int32",
+                "example": 25,
+                "maximum": 50,
+                "minimum": 1
+              },
+              "page": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int32",
+                "example": 1,
+                "minimum": 1
+              },
+              "search": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "applications.list"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "type"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "applications.get"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "IamPending": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "IamRequestAccepted": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/IamRequestData"
+          }
+        }
+      },
+      "IamRequestBody": {
+        "type": "object",
+        "required": [
+          "realm",
+          "operation",
+          "sealing_key"
+        ],
+        "properties": {
+          "operation": {
+            "$ref": "#/components/schemas/IamOperationBody"
+          },
+          "realm": {
+            "type": "string",
+            "example": "master"
+          },
+          "sealing_key": {
+            "$ref": "#/components/schemas/SealingJwk"
+          }
+        },
+        "additionalProperties": false
+      },
+      "IamRequestData": {
+        "type": "object",
+        "required": [
+          "request_id"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "IamResultResponse": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "data"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/IamSealedResult"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "data"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/IamPending"
+              }
+            }
+          }
+        ]
+      },
+      "IamSealedResult": {
+        "type": "object",
+        "required": [
+          "envelope"
+        ],
+        "properties": {
+          "envelope": {
+            "$ref": "#/components/schemas/Envelope"
+          }
+        }
       },
       "IamSettings": {
         "type": "object",
@@ -20668,6 +21124,12 @@
             "format": "uuid",
             "description": "Must be the deployment of the route when sent."
           },
+          "envelope": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "gateway_client_ready": {
             "type": "boolean",
             "description": "Whether the gateway's client exists in the realm. Only with `kind: deployment.agents`."
@@ -20737,6 +21199,13 @@
               "null"
             ],
             "description": "Why the data plane gave up, sent with `failed` when it knows."
+          },
+          "request_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
           },
           "requests": {
             "type": "array",

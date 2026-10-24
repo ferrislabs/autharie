@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE iam_requests\n            SET phase = $4, envelope = $5, message = $6\n            WHERE request_id = $1\n              AND deployment_id = $2\n              AND phase = 'pending'\n              AND expires_at > $3\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Timestamptz",
+        "Text",
+        "Jsonb",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "bb5da0302a8ba05127e816d4677b7852e9b60966b6b77428d2a65b6068559240"
+}

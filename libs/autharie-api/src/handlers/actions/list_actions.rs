@@ -2,6 +2,7 @@ use autharie_auth::Identity;
 use autharie_core::{
     action::{Action, ActionCursor, commands::FetchActionsCommand},
     deployments::ports::DeploymentService,
+    iam::redacted as redacted_iam,
     organisation::OrganisationId,
     smtp::redacted as redacted_smtp,
     webhooks::redacted,
@@ -80,7 +81,7 @@ pub async fn list_actions_handler(
         data: batch
             .actions
             .into_iter()
-            .map(|action| redacted_smtp(redacted(action)))
+            .map(|action| redacted_iam(redacted_smtp(redacted(action))))
             .collect(),
         next_cursor: batch.next_cursor.map(|cursor| cursor.0),
     }))
