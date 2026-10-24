@@ -106,11 +106,37 @@ impl AgentsOutcome {
     }
 }
 
+/// Features whose outcome Herald only carries: it reads the kind and the
+/// deployment, and hands the body to the control plane whole.
+pub const RELAYED_KINDS: [&str; 3] = ["smtp", "portal_theme", "iam"];
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct RelayedOutcome {
+    deployment_id: Uuid,
+    kind: String,
+    body: serde_json::Value,
+}
+
+impl RelayedOutcome {
+    pub fn deployment_id(&self) -> Uuid {
+        self.deployment_id
+    }
+
+    pub fn kind(&self) -> &str {
+        &self.kind
+    }
+
+    pub fn body(&self) -> &serde_json::Value {
+        &self.body
+    }
+}
+
 #[derive(Clone, PartialEq, Eq)]
 pub enum InboundOutcome {
     Report(DeploymentOutcomeReport),
     Webhooks(WebhooksOutcome),
     Agents(AgentsOutcome),
+    Relayed(RelayedOutcome),
 }
 
 impl From<DeploymentOutcomeReport> for InboundOutcome {
@@ -125,6 +151,7 @@ impl InboundOutcome {
             Self::Report(report) => report.deployment_id,
             Self::Webhooks(outcome) => outcome.deployment_id,
             Self::Agents(outcome) => outcome.deployment_id,
+            Self::Relayed(outcome) => outcome.deployment_id,
         }
     }
 
@@ -135,8 +162,9 @@ impl InboundOutcome {
         let kind = value.get("kind").and_then(serde_json::Value::as_str);
         let is_webhooks = kind == Some(WEBHOOKS_KIND);
         let is_agents = kind == Some(AGENTS_KIND);
+        let relayed = kind.filter(|kind| RELAYED_KINDS.contains(kind));
 
-        if !is_webhooks && !is_agents {
+        if !is_webhooks && !is_agents && relayed.is_none() {
             return serde_json::from_value(value)
                 .map(Self::Report)
                 .map_err(|err| err.to_string());
@@ -149,10 +177,23 @@ impl InboundOutcome {
             .ok_or_else(|| {
                 if is_webhooks {
                     "a webhooks outcome without a valid deployment_id".to_string()
-                } else {
+                } else if is_agents {
                     "an agents outcome without a valid deployment_id".to_string()
+                } else {
+                    format!(
+                        "a {} outcome without a valid deployment_id",
+                        relayed.unwrap_or_default()
+                    )
                 }
             })?;
+
+        if let Some(kind) = relayed {
+            return Ok(Self::Relayed(RelayedOutcome {
+                deployment_id,
+                kind: kind.to_string(),
+                body: value,
+            }));
+        }
 
         if is_webhooks {
             Ok(Self::Webhooks(WebhooksOutcome {
@@ -293,5 +334,50 @@ mod tests {
     #[test]
     fn a_message_that_is_not_json_is_refused() {
         assert!(InboundOutcome::parse(b"{nope").is_err());
+    }
+
+    #[test]
+    fn an_smtp_portal_theme_or_iam_outcome_is_kept_whole() {
+        for kind in RELAYED_KINDS {
+            let payload = json!({
+                "deployment_id": DEPLOYMENT,
+                "kind": kind,
+                "phase": "Done",
+                "request_id": "55555555-5555-5555-5555-555555555555",
+            });
+
+            let parsed = InboundOutcome::parse(payload.to_string().as_bytes()).expect("parses");
+
+            let InboundOutcome::Relayed(outcome) = parsed else {
+                panic!("expected a relayed outcome for {kind}");
+            };
+            assert_eq!(outcome.kind(), kind);
+            assert_eq!(
+                outcome.deployment_id(),
+                Uuid::parse_str(DEPLOYMENT).unwrap()
+            );
+            assert_eq!(outcome.body(), &payload);
+        }
+    }
+
+    #[test]
+    fn a_relayed_outcome_without_a_valid_deployment_is_refused_by_name() {
+        let payload = json!({ "kind": "iam", "phase": "Done" });
+
+        let error = InboundOutcome::parse(payload.to_string().as_bytes())
+            .err()
+            .expect("refused");
+
+        assert!(error.contains("iam outcome"), "{error}");
+    }
+
+    #[test]
+    fn a_kind_nobody_relays_is_still_read_as_a_lifecycle_report() {
+        let payload =
+            json!({ "deployment_id": DEPLOYMENT, "kind": "unknown", "outcome": "running" });
+
+        let parsed = InboundOutcome::parse(payload.to_string().as_bytes()).expect("parses");
+
+        assert!(matches!(parsed, InboundOutcome::Report(_)));
     }
 }
