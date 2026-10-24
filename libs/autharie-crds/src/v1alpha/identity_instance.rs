@@ -118,6 +118,40 @@ pub struct IdentityInstanceSpec {
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub portal_themes: Vec<PortalThemeSpec>,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub iam_requests: Vec<IamRequestSpec>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct IamRequestSpec {
+    pub request_id: String,
+
+    pub realm: String,
+
+    pub operation: String,
+
+    pub sealing_key: String,
+
+    pub expires_at: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum IamRequestPhase {
+    Done,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct IamRequestStatus {
+    pub request_id: String,
+
+    pub phase: IamRequestPhase,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -781,7 +815,8 @@ pub enum IamPhase {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct IamStatus {
-    pub phase: IamPhase,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase: Option<IamPhase>,
 
     /// Why the settings are pending or were refused.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -794,6 +829,9 @@ pub struct IamStatus {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub observed_at: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requests: Vec<IamRequestStatus>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1021,6 +1059,7 @@ mod tests {
             agents: None,
             smtp: Vec::new(),
             portal_themes: Vec::new(),
+            iam_requests: Vec::new(),
         };
 
         assert_eq!(spec.provider, IdentityProvider::Keycloak);
@@ -1554,6 +1593,90 @@ mod tests {
     }
 
     #[test]
+    fn a_spec_without_iam_requests_stays_valid_and_serialises_without_them() {
+        let spec: IdentityInstanceSpec = serde_json::from_value(spec_json()).unwrap();
+
+        assert!(spec.iam_requests.is_empty());
+        assert!(
+            serde_json::to_value(&spec)
+                .unwrap()
+                .get("iamRequests")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn iam_requests_round_trip_in_the_frozen_shape() {
+        let mut value = spec_json();
+        value["iamRequests"] = json!([{
+            "requestId": "0b9ad3c4-4a5f-4c3b-8d57-0b2d6d9e1a11",
+            "realm": "master",
+            "operation": "{\"type\":\"applications.list\",\"page\":1,\"limit\":25}",
+            "sealingKey": "{\"kty\":\"RSA\",\"n\":\"AQAB\",\"e\":\"AQAB\",\"alg\":\"RSA-OAEP-256\"}",
+            "expiresAt": "2026-10-24T12:05:00Z"
+        }]);
+
+        let spec: IdentityInstanceSpec = serde_json::from_value(value.clone()).unwrap();
+
+        assert_eq!(spec.iam_requests[0].realm, "master");
+        assert!(spec.iam_requests[0].operation.contains("applications.list"));
+        assert_eq!(spec.iam_requests[0].expires_at, "2026-10-24T12:05:00Z");
+        assert_eq!(
+            serde_json::to_value(&spec).unwrap()["iamRequests"],
+            value["iamRequests"]
+        );
+    }
+
+    #[test]
+    fn iam_request_status_lives_under_status_iam_and_needs_no_branding_phase() {
+        use crate::v1alpha::identity_instance::{IamRequestPhase, IamStatus};
+
+        let status: IdentityInstanceStatus = serde_json::from_value(json!({
+            "iam": { "requests": [
+                { "requestId": "r1", "phase": "Done" },
+                { "requestId": "r2", "phase": "Failed", "message": "result too large" }
+            ] }
+        }))
+        .unwrap();
+
+        let iam: &IamStatus = status.iam.as_ref().unwrap();
+        assert_eq!(iam.phase, None);
+        assert_eq!(iam.requests[0].phase, IamRequestPhase::Done);
+        assert_eq!(iam.requests[1].phase, IamRequestPhase::Failed);
+        assert_eq!(iam.requests[1].message.as_deref(), Some("result too large"));
+        let back = serde_json::to_value(&status).unwrap();
+        assert_eq!(
+            back["iam"],
+            json!({ "requests": [
+                { "requestId": "r1", "phase": "Done" },
+                { "requestId": "r2", "phase": "Failed", "message": "result too large" }
+            ] })
+        );
+    }
+
+    #[test]
+    fn the_schema_asks_for_no_branding_phase_and_keeps_the_request_ids_required() {
+        use kube::CustomResourceExt;
+
+        let crd = serde_json::to_value(IdentityInstance::crd()).unwrap();
+        let schema = &crd["spec"]["versions"][0]["schema"]["openAPIV3Schema"]["properties"];
+        let iam = &schema["status"]["properties"]["iam"];
+        let required = iam["required"].as_array().cloned().unwrap_or_default();
+        assert!(!required.contains(&json!("phase")), "{iam}");
+
+        let request = &schema["spec"]["properties"]["iamRequests"]["items"];
+        for field in ["requestId", "realm", "operation", "sealingKey", "expiresAt"] {
+            assert!(
+                request["required"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!(field)),
+                "{field}"
+            );
+        }
+    }
+
+    #[test]
     fn a_spec_without_portal_themes_stays_valid_and_serialises_without_them() {
         let spec: IdentityInstanceSpec = serde_json::from_value(spec_json()).unwrap();
 
@@ -1836,6 +1959,7 @@ mod tests {
                 agents: None,
                 smtp: Vec::new(),
                 portal_themes: Vec::new(),
+                iam_requests: Vec::new(),
                 restore: None,
                 iam: None,
                 organisation_id: "org-123".to_string(),
@@ -1902,6 +2026,7 @@ mod tests {
                 agents: None,
                 smtp: Vec::new(),
                 portal_themes: Vec::new(),
+                iam_requests: Vec::new(),
                 restore: None,
                 iam: None,
                 organisation_id: "org-123".to_string(),
@@ -1976,10 +2101,11 @@ mod tests {
 
         let status = IdentityInstanceStatus {
             iam: Some(IamStatus {
-                phase: IamPhase::Applied,
+                phase: Some(IamPhase::Applied),
                 message: None,
                 applied: Some("{}".to_string()),
                 observed_at: Some("2026-01-01T00:00:00Z".to_string()),
+                requests: Vec::new(),
             }),
             ..Default::default()
         };

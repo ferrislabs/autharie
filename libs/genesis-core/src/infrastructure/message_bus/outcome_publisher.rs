@@ -4,14 +4,15 @@ use serde_json::to_vec;
 use tracing::info;
 
 use crate::domain::entities::agents_outcome::AgentsOutcomeReport;
+use crate::domain::entities::iam_outcome::IamOutcomeReport;
 use crate::domain::entities::outcome::DeploymentOutcomeReport;
 use crate::domain::entities::portal_theme_outcome::PortalThemeOutcomeReport;
 use crate::domain::entities::smtp_outcome::SmtpOutcomeReport;
 use crate::domain::entities::webhooks_outcome::WebhooksOutcomeReport;
 use crate::domain::error::GenesisError;
 use crate::domain::ports::{
-    AgentsOutcomePublisher, BoxFuture, OutcomePublisher, PortalThemeOutcomePublisher,
-    SmtpOutcomePublisher, WebhookOutcomePublisher,
+    AgentsOutcomePublisher, BoxFuture, IamOutcomePublisher, OutcomePublisher,
+    PortalThemeOutcomePublisher, SmtpOutcomePublisher, WebhookOutcomePublisher,
 };
 
 /// Publishes outcomes to the outcomes topic, where every Herald reads them.
@@ -166,6 +167,23 @@ impl PortalThemeOutcomePublisher for IggyOutcomePublisher {
             revision = report.revision,
             realm = %report.realm,
             "reporting portal theme outcome"
+        );
+
+        self.send(payload).await
+    }
+}
+
+impl IamOutcomePublisher for IggyOutcomePublisher {
+    async fn publish_iam<'a>(&'a self, report: &'a IamOutcomeReport) -> Result<(), GenesisError> {
+        let payload = to_vec(report).map_err(|e| GenesisError::MessageBus {
+            message: format!("failed to serialise outcome: {e}"),
+        })?;
+
+        info!(
+            deployment_id = %report.deployment_id,
+            request_id = %report.request_id,
+            phase = ?report.phase,
+            "reporting iam outcome"
         );
 
         self.send(payload).await

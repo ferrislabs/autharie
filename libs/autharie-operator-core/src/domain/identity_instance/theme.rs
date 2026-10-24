@@ -110,10 +110,13 @@ pub fn outcome_status(
         Err(ThemeError::Rejected { message }) => (IamPhase::Failed, Some(message), kept),
     };
     IamStatus {
-        phase,
+        phase: Some(phase),
         message,
         applied,
         observed_at: Some(observed_at),
+        requests: previous
+            .map(|status| status.requests.clone())
+            .unwrap_or_default(),
     }
 }
 
@@ -265,13 +268,14 @@ mod tests {
     #[test]
     fn success_records_the_marker_and_clears_the_message() {
         let previous = IamStatus {
-            phase: IamPhase::Pending,
+            phase: Some(IamPhase::Pending),
             message: Some("later".into()),
             applied: None,
             observed_at: None,
+            requests: Vec::new(),
         };
         let status = outcome_status(Some(&previous), Some("m".into()), Ok(()), "t".into());
-        assert_eq!(status.phase, IamPhase::Applied);
+        assert_eq!(status.phase, Some(IamPhase::Applied));
         assert_eq!(status.message, None);
         assert_eq!(status.applied.as_deref(), Some("m"));
     }
@@ -279,23 +283,25 @@ mod tests {
     #[test]
     fn restoring_the_default_clears_the_marker() {
         let previous = IamStatus {
-            phase: IamPhase::Applied,
+            phase: Some(IamPhase::Applied),
             message: None,
             applied: Some("m".into()),
             observed_at: None,
+            requests: Vec::new(),
         };
         let status = outcome_status(Some(&previous), None, Ok(()), "t".into());
-        assert_eq!(status.phase, IamPhase::Applied);
+        assert_eq!(status.phase, Some(IamPhase::Applied));
         assert_eq!(status.applied, None);
     }
 
     #[test]
     fn retry_is_pending_and_keeps_what_is_live() {
         let previous = IamStatus {
-            phase: IamPhase::Applied,
+            phase: Some(IamPhase::Applied),
             message: None,
             applied: Some("old".into()),
             observed_at: None,
+            requests: Vec::new(),
         };
         let status = outcome_status(
             Some(&previous),
@@ -305,7 +311,7 @@ mod tests {
             }),
             "t".into(),
         );
-        assert_eq!(status.phase, IamPhase::Pending);
+        assert_eq!(status.phase, Some(IamPhase::Pending));
         assert_eq!(status.message.as_deref(), Some("not ready"));
         assert_eq!(status.applied.as_deref(), Some("old"));
     }
@@ -320,7 +326,7 @@ mod tests {
             }),
             "t".into(),
         );
-        assert_eq!(status.phase, IamPhase::Failed);
+        assert_eq!(status.phase, Some(IamPhase::Failed));
         assert_eq!(status.message.as_deref(), Some("bad color"));
         assert_eq!(status.applied, None);
     }

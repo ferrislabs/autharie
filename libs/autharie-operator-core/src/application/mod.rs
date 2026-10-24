@@ -66,6 +66,7 @@ mod tests {
                 agents: None,
                 smtp: Vec::new(),
                 portal_themes: Vec::new(),
+                iam_requests: Vec::new(),
                 restore: None,
                 organisation_id: "org-1".to_string(),
                 provider: IdentityProvider::Keycloak,
