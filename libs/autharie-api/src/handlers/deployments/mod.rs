@@ -44,6 +44,10 @@ use crate::{
         delete_deployment::{__path_delete_deployment_handler, delete_deployment_handler},
         features::{__path_get_deployment_features_handler, get_deployment_features_handler},
         get_deployment::{__path_get_deployment_handler, get_deployment_handler},
+        iam::{
+            __path_create_iam_request_handler, __path_get_iam_request_handler,
+            create_iam_request_handler, get_iam_request_handler,
+        },
         iam_settings::{
             __path_get_iam_settings_handler, __path_set_iam_settings_handler,
             get_iam_settings_handler, set_iam_settings_handler,
@@ -106,6 +110,7 @@ pub mod delete_deployment;
 pub mod deployment_view;
 pub mod features;
 pub mod get_deployment;
+pub mod iam;
 pub mod iam_settings;
 pub mod list_deployments;
 pub mod network_access;
@@ -185,6 +190,8 @@ pub mod webhooks;
         put_smtp_handler,
         delete_smtp_handler,
         list_branding_realms_handler,
+        create_iam_request_handler,
+        get_iam_request_handler,
         list_themes_handler,
         create_theme_handler,
         update_theme_handler,
@@ -259,6 +266,8 @@ pub fn deployment_routes(app_state: AppState) -> Router<AppState> {
         .typed_put(put_smtp_handler)
         .typed_delete(delete_smtp_handler)
         .typed_get(list_branding_realms_handler)
+        .typed_post(create_iam_request_handler)
+        .typed_get(get_iam_request_handler)
         .typed_get(list_themes_handler)
         .typed_post(create_theme_handler)
         .typed_put(update_theme_handler)

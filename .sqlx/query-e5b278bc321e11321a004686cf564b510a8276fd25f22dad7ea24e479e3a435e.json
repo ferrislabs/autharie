@@ -1,0 +1,72 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT request_id, deployment_id, realm, operation, actor, phase, message,\n                   created_at, expires_at\n            FROM iam_requests\n            WHERE request_id = $1 AND deployment_id = $2 AND expires_at > $3\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "request_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "deployment_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "realm",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "operation",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "actor",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "phase",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "message",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "expires_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "e5b278bc321e11321a004686cf564b510a8276fd25f22dad7ea24e479e3a435e"
+}

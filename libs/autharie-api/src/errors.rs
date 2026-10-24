@@ -1,6 +1,6 @@
 use autharie_core::{
     CoreError, agents::AgentError, backups::keys::KeyError, billing::BillingError,
-    dataplane::credential::CredentialError, smtp::SmtpError, themes::ThemeError,
+    dataplane::credential::CredentialError, iam::IamError, smtp::SmtpError, themes::ThemeError,
     webhooks::WebhookError,
 };
 use axum::{Json, http::StatusCode, response::IntoResponse};
@@ -40,6 +40,9 @@ pub enum ApiError {
 
     #[error("{reason}")]
     Gone { reason: String },
+
+    #[error("{reason}")]
+    TooManyRequests { reason: String },
 
     #[error("{reason}")]
     Unprocessable { reason: String },
@@ -146,6 +149,15 @@ impl IntoResponse for ApiError {
             ApiError::Gone { reason } => (
                 StatusCode::GONE,
                 Json(ApiErrorResponse::new("E_GONE", StatusCode::GONE, reason)),
+            )
+                .into_response(),
+            ApiError::TooManyRequests { reason } => (
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(ApiErrorResponse::new(
+                    "E_TOO_MANY_REQUESTS",
+                    StatusCode::TOO_MANY_REQUESTS,
+                    reason,
+                )),
             )
                 .into_response(),
             ApiError::Unprocessable { reason } => (
@@ -458,6 +470,24 @@ impl From<CoreError> for ApiError {
             CoreError::Smtp(SmtpError::UnsupportedKind) => ApiError::Conflict {
                 reason: value.to_string(),
             },
+            CoreError::Iam(IamError::Invalid { .. }) => ApiError::BadRequest {
+                reason: value.to_string(),
+            },
+            CoreError::Iam(IamError::NotFound { .. }) => ApiError::NotFound {
+                reason: value.to_string(),
+            },
+            CoreError::Iam(IamError::Gone { .. }) => ApiError::Gone {
+                reason: value.to_string(),
+            },
+            CoreError::Iam(IamError::Failed { .. }) => ApiError::Unprocessable {
+                reason: value.to_string(),
+            },
+            CoreError::Iam(IamError::UnsupportedKind) => ApiError::Conflict {
+                reason: value.to_string(),
+            },
+            CoreError::Iam(IamError::TooManyRequests { .. }) => ApiError::TooManyRequests {
+                reason: value.to_string(),
+            },
             CoreError::Theme(ThemeError::Invalid { .. }) => ApiError::BadRequest {
                 reason: value.to_string(),
             },
@@ -603,6 +633,37 @@ mod tests {
             StatusCode::NOT_FOUND
         );
         assert_eq!(status_of(SmtpError::UnsupportedKind), StatusCode::CONFLICT);
+    }
+
+    #[test]
+    fn the_iam_refusals_get_the_status_that_means_something() {
+        let status_of = |error: IamError| {
+            ApiError::from(CoreError::Iam(error))
+                .into_response()
+                .status()
+        };
+        let request_id = uuid::Uuid::nil();
+
+        assert_eq!(
+            status_of(IamError::invalid("bad realm")),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(status_of(IamError::UnsupportedKind), StatusCode::CONFLICT);
+        assert_eq!(
+            status_of(IamError::TooManyRequests { max: 10 }),
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        assert_eq!(
+            status_of(IamError::NotFound { request_id }),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(status_of(IamError::Gone { request_id }), StatusCode::GONE);
+        assert_eq!(
+            status_of(IamError::Failed {
+                message: "too large".to_string()
+            }),
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
     }
 
     #[test]
