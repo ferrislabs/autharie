@@ -34,7 +34,7 @@ fn main() {
     };
 
     for (index, crd) in crds.iter().enumerate() {
-        let yaml = serde_yaml::to_string(crd).expect("Failed to serialize CRD to YAML");
+        let yaml = autharie_crds::yaml::crd_to_yaml(crd).expect("Failed to serialize CRD to YAML");
         print!("{}", yaml);
         if index + 1 < crds.len() {
             println!("---");

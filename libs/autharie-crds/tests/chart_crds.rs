@@ -1,10 +1,13 @@
 use std::{fs, path::PathBuf};
 
-use autharie_crds::v1alpha::{
-    identity_dataplane_upgrade::IdentityDataplaneUpgrade,
-    identity_instance::IdentityInstance,
-    identity_instance_backup::{IdentityInstanceBackup, IdentityInstanceBackupSchedule},
-    identity_instance_upgrade::IdentityInstanceUpgrade,
+use autharie_crds::{
+    v1alpha::{
+        identity_dataplane_upgrade::IdentityDataplaneUpgrade,
+        identity_instance::IdentityInstance,
+        identity_instance_backup::{IdentityInstanceBackup, IdentityInstanceBackupSchedule},
+        identity_instance_upgrade::IdentityInstanceUpgrade,
+    },
+    yaml::crd_to_yaml,
 };
 use k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
 use kube::CustomResourceExt;
@@ -12,7 +15,7 @@ use kube::CustomResourceExt;
 fn render(crds: &[CustomResourceDefinition]) -> String {
     let mut out = String::new();
     for (index, crd) in crds.iter().enumerate() {
-        out.push_str(&serde_yaml::to_string(crd).expect("a CRD serialises"));
+        out.push_str(&crd_to_yaml(crd).expect("a CRD serialises"));
         if index + 1 < crds.len() {
             out.push_str("---\n");
         }
