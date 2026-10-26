@@ -128,6 +128,13 @@ rustfs:
   image:
     repository: rustfs/rustfs
     tag: latest
+  # The image runs as uid/gid 10001, and a freshly provisioned volume belongs
+  # to root: without fsGroup the server exits at startup with "Permission
+  # denied" on /data. Storage that is already writable by anyone, such as a
+  # local-path volume, never showed it.
+  podSecurityContext:
+    fsGroup: 10001
+    fsGroupChangePolicy: OnRootMismatch
   storage:
     size: 10Gi
     storageClass: ""

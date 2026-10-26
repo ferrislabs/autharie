@@ -25,6 +25,10 @@ spec:
         {{- include "autharie-control-plane.labels" . | nindent 8 }}
         app.kubernetes.io/component: rustfs
     spec:
+      {{- with .Values.rustfs.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: rustfs
           image: "{{ .Values.rustfs.image.repository }}:{{ .Values.rustfs.image.tag }}"
