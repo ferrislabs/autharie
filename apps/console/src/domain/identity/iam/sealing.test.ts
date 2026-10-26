@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { toBase64Url } from '@/domain/agents/credential-crypto'
-import fixture from '../../../../../../libs/autharie-operator-core/tests/fixtures/iam-envelope.json'
+import fixture from './fixtures/iam-envelope.json'
 import { generateSealingKeyPair, openEnvelope } from './sealing'
 
 const REQUEST_A = '6f1c2f0e-3b1c-4d8e-9a55-0d6a7f3c9b01'

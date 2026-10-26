@@ -170,3 +170,16 @@ fn a_failure_keeps_its_reason_all_the_way_to_the_control_plane() {
         }
     );
 }
+
+#[test]
+fn the_console_tests_open_the_same_fixture_the_operator_produced() {
+    const CONSOLE_COPY: &str =
+        include_str!("../../../apps/console/src/domain/identity/iam/fixtures/iam-envelope.json");
+
+    assert_eq!(
+        CONSOLE_COPY, FIXTURE,
+        "apps/console/src/domain/identity/iam/fixtures/iam-envelope.json must be a byte-for-byte \
+         copy of libs/autharie-operator-core/tests/fixtures/iam-envelope.json: the console image \
+         is built from apps/console alone and cannot reach the original"
+    );
+}
