@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import fixture from '../../../../../../libs/autharie-operator-core/tests/fixtures/iam-envelope.json'
+import fixture from '@/domain/identity/iam/fixtures/iam-envelope.json'
 import { parseApplicationDetail, parseApplicationList } from './application-result'
 
 const SUMMARY = {
