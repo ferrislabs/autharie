@@ -5,6 +5,8 @@ ignore = [
     "RUSTSEC-2026-0368",
     "RUSTSEC-2026-0369",
     "RUSTSEC-2026-0381",
+    "RUSTSEC-2026-0429",
+    "RUSTSEC-2026-0459",
 ]
 # RUSTSEC-2023-0071 (rsa, Marvin timing attack, no fixed release)
 # Reason: the attack recovers a private key by timing decryptions or
@@ -27,3 +29,15 @@ ignore = [
 # flagged although the roots it serves are fixed. The ignore is by ID, so it
 # would also hide a 1.x below 1.0.10: the lock holds 1.0.10 and must not go
 # back. Remove once sqlx depends on webpki-roots 1.x directly.
+#
+# RUSTSEC-2026-0429 (zip 3.0.0, fixed in 9.0.0)
+# Reason: same zip, same build-only use by utoipa-swagger-ui as the three
+# advisories above. The abort needs a crafted symlink entry in the archive the
+# build script extracts, and no zip runs in a binary. Remove with them.
+#
+# RUSTSEC-2026-0459 (libsqlite3-sys 0.30.1, fixed in 0.39.0)
+# Reason: the crate is in Cargo.lock only because sqlx 0.8 lists sqlx-sqlite
+# as an optional dependency. We enable the postgres feature alone, so
+# `cargo tree -i libsqlite3-sys` finds nothing: it is never compiled, in any
+# binary or build script. sqlx 0.8 pins ^0.30, so 0.39 cannot be reached.
+# Remove once sqlx stops locking sqlite, or if a sqlite feature is ever enabled.
