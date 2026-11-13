@@ -61,6 +61,7 @@ use crate::{
             __path_start_deployment_handler, __path_stop_deployment_handler,
             start_deployment_handler, stop_deployment_handler,
         },
+        quotas::{__path_get_deployment_quotas_handler, get_deployment_quotas_handler},
         read_logs::{__path_read_logs_handler, read_logs_handler},
         resize_cluster::{__path_resize_cluster_handler, resize_cluster_handler},
         smtp::{
@@ -115,6 +116,7 @@ pub mod iam_settings;
 pub mod list_deployments;
 pub mod network_access;
 pub mod power;
+pub mod quotas;
 pub mod read_logs;
 pub mod resize_cluster;
 pub mod smtp;
@@ -155,6 +157,7 @@ pub mod webhooks;
         get_subscription_handler,
         put_subscription_handler,
         get_deployment_features_handler,
+        get_deployment_quotas_handler,
         list_webhooks_handler,
         create_webhook_handler,
         get_webhook_handler,
@@ -230,6 +233,7 @@ pub fn deployment_routes(app_state: AppState) -> Router<AppState> {
         .typed_get(get_subscription_handler)
         .typed_put(put_subscription_handler)
         .typed_get(get_deployment_features_handler)
+        .typed_get(get_deployment_quotas_handler)
         .typed_get(list_webhooks_handler)
         .typed_post(create_webhook_handler)
         .typed_get(get_webhook_handler)

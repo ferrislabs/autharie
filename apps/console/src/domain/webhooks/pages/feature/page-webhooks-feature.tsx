@@ -3,7 +3,7 @@ import { useGetWebhooks } from '@/api/webhook.api'
 import { useDeploymentPath } from '@/domain/deployments/hooks/use-deployment-path'
 import { useMyPermissions } from '@/domain/organisations/hooks/use-my-permissions'
 import { CAN } from '@/domain/organisations/permissions'
-import { selectOrganisations, useOrganisationsStore } from '@/stores/organisations'
+import { useGetDeploymentQuotas } from '@/domain/quotas/hooks/use-quotas'
 import { useWebhookScope } from '../../hooks/use-webhook-scope'
 import { describeLimit } from '../../limit'
 import { PageWebhooks } from '../ui/page-webhooks'
@@ -13,18 +13,18 @@ export default function PageWebhooksFeature() {
   const navigate = useNavigate()
   const deploymentPath = useDeploymentPath()
   const { can } = useMyPermissions()
-  const organisations = useOrganisationsStore(selectOrganisations)
 
   const webhooks = useGetWebhooks(scope)
   const list = webhooks.data?.data ?? []
-  const plan = organisations.find((item) => item.id === scope.organisationId)?.plan
+  const quotas = useGetDeploymentQuotas(scope.organisationId, scope.deploymentId)
+  const quota = quotas.data?.data.find((item) => item.kind === 'webhooks')?.quota
 
   return (
     <PageWebhooks
       isLoading={webhooks.isLoading}
       error={webhooks.error?.message}
       webhooks={list}
-      limit={describeLimit(list.length, plan)}
+      limit={describeLimit(list.length, quota)}
       canManage={can(CAN.manageInstances)}
       onCreate={() => void navigate({ to: deploymentPath('/identity/webhooks/new') })}
       onOpen={(webhookId) => void navigate({ to: deploymentPath(`/identity/webhooks/${webhookId}`) })}

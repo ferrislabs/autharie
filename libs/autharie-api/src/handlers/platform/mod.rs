@@ -33,6 +33,10 @@ use crate::{
             __path_revoke_operator_handler, grant_operator_handler, list_operators_handler,
             revoke_operator_handler,
         },
+        quotas::{
+            __path_list_tenant_quotas_handler, __path_set_tenant_quota_handler,
+            list_tenant_quotas_handler, set_tenant_quota_handler,
+        },
         signals::{__path_list_signals_handler, list_signals_handler},
     },
     router::service_auth_middleware,
@@ -49,6 +53,7 @@ pub mod list_tenants;
 pub mod move_tenant_plan;
 pub mod my_rights;
 pub mod operators;
+pub mod quotas;
 pub mod signals;
 
 #[derive(OpenApi)]
@@ -64,6 +69,8 @@ pub mod signals;
         set_feature_default_handler,
         list_tenant_features_handler,
         set_tenant_feature_handler,
+        list_tenant_quotas_handler,
+        set_tenant_quota_handler,
         list_signals_handler,
         list_tenants_handler,
         get_tenant_handler,
@@ -91,6 +98,8 @@ pub fn platform_routes(app_state: AppState) -> Router<AppState> {
         .typed_put(set_feature_default_handler)
         .typed_get(list_tenant_features_handler)
         .typed_put(set_tenant_feature_handler)
+        .typed_get(list_tenant_quotas_handler)
+        .typed_put(set_tenant_quota_handler)
         .typed_get(list_signals_handler)
         .typed_get(list_tenants_handler)
         .typed_get(get_tenant_handler)

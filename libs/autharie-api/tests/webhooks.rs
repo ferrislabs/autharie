@@ -158,9 +158,10 @@ impl Env {
         sqlx::query(
             "INSERT INTO deployments \
              (id, organisation_id, dataplane_id, name, kind, status, namespace, version, \
-              cpu_millis, memory_mib, storage_gib, created_by, created_at, updated_at, hostname_slug) \
+              cpu_millis, memory_mib, storage_gib, created_by, created_at, updated_at, hostname_slug, \
+              offer) \
              VALUES ($1, $2, $3, 'auth', $6, 'failed', $4, '26.0.0', \
-                     500, 1024, 1, $5, now(), now(), $4)",
+                     500, 1024, 1, $5, now(), now(), $4, $7)",
         )
         .bind(env.deployment)
         .bind(env.organisation)
@@ -168,6 +169,8 @@ impl Env {
         .bind(&tag)
         .bind(env.owner)
         .bind(kind)
+        // The offer a plan buys: the webhook quota follows the offer.
+        .bind(if plan == "free" { "free" } else { "standard" })
         .execute(&env.pool)
         .await
         .expect("a deployment");

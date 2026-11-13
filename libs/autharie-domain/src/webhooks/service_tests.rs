@@ -25,11 +25,9 @@ use crate::{
         Deployment, DeploymentId, DeploymentKind, DeploymentName, DeploymentStatus,
         ports::MockDeploymentRepository,
     },
-    organisation::{
-        Organisation, OrganisationId,
-        ports::MockOrganisationRepository,
-        value_objects::{OrganisationName, OrganisationSlug, Plan},
-    },
+    offers::Offer,
+    organisation::OrganisationId,
+    quotas::fixtures::InMemoryQuotas,
     user::{User, UserId, ports::UserRepository},
     version::Version,
     webhooks::{
@@ -374,7 +372,7 @@ impl Written {
 
 type Service = WebhookServiceImpl<
     MockDeploymentRepository,
-    MockOrganisationRepository,
+    InMemoryQuotas,
     Memory,
     MockActionRepository,
     MockAuditRepository,
@@ -389,26 +387,15 @@ struct World {
     written: Written,
 }
 
-fn world(kind: DeploymentKind, plan: Plan, manage: bool) -> World {
+fn world(kind: DeploymentKind, offer: Offer, manage: bool) -> World {
     let memory = Memory::default();
     let written = Written::default();
 
     let mut deployments = MockDeploymentRepository::new();
     deployments.expect_get_by_id().returning(move |_| {
-        let found = deployment(kind.clone());
+        let mut found = deployment(kind.clone());
+        found.offer = Some(offer);
         Box::pin(async move { Ok(Some(found)) })
-    });
-
-    let mut organisations = MockOrganisationRepository::new();
-    organisations.expect_find_by_id().returning(move |_| {
-        let mut organisation = Organisation::new(
-            OrganisationName::new("acme").unwrap(),
-            OrganisationSlug::new("acme").unwrap(),
-            UserId(Uuid::from_u128(4)),
-            plan,
-        );
-        organisation.id = OrganisationId(ORGANISATION);
-        Box::pin(async move { Ok(Some(organisation)) })
     });
 
     let mut actions = MockActionRepository::new();
@@ -428,7 +415,7 @@ fn world(kind: DeploymentKind, plan: Plan, manage: bool) -> World {
     World {
         service: WebhookServiceImpl::new(
             deployments,
-            organisations,
+            InMemoryQuotas::default(),
             memory.clone(),
             actions,
             audit,
@@ -442,7 +429,7 @@ fn world(kind: DeploymentKind, plan: Plan, manage: bool) -> World {
 }
 
 fn ferriskey() -> World {
-    world(DeploymentKind::Ferriskey, Plan::Starter, true)
+    world(DeploymentKind::Ferriskey, Offer::Standard, true)
 }
 
 fn raw(name: &str) -> RawWebhookInput {
@@ -683,7 +670,7 @@ async fn deleting_an_unknown_webhook_is_not_found() {
 
 #[tokio::test]
 async fn a_free_deployment_cannot_hold_a_sixth_webhook() {
-    let world = world(DeploymentKind::Ferriskey, Plan::Free, true);
+    let world = world(DeploymentKind::Ferriskey, Offer::Free, true);
     for index in 0..5 {
         create(&world, input(&format!("hook-{index}"))).await;
     }
@@ -710,7 +697,7 @@ async fn a_free_deployment_cannot_hold_a_sixth_webhook() {
 
 #[tokio::test]
 async fn a_paid_deployment_holds_twenty_five() {
-    let world = world(DeploymentKind::Ferriskey, Plan::Business, true);
+    let world = world(DeploymentKind::Ferriskey, Offer::Scale, true);
     for index in 0..25 {
         create(&world, input(&format!("hook-{index}"))).await;
     }
@@ -733,7 +720,7 @@ async fn a_paid_deployment_holds_twenty_five() {
 
 #[tokio::test]
 async fn keycloak_has_no_webhooks() {
-    let world = world(DeploymentKind::Keycloak, Plan::Starter, true);
+    let world = world(DeploymentKind::Keycloak, Offer::Standard, true);
 
     let result = world
         .service
@@ -1149,7 +1136,7 @@ async fn retrying_a_delivery_records_the_action() {
 
 #[tokio::test]
 async fn a_viewer_may_list_but_not_change_reveal_rotate_or_retry() {
-    let world = world(DeploymentKind::Ferriskey, Plan::Starter, false);
+    let world = world(DeploymentKind::Ferriskey, Offer::Standard, false);
     let org = OrganisationId(ORGANISATION);
     let dep = DeploymentId(DEPLOYMENT);
     let id = WebhookId(Uuid::new_v4());
