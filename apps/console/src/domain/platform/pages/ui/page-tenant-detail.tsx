@@ -70,8 +70,11 @@ function PlanFact({
   moving: boolean
   onMoveToPlan: (plan: Plan) => void
 }) {
-  const [chosen, setChosen] = useState(plan)
-  const moved = chosen !== plan
+  // The API names a plan "Free", the menu lists "free": without folding the
+  // case no item matches and the trigger renders empty.
+  const current = plan.toLowerCase()
+  const [chosen, setChosen] = useState(current)
+  const moved = chosen !== current
 
   if (!canAct) return <Fact label='Plan' value={plan} />
 
