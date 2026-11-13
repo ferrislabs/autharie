@@ -37,7 +37,6 @@ pub const AGENT_SERVER_UPDATED_AUDIT: &str = "deployment.agent_server.updated";
 pub const AGENT_SERVER_DELETED_AUDIT: &str = "deployment.agent_server.deleted";
 
 pub const DEFAULT_REALM: &str = "master";
-pub const MAX_POLICIES: usize = 100;
 pub const MAX_AUTONOMOUS_AGENTS_PER_DEPLOYMENT: usize = 100;
 pub const MAX_CEDAR_BYTES: usize = 64 * 1024;
 pub const MAX_RULE_BYTES: usize = 64 * 1024;
@@ -55,9 +54,6 @@ pub enum AgentError {
 
     #[error("agents are only available on FerrisKey deployments")]
     UnsupportedKind,
-
-    #[error("a deployment holds at most {max} agent policies")]
-    TooManyPolicies { max: usize },
 
     #[error("the sealing key is refused: {reason}")]
     InvalidSealingKey { reason: String },
@@ -84,9 +80,6 @@ pub enum AgentError {
 
     #[error("MCP server {id} not found")]
     ServerNotFound { id: Uuid },
-
-    #[error("a deployment holds at most {max} MCP servers")]
-    TooManyServers { max: usize },
 
     #[error("the slug '{slug}' is already used by another MCP server of this deployment")]
     ServerSlugTaken { slug: String },

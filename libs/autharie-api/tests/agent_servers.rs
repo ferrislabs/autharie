@@ -414,11 +414,16 @@ async fn an_address_that_is_not_public_https_or_a_reserved_slug_is_a_400_and_not
 }
 
 #[tokio::test]
-async fn a_slug_cannot_be_taken_twice_and_a_deployment_stops_at_ten() {
+async fn a_slug_cannot_be_taken_twice_and_a_standard_deployment_stops_at_ten() {
     let Some(pool) = pool().await else {
         return;
     };
     let estate = Estate::seed(&pool, true).await;
+    sqlx::query("UPDATE deployments SET offer = 'standard' WHERE id = $1")
+        .bind(estate.deployment)
+        .execute(&pool)
+        .await
+        .expect("the deployment is on the standard offer");
     let app = app(&pool, &estate.owner, false);
 
     call(&app, Method::POST, &servers(&estate), Some(crm())).await;

@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { Schemas } from '@/api/api.client'
+import { limited } from '@/domain/quotas/quota'
 import { describeLimit } from '../../limit'
 import { PageWebhooks } from './page-webhooks'
 
@@ -11,7 +12,7 @@ function render(over: Partial<React.ComponentProps<typeof PageWebhooks>> = {}) {
     <PageWebhooks
       isLoading={false}
       webhooks={[]}
-      limit={describeLimit(0, 'Free')}
+      limit={describeLimit(0, limited(5))}
       canManage
       onCreate={noop}
       onOpen={noop}
@@ -43,7 +44,7 @@ describe('the webhooks list', () => {
   })
 
   it('shows host, realm, event count and state of each webhook', () => {
-    const html = render({ webhooks: [webhook], limit: describeLimit(1, 'Free') })
+    const html = render({ webhooks: [webhook], limit: describeLimit(1, limited(5)) })
     expect(html).toContain('hooks.example.com')
     expect(html).toContain('master')
     expect(html).toContain('2 events')
@@ -52,7 +53,7 @@ describe('the webhooks list', () => {
   })
 
   it('disables creation at the limit and says why', () => {
-    const html = render({ webhooks: [webhook], limit: describeLimit(5, 'Free') })
+    const html = render({ webhooks: [webhook], limit: describeLimit(5, limited(5)) })
     expect(html).toContain('5 of 5')
     expect(html).toContain('holds 5 webhooks')
     expect(html).toMatch(/<button[^>]*disabled[^>]*>[^]*?New webhook/)

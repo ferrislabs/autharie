@@ -233,6 +233,7 @@ impl From<CoreError> for ApiError {
                 reason: value.to_string(),
             },
             CoreError::UnknownFeature { .. }
+            | CoreError::UnknownQuota { .. }
             | CoreError::ReleaseNotFound { .. }
             | CoreError::DeploymentNotFound { .. }
             | CoreError::BackupNotFound { .. }
@@ -525,11 +526,9 @@ impl From<CoreError> for ApiError {
             },
             CoreError::Agent(
                 AgentError::UnsupportedKind
-                | AgentError::TooManyPolicies { .. }
                 | AgentError::NotEnabled
                 | AgentError::AddressUnknown
                 | AgentError::TooManyAutonomousAgents { .. }
-                | AgentError::TooManyServers { .. }
                 | AgentError::ServerSlugTaken { .. },
             ) => ApiError::Conflict {
                 reason: value.to_string(),

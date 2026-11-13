@@ -22,6 +22,7 @@ pub mod metrics;
 pub mod offers;
 pub mod organisation;
 pub mod platform;
+pub mod quotas;
 pub mod role;
 pub mod signals;
 pub mod smtp;
@@ -329,6 +330,9 @@ pub enum CoreError {
 
     #[error("'{value}' is not a feature")]
     UnknownFeature { value: String },
+
+    #[error("'{value}' is not a quota")]
+    UnknownQuota { value: String },
 
     #[error("'{value}' is not a platform right")]
     UnknownPlatformRight { value: String },

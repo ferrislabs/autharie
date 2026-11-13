@@ -60,7 +60,7 @@ where
 }
 
 impl AgentService for AutharieService {
-    #[transactional(deployment, organisation, agent, action, audit, user)]
+    #[transactional(deployment, organisation, quota, agent, action, audit, user)]
     async fn get_agents(
         &self,
         identity: Identity,
@@ -77,13 +77,14 @@ impl AgentService for AutharieService {
             InstanceRights {
                 permissions: permissions_in(&tx),
             },
+            quota_repository,
             self.deployment_domain().map(str::to_owned),
         )
         .get_agents(identity, organisation_id, deployment_id)
         .await
     }
 
-    #[transactional(deployment, organisation, agent, action, audit, user)]
+    #[transactional(deployment, organisation, quota, agent, action, audit, user)]
     async fn set_agents(
         &self,
         identity: Identity,
@@ -101,13 +102,14 @@ impl AgentService for AutharieService {
             InstanceRights {
                 permissions: permissions_in(&tx),
             },
+            quota_repository,
             self.deployment_domain().map(str::to_owned),
         )
         .set_agents(identity, organisation_id, deployment_id, input)
         .await
     }
 
-    #[transactional(deployment, organisation, agent, action, audit, user)]
+    #[transactional(deployment, organisation, quota, agent, action, audit, user)]
     async fn list_agent_policies(
         &self,
         identity: Identity,
@@ -124,13 +126,14 @@ impl AgentService for AutharieService {
             InstanceRights {
                 permissions: permissions_in(&tx),
             },
+            quota_repository,
             None,
         )
         .list_agent_policies(identity, organisation_id, deployment_id)
         .await
     }
 
-    #[transactional(deployment, organisation, agent, action, audit, user)]
+    #[transactional(deployment, organisation, quota, agent, action, audit, user)]
     async fn create_agent_policy(
         &self,
         identity: Identity,
@@ -148,13 +151,14 @@ impl AgentService for AutharieService {
             InstanceRights {
                 permissions: permissions_in(&tx),
             },
+            quota_repository,
             None,
         )
         .create_agent_policy(identity, organisation_id, deployment_id, input)
         .await
     }
 
-    #[transactional(deployment, organisation, agent, action, audit, user)]
+    #[transactional(deployment, organisation, quota, agent, action, audit, user)]
     async fn update_agent_policy(
         &self,
         identity: Identity,
@@ -173,13 +177,14 @@ impl AgentService for AutharieService {
             InstanceRights {
                 permissions: permissions_in(&tx),
             },
+            quota_repository,
             None,
         )
         .update_agent_policy(identity, organisation_id, deployment_id, policy_id, input)
         .await
     }
 
-    #[transactional(deployment, organisation, agent, action, audit, user)]
+    #[transactional(deployment, organisation, quota, agent, action, audit, user)]
     async fn delete_agent_policy(
         &self,
         identity: Identity,
@@ -197,13 +202,14 @@ impl AgentService for AutharieService {
             InstanceRights {
                 permissions: permissions_in(&tx),
             },
+            quota_repository,
             None,
         )
         .delete_agent_policy(identity, organisation_id, deployment_id, policy_id)
         .await
     }
 
-    #[transactional(deployment, organisation, agent, action, audit, user)]
+    #[transactional(deployment, organisation, quota, agent, action, audit, user)]
     async fn agent_decisions<I>(
         &self,
         identity: Identity,
@@ -225,6 +231,7 @@ impl AgentService for AutharieService {
             InstanceRights {
                 permissions: permissions_in(&tx),
             },
+            quota_repository,
             None,
         )
         .agent_decisions(identity, organisation_id, deployment_id, query, index)
