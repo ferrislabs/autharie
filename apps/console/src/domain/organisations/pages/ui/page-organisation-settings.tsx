@@ -4,6 +4,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 
 interface Props {
+  agentsEnabled: boolean
   mcpEnabled: boolean
   canManage: boolean
   isLoading: boolean
@@ -13,6 +14,7 @@ interface Props {
 }
 
 export function PageOrganisationSettings({
+  agentsEnabled,
   mcpEnabled,
   canManage,
   isLoading,
@@ -33,32 +35,34 @@ export function PageOrganisationSettings({
       <PageTitle title='Settings' />
 
       <div className='mt-6 space-y-8'>
-        <Section title='AI agents'>
-          <div className='flex items-start justify-between gap-6'>
-            <div className='space-y-1'>
-              <Label htmlFor='organisation-mcp-enabled'>Allow AI agents (MCP)</Label>
-              <p className='text-sm text-muted-foreground'>
-                Lets AI assistants act on this organisation for the people who sign in to them.
-              </p>
-              {!canManage && (
+        {agentsEnabled && (
+          <Section title='AI agents'>
+            <div className='flex items-start justify-between gap-6'>
+              <div className='space-y-1'>
+                <Label htmlFor='organisation-mcp-enabled'>Allow AI agents (MCP)</Label>
                 <p className='text-sm text-muted-foreground'>
-                  Only members who manage the organisation can change this.
+                  Lets AI assistants act on this organisation for the people who sign in to them.
                 </p>
-              )}
+                {!canManage && (
+                  <p className='text-sm text-muted-foreground'>
+                    Only members who manage the organisation can change this.
+                  </p>
+                )}
+              </div>
+              <Switch
+                id='organisation-mcp-enabled'
+                checked={mcpEnabled}
+                disabled={!canManage || isSaving}
+                onCheckedChange={onMcpEnabledChange}
+              />
             </div>
-            <Switch
-              id='organisation-mcp-enabled'
-              checked={mcpEnabled}
-              disabled={!canManage || isSaving}
-              onCheckedChange={onMcpEnabledChange}
-            />
-          </div>
-          {refusal && (
-            <p role='alert' className='text-sm text-destructive'>
-              {refusal}
-            </p>
-          )}
-        </Section>
+            {refusal && (
+              <p role='alert' className='text-sm text-destructive'>
+                {refusal}
+              </p>
+            )}
+          </Section>
+        )}
       </div>
     </Page>
   )

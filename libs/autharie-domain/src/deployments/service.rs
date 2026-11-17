@@ -19,9 +19,14 @@ use crate::{
         ports::{DeploymentPolicy, DeploymentRepository, DeploymentService},
         provisioning::Provisioning,
     },
-    offers::{DatabasePlacement, Offer},
+    offers::{Offer, open, ports::OfferOverrideRepository},
     organisation::{
         Organisation, OrganisationId, ports::OrganisationRepository, value_objects::Plan,
+    },
+    quotas::{
+        OrganisationQuotaKind,
+        ports::QuotaRepository,
+        service::{live_deployments, require_organisation_room},
     },
     user::{UserId, ports::UserRepository},
 };
@@ -43,8 +48,12 @@ fn refuse_if_busy(deployment: &Deployment, operation: &str) -> Result<(), CoreEr
     })
 }
 
-fn refuse_closed_offer(offer: Offer, plan: Plan) -> Result<(), CoreError> {
-    if offer.is_open_to(plan) {
+fn refuse_closed_offer(
+    offer: Offer,
+    plan: Plan,
+    organisation_override: Option<bool>,
+) -> Result<(), CoreError> {
+    if open(offer, plan, organisation_override) {
         return Ok(());
     }
 
@@ -107,7 +116,7 @@ fn draft(
 }
 
 #[derive(Debug)]
-pub struct DeploymentServiceImpl<D, U, DP, O, CP, P>
+pub struct DeploymentServiceImpl<D, U, DP, O, CP, P, Q, F>
 where
     D: DeploymentRepository,
     U: UserRepository,
@@ -115,6 +124,8 @@ where
     O: OrganisationRepository,
     CP: ClusterProvisioner,
     P: DeploymentPolicy,
+    Q: QuotaRepository,
+    F: OfferOverrideRepository,
 {
     organisation_repository: O,
     deployment_repository: D,
@@ -123,9 +134,11 @@ where
     provisioner: CP,
     windows: PlacementWindows,
     policy: P,
+    quotas: Q,
+    offer_overrides: F,
 }
 
-impl<D, U, DP, O, CP, P> DeploymentServiceImpl<D, U, DP, O, CP, P>
+impl<D, U, DP, O, CP, P, Q, F> DeploymentServiceImpl<D, U, DP, O, CP, P, Q, F>
 where
     D: DeploymentRepository,
     U: UserRepository,
@@ -133,6 +146,8 @@ where
     O: OrganisationRepository,
     CP: ClusterProvisioner,
     P: DeploymentPolicy,
+    Q: QuotaRepository,
+    F: OfferOverrideRepository,
 {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -143,6 +158,8 @@ where
         provisioner: CP,
         windows: PlacementWindows,
         policy: P,
+        quotas: Q,
+        offer_overrides: F,
     ) -> Self {
         Self {
             deployment_repository,
@@ -152,6 +169,8 @@ where
             provisioner,
             windows,
             policy,
+            quotas,
+            offer_overrides,
         }
     }
 
@@ -455,21 +474,33 @@ where
             && command.recovery.is_none()
             && !command.offer_from_tier()
         {
-            refuse_closed_offer(command.offer, organisation.plan)?;
+            let overrides = self.offer_overrides.overrides(organisation.id).await?;
+            refuse_closed_offer(
+                command.offer,
+                organisation.plan,
+                overrides.get(&command.offer).copied(),
+            )?;
         }
 
-        // A free deployment costs a database on a cluster shared with every
-        // other free tenant, so the plan's instance limit is what keeps one
-        // organisation from filling it. Counted under the organisation's
-        // advisory lock: two requests racing would each see zero and both
-        // be placed.
+        // Every deployment is a database and a pod somewhere, so what an
+        // organisation may hold is counted across all of them, whatever the
+        // offer. Counted under the organisation's advisory lock: two requests
+        // racing would each see the same count and both be placed.
         //
         // A recovery brings back a deployment that already counted.
-        if command.offer.database() == DatabasePlacement::Shared && command.recovery.is_none() {
+        if command.recovery.is_none() {
             self.organisation_repository
                 .lock_instance_count(&organisation.id)
                 .await?;
-            self.refuse_past_instance_limit(&organisation).await?;
+            let live = live_deployments(&self.deployment_repository, organisation.id).await?;
+            require_organisation_room(
+                &self.quotas,
+                organisation.id,
+                organisation.plan,
+                OrganisationQuotaKind::Deployments,
+                live,
+            )
+            .await?;
         }
 
         // Both read from the offer, so what reserves room on a data plane and
@@ -543,24 +574,9 @@ where
 
         Ok(deployment)
     }
-
-    async fn refuse_past_instance_limit(
-        &self,
-        organisation: &Organisation,
-    ) -> Result<(), CoreError> {
-        let live = self
-            .deployment_repository
-            .list_by_organisation(organisation.id)
-            .await?
-            .iter()
-            .filter(|deployment| deployment.deleted_at.is_none())
-            .count();
-
-        organisation.check_instance_limit(live)
-    }
 }
 
-impl<D, U, DP, O, CP, P> DeploymentService for DeploymentServiceImpl<D, U, DP, O, CP, P>
+impl<D, U, DP, O, CP, P, Q, F> DeploymentService for DeploymentServiceImpl<D, U, DP, O, CP, P, Q, F>
 where
     D: DeploymentRepository,
     U: UserRepository,
@@ -568,6 +584,8 @@ where
     O: OrganisationRepository,
     CP: ClusterProvisioner,
     P: DeploymentPolicy,
+    Q: QuotaRepository,
+    F: OfferOverrideRepository,
 {
     async fn create_deployment(
         &self,
@@ -875,11 +893,22 @@ mod tests {
     use chrono::Utc;
     use uuid::Uuid;
 
+    use crate::{offers::service::fixtures::InMemoryOffers, quotas::fixtures::InMemoryQuotas};
+
     /// Shorthand for the tests below that never expect the provisioner to be
     /// touched at all -- everything on the shared path, and error paths that
     /// return before placement decides anything.
     fn no_provisioning() -> MockClusterProvisioner {
         MockClusterProvisioner::new()
+    }
+
+    fn no_live_deployments() -> MockDeploymentRepository {
+        let mut deployments = MockDeploymentRepository::new();
+        deployments
+            .expect_list_by_organisation()
+            .returning(|_| Box::pin(async { Ok(Vec::new()) }));
+
+        deployments
     }
 
     fn an_organisation(
@@ -1049,7 +1078,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_deployment_persists() {
-        let mut mock_repo = MockDeploymentRepository::new();
+        let mut mock_repo = no_live_deployments();
         let mut mock_dataplane_repo = MockDataPlaneRepository::new();
         mock_repo
             .expect_insert()
@@ -1072,6 +1101,8 @@ mod tests {
             no_provisioning(),
             windows(),
             Allowed,
+            InMemoryQuotas::default(),
+            InMemoryOffers::default(),
         );
         let command = CreateDeploymentCommand::new(
             OrganisationId(Uuid::new_v4()),
@@ -1101,7 +1132,7 @@ mod tests {
         plan: crate::organisation::value_objects::Plan,
         command: CreateDeploymentCommand,
     ) -> Deployment {
-        let mut mock_repo = MockDeploymentRepository::new();
+        let mut mock_repo = no_live_deployments();
         let mut mock_dataplane_repo = MockDataPlaneRepository::new();
         mock_repo
             .expect_insert()
@@ -1123,6 +1154,8 @@ mod tests {
             no_provisioning(),
             windows(),
             Allowed,
+            InMemoryQuotas::default(),
+            InMemoryOffers::default(),
         )
         .create_deployment(caller(), command)
         .await
@@ -1189,6 +1222,8 @@ mod tests {
             no_provisioning(),
             windows(),
             Allowed,
+            InMemoryQuotas::default(),
+            InMemoryOffers::default(),
         )
         .create_deployment(caller(), a_create_command())
         .await
@@ -1209,13 +1244,15 @@ mod tests {
         ));
 
         let refused = DeploymentServiceImpl::new(
-            MockDeploymentRepository::new(),
+            no_live_deployments(),
             StubUserRepository,
             MockDataPlaneRepository::new(),
             organisations_on(Plan::Free),
             no_provisioning(),
             windows(),
             Allowed,
+            InMemoryQuotas::default(),
+            InMemoryOffers::default(),
         )
         .create_deployment(caller(), command)
         .await
@@ -1265,7 +1302,7 @@ mod tests {
     /// opaque `InternalError` that used to turn either one into a 500.
     #[tokio::test]
     async fn a_deployment_that_does_not_exist_is_not_found_rather_than_broken() {
-        let mut mock_repo = MockDeploymentRepository::new();
+        let mut mock_repo = no_live_deployments();
         let mock_dataplane_repo = MockDataPlaneRepository::new();
         let deployment_id = DeploymentId(Uuid::new_v4());
         let organisation_id = OrganisationId(Uuid::new_v4());
@@ -1283,6 +1320,8 @@ mod tests {
             no_provisioning(),
             windows(),
             Allowed,
+            InMemoryQuotas::default(),
+            InMemoryOffers::default(),
         );
         let result = service
             .get_deployment_for_organisation(caller(), organisation_id, deployment_id)
@@ -1300,7 +1339,7 @@ mod tests {
     /// somewhere else.
     #[tokio::test]
     async fn a_deployment_belonging_to_another_organisation_is_not_found_rather_than_broken() {
-        let mut mock_repo = MockDeploymentRepository::new();
+        let mut mock_repo = no_live_deployments();
         let mock_dataplane_repo = MockDataPlaneRepository::new();
         let deployment_id = DeploymentId(Uuid::new_v4());
         let organisation_id = OrganisationId(Uuid::new_v4());
@@ -1320,6 +1359,8 @@ mod tests {
             no_provisioning(),
             windows(),
             Allowed,
+            InMemoryQuotas::default(),
+            InMemoryOffers::default(),
         );
         let result = service
             .get_deployment_for_organisation(caller(), organisation_id, deployment_id)
@@ -1334,13 +1375,15 @@ mod tests {
     #[tokio::test]
     async fn update_deployment_rejects_empty_command() {
         let service = DeploymentServiceImpl::new(
-            MockDeploymentRepository::new(),
+            no_live_deployments(),
             StubUserRepository,
             MockDataPlaneRepository::new(),
             organisations_on(crate::organisation::value_objects::Plan::Enterprise),
             no_provisioning(),
             windows(),
             Allowed,
+            InMemoryQuotas::default(),
+            InMemoryOffers::default(),
         );
         let result = service
             .update_deployment(DeploymentId(Uuid::new_v4()), UpdateDeploymentCommand::new())
@@ -1351,7 +1394,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_deployment_renames_and_leaves_the_platform_record_alone() {
-        let mut mock_repo = MockDeploymentRepository::new();
+        let mut mock_repo = no_live_deployments();
         let mock_dataplane_repo = MockDataPlaneRepository::new();
         let deployment_id = DeploymentId(Uuid::new_v4());
         let organisation_id = OrganisationId(Uuid::new_v4());
@@ -1377,6 +1420,8 @@ mod tests {
             no_provisioning(),
             windows(),
             Allowed,
+            InMemoryQuotas::default(),
+            InMemoryOffers::default(),
         );
         let command = UpdateDeploymentCommand::new()
             .with_name(DeploymentName("renamed".to_string()))
@@ -1408,7 +1453,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_deployment_can_turn_on_log_shipping() {
-        let mut mock_repo = MockDeploymentRepository::new();
+        let mut mock_repo = no_live_deployments();
         let mock_dataplane_repo = MockDataPlaneRepository::new();
         let deployment_id = DeploymentId(Uuid::new_v4());
         let organisation_id = OrganisationId(Uuid::new_v4());
@@ -1434,6 +1479,8 @@ mod tests {
             no_provisioning(),
             windows(),
             Allowed,
+            InMemoryQuotas::default(),
+            InMemoryOffers::default(),
         );
         let command = UpdateDeploymentCommand::new().with_log_shipping_enabled(true);
 
@@ -1467,6 +1514,8 @@ mod tests {
             no_provisioning(),
             windows(),
             Allowed,
+            InMemoryQuotas::default(),
+            InMemoryOffers::default(),
         );
         let result = service
             .list_deployments_by_organisation(caller(), organisation_id)
@@ -1498,6 +1547,8 @@ mod tests {
             no_provisioning(),
             windows(),
             Allowed,
+            InMemoryQuotas::default(),
+            InMemoryOffers::default(),
         );
 
         let refused = service
@@ -1542,13 +1593,15 @@ mod tests {
         });
 
         let service = DeploymentServiceImpl::new(
-            MockDeploymentRepository::new(),
+            no_live_deployments(),
             StubUserRepository,
             dataplanes,
             organisations_on(Plan::Enterprise),
             provisioner,
             windows(),
             Allowed,
+            InMemoryQuotas::default(),
+            InMemoryOffers::default(),
         );
 
         let refused = service
@@ -1590,7 +1643,7 @@ mod tests {
     /// since it never calls it at all.
     #[tokio::test]
     async fn the_requested_region_and_mode_reach_placement() {
-        let mut mock_repo = MockDeploymentRepository::new();
+        let mut mock_repo = no_live_deployments();
         mock_repo
             .expect_insert()
             .returning(|_| Box::pin(async { Ok(()) }));
@@ -1616,6 +1669,8 @@ mod tests {
             no_provisioning(),
             windows(),
             Allowed,
+            InMemoryQuotas::default(),
+            InMemoryOffers::default(),
         );
 
         let result = service
@@ -1644,13 +1699,15 @@ mod tests {
             .returning(|_, _, _| Box::pin(async { Ok(false) }));
 
         let service = DeploymentServiceImpl::new(
-            MockDeploymentRepository::new(),
+            no_live_deployments(),
             StubUserRepository,
             mock_dataplane_repo,
             organisations_on(crate::organisation::value_objects::Plan::Enterprise),
             no_provisioning(),
             windows(),
             Allowed,
+            InMemoryQuotas::default(),
+            InMemoryOffers::default(),
         );
 
         let result = service
@@ -1687,13 +1744,15 @@ mod tests {
             .returning(|_, _, _| Box::pin(async { Ok(true) }));
 
         let service = DeploymentServiceImpl::new(
-            MockDeploymentRepository::new(),
+            no_live_deployments(),
             StubUserRepository,
             mock_dataplane_repo,
             organisations_on(crate::organisation::value_objects::Plan::Enterprise),
             no_provisioning(),
             windows(),
             Allowed,
+            InMemoryQuotas::default(),
+            InMemoryOffers::default(),
         );
 
         let result = service
@@ -1725,13 +1784,15 @@ mod tests {
             .returning(|_| Box::pin(async { Ok(false) }));
 
         let service = DeploymentServiceImpl::new(
-            MockDeploymentRepository::new(),
+            no_live_deployments(),
             StubUserRepository,
             mock_dataplane_repo,
             organisations_on(crate::organisation::value_objects::Plan::Enterprise),
             no_provisioning(),
             windows(),
             Allowed,
+            InMemoryQuotas::default(),
+            InMemoryOffers::default(),
         );
 
         let result = service
@@ -1748,7 +1809,7 @@ mod tests {
     /// is only asked once there is a failure to explain.
     #[tokio::test]
     async fn a_successful_placement_never_asks_whether_the_region_is_served() {
-        let mut mock_repo = MockDeploymentRepository::new();
+        let mut mock_repo = no_live_deployments();
         mock_repo
             .expect_insert()
             .returning(|_| Box::pin(async { Ok(()) }));
@@ -1768,6 +1829,8 @@ mod tests {
             no_provisioning(),
             windows(),
             Allowed,
+            InMemoryQuotas::default(),
+            InMemoryOffers::default(),
         );
 
         assert!(
@@ -1783,7 +1846,7 @@ mod tests {
     /// nothing on this path may ever reach for it.
     #[tokio::test]
     async fn a_free_organisation_can_restore_the_sandbox_it_already_holds() {
-        let mut mock_repo = MockDeploymentRepository::new();
+        let mut mock_repo = no_live_deployments();
         mock_repo
             .expect_insert()
             .times(1)
@@ -1801,6 +1864,8 @@ mod tests {
             no_provisioning(),
             windows(),
             Allowed,
+            InMemoryQuotas::default(),
+            InMemoryOffers::default(),
         );
         let mut command = command_for("fr-par", DataPlaneMode::Shared);
         command.offer = crate::offers::Offer::Sandbox;
@@ -1818,7 +1883,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_shared_deployment_never_calls_the_provisioner() {
-        let mut mock_repo = MockDeploymentRepository::new();
+        let mut mock_repo = no_live_deployments();
         mock_repo
             .expect_insert()
             .returning(|_| Box::pin(async { Ok(()) }));
@@ -1841,6 +1906,8 @@ mod tests {
             mock_provisioner,
             windows(),
             Allowed,
+            InMemoryQuotas::default(),
+            InMemoryOffers::default(),
         );
 
         let result = service
@@ -1861,7 +1928,7 @@ mod tests {
     #[tokio::test]
     async fn a_customer_cloud_deployment_saves_a_provisioning_plane_and_never_calls_the_provisioner()
      {
-        let mut mock_repo = MockDeploymentRepository::new();
+        let mut mock_repo = no_live_deployments();
         mock_repo
             .expect_insert()
             .times(1)
@@ -1894,6 +1961,8 @@ mod tests {
             MockClusterProvisioner::new(),
             windows(),
             Allowed,
+            InMemoryQuotas::default(),
+            InMemoryOffers::default(),
         );
 
         let deployment = service
@@ -1909,7 +1978,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_plane_whose_deployment_could_not_be_recorded_is_marked_failed_with_a_reason() {
-        let mut mock_repo = MockDeploymentRepository::new();
+        let mut mock_repo = no_live_deployments();
         mock_repo.expect_insert().times(1).returning(|_| {
             Box::pin(async {
                 Err(CoreError::DatabaseError {
@@ -1947,6 +2016,8 @@ mod tests {
             MockClusterProvisioner::new(),
             windows(),
             Allowed,
+            InMemoryQuotas::default(),
+            InMemoryOffers::default(),
         );
 
         let result = service
@@ -1968,13 +2039,15 @@ mod tests {
         });
 
         let service = DeploymentServiceImpl::new(
-            MockDeploymentRepository::new(),
+            no_live_deployments(),
             StubUserRepository,
             mock_dataplane_repo,
             organisations_on(crate::organisation::value_objects::Plan::Enterprise),
             MockClusterProvisioner::new(),
             windows(),
             Allowed,
+            InMemoryQuotas::default(),
+            InMemoryOffers::default(),
         );
 
         let result = service
@@ -1991,7 +2064,7 @@ mod tests {
     async fn a_dedicated_deployment_with_no_existing_plane_provisions_exactly_once() {
         let organisation_id = OrganisationId(Uuid::new_v4());
 
-        let mut mock_repo = MockDeploymentRepository::new();
+        let mut mock_repo = no_live_deployments();
         mock_repo
             .expect_insert()
             .times(1)
@@ -2031,6 +2104,8 @@ mod tests {
             mock_provisioner,
             windows(),
             Allowed,
+            InMemoryQuotas::default(),
+            InMemoryOffers::default(),
         );
 
         let mut command = command_for("eu-west", DataPlaneMode::Dedicated);
@@ -2050,7 +2125,7 @@ mod tests {
         let organisation_id = OrganisationId(Uuid::new_v4());
         let capacity = Capacity::new(4_000, 8_192, 100).unwrap();
 
-        let mut mock_repo = MockDeploymentRepository::new();
+        let mut mock_repo = no_live_deployments();
         mock_repo
             .expect_insert()
             .times(1)
@@ -2081,6 +2156,8 @@ mod tests {
             mock_provisioner,
             windows(),
             Allowed,
+            InMemoryQuotas::default(),
+            InMemoryOffers::default(),
         );
 
         let mut command = command_for("eu-west", DataPlaneMode::Dedicated);
@@ -2106,7 +2183,7 @@ mod tests {
             let organisation_id = OrganisationId(Uuid::new_v4());
             let capacity = Capacity::new(4_000, 8_192, 100).unwrap();
 
-            let mut mock_repo = MockDeploymentRepository::new();
+            let mut mock_repo = no_live_deployments();
             mock_repo.expect_insert().times(0);
             // The capacity sum is never reached: a plane that cannot serve is
             // refused before its room is even counted.
@@ -2134,6 +2211,8 @@ mod tests {
                 mock_provisioner,
                 windows(),
                 Allowed,
+                InMemoryQuotas::default(),
+                InMemoryOffers::default(),
             );
 
             let mut command = command_for("eu-west", DataPlaneMode::Dedicated);
@@ -2159,7 +2238,7 @@ mod tests {
         let organisation_id = OrganisationId(Uuid::new_v4());
         let capacity = Capacity::new(4_000, 8_192, 100).unwrap();
 
-        let mut mock_repo = MockDeploymentRepository::new();
+        let mut mock_repo = no_live_deployments();
         mock_repo.expect_insert().times(0);
         mock_repo.expect_list_by_dataplane().times(0);
 
@@ -2187,6 +2266,8 @@ mod tests {
             mock_provisioner,
             windows(),
             Allowed,
+            InMemoryQuotas::default(),
+            InMemoryOffers::default(),
         );
 
         let mut command = command_for("eu-west", DataPlaneMode::Dedicated);
@@ -2211,7 +2292,7 @@ mod tests {
             let organisation_id = OrganisationId(Uuid::new_v4());
             let capacity = Capacity::new(4_000, 8_192, 100).unwrap();
 
-            let mut mock_repo = MockDeploymentRepository::new();
+            let mut mock_repo = no_live_deployments();
             mock_repo
                 .expect_insert()
                 .times(1)
@@ -2242,6 +2323,8 @@ mod tests {
                 mock_provisioner,
                 windows(),
                 Allowed,
+                InMemoryQuotas::default(),
+                InMemoryOffers::default(),
             );
 
             let mut command = command_for("eu-west", DataPlaneMode::Dedicated);
@@ -2265,7 +2348,7 @@ mod tests {
         // room for another of the same size.
         let capacity = Capacity::new(500, 1_024, 1).unwrap();
 
-        let mut mock_repo = MockDeploymentRepository::new();
+        let mut mock_repo = no_live_deployments();
         mock_repo
             .expect_list_by_dataplane()
             .times(1)
@@ -2296,6 +2379,8 @@ mod tests {
             mock_provisioner,
             windows(),
             Allowed,
+            InMemoryQuotas::default(),
+            InMemoryOffers::default(),
         );
 
         let mut command = command_for("eu-west", DataPlaneMode::Dedicated);
@@ -2325,7 +2410,7 @@ mod tests {
             .with_max_deployments(1)
             .expect("non-zero bound");
 
-        let mut mock_repo = MockDeploymentRepository::new();
+        let mut mock_repo = no_live_deployments();
         mock_repo
             .expect_list_by_dataplane()
             .times(1)
@@ -2356,6 +2441,8 @@ mod tests {
             mock_provisioner,
             windows(),
             Allowed,
+            InMemoryQuotas::default(),
+            InMemoryOffers::default(),
         );
 
         let mut command = command_for("eu-west", DataPlaneMode::Dedicated);
@@ -2379,7 +2466,7 @@ mod tests {
         let organisation_id = OrganisationId(Uuid::new_v4());
         let capacity = Capacity::new(4_000, 8_192, 100).unwrap();
 
-        let mut mock_repo = MockDeploymentRepository::new();
+        let mut mock_repo = no_live_deployments();
         mock_repo
             .expect_list_by_dataplane()
             .times(1)
@@ -2411,6 +2498,8 @@ mod tests {
             MockClusterProvisioner::new(),
             windows(),
             Allowed,
+            InMemoryQuotas::default(),
+            InMemoryOffers::default(),
         );
 
         let mut command = command_for("eu-west", DataPlaneMode::Dedicated);
@@ -2432,7 +2521,7 @@ mod tests {
     /// through leaves resources nobody is tracking, so it waits.
     #[tokio::test]
     async fn a_deployment_being_upgraded_refuses_a_delete() {
-        let mut mock_repo = MockDeploymentRepository::new();
+        let mut mock_repo = no_live_deployments();
         mock_repo
             .expect_get_by_id()
             .returning(|_| Box::pin(async { Ok(Some(upgrading_deployment())) }));
@@ -2446,6 +2535,8 @@ mod tests {
             MockClusterProvisioner::new(),
             windows(),
             Allowed,
+            InMemoryQuotas::default(),
+            InMemoryOffers::default(),
         );
 
         let error = service
@@ -2467,7 +2558,7 @@ mod tests {
         let organisation_id = deployment.organisation_id;
         let deployment_id = deployment.id;
 
-        let mut mock_repo = MockDeploymentRepository::new();
+        let mut mock_repo = no_live_deployments();
         mock_repo.expect_get_by_id().returning(move |_| {
             let deployment = deployment.clone();
             Box::pin(async move { Ok(Some(deployment)) })
@@ -2482,6 +2573,8 @@ mod tests {
             MockClusterProvisioner::new(),
             windows(),
             Allowed,
+            InMemoryQuotas::default(),
+            InMemoryOffers::default(),
         );
 
         let error = service
@@ -2496,7 +2589,7 @@ mod tests {
     /// shape the data plane is not building.
     #[tokio::test]
     async fn a_deployment_being_upgraded_refuses_a_change() {
-        let mut mock_repo = MockDeploymentRepository::new();
+        let mut mock_repo = no_live_deployments();
         mock_repo
             .expect_get_by_id()
             .returning(|_| Box::pin(async { Ok(Some(upgrading_deployment())) }));
@@ -2510,6 +2603,8 @@ mod tests {
             MockClusterProvisioner::new(),
             windows(),
             Allowed,
+            InMemoryQuotas::default(),
+            InMemoryOffers::default(),
         );
 
         let command = UpdateDeploymentCommand::default()
@@ -2535,7 +2630,7 @@ mod tests {
             DeploymentStatus::Successful,
             DeploymentStatus::Failed,
         ] {
-            let mut mock_repo = MockDeploymentRepository::new();
+            let mut mock_repo = no_live_deployments();
             let held = status.clone();
             mock_repo.expect_get_by_id().returning(move |_| {
                 let mut deployment =
@@ -2556,6 +2651,8 @@ mod tests {
                 MockClusterProvisioner::new(),
                 windows(),
                 Allowed,
+                InMemoryQuotas::default(),
+                InMemoryOffers::default(),
             );
 
             assert!(
@@ -2574,13 +2671,15 @@ mod tests {
 
         fn refusing() -> impl DeploymentService {
             DeploymentServiceImpl::new(
-                MockDeploymentRepository::new(),
+                no_live_deployments(),
                 StubUserRepository,
                 MockDataPlaneRepository::new(),
                 organisations_on(crate::organisation::value_objects::Plan::Enterprise),
                 no_provisioning(),
                 windows(),
                 Refused,
+                InMemoryQuotas::default(),
+                InMemoryOffers::default(),
             )
         }
 
@@ -2695,6 +2794,8 @@ mod tests {
                 no_provisioning(),
                 windows(),
                 Allowed,
+                InMemoryQuotas::default(),
+                InMemoryOffers::default(),
             )
         }
 
@@ -2774,13 +2875,15 @@ mod tests {
         #[tokio::test]
         async fn a_caller_who_may_not_view_deployments_is_refused() {
             let error = DeploymentServiceImpl::new(
-                MockDeploymentRepository::new(),
+                no_live_deployments(),
                 StubUserRepository,
                 MockDataPlaneRepository::new(),
                 organisations_on(crate::organisation::value_objects::Plan::Enterprise),
                 no_provisioning(),
                 windows(),
                 Refused,
+                InMemoryQuotas::default(),
+                InMemoryOffers::default(),
             )
             .get_provisioning_for_organisation(
                 caller(),
@@ -2834,6 +2937,8 @@ mod tests {
             crate::organisation::ports::MockOrganisationRepository,
             MockClusterProvisioner,
             Allowed,
+            InMemoryQuotas,
+            InMemoryOffers,
         > {
             DeploymentServiceImpl::new(
                 deployments,
@@ -2843,7 +2948,182 @@ mod tests {
                 no_provisioning(),
                 windows(),
                 Allowed,
+                InMemoryQuotas::default(),
+                InMemoryOffers::default(),
             )
+        }
+
+        fn service_with(
+            deployments: MockDeploymentRepository,
+            dataplanes: MockDataPlaneRepository,
+            plan: Plan,
+            quotas: InMemoryQuotas,
+            offers: InMemoryOffers,
+        ) -> DeploymentServiceImpl<
+            MockDeploymentRepository,
+            StubUserRepository,
+            MockDataPlaneRepository,
+            crate::organisation::ports::MockOrganisationRepository,
+            MockClusterProvisioner,
+            Allowed,
+            InMemoryQuotas,
+            InMemoryOffers,
+        > {
+            DeploymentServiceImpl::new(
+                deployments,
+                StubUserRepository,
+                dataplanes,
+                organisations_on(plan),
+                no_provisioning(),
+                windows(),
+                Allowed,
+                quotas,
+                offers,
+            )
+        }
+
+        fn live(count: usize) -> Vec<Deployment> {
+            (0..count)
+                .map(|_| {
+                    sample_deployment(DeploymentId(Uuid::new_v4()), OrganisationId(Uuid::nil()))
+                })
+                .collect()
+        }
+
+        /// @spec-pilot-1
+        #[tokio::test]
+        async fn an_override_of_two_allows_a_second_deployment_and_refuses_a_third() {
+            use crate::quotas::{OrganisationQuotaKind, Quota};
+
+            let quotas = || {
+                InMemoryQuotas::default().with_organisation_kind(
+                    OrganisationId(Uuid::nil()),
+                    OrganisationQuotaKind::Deployments,
+                    Quota::Limited(2),
+                )
+            };
+            let mut deployments = holding(live(1));
+            deployments
+                .expect_insert()
+                .times(1)
+                .returning(|_| Box::pin(async { Ok(()) }));
+
+            service_with(
+                deployments,
+                a_plane_with_room(),
+                Plan::Free,
+                quotas(),
+                InMemoryOffers::default(),
+            )
+            .create_deployment(caller(), a_free_command("second"))
+            .await
+            .expect("the override makes room for a second");
+
+            let mut deployments = holding(live(2));
+            deployments.expect_insert().never();
+            let refused = service_with(
+                deployments,
+                MockDataPlaneRepository::new(),
+                Plan::Free,
+                quotas(),
+                InMemoryOffers::default(),
+            )
+            .create_deployment(caller(), a_free_command("third"))
+            .await
+            .expect_err("two held");
+
+            assert!(
+                matches!(
+                    refused,
+                    CoreError::OrganisationLimitReached {
+                        ref limit_type,
+                        max: 2,
+                        current: 2,
+                    } if limit_type == "deployments"
+                ),
+                "{refused}"
+            );
+        }
+
+        #[tokio::test]
+        async fn a_paying_organisation_is_counted_against_deployments_whatever_the_offer() {
+            let mut command = a_free_command("acme");
+            command.offer = Offer::Standard;
+            let mut deployments = holding(live(5));
+            deployments.expect_insert().never();
+
+            let refused = service(deployments, MockDataPlaneRepository::new(), Plan::Starter)
+                .create_deployment(caller(), command)
+                .await
+                .expect_err("the starter plan holds five");
+
+            assert!(
+                matches!(
+                    refused,
+                    CoreError::OrganisationLimitReached {
+                        ref limit_type,
+                        max: 5,
+                        current: 5,
+                    } if limit_type == "deployments"
+                ),
+                "{refused}"
+            );
+        }
+
+        /// @spec-pilot-4
+        #[tokio::test]
+        async fn an_offer_opened_for_the_organisation_is_placed_and_a_cleared_one_is_refused() {
+            let sandbox = || {
+                let mut command = a_free_command("acme");
+                command.offer = Offer::Sandbox;
+                command
+            };
+            let mut deployments = no_live_deployments();
+            deployments
+                .expect_insert()
+                .times(1)
+                .returning(|_| Box::pin(async { Ok(()) }));
+
+            let created = service_with(
+                deployments,
+                a_plane_with_room(),
+                Plan::Free,
+                InMemoryQuotas::default(),
+                InMemoryOffers::default().with(OrganisationId(Uuid::nil()), Offer::Sandbox, true),
+            )
+            .create_deployment(caller(), sandbox())
+            .await
+            .expect("opened for this organisation");
+            assert_eq!(created.offer, Some(Offer::Sandbox));
+
+            let refused = service(
+                no_live_deployments(),
+                MockDataPlaneRepository::new(),
+                Plan::Free,
+            )
+            .create_deployment(caller(), sandbox())
+            .await
+            .expect_err("closed again");
+            assert!(matches!(refused, CoreError::OfferNotOpenToPlan { .. }));
+        }
+
+        #[tokio::test]
+        async fn an_override_can_close_an_offer_the_plan_opens() {
+            let mut command = a_free_command("acme");
+            command.offer = Offer::Standard;
+
+            let refused = service_with(
+                no_live_deployments(),
+                MockDataPlaneRepository::new(),
+                Plan::Starter,
+                InMemoryQuotas::default(),
+                InMemoryOffers::default().with(OrganisationId(Uuid::nil()), Offer::Standard, false),
+            )
+            .create_deployment(caller(), command)
+            .await
+            .expect_err("closed for this organisation");
+
+            assert!(matches!(refused, CoreError::OfferNotOpenToPlan { .. }));
         }
 
         fn a_plane_with_room() -> MockDataPlaneRepository {
@@ -2949,7 +3229,7 @@ mod tests {
             command.offer = Offer::Sandbox;
 
             let refused = service(
-                MockDeploymentRepository::new(),
+                no_live_deployments(),
                 MockDataPlaneRepository::new(),
                 Plan::Free,
             )

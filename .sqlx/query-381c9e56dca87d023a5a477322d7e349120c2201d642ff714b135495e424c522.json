@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT offer, open FROM organisation_offer_overrides WHERE organisation_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "offer",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "open",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "381c9e56dca87d023a5a477322d7e349120c2201d642ff714b135495e424c522"
+}

@@ -21,7 +21,7 @@ use std::{fmt, str::FromStr};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::{CoreError, offers::Offer};
+use crate::{CoreError, offers::Offer, organisation::value_objects::Plan};
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, ToSchema,
@@ -74,6 +74,57 @@ impl fmt::Display for QuotaKind {
 }
 
 impl FromStr for QuotaKind {
+    type Err = CoreError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::ALL
+            .into_iter()
+            .find(|kind| kind.as_str() == value)
+            .ok_or_else(|| CoreError::UnknownQuota {
+                value: value.to_string(),
+            })
+    }
+}
+
+/// What an organisation as a whole may hold, as opposed to one deployment.
+///
+/// A second enum rather than more variants of [`QuotaKind`]: the two scopes
+/// take their defaults from different things, an offer for the first and a
+/// plan for this one, and one match over both could not say which.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, ToSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum OrganisationQuotaKind {
+    Deployments,
+    Members,
+}
+
+impl OrganisationQuotaKind {
+    pub const ALL: [Self; 2] = [Self::Deployments, Self::Members];
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Deployments => "deployments",
+            Self::Members => "members",
+        }
+    }
+
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::Deployments => "Live deployments of the organisation, whatever their offer.",
+            Self::Members => "Members of the organisation plus its pending invitations.",
+        }
+    }
+}
+
+impl fmt::Display for OrganisationQuotaKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for OrganisationQuotaKind {
     type Err = CoreError;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
@@ -146,6 +197,54 @@ pub fn resolve(
     kind: QuotaKind,
 ) -> Quota {
     organisation_override.unwrap_or_else(|| default_quota(offer, kind))
+}
+
+/// What each plan allows an organisation as a whole.
+pub fn plan_default(plan: Plan, kind: OrganisationQuotaKind) -> Quota {
+    let max = match kind {
+        OrganisationQuotaKind::Deployments => plan.max_instances(),
+        OrganisationQuotaKind::Members => plan.max_users(),
+    };
+
+    Quota::Limited(u32::try_from(max).unwrap_or(u32::MAX))
+}
+
+pub fn resolve_for_plan(
+    organisation_override: Option<Quota>,
+    plan: Plan,
+    kind: OrganisationQuotaKind,
+) -> Quota {
+    organisation_override.unwrap_or_else(|| plan_default(plan, kind))
+}
+
+/// One organisation-scope kind as the platform panel shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct OrganisationScopeQuota {
+    pub kind: OrganisationQuotaKind,
+    pub description: &'static str,
+    pub plan_default: Quota,
+    #[serde(rename = "override")]
+    pub organisation_override: Option<Quota>,
+    pub effective: Quota,
+    pub held: usize,
+}
+
+impl OrganisationScopeQuota {
+    pub fn new(
+        kind: OrganisationQuotaKind,
+        plan: Plan,
+        organisation_override: Option<Quota>,
+        held: usize,
+    ) -> Self {
+        Self {
+            kind,
+            description: kind.description(),
+            plan_default: plan_default(plan, kind),
+            organisation_override,
+            effective: resolve_for_plan(organisation_override, plan, kind),
+            held,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
@@ -383,5 +482,109 @@ mod tests {
 
         assert_eq!(view.defaults.len(), Offer::ALL.len());
         assert_eq!(view.organisation_override, Some(Quota::Limited(7)));
+    }
+
+    #[test]
+    fn every_organisation_kind_round_trips_through_its_key() {
+        for kind in OrganisationQuotaKind::ALL {
+            assert_eq!(
+                kind.as_str().parse::<OrganisationQuotaKind>().unwrap(),
+                kind
+            );
+            assert_eq!(
+                serde_json::to_value(kind).unwrap(),
+                serde_json::Value::String(kind.as_str().to_string())
+            );
+        }
+        assert!(matches!(
+            "nope".parse::<OrganisationQuotaKind>(),
+            Err(CoreError::UnknownQuota { .. })
+        ));
+    }
+
+    #[test]
+    fn the_two_scopes_never_share_a_wire_key() {
+        let mut keys: Vec<_> = QuotaKind::ALL
+            .iter()
+            .map(QuotaKind::as_str)
+            .chain(
+                OrganisationQuotaKind::ALL
+                    .iter()
+                    .map(OrganisationQuotaKind::as_str),
+            )
+            .collect();
+        let before = keys.len();
+        keys.sort();
+        keys.dedup();
+
+        assert_eq!(keys.len(), before);
+    }
+
+    #[test]
+    fn every_organisation_kind_has_a_default_for_every_plan() {
+        for kind in OrganisationQuotaKind::ALL {
+            for plan in Plan::ALL {
+                let _ = plan_default(plan, kind);
+            }
+        }
+    }
+
+    #[test]
+    fn the_plan_defaults_are_the_grid() {
+        let grid = |kind| {
+            Plan::ALL
+                .into_iter()
+                .map(|plan| plan_default(plan, kind))
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            grid(OrganisationQuotaKind::Deployments),
+            [1, 5, 20, 100].map(Quota::Limited)
+        );
+        assert_eq!(
+            grid(OrganisationQuotaKind::Members),
+            [2, 10, 50, 100].map(Quota::Limited)
+        );
+    }
+
+    #[test]
+    fn an_organisation_override_beats_the_plan_in_both_directions() {
+        let kind = OrganisationQuotaKind::Deployments;
+
+        assert_eq!(
+            resolve_for_plan(Some(Quota::Limited(2)), Plan::Free, kind),
+            Quota::Limited(2)
+        );
+        assert_eq!(
+            resolve_for_plan(Some(Quota::Limited(1)), Plan::Enterprise, kind),
+            Quota::Limited(1)
+        );
+        assert_eq!(
+            resolve_for_plan(None, Plan::Starter, kind),
+            Quota::Limited(5)
+        );
+    }
+
+    #[test]
+    fn the_organisation_scope_entry_is_shaped_as_the_panel_reads_it() {
+        let entry = OrganisationScopeQuota::new(
+            OrganisationQuotaKind::Members,
+            Plan::Free,
+            Some(Quota::Unlimited),
+            1,
+        );
+
+        assert_eq!(
+            serde_json::to_value(&entry).unwrap(),
+            serde_json::json!({
+                "kind": "members",
+                "description": OrganisationQuotaKind::Members.description(),
+                "plan_default": { "type": "limited", "max": 2 },
+                "override": { "type": "unlimited" },
+                "effective": { "type": "unlimited" },
+                "held": 1
+            })
+        );
     }
 }

@@ -1,5 +1,6 @@
 import { useGetOrganisation, useUpdateOrganisation } from '@/api/organisation.api'
 import { RequiresPermission } from '@/components/layout/requires-permission'
+import { useAgentsFeature } from '@/domain/agents-feature/use-agents-feature'
 import { useMyPermissions } from '@/domain/organisations/hooks/use-my-permissions'
 import { useResolvedOrganisationId } from '@/domain/organisations/hooks/use-resolved-organisation-id'
 import { CAN } from '@/domain/organisations/permissions'
@@ -10,12 +11,14 @@ export default function PageOrganisationSettingsFeature() {
   const { can } = useMyPermissions()
 
   const organisation = useGetOrganisation(organisationId)
+  const agentsEnabled = useAgentsFeature(organisationId)
   const update = useUpdateOrganisation()
 
   return (
     <RequiresPermission permission={CAN.viewOrganisation} what='see the settings'>
       <PageOrganisationSettings
         key={organisationId}
+        agentsEnabled={agentsEnabled}
         mcpEnabled={organisation.data?.data.mcp_enabled ?? false}
         canManage={can(CAN.manageOrganisation)}
         isLoading={organisation.isLoading}

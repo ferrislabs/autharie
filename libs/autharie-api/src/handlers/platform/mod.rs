@@ -28,10 +28,19 @@ use crate::{
         },
         move_tenant_plan::{__path_move_tenant_plan_handler, move_tenant_plan_handler},
         my_rights::{__path_my_rights_handler, my_rights_handler},
+        offers::{
+            __path_list_tenant_offers_handler, __path_set_tenant_offer_handler,
+            list_tenant_offers_handler, set_tenant_offer_handler,
+        },
         operators::{
             __path_grant_operator_handler, __path_list_operators_handler,
             __path_revoke_operator_handler, grant_operator_handler, list_operators_handler,
             revoke_operator_handler,
+        },
+        organisation_quotas::{
+            __path_list_tenant_organisation_quotas_handler,
+            __path_set_tenant_organisation_quota_handler, list_tenant_organisation_quotas_handler,
+            set_tenant_organisation_quota_handler,
         },
         quotas::{
             __path_list_tenant_quotas_handler, __path_set_tenant_quota_handler,
@@ -52,7 +61,9 @@ pub mod list_estate_deployments;
 pub mod list_tenants;
 pub mod move_tenant_plan;
 pub mod my_rights;
+pub mod offers;
 pub mod operators;
+pub mod organisation_quotas;
 pub mod quotas;
 pub mod signals;
 
@@ -71,6 +82,10 @@ pub mod signals;
         set_tenant_feature_handler,
         list_tenant_quotas_handler,
         set_tenant_quota_handler,
+        list_tenant_organisation_quotas_handler,
+        set_tenant_organisation_quota_handler,
+        list_tenant_offers_handler,
+        set_tenant_offer_handler,
         list_signals_handler,
         list_tenants_handler,
         get_tenant_handler,
@@ -100,6 +115,10 @@ pub fn platform_routes(app_state: AppState) -> Router<AppState> {
         .typed_put(set_tenant_feature_handler)
         .typed_get(list_tenant_quotas_handler)
         .typed_put(set_tenant_quota_handler)
+        .typed_get(list_tenant_organisation_quotas_handler)
+        .typed_put(set_tenant_organisation_quota_handler)
+        .typed_get(list_tenant_offers_handler)
+        .typed_put(set_tenant_offer_handler)
         .typed_get(list_signals_handler)
         .typed_get(list_tenants_handler)
         .typed_get(get_tenant_handler)

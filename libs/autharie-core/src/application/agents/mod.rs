@@ -6,7 +6,10 @@ use autharie_domain::agents::{
     service::{AgentOutcomeServiceImpl, AgentServiceImpl},
 };
 use autharie_domain::{
-    CoreError, deployments::DeploymentId, organisation::OrganisationId,
+    CoreError,
+    deployments::DeploymentId,
+    features::{Feature, ports::FeatureRepository, service::require_enabled},
+    organisation::OrganisationId,
     role::ports::PermissionProvider,
 };
 use autharie_macros::transactional;
@@ -59,6 +62,23 @@ where
     }
 }
 
+async fn require_agents<P, F>(
+    permissions: P,
+    features: &F,
+    identity: Identity,
+    organisation_id: OrganisationId,
+) -> Result<(), CoreError>
+where
+    P: PermissionProvider,
+    F: FeatureRepository,
+{
+    InstanceRights { permissions }
+        .can_manage_agents(identity, organisation_id)
+        .await?;
+
+    require_enabled(features, organisation_id, Feature::Agents).await
+}
+
 impl AgentService for AutharieService {
     #[transactional(deployment, organisation, quota, agent, action, audit, user)]
     async fn get_agents(
@@ -84,7 +104,16 @@ impl AgentService for AutharieService {
         .await
     }
 
-    #[transactional(deployment, organisation, quota, agent, action, audit, user)]
+    #[transactional(
+        feature_flag,
+        deployment,
+        organisation,
+        quota,
+        agent,
+        action,
+        audit,
+        user
+    )]
     async fn set_agents(
         &self,
         identity: Identity,
@@ -92,6 +121,15 @@ impl AgentService for AutharieService {
         deployment_id: DeploymentId,
         input: AgentSettingsInput,
     ) -> Result<AgentsView, CoreError> {
+        if input.enabled {
+            require_agents(
+                permissions_in(&tx),
+                &feature_flag_repository,
+                identity.clone(),
+                organisation_id,
+            )
+            .await?;
+        }
         AgentServiceImpl::new(
             deployment_repository,
             organisation_repository,
@@ -133,7 +171,16 @@ impl AgentService for AutharieService {
         .await
     }
 
-    #[transactional(deployment, organisation, quota, agent, action, audit, user)]
+    #[transactional(
+        feature_flag,
+        deployment,
+        organisation,
+        quota,
+        agent,
+        action,
+        audit,
+        user
+    )]
     async fn create_agent_policy(
         &self,
         identity: Identity,
@@ -141,6 +188,13 @@ impl AgentService for AutharieService {
         deployment_id: DeploymentId,
         input: PolicyInput,
     ) -> Result<AgentPolicy, CoreError> {
+        require_agents(
+            permissions_in(&tx),
+            &feature_flag_repository,
+            identity.clone(),
+            organisation_id,
+        )
+        .await?;
         AgentServiceImpl::new(
             deployment_repository,
             organisation_repository,
@@ -158,7 +212,16 @@ impl AgentService for AutharieService {
         .await
     }
 
-    #[transactional(deployment, organisation, quota, agent, action, audit, user)]
+    #[transactional(
+        feature_flag,
+        deployment,
+        organisation,
+        quota,
+        agent,
+        action,
+        audit,
+        user
+    )]
     async fn update_agent_policy(
         &self,
         identity: Identity,
@@ -167,6 +230,13 @@ impl AgentService for AutharieService {
         policy_id: PolicyId,
         input: PolicyInput,
     ) -> Result<AgentPolicy, CoreError> {
+        require_agents(
+            permissions_in(&tx),
+            &feature_flag_repository,
+            identity.clone(),
+            organisation_id,
+        )
+        .await?;
         AgentServiceImpl::new(
             deployment_repository,
             organisation_repository,

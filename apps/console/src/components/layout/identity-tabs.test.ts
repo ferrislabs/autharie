@@ -4,8 +4,14 @@ import { identityTabs } from './identity-tabs'
 
 const path = (suffix = '') => `/d${suffix}`
 
-function tabs(rights: number[], ferriskey: boolean, realm = 'acme') {
-  return identityTabs({ can: (bit) => rights.includes(bit), deploymentPath: path, ferriskey, realm })
+function tabs(rights: number[], ferriskey: boolean, realm = 'acme', agents = true) {
+  return identityTabs({
+    can: (bit) => rights.includes(bit),
+    deploymentPath: path,
+    ferriskey,
+    agents,
+    realm,
+  })
 }
 
 describe('the tabs of the Identity space', () => {
@@ -49,6 +55,13 @@ describe('the tabs of the Identity space', () => {
     expect(tabs([CAN.manageInstances], false).map((tab) => tab.label)).not.toContain('Webhooks')
   })
 
+  it('hides Agents when the agents feature is off, and keeps Webhooks', () => {
+    const labels = tabs([CAN.manageInstances], true, 'acme', false).map((tab) => tab.label)
+
+    expect(labels).not.toContain('Agents')
+    expect(labels).toContain('Webhooks')
+  })
+
   it('links Applications, which is no longer marked Soon', () => {
     const applications = tabs([], true, 'acme').find((tab) => tab.label === 'Applications')
 
@@ -63,7 +76,9 @@ describe('the tabs of the Identity space', () => {
   })
 
   it('leaves the deployment-wide pages out of any realm', () => {
-    const byLabel = Object.fromEntries(tabs([CAN.manageInstances], true, 'acme').map((tab) => [tab.label, tab.to]))
+    const byLabel = Object.fromEntries(
+      tabs([CAN.manageInstances], true, 'acme').map((tab) => [tab.label, tab.to])
+    )
 
     expect(byLabel.Agents).toBe('/d/identity/agents')
     expect(byLabel.Webhooks).toBe('/d/identity/webhooks')

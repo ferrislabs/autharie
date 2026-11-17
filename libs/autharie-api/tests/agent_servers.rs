@@ -157,6 +157,15 @@ impl Estate {
         .execute(pool)
         .await
         .expect("an organisation");
+        sqlx::query(
+            "INSERT INTO organisation_feature_flags \
+             (organisation_id, key, enabled, updated_at, updated_by) \
+             VALUES ($1, 'agents', true, now(), 'the test')",
+        )
+        .bind(estate.organisation)
+        .execute(pool)
+        .await
+        .expect("agents switched on");
         for person in [&estate.owner, &estate.member] {
             sqlx::query(
                 "INSERT INTO members (id, organisation_id, user_id, created_at, updated_at) \
@@ -559,4 +568,51 @@ async fn removing_a_server_leaves_the_policies_that_name_it() {
     let last = sent.last().unwrap();
     assert_eq!(last["servers"], json!([]));
     assert_eq!(last["policies"].as_array().unwrap().len(), 1);
+}
+
+/// @spec-pilot-5
+#[tokio::test]
+async fn without_the_agents_feature_a_server_is_refused_until_staff_switch_it_on() {
+    let Some(pool) = pool().await else {
+        return;
+    };
+    let estate = Estate::seed(&pool, true).await;
+    let app = app(&pool, &estate.owner, false);
+    sqlx::query("DELETE FROM organisation_feature_flags WHERE organisation_id = $1")
+        .bind(estate.organisation)
+        .execute(&pool)
+        .await
+        .expect("agents switched off");
+
+    let (refused, body) = call(&app, Method::POST, &servers(&estate), Some(crm())).await;
+    let (listed, _) = call(&app, Method::GET, &servers(&estate), None).await;
+    let (policy, _) = call(
+        &app,
+        Method::POST,
+        &format!("{}/policies", estate.agents()),
+        Some(json!({
+            "name": "p",
+            "enabled": false,
+            "cedar": "permit(principal, action, resource);",
+        })),
+    )
+    .await;
+
+    sqlx::query(
+        "INSERT INTO organisation_feature_flags \
+         (organisation_id, key, enabled, updated_at, updated_by) \
+         VALUES ($1, 'agents', true, now(), 'the test')",
+    )
+    .bind(estate.organisation)
+    .execute(&pool)
+    .await
+    .expect("agents switched on");
+    let (created, registered) = call(&app, Method::POST, &servers(&estate), Some(crm())).await;
+    estate.forget(&pool).await;
+
+    assert_eq!(refused, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(body["code"], "E_FEATURE_NOT_ENABLED");
+    assert_eq!(listed, StatusCode::OK, "reads stay open");
+    assert_eq!(policy, StatusCode::FORBIDDEN);
+    assert_eq!(created, StatusCode::CREATED, "{registered}");
 }

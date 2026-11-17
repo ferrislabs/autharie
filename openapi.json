@@ -13575,6 +13575,354 @@
         ]
       }
     },
+    "/platform/organisations/{organisation_id}/offers": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "list the offers of an organisation",
+        "description": "Every offer with whether the organisation's plan opens it, the override staff set for this organisation when there is one, and whether it is open now.",
+        "operationId": "list_tenant_offers_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Every offer as this organisation sees it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TenantOffersResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "This needs the view_estate right",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such organisation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/platform/organisations/{organisation_id}/offers/{offer}": {
+      "put": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "open or close an offer for an organisation",
+        "description": "`true` opens the offer and `false` closes it, whatever the plan says; `null` clears the override. Deployments already created on the offer stay.",
+        "operationId": "set_tenant_offer_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "offer",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetTenantOfferRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The offer as the organisation now sees it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TenantOfferResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "This needs the act_on_tenant right",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such organisation or offer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/platform/organisations/{organisation_id}/organisation-quotas": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "list the organisation-wide quotas of an organisation",
+        "description": "The deployments and members quotas: the default of the organisation's plan, its own override when it has one, the effective limit and what it holds now.",
+        "operationId": "list_tenant_organisation_quotas_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Every organisation-wide quota",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TenantOrganisationQuotasResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "This needs the view_estate right",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such organisation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/platform/organisations/{organisation_id}/organisation-quotas/{kind}": {
+      "put": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "set or clear an organisation-wide quota override",
+        "description": "A limit or `unlimited` replaces the plan default; `null` clears the override. Lowering a quota below what the organisation holds deletes nothing and refuses only the next create.",
+        "operationId": "set_tenant_organisation_quota_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetTenantOrganisationQuotaRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The quota as the organisation now sees it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TenantOrganisationQuotaResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "This needs the act_on_tenant right",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such organisation or quota",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/platform/organisations/{organisation_id}/plan": {
       "put": {
         "tags": [
@@ -18758,7 +19106,8 @@
       "Feature": {
         "type": "string",
         "enum": [
-          "customer_cloud"
+          "customer_cloud",
+          "agents"
         ]
       },
       "FeatureResponse": {
@@ -20668,6 +21017,14 @@
         "type": "string",
         "description": "Organisation name value object"
       },
+      "OrganisationQuotaKind": {
+        "type": "string",
+        "description": "What an organisation as a whole may hold, as opposed to one deployment.\n\nA second enum rather than more variants of [`QuotaKind`]: the two scopes\ntake their defaults from different things, an offer for the first and a\nplan for this one, and one match over both could not say which.",
+        "enum": [
+          "deployments",
+          "members"
+        ]
+      },
       "OrganisationResponse": {
         "type": "object",
         "required": [
@@ -22215,6 +22572,34 @@
           }
         }
       },
+      "SetTenantOfferRequest": {
+        "type": "object",
+        "properties": {
+          "open": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "`true` opens the offer, `false` closes it, `null` returns it to the plan."
+          }
+        }
+      },
+      "SetTenantOrganisationQuotaRequest": {
+        "type": "object",
+        "properties": {
+          "quota": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Quota",
+                "description": "A limit, or `{\"type\": \"unlimited\"}`. `null` clears the override."
+              }
+            ]
+          }
+        }
+      },
       "SetTenantQuotaRequest": {
         "type": "object",
         "properties": {
@@ -22908,6 +23293,119 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/TenantFeatureView"
+            }
+          }
+        }
+      },
+      "TenantOfferResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TenantOfferView"
+          }
+        }
+      },
+      "TenantOfferView": {
+        "type": "object",
+        "required": [
+          "offer",
+          "plan_default",
+          "effective"
+        ],
+        "properties": {
+          "effective": {
+            "type": "boolean"
+          },
+          "offer": {
+            "$ref": "#/components/schemas/Offer"
+          },
+          "override": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "plan_default": {
+            "type": "boolean"
+          }
+        }
+      },
+      "TenantOffersResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TenantOfferView"
+            }
+          }
+        }
+      },
+      "TenantOrganisationQuotaResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TenantOrganisationQuotaView"
+          }
+        }
+      },
+      "TenantOrganisationQuotaView": {
+        "type": "object",
+        "required": [
+          "kind",
+          "description",
+          "plan_default",
+          "effective",
+          "held"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "effective": {
+            "$ref": "#/components/schemas/Quota"
+          },
+          "held": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "kind": {
+            "$ref": "#/components/schemas/OrganisationQuotaKind"
+          },
+          "override": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Quota"
+              }
+            ]
+          },
+          "plan_default": {
+            "$ref": "#/components/schemas/Quota"
+          }
+        }
+      },
+      "TenantOrganisationQuotasResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TenantOrganisationQuotaView"
             }
           }
         }

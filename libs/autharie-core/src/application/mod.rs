@@ -39,6 +39,7 @@ mod logs;
 mod member;
 mod metrics;
 mod network_access;
+mod offers;
 mod organisation;
 mod platform;
 mod quotas;

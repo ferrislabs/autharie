@@ -468,6 +468,9 @@ where
             .await?;
         let mcp_enabled = self.organisation_mcp_enabled(organisation_id).await?;
 
+        self.quotas
+            .serialise_creates(deployment_id.0, QuotaKind::Policies.as_str())
+            .await?;
         let held = self
             .publisher
             .agents

@@ -11,12 +11,21 @@ use crate::{
     },
     deployments::{DeploymentId, ports::DeploymentPolicy, ports::DeploymentRepository},
     offers::Offer,
-    organisation::{OrganisationId, ports::OrganisationRepository},
+    organisation::{
+        Organisation, OrganisationId,
+        invitation::InvitationState,
+        ports::{InvitationRepository, OrganisationRepository},
+        value_objects::Plan,
+    },
     platform::{PlatformRight, ports::PlatformPolicy},
     quotas::{
-        EffectiveQuota, OrganisationQuota, Quota, QuotaKind,
-        ports::{DeploymentQuotaService, OrganisationQuotaService, QuotaChange, QuotaRepository},
-        resolve,
+        EffectiveQuota, OrganisationQuota, OrganisationQuotaKind, OrganisationScopeQuota, Quota,
+        QuotaKind,
+        ports::{
+            DeploymentQuotaService, OrganisationQuotaService, OrganisationScopeQuotaService,
+            QuotaChange, QuotaRepository,
+        },
+        resolve, resolve_for_plan,
     },
     user::ports::UserRepository,
 };
@@ -47,6 +56,24 @@ pub async fn require_room<Q: QuotaRepository>(
 ) -> Result<(), CoreError> {
     let quota = effective(quotas, organisation_id, offer, kind).await?;
 
+    refuse_past(quota, kind.as_str(), held)
+}
+
+/// Refuses a create when the organisation already holds what its quota allows.
+pub async fn require_organisation_room<Q: QuotaRepository>(
+    quotas: &Q,
+    organisation_id: OrganisationId,
+    plan: Plan,
+    kind: OrganisationQuotaKind,
+    held: usize,
+) -> Result<(), CoreError> {
+    let overrides = quotas.organisation_overrides(organisation_id).await?;
+    let quota = resolve_for_plan(overrides.get(&kind).copied(), plan, kind);
+
+    refuse_past(quota, kind.as_str(), held)
+}
+
+fn refuse_past(quota: Quota, limit_type: &str, held: usize) -> Result<(), CoreError> {
     if quota.allows(held) {
         return Ok(());
     }
@@ -57,10 +84,224 @@ pub async fn require_room<Q: QuotaRepository>(
     };
 
     Err(CoreError::OrganisationLimitReached {
-        limit_type: kind.to_string(),
+        limit_type: limit_type.to_string(),
         max,
         current: held,
     })
+}
+
+/// Deployments of the organisation that are not deleted, whatever their offer.
+pub async fn live_deployments<D: DeploymentRepository>(
+    deployments: &D,
+    organisation_id: OrganisationId,
+) -> Result<usize, CoreError> {
+    Ok(deployments
+        .list_by_organisation(organisation_id)
+        .await?
+        .iter()
+        .filter(|deployment| deployment.deleted_at.is_none())
+        .count())
+}
+
+/// Invitations that can still be walked through: not accepted, revoked or
+/// expired.
+pub async fn pending_invitations<I: InvitationRepository>(
+    invitations: &I,
+    organisation_id: OrganisationId,
+) -> Result<usize, CoreError> {
+    let now = Utc::now();
+
+    Ok(invitations
+        .list_invitations(&organisation_id)
+        .await?
+        .iter()
+        .filter(|invitation| invitation.state(now) == InvitationState::Pending)
+        .count())
+}
+
+pub async fn members_of<O: OrganisationRepository>(
+    organisations: &O,
+    organisation_id: OrganisationId,
+) -> Result<usize, CoreError> {
+    Ok(organisations.list_members(&organisation_id).await?.len())
+}
+
+pub struct OrganisationScopeQuotaServiceImpl<Q, P, O, A, U, D, I>
+where
+    Q: QuotaRepository,
+    P: PlatformPolicy,
+    O: OrganisationRepository,
+    A: AuditRepository,
+    U: UserRepository,
+    D: DeploymentRepository,
+    I: InvitationRepository,
+{
+    quotas: Q,
+    policy: P,
+    organisations: O,
+    audit: A,
+    users: U,
+    deployments: D,
+    invitations: I,
+}
+
+impl<Q, P, O, A, U, D, I> OrganisationScopeQuotaServiceImpl<Q, P, O, A, U, D, I>
+where
+    Q: QuotaRepository,
+    P: PlatformPolicy,
+    O: OrganisationRepository,
+    A: AuditRepository,
+    U: UserRepository,
+    D: DeploymentRepository,
+    I: InvitationRepository,
+{
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        quotas: Q,
+        policy: P,
+        organisations: O,
+        audit: A,
+        users: U,
+        deployments: D,
+        invitations: I,
+    ) -> Self {
+        Self {
+            quotas,
+            policy,
+            organisations,
+            audit,
+            users,
+            deployments,
+            invitations,
+        }
+    }
+
+    async fn organisation(
+        &self,
+        organisation_id: OrganisationId,
+    ) -> Result<Organisation, CoreError> {
+        self.organisations
+            .find_by_id(&organisation_id)
+            .await?
+            .ok_or(CoreError::OrganisationNotFound {
+                id: organisation_id.0,
+            })
+    }
+
+    async fn held(
+        &self,
+        organisation_id: OrganisationId,
+        kind: OrganisationQuotaKind,
+    ) -> Result<usize, CoreError> {
+        match kind {
+            OrganisationQuotaKind::Deployments => {
+                live_deployments(&self.deployments, organisation_id).await
+            }
+            OrganisationQuotaKind::Members => Ok(members_of(&self.organisations, organisation_id)
+                .await?
+                + pending_invitations(&self.invitations, organisation_id).await?),
+        }
+    }
+
+    async fn view(
+        &self,
+        organisation: &Organisation,
+        kind: OrganisationQuotaKind,
+    ) -> Result<OrganisationScopeQuota, CoreError> {
+        let overrides = self.quotas.organisation_overrides(organisation.id).await?;
+
+        Ok(OrganisationScopeQuota::new(
+            kind,
+            organisation.plan,
+            overrides.get(&kind).copied(),
+            self.held(organisation.id, kind).await?,
+        ))
+    }
+}
+
+impl<Q, P, O, A, U, D, I> OrganisationScopeQuotaService
+    for OrganisationScopeQuotaServiceImpl<Q, P, O, A, U, D, I>
+where
+    Q: QuotaRepository,
+    P: PlatformPolicy,
+    O: OrganisationRepository,
+    A: AuditRepository,
+    U: UserRepository,
+    D: DeploymentRepository,
+    I: InvitationRepository,
+{
+    async fn list_organisation_scope_quotas(
+        &self,
+        identity: Identity,
+        organisation_id: OrganisationId,
+    ) -> Result<Vec<OrganisationScopeQuota>, CoreError> {
+        self.policy
+            .require(identity, PlatformRight::ViewEstate)
+            .await?;
+        let organisation = self.organisation(organisation_id).await?;
+
+        let mut listed = Vec::with_capacity(OrganisationQuotaKind::ALL.len());
+        for kind in OrganisationQuotaKind::ALL {
+            listed.push(self.view(&organisation, kind).await?);
+        }
+
+        Ok(listed)
+    }
+
+    async fn set_organisation_scope_quota(
+        &self,
+        identity: Identity,
+        organisation_id: OrganisationId,
+        kind: OrganisationQuotaKind,
+        quota: Option<Quota>,
+    ) -> Result<OrganisationScopeQuota, CoreError> {
+        self.policy
+            .require(identity.clone(), PlatformRight::ActOnTenant)
+            .await?;
+        let organisation = self.organisation(organisation_id).await?;
+
+        let before = self
+            .quotas
+            .organisation_overrides(organisation_id)
+            .await?
+            .get(&kind)
+            .copied();
+        let now = Utc::now();
+
+        if before != quota {
+            self.quotas
+                .set_organisation_override(
+                    organisation_id,
+                    kind,
+                    quota,
+                    &QuotaChange {
+                        by: identity.id().to_string(),
+                        at: now,
+                    },
+                )
+                .await?;
+
+            self.audit
+                .append(AuditEntry::record(
+                    AuditEntryId(Uuid::new_v4()),
+                    organisation_id,
+                    audit_actor(&identity, &self.users).await?,
+                    AuditAction("organisation.quota.changed".to_string()),
+                    AuditTarget {
+                        kind: AuditTargetKind::Organisation,
+                        id: organisation_id.0,
+                    },
+                    Some(AuditChange::new(
+                        json!({ "quota": kind, "override": before }),
+                        json!({ "quota": kind, "override": quota }),
+                    )?),
+                    now,
+                ))
+                .await?;
+        }
+
+        self.view(&organisation, kind).await
+    }
 }
 
 pub struct OrganisationQuotaServiceImpl<Q, P, O, A, U>
@@ -272,11 +513,15 @@ where
 mod tests {
     use std::sync::{Arc, Mutex};
 
+    use chrono::DateTime;
+
     use super::*;
     use crate::{
         audit::ports::MockAuditRepository,
         organisation::{
             Organisation,
+            invitation::{Invitation, InvitationId, InvitationTokenHash, InvitedEmail},
+            member::{Member, MemberId},
             ports::MockOrganisationRepository,
             value_objects::{
                 OrganisationLimits, OrganisationName, OrganisationSlug, OrganisationStatus, Plan,
@@ -624,5 +869,342 @@ mod tests {
             .unwrap();
 
         assert!(recorded.lock().unwrap().is_empty());
+    }
+
+    type ScopeService = OrganisationScopeQuotaServiceImpl<
+        InMemoryQuotas,
+        Holding,
+        MockOrganisationRepository,
+        MockAuditRepository,
+        NoUsers,
+        crate::deployments::ports::MockDeploymentRepository,
+        Invitations,
+    >;
+
+    struct Invitations(Vec<Invitation>);
+
+    impl InvitationRepository for Invitations {
+        async fn list_invitations(&self, _: &OrganisationId) -> Result<Vec<Invitation>, CoreError> {
+            Ok(self.0.clone())
+        }
+
+        async fn save_invitation(
+            &self,
+            _: &Invitation,
+            _: &InvitationTokenHash,
+        ) -> Result<(), CoreError> {
+            unreachable!("counting writes nothing")
+        }
+
+        async fn find_invitation_by_hash(
+            &self,
+            _: &InvitationTokenHash,
+        ) -> Result<Option<Invitation>, CoreError> {
+            unreachable!("counting looks nothing up")
+        }
+
+        async fn find_invitation(
+            &self,
+            _: &OrganisationId,
+            _: &InvitationId,
+        ) -> Result<Option<Invitation>, CoreError> {
+            unreachable!("counting looks nothing up")
+        }
+
+        async fn mark_invitation_accepted(
+            &self,
+            _: &InvitationId,
+            _: DateTime<Utc>,
+        ) -> Result<(), CoreError> {
+            unreachable!("counting writes nothing")
+        }
+
+        async fn mark_invitation_revoked(
+            &self,
+            _: &InvitationId,
+            _: DateTime<Utc>,
+        ) -> Result<(), CoreError> {
+            unreachable!("counting writes nothing")
+        }
+    }
+
+    fn invitation(now: DateTime<Utc>) -> Invitation {
+        Invitation::issue(
+            org(),
+            InvitedEmail::parse("pilot@acme.test").expect("an address"),
+            Vec::new(),
+            None,
+            now,
+        )
+        .0
+    }
+
+    fn member() -> Member {
+        Member {
+            id: MemberId(Uuid::from_u128(7)),
+            organisation_id: org(),
+            user_id: crate::user::UserId(Uuid::from_u128(2)),
+            email: "owner@acme.test".to_string(),
+            name: "owner".to_string(),
+            roles: Vec::new(),
+            joined_at: Utc::now(),
+            invited_by: None,
+        }
+    }
+
+    fn free_organisation() -> Organisation {
+        Organisation {
+            plan: Plan::Free,
+            limits: OrganisationLimits::from_plan(&Plan::Free),
+            ..organisation()
+        }
+    }
+
+    fn scope_service(
+        quotas: InMemoryQuotas,
+        holding: &[PlatformRight],
+        invitations: Vec<Invitation>,
+    ) -> (ScopeService, Recorded) {
+        let recorded: Recorded = Arc::new(Mutex::new(Vec::new()));
+
+        let mut organisations = MockOrganisationRepository::new();
+        organisations.expect_find_by_id().returning(|_| {
+            let found = Some(free_organisation());
+            Box::pin(async move { Ok(found) })
+        });
+        organisations
+            .expect_list_members()
+            .returning(|_| Box::pin(async { Ok(vec![member()]) }));
+
+        let mut deployments = crate::deployments::ports::MockDeploymentRepository::new();
+        deployments
+            .expect_list_by_organisation()
+            .returning(|_| Box::pin(async { Ok(Vec::new()) }));
+
+        let mut audit = MockAuditRepository::new();
+        let heard = Arc::clone(&recorded);
+        audit.expect_append().returning(move |entry| {
+            heard.lock().unwrap().push(entry);
+            Box::pin(async { Ok(()) })
+        });
+
+        (
+            OrganisationScopeQuotaServiceImpl::new(
+                quotas,
+                Holding(PlatformRights::of(holding.iter().copied())),
+                organisations,
+                audit,
+                NoUsers,
+                deployments,
+                Invitations(invitations),
+            ),
+            recorded,
+        )
+    }
+
+    #[tokio::test]
+    async fn a_free_organisation_refuses_a_second_deployment() {
+        let refused = require_organisation_room(
+            &InMemoryQuotas::default(),
+            org(),
+            Plan::Free,
+            OrganisationQuotaKind::Deployments,
+            1,
+        )
+        .await
+        .expect_err("the free plan holds one");
+
+        let CoreError::OrganisationLimitReached {
+            limit_type,
+            max,
+            current,
+        } = refused
+        else {
+            panic!("the refusal was not a limit: {refused}");
+        };
+        assert_eq!((limit_type.as_str(), max, current), ("deployments", 1, 1));
+    }
+
+    #[tokio::test]
+    async fn an_organisation_override_allows_the_second_and_refuses_the_third() {
+        let quotas = InMemoryQuotas::default().with_organisation_kind(
+            org(),
+            OrganisationQuotaKind::Deployments,
+            Quota::Limited(2),
+        );
+
+        require_organisation_room(
+            &quotas,
+            org(),
+            Plan::Free,
+            OrganisationQuotaKind::Deployments,
+            1,
+        )
+        .await
+        .expect("the second fits");
+        assert!(
+            require_organisation_room(
+                &quotas,
+                org(),
+                Plan::Free,
+                OrganisationQuotaKind::Deployments,
+                2
+            )
+            .await
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn the_scope_listing_needs_view_estate() {
+        let (service, _) = scope_service(
+            InMemoryQuotas::default(),
+            &[PlatformRight::OperateFleet],
+            Vec::new(),
+        );
+
+        assert!(matches!(
+            service
+                .list_organisation_scope_quotas(caller(), org())
+                .await,
+            Err(CoreError::MissingPlatformRight { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn members_held_counts_members_and_only_pending_invitations() {
+        let now = Utc::now();
+        let mut revoked = invitation(now);
+        revoked.revoked_at = Some(now);
+        let mut accepted = invitation(now);
+        accepted.accepted_at = Some(now);
+        let expired = invitation(now - chrono::Duration::days(30));
+        let (service, _) = scope_service(
+            InMemoryQuotas::default(),
+            &[PlatformRight::ViewEstate],
+            vec![invitation(now), revoked, accepted, expired],
+        );
+
+        let listed = service
+            .list_organisation_scope_quotas(caller(), org())
+            .await
+            .unwrap();
+
+        let members = listed
+            .iter()
+            .find(|entry| entry.kind == OrganisationQuotaKind::Members)
+            .unwrap();
+        assert_eq!(members.held, 2);
+        assert_eq!(members.plan_default, Quota::Limited(2));
+        assert_eq!(members.effective, Quota::Limited(2));
+        let deployments = listed
+            .iter()
+            .find(|entry| entry.kind == OrganisationQuotaKind::Deployments)
+            .unwrap();
+        assert_eq!(deployments.held, 0);
+    }
+
+    #[tokio::test]
+    async fn setting_a_scope_quota_needs_act_on_tenant_and_is_audited() {
+        let (denied, recorded) = scope_service(
+            InMemoryQuotas::default(),
+            &[PlatformRight::ViewEstate],
+            Vec::new(),
+        );
+        assert!(matches!(
+            denied
+                .set_organisation_scope_quota(
+                    caller(),
+                    org(),
+                    OrganisationQuotaKind::Deployments,
+                    Some(Quota::Limited(2))
+                )
+                .await,
+            Err(CoreError::MissingPlatformRight { .. })
+        ));
+        assert!(recorded.lock().unwrap().is_empty());
+
+        let (service, recorded) = scope_service(
+            InMemoryQuotas::default(),
+            &[PlatformRight::ActOnTenant],
+            Vec::new(),
+        );
+        let view = service
+            .set_organisation_scope_quota(
+                caller(),
+                org(),
+                OrganisationQuotaKind::Deployments,
+                Some(Quota::Limited(2)),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(view.organisation_override, Some(Quota::Limited(2)));
+        assert_eq!(view.effective, Quota::Limited(2));
+        let entries = recorded.lock().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].action.0, "organisation.quota.changed");
+    }
+
+    #[tokio::test]
+    async fn clearing_a_scope_quota_returns_to_the_plan_and_setting_the_same_writes_nothing() {
+        let quotas = InMemoryQuotas::default().with_organisation_kind(
+            org(),
+            OrganisationQuotaKind::Members,
+            Quota::Limited(9),
+        );
+        let (service, recorded) =
+            scope_service(quotas.clone(), &[PlatformRight::ActOnTenant], Vec::new());
+
+        service
+            .set_organisation_scope_quota(
+                caller(),
+                org(),
+                OrganisationQuotaKind::Members,
+                Some(Quota::Limited(9)),
+            )
+            .await
+            .unwrap();
+        assert!(recorded.lock().unwrap().is_empty());
+
+        let view = service
+            .set_organisation_scope_quota(caller(), org(), OrganisationQuotaKind::Members, None)
+            .await
+            .unwrap();
+
+        assert_eq!(view.organisation_override, None);
+        assert_eq!(view.effective, Quota::Limited(2));
+        assert!(
+            quotas
+                .organisation_overrides(org())
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(recorded.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn the_unknown_organisation_is_not_found() {
+        let mut organisations = MockOrganisationRepository::new();
+        organisations
+            .expect_find_by_id()
+            .returning(|_| Box::pin(async { Ok(None) }));
+        let service = OrganisationScopeQuotaServiceImpl::new(
+            InMemoryQuotas::default(),
+            Holding(PlatformRights::of([PlatformRight::ViewEstate])),
+            organisations,
+            MockAuditRepository::new(),
+            NoUsers,
+            crate::deployments::ports::MockDeploymentRepository::new(),
+            Invitations(Vec::new()),
+        );
+
+        assert!(matches!(
+            service
+                .list_organisation_scope_quotas(caller(), org())
+                .await,
+            Err(CoreError::OrganisationNotFound { .. })
+        ));
     }
 }

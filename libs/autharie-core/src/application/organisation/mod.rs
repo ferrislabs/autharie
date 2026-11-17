@@ -122,10 +122,7 @@ impl OrganisationMcpSwitch for AutharieService {
 }
 
 impl autharie_domain::offers::ports::OfferService for AutharieService {
-    // Only the organisation: what a tier opens is read from its plan, and
-    // asking for a repository this never touches is a repository the next
-    // reader has to work out is unused.
-    #[transactional(organisation)]
+    #[transactional(organisation, offer_override)]
     async fn list_offers(
         &self,
         identity: Identity,
@@ -147,7 +144,16 @@ impl autharie_domain::offers::ports::OfferService for AutharieService {
                 id: organisation_id.0,
             })?;
 
-        Ok(autharie_domain::offers::offers_for(organisation.plan))
+        let overrides = autharie_domain::offers::ports::OfferOverrideRepository::overrides(
+            &offer_override_repository,
+            organisation_id,
+        )
+        .await?;
+
+        Ok(autharie_domain::offers::offers_for(
+            organisation.plan,
+            &overrides,
+        ))
     }
 }
 

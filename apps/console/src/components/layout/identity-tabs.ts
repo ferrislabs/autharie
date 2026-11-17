@@ -1,4 +1,13 @@
-import { AppWindow, Bot, Building2, KeyRound, LayoutGrid, Palette, Users, Webhook } from 'lucide-react'
+import {
+  AppWindow,
+  Bot,
+  Building2,
+  KeyRound,
+  LayoutGrid,
+  Palette,
+  Users,
+  Webhook,
+} from 'lucide-react'
 import { CAN } from '@/domain/organisations/permissions'
 import type { Tab } from './nav-tabs'
 
@@ -7,6 +16,7 @@ interface Options {
   deploymentPath: (path?: string) => string
   /** Webhooks and agents are FerrisKey's: another kind of deployment has none. */
   ferriskey: boolean
+  agents: boolean
   /** The realm the realm pages open on. */
   realm: string
 }
@@ -18,7 +28,7 @@ interface Options {
  * Webhooks are deployment-wide and do not. `soon` tabs are announced and not
  * built: they are not links, the same convention as the side navigation.
  */
-export function identityTabs({ can, deploymentPath, ferriskey, realm }: Options): Tab[] {
+export function identityTabs({ can, deploymentPath, ferriskey, agents, realm }: Options): Tab[] {
   const inRealm = (path: string) =>
     deploymentPath(`/identity/realms/${encodeURIComponent(realm)}${path}`)
 
@@ -29,7 +39,7 @@ export function identityTabs({ can, deploymentPath, ferriskey, realm }: Options)
     { label: 'Organisations', to: inRealm('/organisations'), icon: Building2, soon: true },
     { label: 'Roles', to: inRealm('/roles'), icon: KeyRound, soon: true },
     { label: 'Branding', to: inRealm('/branding'), icon: Palette },
-    ...(ferriskey && can(CAN.manageInstances)
+    ...(ferriskey && agents && can(CAN.manageInstances)
       ? [{ label: 'Agents', to: deploymentPath('/identity/agents'), icon: Bot }]
       : []),
     ...(ferriskey

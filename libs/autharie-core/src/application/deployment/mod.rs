@@ -276,7 +276,9 @@ impl DeploymentService for AutharieService {
         feature_flag,
         tier,
         subscription,
-        billing_account
+        billing_account,
+        quota,
+        offer_override
     )]
     async fn create_deployment(
         &self,
@@ -342,6 +344,8 @@ impl DeploymentService for AutharieService {
             LocalClusterProvisioner,
             self.placement_windows(),
             AuthariePolicy::new(permissions_in(&tx)),
+            quota_repository,
+            offer_override_repository,
         );
 
         let deployment = deployments.create_deployment(identity, command).await?;
@@ -357,7 +361,7 @@ impl DeploymentService for AutharieService {
         Ok(deployment)
     }
 
-    #[transactional(deployment, user, data_plane, organisation)]
+    #[transactional(deployment, user, data_plane, organisation, quota, offer_override)]
     async fn purge_deleted_deployments(&self, retention: Duration) -> Result<u64, CoreError> {
         DeploymentServiceImpl::new(
             deployment_repository,
@@ -367,12 +371,14 @@ impl DeploymentService for AutharieService {
             LocalClusterProvisioner,
             self.placement_windows(),
             AuthariePolicy::new(permissions_in(&tx)),
+            quota_repository,
+            offer_override_repository,
         )
         .purge_deleted_deployments(retention)
         .await
     }
 
-    #[transactional(deployment, user, data_plane, organisation)]
+    #[transactional(deployment, user, data_plane, organisation, quota, offer_override)]
     async fn list_all_live_deployments(&self) -> Result<Vec<Deployment>, CoreError> {
         DeploymentServiceImpl::new(
             deployment_repository,
@@ -382,6 +388,8 @@ impl DeploymentService for AutharieService {
             LocalClusterProvisioner,
             self.placement_windows(),
             AuthariePolicy::new(permissions_in(&tx)),
+            quota_repository,
+            offer_override_repository,
         )
         .list_all_live_deployments()
         .await
@@ -395,7 +403,9 @@ impl DeploymentService for AutharieService {
         organisation,
         tier,
         subscription,
-        billing_account
+        billing_account,
+        quota,
+        offer_override
     )]
     async fn delete_deployment(
         &self,
@@ -409,6 +419,8 @@ impl DeploymentService for AutharieService {
             LocalClusterProvisioner,
             self.placement_windows(),
             AuthariePolicy::new(permissions_in(&tx)),
+            quota_repository,
+            offer_override_repository,
         )
         .delete_deployment(deployment_id)
         .await?;
@@ -440,7 +452,9 @@ impl DeploymentService for AutharieService {
         organisation,
         tier,
         subscription,
-        billing_account
+        billing_account,
+        quota,
+        offer_override
     )]
     async fn delete_deployment_for_organisation(
         &self,
@@ -456,6 +470,8 @@ impl DeploymentService for AutharieService {
             LocalClusterProvisioner,
             self.placement_windows(),
             AuthariePolicy::new(permissions_in(&tx)),
+            quota_repository,
+            offer_override_repository,
         )
         .delete_deployment_for_organisation(identity, organisation_id, deployment_id)
         .await?;
@@ -479,7 +495,7 @@ impl DeploymentService for AutharieService {
         Ok(deployment)
     }
 
-    #[transactional(deployment, user, data_plane, organisation)]
+    #[transactional(deployment, user, data_plane, organisation, quota, offer_override)]
     async fn get_deployment(
         &self,
         deployment_id: DeploymentId,
@@ -492,12 +508,14 @@ impl DeploymentService for AutharieService {
             LocalClusterProvisioner,
             self.placement_windows(),
             AuthariePolicy::new(permissions_in(&tx)),
+            quota_repository,
+            offer_override_repository,
         )
         .get_deployment(deployment_id)
         .await
     }
 
-    #[transactional(deployment, user, data_plane, organisation)]
+    #[transactional(deployment, user, data_plane, organisation, quota, offer_override)]
     async fn get_deployment_for_organisation(
         &self,
         identity: Identity,
@@ -512,12 +530,14 @@ impl DeploymentService for AutharieService {
             LocalClusterProvisioner,
             self.placement_windows(),
             AuthariePolicy::new(permissions_in(&tx)),
+            quota_repository,
+            offer_override_repository,
         )
         .get_deployment_for_organisation(identity, organisation_id, deployment_id)
         .await
     }
 
-    #[transactional(deployment, user, data_plane, organisation)]
+    #[transactional(deployment, user, data_plane, organisation, quota, offer_override)]
     async fn get_provisioning_for_organisation(
         &self,
         identity: Identity,
@@ -532,12 +552,14 @@ impl DeploymentService for AutharieService {
             LocalClusterProvisioner,
             self.placement_windows(),
             AuthariePolicy::new(permissions_in(&tx)),
+            quota_repository,
+            offer_override_repository,
         )
         .get_provisioning_for_organisation(identity, organisation_id, deployment_id)
         .await
     }
 
-    #[transactional(deployment, user, data_plane, organisation)]
+    #[transactional(deployment, user, data_plane, organisation, quota, offer_override)]
     async fn list_deployments_by_organisation(
         &self,
         identity: Identity,
@@ -551,12 +573,14 @@ impl DeploymentService for AutharieService {
             LocalClusterProvisioner,
             self.placement_windows(),
             AuthariePolicy::new(permissions_in(&tx)),
+            quota_repository,
+            offer_override_repository,
         )
         .list_deployments_by_organisation(identity, organisation_id)
         .await
     }
 
-    #[transactional(deployment, user, data_plane, organisation)]
+    #[transactional(deployment, user, data_plane, organisation, quota, offer_override)]
     async fn update_deployment(
         &self,
         deployment_id: DeploymentId,
@@ -571,6 +595,8 @@ impl DeploymentService for AutharieService {
             LocalClusterProvisioner,
             self.placement_windows(),
             AuthariePolicy::new(permissions_in(&tx)),
+            quota_repository,
+            offer_override_repository,
         )
         .update_deployment(deployment_id, command)
         .await?;
@@ -581,7 +607,7 @@ impl DeploymentService for AutharieService {
         Ok(updated)
     }
 
-    #[transactional(deployment, user, data_plane, organisation)]
+    #[transactional(deployment, user, data_plane, organisation, quota, offer_override)]
     async fn update_deployment_for_organisation(
         &self,
         identity: Identity,
@@ -598,6 +624,8 @@ impl DeploymentService for AutharieService {
             LocalClusterProvisioner,
             self.placement_windows(),
             AuthariePolicy::new(permissions_in(&tx)),
+            quota_repository,
+            offer_override_repository,
         )
         .update_deployment_for_organisation(identity, organisation_id, deployment_id, command)
         .await?;

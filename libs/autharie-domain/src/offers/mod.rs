@@ -12,6 +12,7 @@
 
 pub mod availability;
 pub mod ports;
+pub mod service;
 
 pub use availability::{OfferAvailability, offers_for};
 
@@ -212,6 +213,37 @@ impl std::str::FromStr for Offer {
     }
 }
 
+/// Whether an organisation may choose an offer.
+///
+/// The one place this is decided. An override states it outright, in both
+/// directions; without one the plan decides. The deployment create and the
+/// catalogue listing both ask here, so a closed offer is never listed as open
+/// nor the reverse.
+pub fn open(offer: Offer, plan: Plan, organisation_override: Option<bool>) -> bool {
+    organisation_override.unwrap_or_else(|| offer.is_open_to(plan))
+}
+
+/// One offer as the platform panel shows it for an organisation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+pub struct OrganisationOffer {
+    pub offer: Offer,
+    pub plan_default: bool,
+    #[serde(rename = "override")]
+    pub organisation_override: Option<bool>,
+    pub effective: bool,
+}
+
+impl OrganisationOffer {
+    pub fn new(offer: Offer, plan: Plan, organisation_override: Option<bool>) -> Self {
+        Self {
+            offer,
+            plan_default: offer.is_open_to(plan),
+            organisation_override,
+            effective: open(offer, plan, organisation_override),
+        }
+    }
+}
+
 impl Plan {
     /// What this organisation may choose from.
     ///
@@ -229,6 +261,36 @@ impl Plan {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn without_an_override_the_plan_decides() {
+        for plan in Plan::ALL {
+            for offer in Offer::ALL {
+                assert_eq!(open(offer, plan, None), offer.is_open_to(plan));
+            }
+        }
+    }
+
+    #[test]
+    fn the_panel_entry_carries_default_override_and_effective() {
+        let entry = OrganisationOffer::new(Offer::Sandbox, Plan::Free, Some(true));
+
+        assert_eq!(
+            serde_json::to_value(entry).unwrap(),
+            serde_json::json!({
+                "offer": "sandbox",
+                "plan_default": false,
+                "override": true,
+                "effective": true
+            })
+        );
+    }
+
+    #[test]
+    fn an_override_wins_in_both_directions() {
+        assert!(open(Offer::Sandbox, Plan::Free, Some(true)));
+        assert!(!open(Offer::Free, Plan::Free, Some(false)));
+    }
 
     /// A set with a hole in it is a set that places a deployment nowhere.
     #[test]

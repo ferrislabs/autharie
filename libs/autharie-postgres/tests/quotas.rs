@@ -2,7 +2,7 @@ use autharie_domain::{
     CoreError,
     organisation::OrganisationId,
     quotas::{
-        Quota, QuotaKind,
+        OrganisationQuotaKind, Quota, QuotaKind,
         ports::{QuotaChange, QuotaRepository},
     },
 };
@@ -247,4 +247,92 @@ async fn an_override_is_removed_with_its_organisation() {
     .await;
 
     assert_eq!(left.expect("the transaction"), 0);
+}
+
+#[tokio::test]
+async fn the_two_scopes_share_the_table_and_never_read_each_other() {
+    let pool = pool_or_skip!();
+
+    let (deployment_scope, organisation_scope) = in_scratch_tx(&pool, map_err, async |tx| {
+        let organisation = an_organisation(&tx).await?;
+        let quotas = PostgresQuotaRepository::new(&tx);
+        quotas
+            .set_override(
+                organisation,
+                QuotaKind::Webhooks,
+                Some(Quota::Limited(7)),
+                &change(),
+            )
+            .await?;
+        quotas
+            .set_organisation_override(
+                organisation,
+                OrganisationQuotaKind::Deployments,
+                Some(Quota::Limited(2)),
+                &change(),
+            )
+            .await?;
+        quotas
+            .set_organisation_override(
+                organisation,
+                OrganisationQuotaKind::Members,
+                Some(Quota::Unlimited),
+                &change(),
+            )
+            .await?;
+
+        Ok((
+            quotas.overrides(organisation).await?,
+            quotas.organisation_overrides(organisation).await?,
+        ))
+    })
+    .await
+    .expect("the transaction");
+
+    assert_eq!(deployment_scope.len(), 1);
+    assert_eq!(
+        deployment_scope.get(&QuotaKind::Webhooks),
+        Some(&Quota::Limited(7))
+    );
+    assert_eq!(organisation_scope.len(), 2);
+    assert_eq!(
+        organisation_scope.get(&OrganisationQuotaKind::Deployments),
+        Some(&Quota::Limited(2))
+    );
+    assert_eq!(
+        organisation_scope.get(&OrganisationQuotaKind::Members),
+        Some(&Quota::Unlimited)
+    );
+}
+
+#[tokio::test]
+async fn clearing_an_organisation_scope_override_returns_to_the_plan() {
+    let pool = pool_or_skip!();
+
+    let overrides = in_scratch_tx(&pool, map_err, async |tx| {
+        let organisation = an_organisation(&tx).await?;
+        let quotas = PostgresQuotaRepository::new(&tx);
+        quotas
+            .set_organisation_override(
+                organisation,
+                OrganisationQuotaKind::Deployments,
+                Some(Quota::Limited(0)),
+                &change(),
+            )
+            .await?;
+        quotas
+            .set_organisation_override(
+                organisation,
+                OrganisationQuotaKind::Deployments,
+                None,
+                &change(),
+            )
+            .await?;
+
+        quotas.organisation_overrides(organisation).await
+    })
+    .await
+    .expect("the transaction");
+
+    assert!(overrides.is_empty());
 }

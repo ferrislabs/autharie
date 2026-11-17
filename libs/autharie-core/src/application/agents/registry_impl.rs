@@ -9,7 +9,7 @@ use autharie_domain::{CoreError, deployments::DeploymentId, organisation::Organi
 use autharie_macros::transactional;
 use uuid::Uuid;
 
-use super::InstanceRights;
+use super::{InstanceRights, require_agents};
 use crate::{AutharieService, infrastructure::role::permissions_in};
 
 impl AutharieService {
@@ -47,7 +47,7 @@ impl AgentRegistryService for AutharieService {
         .await
     }
 
-    #[transactional(deployment, organisation, agent, action, audit, user)]
+    #[transactional(feature_flag, deployment, organisation, agent, action, audit, user)]
     async fn set_approval_mode(
         &self,
         identity: Identity,
@@ -55,6 +55,13 @@ impl AgentRegistryService for AutharieService {
         deployment_id: DeploymentId,
         approval_required: bool,
     ) -> Result<(), CoreError> {
+        require_agents(
+            permissions_in(&tx),
+            &feature_flag_repository,
+            identity.clone(),
+            organisation_id,
+        )
+        .await?;
         AgentRegistryServiceImpl::new(
             deployment_repository,
             organisation_repository,
@@ -71,7 +78,7 @@ impl AgentRegistryService for AutharieService {
         .await
     }
 
-    #[transactional(deployment, organisation, agent, action, audit, user)]
+    #[transactional(feature_flag, deployment, organisation, agent, action, audit, user)]
     async fn approve_agent(
         &self,
         identity: Identity,
@@ -79,6 +86,13 @@ impl AgentRegistryService for AutharieService {
         deployment_id: DeploymentId,
         client_id: AgentClientId,
     ) -> Result<(), CoreError> {
+        require_agents(
+            permissions_in(&tx),
+            &feature_flag_repository,
+            identity.clone(),
+            organisation_id,
+        )
+        .await?;
         AgentRegistryServiceImpl::new(
             deployment_repository,
             organisation_repository,
@@ -167,7 +181,7 @@ impl AgentRegistryService for AutharieService {
         .await
     }
 
-    #[transactional(deployment, organisation, agent, action, audit, user)]
+    #[transactional(feature_flag, deployment, organisation, agent, action, audit, user)]
     async fn create_autonomous_agent(
         &self,
         identity: Identity,
@@ -175,6 +189,13 @@ impl AgentRegistryService for AutharieService {
         deployment_id: DeploymentId,
         input: AutonomousInput,
     ) -> Result<Uuid, CoreError> {
+        require_agents(
+            permissions_in(&tx),
+            &feature_flag_repository,
+            identity.clone(),
+            organisation_id,
+        )
+        .await?;
         AgentRegistryServiceImpl::new(
             deployment_repository,
             organisation_repository,

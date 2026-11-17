@@ -197,6 +197,8 @@ pub enum Plan {
 }
 
 impl Plan {
+    pub const ALL: [Self; 4] = [Self::Free, Self::Starter, Self::Business, Self::Enterprise];
+
     pub fn max_instances(&self) -> usize {
         match self {
             Self::Free => 1,

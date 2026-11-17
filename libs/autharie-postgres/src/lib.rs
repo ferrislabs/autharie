@@ -43,6 +43,9 @@ pub mod iam;
 pub mod metrics;
 
 #[cfg_attr(coverage_nightly, coverage(off))]
+pub mod offers;
+
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub mod organisation;
 
 #[cfg_attr(coverage_nightly, coverage(off))]
@@ -115,6 +118,7 @@ pub mod registry {
         pub struct Deployment;
         pub struct Iam;
         pub struct Metrics;
+        pub struct OfferOverride;
         pub struct Release;
         pub struct Signal;
         pub struct Smtp;
@@ -184,6 +188,7 @@ mod registry_completeness {
         assert_registered::<domain::Deployment>();
         assert_registered::<domain::Iam>();
         assert_registered::<domain::Metrics>();
+        assert_registered::<domain::OfferOverride>();
         assert_registered::<domain::Quota>();
         assert_registered::<domain::Organisation>();
         assert_registered::<domain::Release>();
