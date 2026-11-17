@@ -13,7 +13,7 @@ use crate::{
 };
 
 /// Maximum number of organisations a user can own
-const MAX_ORGANISATIONS_PER_USER: usize = 10;
+const MAX_ORGANISATIONS_PER_USER: usize = 3;
 
 #[derive(Debug)]
 pub struct OrganisationServiceImpl<O, U>
@@ -54,7 +54,7 @@ where
             .ok_or(CoreError::InvalidIdentity)?;
         let owner_id = user.id;
 
-        // 1. Check user organisation limit (max 10 organisations per user)
+        // 1. Check user organisation limit (max 3 organisations per user)
         let user_organisations = self
             .organisation_repository
             .find_by_owner(&owner_id)
@@ -341,7 +341,7 @@ mod tests {
         };
         let name = OrganisationName::new("Test Org").unwrap();
 
-        let existing_orgs: Vec<Organisation> = (0..10)
+        let existing_orgs: Vec<Organisation> = (0..3)
             .map(|i| {
                 create_test_organisation(
                     &format!("Org {}", i),
@@ -367,8 +367,8 @@ mod tests {
         assert!(result.is_err());
         match result.unwrap_err() {
             CoreError::UserOrganisationLimitReached { max, current } => {
-                assert_eq!(max, 10);
-                assert_eq!(current, 10);
+                assert_eq!(max, 3);
+                assert_eq!(current, 3);
             }
             _ => panic!("Expected UserOrganisationLimitReached error"),
         }

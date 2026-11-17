@@ -2,8 +2,10 @@ import { Outlet, useParams } from '@tanstack/react-router'
 import { Boxes } from 'lucide-react'
 import { useGetDeployment } from '@/api/deployment.api'
 import { useDeploymentPath } from '@/domain/deployments/hooks/use-deployment-path'
+import { useAgentsFeature } from '@/domain/agents-feature/use-agents-feature'
 import { useIdentityRealm, useRememberRealm } from '@/domain/identity/use-identity-realm'
 import { useMyPermissions } from '@/domain/organisations/hooks/use-my-permissions'
+import { useResolvedOrganisationId } from '@/domain/organisations/hooks/use-resolved-organisation-id'
 import { useOrganisationPath } from '@/domain/organisations/hooks/use-organisation-path'
 import { identityTabs } from './identity-tabs'
 import { NavTabs } from './nav-tabs'
@@ -27,6 +29,7 @@ export function IdentityLayout() {
   const deploymentPath = useDeploymentPath()
   const { can } = useMyPermissions()
   const realm = useIdentityRealm()
+  const agents = useAgentsFeature(useResolvedOrganisationId() ?? null)
   useRememberRealm()
 
   const deployment = useGetDeployment(deploymentId ?? null)
@@ -36,6 +39,7 @@ export function IdentityLayout() {
     can,
     deploymentPath,
     realm,
+    agents,
     ferriskey: deployment.data?.data.kind === 'ferriskey',
   })
 

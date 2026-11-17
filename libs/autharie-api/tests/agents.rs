@@ -163,6 +163,15 @@ impl Estate {
         .execute(pool)
         .await
         .expect("an organisation");
+        sqlx::query(
+            "INSERT INTO organisation_feature_flags \
+             (organisation_id, key, enabled, updated_at, updated_by) \
+             VALUES ($1, 'agents', true, now(), 'the test')",
+        )
+        .bind(estate.organisation)
+        .execute(pool)
+        .await
+        .expect("agents switched on");
         for person in [&estate.owner, &estate.member] {
             sqlx::query(
                 "INSERT INTO members (id, organisation_id, user_id, created_at, updated_at) \

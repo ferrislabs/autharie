@@ -13,25 +13,32 @@ use crate::{
             InvitationPolicy, InvitationRepository, InvitationService, OrganisationRepository,
         },
     },
+    quotas::{
+        OrganisationQuotaKind,
+        ports::QuotaRepository,
+        service::{members_of, pending_invitations, require_organisation_room},
+    },
     role::{RoleId, ports::RoleRepository},
     user::{UserId, ports::UserRepository},
 };
 
-pub struct InvitationServiceImpl<O, I, R, U, P> {
+pub struct InvitationServiceImpl<O, I, R, U, P, Q> {
     organisation_repository: O,
     invitation_repository: I,
     role_repository: R,
     user_repository: U,
     policy: P,
+    quotas: Q,
 }
 
-impl<O, I, R, U, P> InvitationServiceImpl<O, I, R, U, P> {
+impl<O, I, R, U, P, Q> InvitationServiceImpl<O, I, R, U, P, Q> {
     pub fn new(
         organisation_repository: O,
         invitation_repository: I,
         role_repository: R,
         user_repository: U,
         policy: P,
+        quotas: Q,
     ) -> Self {
         Self {
             organisation_repository,
@@ -39,17 +46,19 @@ impl<O, I, R, U, P> InvitationServiceImpl<O, I, R, U, P> {
             role_repository,
             user_repository,
             policy,
+            quotas,
         }
     }
 }
 
-impl<O, I, R, U, P> InvitationService for InvitationServiceImpl<O, I, R, U, P>
+impl<O, I, R, U, P, Q> InvitationService for InvitationServiceImpl<O, I, R, U, P, Q>
 where
     O: OrganisationRepository,
     I: InvitationRepository,
     R: RoleRepository,
     U: UserRepository,
     P: InvitationPolicy,
+    Q: QuotaRepository,
 {
     async fn invite(
         &self,
@@ -97,6 +106,27 @@ where
                 email: email.to_string(),
             });
         }
+
+        self.quotas
+            .serialise_creates(organisation_id.0, OrganisationQuotaKind::Members.as_str())
+            .await?;
+        let held = members_of(&self.organisation_repository, organisation_id).await?
+            + pending_invitations(&self.invitation_repository, organisation_id).await?;
+        let organisation = self
+            .organisation_repository
+            .find_by_id(&organisation_id)
+            .await?
+            .ok_or(CoreError::OrganisationNotFound {
+                id: organisation_id.0,
+            })?;
+        require_organisation_room(
+            &self.quotas,
+            organisation_id,
+            organisation.plan,
+            OrganisationQuotaKind::Members,
+            held,
+        )
+        .await?;
 
         let invited_by = self
             .user_repository
@@ -187,6 +217,7 @@ where
             return Err(CoreError::InvitationAddressedToSomebodyElse);
         }
 
+        self.require_room_to_join(&invitation, user.id).await?;
         self.join(&invitation, user.id).await?;
 
         self.invitation_repository
@@ -203,10 +234,53 @@ where
     }
 }
 
-impl<O, I, R, U, P> InvitationServiceImpl<O, I, R, U, P>
+impl<O, I, R, U, P, Q> InvitationServiceImpl<O, I, R, U, P, Q>
 where
     O: OrganisationRepository,
+    Q: QuotaRepository,
 {
+    /// Pending invitations are not counted here: this one is among them, and
+    /// the room it held when it was written is the room it is spending.
+    ///
+    /// Somebody already in takes no room by walking through another.
+    async fn require_room_to_join(
+        &self,
+        invitation: &Invitation,
+        user_id: UserId,
+    ) -> Result<(), CoreError> {
+        let organisation_id = invitation.organisation_id;
+
+        if self
+            .organisation_repository
+            .find_member(&organisation_id, &user_id)
+            .await?
+            .is_some()
+        {
+            return Ok(());
+        }
+
+        self.quotas
+            .serialise_creates(organisation_id.0, OrganisationQuotaKind::Members.as_str())
+            .await?;
+        let organisation = self
+            .organisation_repository
+            .find_by_id(&organisation_id)
+            .await?
+            .ok_or(CoreError::OrganisationNotFound {
+                id: organisation_id.0,
+            })?;
+        let held = members_of(&self.organisation_repository, organisation_id).await?;
+
+        require_organisation_room(
+            &self.quotas,
+            organisation_id,
+            organisation.plan,
+            OrganisationQuotaKind::Members,
+            held,
+        )
+        .await
+    }
+
     /// Puts somebody in with what the invitation promised.
     ///
     /// Tolerates being already a member: the membership row is what matters,
@@ -242,6 +316,7 @@ mod tests {
             invitation::{InvitationState, InvitationTokenHash},
             member::MemberId,
         },
+        quotas::{Quota, fixtures::InMemoryQuotas},
         role::Role,
         user::User,
     };
@@ -450,12 +525,42 @@ mod tests {
 
         async fn find_by_id(
             &self,
-            _: &OrganisationId,
+            id: &OrganisationId,
         ) -> Result<Option<crate::organisation::Organisation>, CoreError> {
-            unreachable!("an invitation does not read the organisation")
+            use crate::organisation::value_objects::{
+                OrganisationLimits, OrganisationName, OrganisationSlug, OrganisationStatus, Plan,
+            };
+
+            let now = Utc::now();
+
+            Ok(Some(crate::organisation::Organisation {
+                id: *id,
+                name: OrganisationName::new("Acme").expect("a name"),
+                slug: OrganisationSlug::new("acme").expect("a slug"),
+                owner_id: UserId(INVITER),
+                status: OrganisationStatus::Active,
+                plan: Plan::Free,
+                limits: OrganisationLimits::from_plan(&Plan::Free),
+                created_at: now,
+                updated_at: now,
+                deleted_at: None,
+                mcp_enabled: false,
+            }))
         }
-        async fn list_members(&self, _: &OrganisationId) -> Result<Vec<Member>, CoreError> {
-            unreachable!("an invitation asks about one person")
+        async fn list_members(
+            &self,
+            organisation_id: &OrganisationId,
+        ) -> Result<Vec<Member>, CoreError> {
+            let mut members = Vec::new();
+            for user_id in self.0.members() {
+                members.push(
+                    self.find_member(organisation_id, &UserId(user_id))
+                        .await?
+                        .expect("listed members are members"),
+                );
+            }
+
+            Ok(members)
         }
         async fn remove_member(&self, _: &OrganisationId, _: &UserId) -> Result<(), CoreError> {
             unreachable!("an invitation never removes anybody")
@@ -565,15 +670,26 @@ mod tests {
         }
     }
 
-    type Service = InvitationServiceImpl<Organisations, Store, Roles, Users, Allowed>;
+    type Service =
+        InvitationServiceImpl<Organisations, Store, Roles, Users, Allowed, InMemoryQuotas>;
 
     fn service(store: Store, roles: Vec<Role>, users: Vec<User>) -> Service {
+        service_with(store, roles, users, InMemoryQuotas::default())
+    }
+
+    fn service_with(
+        store: Store,
+        roles: Vec<Role>,
+        users: Vec<User>,
+        quotas: InMemoryQuotas,
+    ) -> Service {
         InvitationServiceImpl::new(
             Organisations(store.clone()),
             store,
             Roles(roles),
             Users(users),
             Allowed,
+            quotas,
         )
     }
 
@@ -919,5 +1035,208 @@ mod tests {
             .expect_err("no such link");
 
         assert!(matches!(error, CoreError::InvitationNotFound));
+    }
+
+    fn limit_of(error: CoreError) -> (String, usize, usize) {
+        let CoreError::OrganisationLimitReached {
+            limit_type,
+            max,
+            current,
+        } = error
+        else {
+            panic!("the refusal was not a limit: {error}");
+        };
+
+        (limit_type, max, current)
+    }
+
+    /// @spec-pilot-2
+    #[tokio::test]
+    async fn a_pending_invitation_counts_against_members() {
+        let store = Store::default();
+        store.members.lock().unwrap().push(INVITER);
+        let service = service(store, Vec::new(), vec![user(INVITER, "inviter@acme.test")]);
+
+        service
+            .invite(
+                caller(INVITER),
+                OrganisationId(ORGANISATION),
+                email("first@acme.test"),
+                Vec::new(),
+            )
+            .await
+            .expect("room for one more on the free plan");
+
+        let Err(refused) = service
+            .invite(
+                caller(INVITER),
+                OrganisationId(ORGANISATION),
+                email("second@acme.test"),
+                Vec::new(),
+            )
+            .await
+        else {
+            panic!("the owner and one pending invitation fill two");
+        };
+
+        assert_eq!(limit_of(refused), ("members".to_string(), 2, 2));
+    }
+
+    #[tokio::test]
+    async fn a_revoked_or_expired_invitation_frees_its_place() {
+        let store = Store::default();
+        store.members.lock().unwrap().push(INVITER);
+        let service = service(
+            store.clone(),
+            Vec::new(),
+            vec![user(INVITER, "inviter@acme.test")],
+        );
+        let (invitation, _) = service
+            .invite(
+                caller(INVITER),
+                OrganisationId(ORGANISATION),
+                email("first@acme.test"),
+                Vec::new(),
+            )
+            .await
+            .expect("invited");
+
+        service
+            .revoke_invitation(caller(INVITER), OrganisationId(ORGANISATION), invitation.id)
+            .await
+            .expect("revoked");
+        service
+            .invite(
+                caller(INVITER),
+                OrganisationId(ORGANISATION),
+                email("second@acme.test"),
+                Vec::new(),
+            )
+            .await
+            .expect("the revoked one took no place");
+
+        for (held, _) in store.invitations.lock().unwrap().iter_mut() {
+            held.revoked_at = None;
+            held.expires_at = Utc::now() - Duration::days(1);
+        }
+        service
+            .invite(
+                caller(INVITER),
+                OrganisationId(ORGANISATION),
+                email("third@acme.test"),
+                Vec::new(),
+            )
+            .await
+            .expect("an expired one took no place");
+    }
+
+    #[tokio::test]
+    async fn an_override_raises_the_members_limit() {
+        let store = Store::default();
+        store.members.lock().unwrap().push(INVITER);
+        let quotas = InMemoryQuotas::default().with_organisation_kind(
+            OrganisationId(ORGANISATION),
+            OrganisationQuotaKind::Members,
+            Quota::Limited(4),
+        );
+        let service = service_with(
+            store,
+            Vec::new(),
+            vec![user(INVITER, "inviter@acme.test")],
+            quotas,
+        );
+
+        for address in ["a@acme.test", "b@acme.test", "c@acme.test"] {
+            service
+                .invite(
+                    caller(INVITER),
+                    OrganisationId(ORGANISATION),
+                    email(address),
+                    Vec::new(),
+                )
+                .await
+                .expect("within four");
+        }
+        let Err(refused) = service
+            .invite(
+                caller(INVITER),
+                OrganisationId(ORGANISATION),
+                email("d@acme.test"),
+                Vec::new(),
+            )
+            .await
+        else {
+            panic!("a fifth");
+        };
+
+        assert_eq!(limit_of(refused), ("members".to_string(), 4, 4));
+    }
+
+    #[tokio::test]
+    async fn accepting_past_the_limit_is_refused_and_pending_ones_are_not_counted() {
+        let store = Store::default();
+        store.members.lock().unwrap().extend([INVITER, MINE]);
+        let raised = InMemoryQuotas::default().with_organisation_kind(
+            OrganisationId(ORGANISATION),
+            OrganisationQuotaKind::Members,
+            Quota::Limited(3),
+        );
+        let users = vec![
+            user(INVITER, "inviter@acme.test"),
+            user(NEWCOMER, "colleague@acme.test"),
+        ];
+        let inviting = service_with(store.clone(), Vec::new(), users.clone(), raised);
+        let (_, token) = inviting
+            .invite(
+                caller(INVITER),
+                OrganisationId(ORGANISATION),
+                email("colleague@acme.test"),
+                Vec::new(),
+            )
+            .await
+            .expect("two members and nothing pending leave one place");
+
+        let lowered = InMemoryQuotas::default().with_organisation_kind(
+            OrganisationId(ORGANISATION),
+            OrganisationQuotaKind::Members,
+            Quota::Limited(2),
+        );
+        let refused = service_with(store.clone(), Vec::new(), users.clone(), lowered)
+            .accept_invitation(caller(NEWCOMER), token)
+            .await
+            .expect_err("two members already fill two");
+
+        assert_eq!(limit_of(refused), ("members".to_string(), 2, 2));
+        assert_eq!(store.members(), vec![INVITER, MINE]);
+    }
+
+    #[tokio::test]
+    async fn the_pending_invitation_is_not_counted_against_itself_on_accept() {
+        let store = Store::default();
+        store.members.lock().unwrap().push(INVITER);
+        let service = service(
+            store.clone(),
+            Vec::new(),
+            vec![
+                user(INVITER, "inviter@acme.test"),
+                user(NEWCOMER, "colleague@acme.test"),
+            ],
+        );
+        let (_, token) = service
+            .invite(
+                caller(INVITER),
+                OrganisationId(ORGANISATION),
+                email("colleague@acme.test"),
+                Vec::new(),
+            )
+            .await
+            .expect("invited");
+
+        service
+            .accept_invitation(caller(NEWCOMER), token)
+            .await
+            .expect("one member and this invitation fit two");
+
+        assert_eq!(store.members(), vec![INVITER, NEWCOMER]);
     }
 }

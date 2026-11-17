@@ -449,6 +449,9 @@ where
             .managed_deployment(organisation_id, deployment_id)
             .await?;
 
+        self.quotas
+            .serialise_creates(deployment_id.0, QuotaKind::Webhooks.as_str())
+            .await?;
         let held = self.webhooks.list(deployment_id).await?.len();
         require_room(
             &self.quotas,

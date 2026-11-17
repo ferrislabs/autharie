@@ -5,6 +5,7 @@ import { PageOrganisationSettings } from './page-organisation-settings'
 const noop = () => {}
 
 const props = {
+  agentsEnabled: true,
   mcpEnabled: false,
   canManage: true,
   isLoading: false,
@@ -19,6 +20,11 @@ function theSwitch(html: string): string {
 const DISABLED = /\sdisabled=""/
 
 describe('the organisation settings page', () => {
+  it('hides the AI switch when the agents feature is off', () => {
+    const html = renderToStaticMarkup(<PageOrganisationSettings {...props} agentsEnabled={false} />)
+    expect(html).not.toContain('Allow AI agents (MCP)')
+  })
+
   it('offers the AI switch with a line saying what it does', () => {
     const html = renderToStaticMarkup(<PageOrganisationSettings {...props} />)
     expect(html).toContain('>Allow AI agents (MCP)</label>')
@@ -54,7 +60,7 @@ describe('the organisation settings page', () => {
 
   it('shows why a change was refused', () => {
     const html = renderToStaticMarkup(
-      <PageOrganisationSettings {...props} refusal='forbidden: insufficient permissions' />,
+      <PageOrganisationSettings {...props} refusal='forbidden: insufficient permissions' />
     )
     expect(html).toContain('forbidden: insufficient permissions')
   })

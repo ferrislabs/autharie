@@ -684,7 +684,7 @@ export namespace Schemas {
     uptime_7d: UptimeWindow
   }
   export type DeploymentUptimeResponse = { data: DeploymentUptime }
-  export type Feature = 'customer_cloud'
+  export type Feature = 'customer_cloud' | 'agents'
   export type EnabledFeaturesResponse = { enabled: Array<Feature> }
   export type Ending = 'finished' | 'unreadable'
   export type Envelope = { alg: string; ct: string; ek: string; iv: string; v: number }
@@ -997,6 +997,7 @@ export namespace Schemas {
   }
   export type OperatorResponse = { data: PlatformOperator }
   export type OperatorsResponse = { data: Array<PlatformOperator> }
+  export type OrganisationQuotaKind = 'deployments' | 'members'
   export type OrganisationResponse = { data: Organisation }
   export type OutcomeItemReport = { message?: (string | null) | undefined; phase: string }
   export type PaymentMethodSessionResponse = { url: string }
@@ -1142,6 +1143,8 @@ export namespace Schemas {
   export type SetNetworkAccessResponse = { data: Deployment }
   export type SetServiceRequest = { service: ServiceIntent }
   export type SetTenantFeatureRequest = Partial<{ enabled: boolean | null }>
+  export type SetTenantOfferRequest = Partial<{ open: boolean | null }>
+  export type SetTenantOrganisationQuotaRequest = Partial<{ quota: null | Quota }>
   export type SetTenantQuotaRequest = Partial<{ quota: null | Quota }>
   export type SetUpgradeSettingsRequest = {
     auto_upgrade: AutoUpgradePolicy
@@ -1236,6 +1239,24 @@ export namespace Schemas {
   }
   export type TenantFeatureResponse = { data: TenantFeatureView }
   export type TenantFeaturesResponse = { data: Array<TenantFeatureView> }
+  export type TenantOfferView = {
+    effective: boolean
+    offer: Offer
+    override?: (boolean | null) | undefined
+    plan_default: boolean
+  }
+  export type TenantOfferResponse = { data: TenantOfferView }
+  export type TenantOffersResponse = { data: Array<TenantOfferView> }
+  export type TenantOrganisationQuotaView = {
+    description: string
+    effective: Quota
+    held: number
+    kind: OrganisationQuotaKind
+    override?: (null | Quota) | undefined
+    plan_default: Quota
+  }
+  export type TenantOrganisationQuotaResponse = { data: TenantOrganisationQuotaView }
+  export type TenantOrganisationQuotasResponse = { data: Array<TenantOrganisationQuotaView> }
   export type TenantQuotaView = {
     defaults: Array<OfferDefaultView>
     description: string
@@ -2788,6 +2809,46 @@ export namespace Endpoints {
     }
     response: Schemas.TenantFeatureResponse
   }
+  export type get_List_tenant_offers_handler = {
+    method: 'GET'
+    path: '/platform/organisations/{organisation_id}/offers'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string }
+    }
+    response: Schemas.TenantOffersResponse
+  }
+  export type put_Set_tenant_offer_handler = {
+    method: 'PUT'
+    path: '/platform/organisations/{organisation_id}/offers/{offer}'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; offer: string }
+
+      body: Schemas.SetTenantOfferRequest
+    }
+    response: Schemas.TenantOfferResponse
+  }
+  export type get_List_tenant_organisation_quotas_handler = {
+    method: 'GET'
+    path: '/platform/organisations/{organisation_id}/organisation-quotas'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string }
+    }
+    response: Schemas.TenantOrganisationQuotasResponse
+  }
+  export type put_Set_tenant_organisation_quota_handler = {
+    method: 'PUT'
+    path: '/platform/organisations/{organisation_id}/organisation-quotas/{kind}'
+    requestFormat: 'json'
+    parameters: {
+      path: { organisation_id: string; kind: string }
+
+      body: Schemas.SetTenantOrganisationQuotaRequest
+    }
+    response: Schemas.TenantOrganisationQuotaResponse
+  }
   export type put_Move_tenant_plan_handler = {
     method: 'PUT'
     path: '/platform/organisations/{organisation_id}/plan'
@@ -3071,6 +3132,8 @@ export type EndpointByMethod = {
     '/platform/organisations': Endpoints.get_List_tenants_handler
     '/platform/organisations/{organisation_id}': Endpoints.get_Get_tenant_handler
     '/platform/organisations/{organisation_id}/features': Endpoints.get_List_tenant_features_handler
+    '/platform/organisations/{organisation_id}/offers': Endpoints.get_List_tenant_offers_handler
+    '/platform/organisations/{organisation_id}/organisation-quotas': Endpoints.get_List_tenant_organisation_quotas_handler
     '/platform/organisations/{organisation_id}/quotas': Endpoints.get_List_tenant_quotas_handler
     '/platform/rights': Endpoints.get_My_rights_handler
     '/platform/signals': Endpoints.get_List_signals_handler
@@ -3117,6 +3180,8 @@ export type EndpointByMethod = {
     '/platform/features/{key}': Endpoints.put_Set_feature_default_handler
     '/platform/operators/{subject}': Endpoints.put_Grant_operator_handler
     '/platform/organisations/{organisation_id}/features/{key}': Endpoints.put_Set_tenant_feature_handler
+    '/platform/organisations/{organisation_id}/offers/{offer}': Endpoints.put_Set_tenant_offer_handler
+    '/platform/organisations/{organisation_id}/organisation-quotas/{kind}': Endpoints.put_Set_tenant_organisation_quota_handler
     '/platform/organisations/{organisation_id}/plan': Endpoints.put_Move_tenant_plan_handler
     '/platform/organisations/{organisation_id}/quotas/{kind}': Endpoints.put_Set_tenant_quota_handler
     '/releases/operator/{kind}/{version}/rollout': Endpoints.put_Widen_rollout_handler

@@ -37,6 +37,8 @@ interface Props {
   moving: boolean
   features?: React.ReactNode
   quotas?: React.ReactNode
+  organisationQuotas?: React.ReactNode
+  offers?: React.ReactNode
 }
 
 /**
@@ -130,6 +132,8 @@ export function PageTenantDetail({
   moving,
   features,
   quotas,
+  organisationQuotas,
+  offers,
 }: Props) {
   if (isLoading) {
     return (
@@ -247,6 +251,8 @@ export function PageTenantDetail({
       )}
 
       {features}
+      {organisationQuotas}
+      {offers}
       {quotas}
 
       {/* Below the organisation's own facts rather than instead of them: an

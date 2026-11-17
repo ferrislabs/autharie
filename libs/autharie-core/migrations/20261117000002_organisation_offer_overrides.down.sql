@@ -1,0 +1,1 @@
+DROP TABLE organisation_offer_overrides;

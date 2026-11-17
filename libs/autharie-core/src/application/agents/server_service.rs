@@ -11,7 +11,7 @@ use autharie_domain::{
 };
 use autharie_macros::transactional;
 
-use super::InstanceRights;
+use super::{InstanceRights, require_agents};
 use crate::{AutharieService, infrastructure::role::permissions_in};
 
 impl AgentServerService for AutharieService {
@@ -39,7 +39,16 @@ impl AgentServerService for AutharieService {
         .await
     }
 
-    #[transactional(deployment, organisation, quota, agent, action, audit, user)]
+    #[transactional(
+        feature_flag,
+        deployment,
+        organisation,
+        quota,
+        agent,
+        action,
+        audit,
+        user
+    )]
     async fn register_agent_server(
         &self,
         identity: Identity,
@@ -47,6 +56,13 @@ impl AgentServerService for AutharieService {
         deployment_id: DeploymentId,
         input: ServerInput,
     ) -> Result<CustomerServer, CoreError> {
+        require_agents(
+            permissions_in(&tx),
+            &feature_flag_repository,
+            identity.clone(),
+            organisation_id,
+        )
+        .await?;
         AgentServiceImpl::new(
             deployment_repository,
             organisation_repository,

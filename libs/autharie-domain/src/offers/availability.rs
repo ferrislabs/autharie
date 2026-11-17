@@ -6,12 +6,14 @@
 //! hiding an offer makes an upsell invisible; showing it with what opens it
 //! turns a refusal into a next step.
 
+use std::collections::HashMap;
+
 use serde::Serialize;
 use utoipa::ToSchema;
 
 use crate::{
     dataplane::value_objects::DeploymentResources,
-    offers::{DatabasePlacement, Offer},
+    offers::{DatabasePlacement, Offer, open},
     organisation::value_objects::Plan,
 };
 
@@ -37,13 +39,17 @@ pub struct OfferAvailability {
     pub opened_by: Option<Plan>,
 }
 
-/// The whole catalogue, answered for one tier.
-pub fn offers_for(plan: Plan) -> Vec<OfferAvailability> {
+/// The whole catalogue, answered for one tier and the overrides of one
+/// organisation.
+pub fn offers_for(plan: Plan, overrides: &HashMap<Offer, bool>) -> Vec<OfferAvailability> {
     Offer::ALL
         .into_iter()
-        .filter(|offer| offer.database() == DatabasePlacement::Managed || offer.is_open_to(plan))
+        .filter(|offer| {
+            offer.database() == DatabasePlacement::Managed
+                || open(*offer, plan, overrides.get(offer).copied())
+        })
         .map(|offer| {
-            let open = offer.is_open_to(plan);
+            let open = open(offer, plan, overrides.get(&offer).copied());
 
             OfferAvailability {
                 offer,
@@ -65,7 +71,10 @@ mod tests {
     #[test]
     fn every_dedicated_offer_is_answered_whatever_the_tier() {
         for plan in [Plan::Free, Plan::Starter, Plan::Business, Plan::Enterprise] {
-            let answered: Vec<Offer> = offers_for(plan).iter().map(|entry| entry.offer).collect();
+            let answered: Vec<Offer> = offers_for(plan, &HashMap::new())
+                .iter()
+                .map(|entry| entry.offer)
+                .collect();
 
             for offer in Offer::ALL
                 .into_iter()
@@ -82,7 +91,7 @@ mod tests {
     #[test]
     fn the_free_offer_is_shown_only_to_the_tier_it_is_for() {
         let shown = |plan| {
-            offers_for(plan)
+            offers_for(plan, &HashMap::new())
                 .iter()
                 .any(|entry| entry.offer == Offer::Free)
         };
@@ -95,7 +104,7 @@ mod tests {
 
     #[test]
     fn a_free_organisation_sees_the_sandbox_locked_behind_starter() {
-        let sandbox = offers_for(Plan::Free)
+        let sandbox = offers_for(Plan::Free, &HashMap::new())
             .into_iter()
             .find(|entry| entry.offer == Offer::Sandbox)
             .expect("the catalogue is whole");
@@ -106,7 +115,7 @@ mod tests {
 
     #[test]
     fn a_free_organisation_is_told_what_would_open_the_rest() {
-        let catalogue = offers_for(Plan::Free);
+        let catalogue = offers_for(Plan::Free, &HashMap::new());
 
         let private = catalogue
             .iter()
@@ -121,7 +130,7 @@ mod tests {
     /// something the customer has already bought.
     #[test]
     fn an_open_offer_names_no_tier() {
-        for entry in offers_for(Plan::Enterprise) {
+        for entry in offers_for(Plan::Enterprise, &HashMap::new()) {
             assert!(entry.open, "{} is closed to enterprise", entry.offer);
             assert_eq!(entry.opened_by, None);
         }
@@ -129,7 +138,7 @@ mod tests {
 
     #[test]
     fn the_catalogue_says_which_offers_share_a_cluster() {
-        let catalogue = offers_for(Plan::Enterprise);
+        let catalogue = offers_for(Plan::Enterprise, &HashMap::new());
 
         let shared: Vec<_> = catalogue
             .iter()
@@ -139,5 +148,42 @@ mod tests {
 
         assert!(shared.contains(&Offer::Standard));
         assert!(!shared.contains(&Offer::Private));
+    }
+
+    #[test]
+    fn an_override_opens_the_catalogue_entry_it_names() {
+        let overrides = HashMap::from([(Offer::Sandbox, true)]);
+
+        let sandbox = offers_for(Plan::Free, &overrides)
+            .into_iter()
+            .find(|entry| entry.offer == Offer::Sandbox)
+            .expect("the catalogue is whole");
+
+        assert!(sandbox.open);
+        assert_eq!(sandbox.opened_by, None);
+    }
+
+    #[test]
+    fn an_override_closes_what_the_plan_opens() {
+        let overrides = HashMap::from([(Offer::Standard, false)]);
+
+        let standard = offers_for(Plan::Enterprise, &overrides)
+            .into_iter()
+            .find(|entry| entry.offer == Offer::Standard)
+            .expect("the catalogue is whole");
+
+        assert!(!standard.open);
+        assert_eq!(standard.opened_by, Some(Plan::Starter));
+    }
+
+    #[test]
+    fn an_override_can_show_the_free_offer_to_another_tier() {
+        let overrides = HashMap::from([(Offer::Free, true)]);
+
+        assert!(
+            offers_for(Plan::Starter, &overrides)
+                .iter()
+                .any(|entry| entry.offer == Offer::Free && entry.open)
+        );
     }
 }

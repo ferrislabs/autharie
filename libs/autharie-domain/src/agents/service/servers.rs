@@ -119,6 +119,9 @@ where
             .slug
             .ok_or_else(|| AgentError::invalid("slug: is required"))?;
 
+        self.quotas
+            .serialise_creates(deployment_id.0, QuotaKind::McpServers.as_str())
+            .await?;
         let known = self.publisher.agents.list_servers(deployment_id).await?;
         require_room(
             &self.quotas,

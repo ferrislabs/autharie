@@ -37,9 +37,9 @@ use autharie_domain::{
 };
 use autharie_e2e::support::{
     customer_cloud::{
-        AllowAll, Audit, Grants, Identities, Keys, MEDIUM, MUTUALIZED, NeverProvisions, Platform,
-        REGION, Runner, SMALL, Users, capture, credential_json, member, providers, provisioner,
-        worker,
+        AllowAll, Audit, Grants, Identities, Keys, MEDIUM, MUTUALIZED, NeverProvisions,
+        NoOfferOverrides, NoQuotaOverrides, Platform, REGION, Runner, SMALL, Users, capture,
+        credential_json, member, providers, provisioner, worker,
     },
     iam::OneOrganisation,
     platform::caller,
@@ -71,8 +71,16 @@ impl fmt::Debug for Server {
     }
 }
 
-type Service =
-    DeploymentServiceImpl<Platform, Users, Platform, OneOrganisation, NeverProvisions, AllowAll>;
+type Service = DeploymentServiceImpl<
+    Platform,
+    Users,
+    Platform,
+    OneOrganisation,
+    NeverProvisions,
+    AllowAll,
+    NoQuotaOverrides,
+    NoOfferOverrides,
+>;
 
 #[derive(Debug, World)]
 #[world(init = Self::new)]
@@ -160,6 +168,8 @@ impl CustomerCloudWorld {
             self.spy.clone(),
             PlacementWindows::new(chrono::Duration::seconds(90), chrono::Duration::minutes(30)),
             AllowAll,
+            NoQuotaOverrides,
+            NoOfferOverrides,
         )
     }
 

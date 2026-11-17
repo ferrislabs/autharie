@@ -9,6 +9,8 @@ import {
 } from '@/api/platform.api'
 import TenantFeaturesFeature from '@/domain/features/pages/feature/tenant-features-feature'
 import TenantQuotasFeature from '@/domain/quotas/pages/feature/tenant-quotas-feature'
+import OfferOverridesFeature from '@/domain/offer-overrides/pages/feature/offer-overrides-feature'
+import OrganisationQuotasFeature from '@/domain/organisation-quotas/pages/feature/organisation-quotas-feature'
 import { useHoldsPlatformRight } from '@/domain/organisations/hooks/use-is-operator'
 import { PageTenantDetail } from '../ui/page-tenant-detail'
 
@@ -36,7 +38,7 @@ export default function PageTenantDetailFeature() {
             // what is in the way, which is what the operator has to act on.
             message: error instanceof Error ? error.message : 'The plan could not be changed.',
           }),
-      },
+      }
     )
   }
 
@@ -59,10 +61,9 @@ export default function PageTenantDetailFeature() {
         onError: (error: unknown) =>
           setOutcome({
             ok: false,
-            message:
-              error instanceof Error ? error.message : 'The archive could not be asked for.',
+            message: error instanceof Error ? error.message : 'The archive could not be asked for.',
           }),
-      },
+      }
     )
   }
 
@@ -81,6 +82,8 @@ export default function PageTenantDetailFeature() {
       onMoveToPlan={moveToPlan}
       moving={move.isPending}
       features={<TenantFeaturesFeature organisationId={organisationId} />}
+      organisationQuotas={<OrganisationQuotasFeature organisationId={organisationId} />}
+      offers={<OfferOverridesFeature organisationId={organisationId} />}
       quotas={<TenantQuotasFeature organisationId={organisationId} />}
     />
   )

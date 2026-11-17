@@ -374,7 +374,7 @@ async fn a_second_free_deployment_is_refused_with_the_instance_limit() {
         .await;
         assert_eq!(status, StatusCode::CONFLICT, "{second}");
         assert!(
-            second.to_string().contains("instances"),
+            second.to_string().contains("deployments"),
             "the refusal names the limit: {second}"
         );
 
@@ -441,6 +441,151 @@ async fn a_free_organisation_is_refused_the_sandbox_and_told_which_tier_opens_it
 
         assert_eq!(status, StatusCode::CONFLICT, "{refused}");
         assert!(refused.to_string().contains("starter"), "{refused}");
+    })
+    .await;
+}
+
+async fn override_quota(installation: &Installation, kind: &str, max: i32) {
+    sqlx::query(
+        "INSERT INTO organisation_quotas \
+         (organisation_id, kind, max_count, updated_at, updated_by) \
+         VALUES ($1, $2, $3, now(), 'the test')",
+    )
+    .bind(installation.free_organisation)
+    .bind(kind)
+    .bind(max)
+    .execute(&installation.pool)
+    .await
+    .expect("an override");
+}
+
+/// @spec-pilot-1
+#[tokio::test]
+async fn a_second_free_deployment_is_allowed_by_an_override_and_a_third_is_refused() {
+    scenario(async |installation| {
+        installation.serve_region().await;
+        let app = installation.app();
+        let path = installation.deployments(installation.free_organisation);
+
+        let (status, first) = call(
+            &app,
+            &path,
+            installation.command("pilot-one-first", "ferriskey", "free"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{first}");
+        let (status, refused) = call(
+            &app,
+            &path,
+            installation.command("pilot-one-second", "ferriskey", "free"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+
+        override_quota(installation, "deployments", 2).await;
+
+        let (status, second) = call(
+            &app,
+            &path,
+            installation.command("pilot-one-second", "ferriskey", "free"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{second}");
+        let (status, third) = call(
+            &app,
+            &path,
+            installation.command("pilot-one-third", "ferriskey", "free"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{third}");
+        assert!(third.to_string().contains("deployments"), "{third}");
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_paying_organisation_is_counted_against_the_deployments_quota() {
+    scenario(async |installation| {
+        installation.serve_region().await;
+        sqlx::query(
+            "INSERT INTO organisation_quotas \
+             (organisation_id, kind, max_count, updated_at, updated_by) \
+             VALUES ($1, 'deployments', 1, now(), 'the test')",
+        )
+        .bind(installation.paid_organisation)
+        .execute(&installation.pool)
+        .await
+        .expect("an override");
+        let app = installation.app();
+        let path = installation.deployments(installation.paid_organisation);
+
+        let (status, first) = call(
+            &app,
+            &path,
+            installation.command("paid-one", "ferriskey", "standard"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{first}");
+        let (status, second) = call(
+            &app,
+            &path,
+            installation.command("paid-two", "ferriskey", "standard"),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::CONFLICT, "{second}");
+        assert!(second.to_string().contains("deployments"), "{second}");
+    })
+    .await;
+}
+
+/// @spec-pilot-4
+#[tokio::test]
+async fn an_offer_opened_for_one_organisation_is_created_without_a_payment_method() {
+    scenario(async |installation| {
+        installation.serve_region().await;
+        let app = installation.app();
+        let path = installation.deployments(installation.free_organisation);
+        sqlx::query(
+            "INSERT INTO organisation_offer_overrides \
+             (organisation_id, offer, open, updated_at, updated_by) \
+             VALUES ($1, 'sandbox', true, now(), 'the test')",
+        )
+        .bind(installation.free_organisation)
+        .execute(&installation.pool)
+        .await
+        .expect("an override");
+
+        let (status, created) = call(
+            &app,
+            &path,
+            installation.command("sandboxed", "ferriskey", "sandbox"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{created}");
+
+        sqlx::query("DELETE FROM organisation_offer_overrides WHERE organisation_id = $1")
+            .bind(installation.free_organisation)
+            .execute(&installation.pool)
+            .await
+            .expect("cleared");
+        override_quota(installation, "deployments", 5).await;
+
+        let (status, refused) = call(
+            &app,
+            &path,
+            installation.command("sandboxed-again", "ferriskey", "sandbox"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+
+        let stays: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM deployments WHERE organisation_id = $1")
+                .bind(installation.free_organisation)
+                .fetch_one(&installation.pool)
+                .await
+                .expect("count");
+        assert_eq!(stays, 1);
     })
     .await;
 }

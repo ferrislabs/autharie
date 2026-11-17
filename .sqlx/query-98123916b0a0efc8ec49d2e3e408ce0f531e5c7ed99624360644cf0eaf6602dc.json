@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM organisation_offer_overrides WHERE organisation_id = $1 AND offer = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "98123916b0a0efc8ec49d2e3e408ce0f531e5c7ed99624360644cf0eaf6602dc"
+}

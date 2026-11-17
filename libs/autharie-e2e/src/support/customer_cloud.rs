@@ -974,6 +974,77 @@ impl UserRepository for Users {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub struct NoQuotaOverrides;
+
+impl autharie_domain::quotas::ports::QuotaRepository for NoQuotaOverrides {
+    async fn overrides(
+        &self,
+        _: OrganisationId,
+    ) -> Result<
+        HashMap<autharie_domain::quotas::QuotaKind, autharie_domain::quotas::Quota>,
+        CoreError,
+    > {
+        Ok(HashMap::new())
+    }
+
+    async fn set_override(
+        &self,
+        _: OrganisationId,
+        _: autharie_domain::quotas::QuotaKind,
+        _: Option<autharie_domain::quotas::Quota>,
+        _: &autharie_domain::quotas::ports::QuotaChange,
+    ) -> Result<(), CoreError> {
+        Ok(())
+    }
+
+    async fn organisation_overrides(
+        &self,
+        _: OrganisationId,
+    ) -> Result<
+        HashMap<autharie_domain::quotas::OrganisationQuotaKind, autharie_domain::quotas::Quota>,
+        CoreError,
+    > {
+        Ok(HashMap::new())
+    }
+
+    async fn set_organisation_override(
+        &self,
+        _: OrganisationId,
+        _: autharie_domain::quotas::OrganisationQuotaKind,
+        _: Option<autharie_domain::quotas::Quota>,
+        _: &autharie_domain::quotas::ports::QuotaChange,
+    ) -> Result<(), CoreError> {
+        Ok(())
+    }
+
+    async fn serialise_creates(&self, _: uuid::Uuid, _: &str) -> Result<(), CoreError> {
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct NoOfferOverrides;
+
+impl autharie_domain::offers::ports::OfferOverrideRepository for NoOfferOverrides {
+    async fn overrides(
+        &self,
+        _: OrganisationId,
+    ) -> Result<HashMap<autharie_domain::offers::Offer, bool>, CoreError> {
+        Ok(HashMap::new())
+    }
+
+    async fn set_override(
+        &self,
+        _: OrganisationId,
+        _: autharie_domain::offers::Offer,
+        _: Option<bool>,
+        _: &autharie_domain::offers::ports::OfferChange,
+    ) -> Result<(), CoreError> {
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct AllowAll;
 
 impl DeploymentPolicy for AllowAll {

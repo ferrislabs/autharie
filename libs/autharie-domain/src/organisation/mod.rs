@@ -217,29 +217,6 @@ impl Organisation {
     }
 
     /// Checks if a resource limit is reached
-    pub fn check_instance_limit(&self, current_count: usize) -> Result<(), CoreError> {
-        if current_count >= self.limits.max_instances {
-            return Err(CoreError::OrganisationLimitReached {
-                limit_type: "instances".to_string(),
-                max: self.limits.max_instances,
-                current: current_count,
-            });
-        }
-        Ok(())
-    }
-
-    pub fn check_user_limit(&self, current_count: usize) -> Result<(), CoreError> {
-        if current_count >= self.limits.max_users {
-            return Err(CoreError::OrganisationLimitReached {
-                limit_type: "users".to_string(),
-                max: self.limits.max_users,
-                current: current_count,
-            });
-        }
-        // None means unlimited, so always Ok
-        Ok(())
-    }
-
     pub fn check_storage_limit(&self, current_gb: usize) -> Result<(), CoreError> {
         if current_gb >= self.limits.max_storage_gb {
             return Err(CoreError::OrganisationLimitReached {
@@ -320,13 +297,8 @@ mod tests {
 
         let org = Organisation::new(name, slug, owner_id, Plan::Free);
 
-        // Free plan allows 1 instance
-        assert!(org.check_instance_limit(0).is_ok());
-        assert!(org.check_instance_limit(1).is_err());
-
-        // Free plan allows 5 users
-        assert!(org.check_user_limit(1).is_ok());
-        assert!(org.check_user_limit(2).is_err());
+        assert!(org.check_storage_limit(0).is_ok());
+        assert!(org.check_storage_limit(1).is_err());
     }
 
     #[test]

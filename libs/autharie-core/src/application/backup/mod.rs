@@ -361,7 +361,9 @@ impl BackupService for AutharieService {
         organisation,
         tier,
         subscription,
-        billing_account
+        billing_account,
+        quota,
+        offer_override
     )]
     async fn restore_backup(
         &self,
@@ -435,6 +437,8 @@ impl BackupService for AutharieService {
             LocalClusterProvisioner,
             self.placement_windows(),
             AuthariePolicy::new(permissions_in(&tx)),
+            quota_repository,
+            offer_override_repository,
         )
         // Placed, not created: whether this caller may restore was settled
         // above, against the right an operator holds or the one a member holds

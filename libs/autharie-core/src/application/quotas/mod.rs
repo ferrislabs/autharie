@@ -4,12 +4,17 @@ use autharie_domain::{
     deployments::DeploymentId,
     organisation::OrganisationId,
     quotas::{
-        EffectiveQuota, OrganisationQuota, Quota, QuotaKind,
-        ports::{DeploymentQuotaService, OrganisationQuotaService},
-        service::{DeploymentQuotaServiceImpl, OrganisationQuotaServiceImpl},
+        EffectiveQuota, OrganisationQuota, OrganisationQuotaKind, OrganisationScopeQuota, Quota,
+        QuotaKind,
+        ports::{DeploymentQuotaService, OrganisationQuotaService, OrganisationScopeQuotaService},
+        service::{
+            DeploymentQuotaServiceImpl, OrganisationQuotaServiceImpl,
+            OrganisationScopeQuotaServiceImpl,
+        },
     },
 };
 use autharie_macros::transactional;
+use autharie_postgres::organisation::PostgresOrganisationRepository;
 
 use crate::{
     AutharieService,
@@ -51,6 +56,48 @@ impl OrganisationQuotaService for AutharieService {
             user_repository,
         )
         .set_organisation_quota(identity, organisation_id, kind, quota)
+        .await
+    }
+}
+
+impl OrganisationScopeQuotaService for AutharieService {
+    #[transactional(quota, platform_operator, organisation, audit, user, deployment)]
+    async fn list_organisation_scope_quotas(
+        &self,
+        identity: Identity,
+        organisation_id: OrganisationId,
+    ) -> Result<Vec<OrganisationScopeQuota>, CoreError> {
+        OrganisationScopeQuotaServiceImpl::new(
+            quota_repository,
+            PlatformRightsPolicy::new(platform_operator_repository),
+            organisation_repository,
+            audit_repository,
+            user_repository,
+            deployment_repository,
+            PostgresOrganisationRepository::new(&tx),
+        )
+        .list_organisation_scope_quotas(identity, organisation_id)
+        .await
+    }
+
+    #[transactional(quota, platform_operator, organisation, audit, user, deployment)]
+    async fn set_organisation_scope_quota(
+        &self,
+        identity: Identity,
+        organisation_id: OrganisationId,
+        kind: OrganisationQuotaKind,
+        quota: Option<Quota>,
+    ) -> Result<OrganisationScopeQuota, CoreError> {
+        OrganisationScopeQuotaServiceImpl::new(
+            quota_repository,
+            PlatformRightsPolicy::new(platform_operator_repository),
+            organisation_repository,
+            audit_repository,
+            user_repository,
+            deployment_repository,
+            PostgresOrganisationRepository::new(&tx),
+        )
+        .set_organisation_scope_quota(identity, organisation_id, kind, quota)
         .await
     }
 }

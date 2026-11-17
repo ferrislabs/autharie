@@ -16,7 +16,7 @@ use autharie_postgres::organisation::PostgresOrganisationRepository;
 use crate::{AutharieService, infrastructure::role::permissions_in, policy::AuthariePolicy};
 
 impl InvitationService for AutharieService {
-    #[transactional(organisation, role, user)]
+    #[transactional(organisation, role, user, quota)]
     async fn invite(
         &self,
         identity: Identity,
@@ -30,12 +30,13 @@ impl InvitationService for AutharieService {
             role_repository,
             user_repository,
             AuthariePolicy::new(permissions_in(&tx)),
+            quota_repository,
         )
         .invite(identity, organisation_id, email, roles)
         .await
     }
 
-    #[transactional(organisation, role, user)]
+    #[transactional(organisation, role, user, quota)]
     async fn list_invitations(
         &self,
         identity: Identity,
@@ -47,12 +48,13 @@ impl InvitationService for AutharieService {
             role_repository,
             user_repository,
             AuthariePolicy::new(permissions_in(&tx)),
+            quota_repository,
         )
         .list_invitations(identity, organisation_id)
         .await
     }
 
-    #[transactional(organisation, role, user)]
+    #[transactional(organisation, role, user, quota)]
     async fn revoke_invitation(
         &self,
         identity: Identity,
@@ -65,6 +67,7 @@ impl InvitationService for AutharieService {
             role_repository,
             user_repository,
             AuthariePolicy::new(permissions_in(&tx)),
+            quota_repository,
         )
         .revoke_invitation(identity, organisation_id, invitation_id)
         .await
@@ -74,7 +77,7 @@ impl InvitationService for AutharieService {
     /// its roles, and the stamp that closes the invitation. Two of those
     /// landing without the third is either a member who holds nothing or a
     /// link that still works after it was used.
-    #[transactional(organisation, role, user)]
+    #[transactional(organisation, role, user, quota)]
     async fn accept_invitation(
         &self,
         identity: Identity,
@@ -86,6 +89,7 @@ impl InvitationService for AutharieService {
             role_repository,
             user_repository,
             AuthariePolicy::new(permissions_in(&tx)),
+            quota_repository,
         )
         .accept_invitation(identity, token)
         .await

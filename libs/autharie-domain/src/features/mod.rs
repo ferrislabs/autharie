@@ -12,14 +12,16 @@ use crate::CoreError;
 #[serde(rename_all = "snake_case")]
 pub enum Feature {
     CustomerCloud,
+    Agents,
 }
 
 impl Feature {
-    pub const ALL: [Self; 1] = [Self::CustomerCloud];
+    pub const ALL: [Self; 2] = [Self::CustomerCloud, Self::Agents];
 
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::CustomerCloud => "customer_cloud",
+            Self::Agents => "agents",
         }
     }
 
@@ -27,6 +29,9 @@ impl Feature {
         match self {
             Self::CustomerCloud => {
                 "Deploy into the customer's own cloud account (bring your own cloud)."
+            }
+            Self::Agents => {
+                "Connect MCP servers and agents to a deployment (MCP gateway, policies, agent registry)."
             }
         }
     }
@@ -137,6 +142,13 @@ mod tests {
         for feature in Feature::ALL {
             assert!(!feature.description().is_empty(), "{feature}");
         }
+    }
+
+    #[test]
+    fn agents_is_a_flag_with_its_key_and_off_by_default() {
+        assert_eq!("agents".parse::<Feature>().unwrap(), Feature::Agents);
+        assert!(Feature::ALL.contains(&Feature::Agents));
+        assert!(!resolve(None, None));
     }
 
     #[test]

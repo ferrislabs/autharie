@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { RequiresPermission } from '@/components/layout/requires-permission'
+import { isFeatureEnabled } from '@/domain/features/choice'
+import { useEnabledFeatures } from '@/domain/features/hooks/use-feature'
 import { useMyPermissions } from '@/domain/organisations/hooks/use-my-permissions'
 import { useOrganisationPath } from '@/domain/organisations/hooks/use-organisation-path'
 import { CAN } from '@/domain/organisations/permissions'
@@ -223,10 +225,28 @@ function AgentsTab() {
   )
 }
 
+function RequiresAgents({ children }: { children: React.ReactNode }) {
+  const { organisationId } = useAgentScope()
+  const features = useEnabledFeatures(organisationId)
+
+  if (features.isPending) return null
+  if (!isFeatureEnabled(features.data?.enabled, 'agents')) {
+    return (
+      <p className='p-6 text-sm text-muted-foreground'>
+        Agents are not enabled for this organisation. Contact support to turn them on.
+      </p>
+    )
+  }
+
+  return children
+}
+
 export default function PageAgentsFeature() {
   return (
     <RequiresPermission permission={CAN.manageInstances} what='manage agents'>
-      <AgentsTab />
+      <RequiresAgents>
+        <AgentsTab />
+      </RequiresAgents>
     </RequiresPermission>
   )
 }

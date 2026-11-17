@@ -55,3 +55,12 @@ The member endpoint is `feature-flags` rather than `features` because `GET /orga
 - Description: deploy into the customer's own cloud account (bring your own cloud).
 - Gate: `AutharieService::create_deployment` refuses a deployment whose distribution is `customer_cloud` with `403 E_FEATURE_NOT_ENABLED` unless the flag is enabled for the organisation. The caller must first hold the right to create deployments, so the flag state is not disclosed to non-members.
 - Off by default. Enable it for one organisation with an override, or for everyone by switching the default on.
+
+## `agents`
+
+- Key: `agents`.
+- Description: connect MCP servers and agents to a deployment (MCP gateway, policies, agent registry).
+- Gate: the agent services in `libs/autharie-core/src/application/agents/` refuse these writes with `403 E_FEATURE_NOT_ENABLED` unless the flag is enabled for the organisation: registering an MCP server, creating or updating a policy, enabling agents, approving an agent, setting the approval mode, creating an autonomous agent. Reads, disabling agents, block, unblock, delete, secret rotation and data plane reports stay open, and existing objects are untouched.
+- The customer's own switch `organisations.mcp_enabled` (organisation settings) is separate and still applies behind this flag.
+- Off by default. The console hides the Agents tab and the organisation's MCP setting while it is off.
+- Tests that exercise agents enable it in their setup, for example by inserting `organisation_feature_flags (key = 'agents', enabled = true)`.
