@@ -140,6 +140,7 @@ async fn seed(pool: &PgPool) -> Seeded {
             environment: autharie_domain::deployments::environment::Environment::Development,
             offer: Some(Offer::Free),
             restored_from: None,
+            failure_reason: None,
             resources: autharie_domain::dataplane::value_objects::DeploymentResources::DEFAULT,
             created_by: user,
             created_at: at,
