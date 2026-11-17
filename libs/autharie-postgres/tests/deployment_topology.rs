@@ -120,6 +120,7 @@ fn deployment(world: &World, topology: Topology) -> Deployment {
         last_verified_restore_at: None,
         last_restore_drill_seconds: None,
         log_shipping_enabled: false,
+        failure_reason: None,
         iam_settings: Default::default(),
         distribution: Default::default(),
     }
@@ -305,6 +306,30 @@ async fn the_database_refuses_zero_database_instances() {
             constraint.as_deref(),
             Some("deployments_database_instances_in_range")
         );
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_failure_reason_is_stored_and_cleared() {
+    scratch(async |tx| {
+        let world = seed_world(&tx).await?;
+        let deployments = PostgresDeploymentRepository::new(&tx);
+        let mut stored = deployment(&world, Topology::default());
+        deployments.insert(stored.clone()).await?;
+
+        stored.status = DeploymentStatus::Failed;
+        stored.failure_reason = Some("image pull backoff".to_string());
+        deployments.update(stored.clone()).await?;
+        let read = deployments.get_by_id(stored.id).await?.expect("stored");
+        assert_eq!(read.failure_reason.as_deref(), Some("image pull backoff"));
+
+        stored.status = DeploymentStatus::Successful;
+        stored.failure_reason = None;
+        deployments.update(stored.clone()).await?;
+        let read = deployments.get_by_id(stored.id).await?.expect("stored");
+        assert_eq!(read.failure_reason, None);
         Ok(())
     })
     .await;

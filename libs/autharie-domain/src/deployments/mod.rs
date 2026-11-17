@@ -256,6 +256,8 @@ pub struct Deployment {
     pub distribution: distribution::Distribution,
 
     pub topology: Topology,
+
+    pub failure_reason: Option<String>,
 }
 
 impl Deployment {
@@ -357,8 +359,23 @@ impl Deployment {
     ///
     /// Distinct from `fail_hand_off`, which is the control plane failing to
     /// hand the work over at all. This one is the data plane having tried.
-    pub fn confirm_failed(&mut self, at: DateTime<Utc>) -> bool {
-        self.settle_on(DeploymentStatus::Failed, at)
+    ///
+    /// Keeps what the data plane said about why, so the console can show it.
+    /// A repeat of the same report changes nothing; a new reason on a
+    /// deployment already failed is a change worth writing.
+    pub fn confirm_failed(&mut self, at: DateTime<Utc>, reason: Option<String>) -> bool {
+        if !self.is_still_arriving() {
+            return false;
+        }
+
+        if self.status == DeploymentStatus::Failed && self.failure_reason == reason {
+            return false;
+        }
+
+        self.status = DeploymentStatus::Failed;
+        self.failure_reason = reason;
+        self.updated_at = at;
+        true
     }
 
     /// Moves to the state an outcome reports, when that is meaningful.
@@ -373,6 +390,9 @@ impl Deployment {
             return false;
         }
 
+        if status != DeploymentStatus::Failed {
+            self.failure_reason = None;
+        }
         self.status = status;
         self.updated_at = at;
         true
@@ -507,7 +527,41 @@ pub(crate) mod tests {
             log_shipping_enabled: false,
             iam_settings: Default::default(),
             distribution: Default::default(),
+            failure_reason: None,
         }
+    }
+
+    #[test]
+    fn a_failed_outcome_keeps_the_reason_the_data_plane_sent() {
+        let mut subject = deployment(DeploymentStatus::InProgress);
+
+        assert!(subject.confirm_failed(Utc::now(), Some("image pull backoff".to_string())));
+        assert_eq!(
+            subject.failure_reason.as_deref(),
+            Some("image pull backoff")
+        );
+
+        assert!(!subject.confirm_failed(Utc::now(), Some("image pull backoff".to_string())));
+        assert!(subject.confirm_failed(Utc::now(), Some("oom killed".to_string())));
+        assert_eq!(subject.failure_reason.as_deref(), Some("oom killed"));
+    }
+
+    #[test]
+    fn a_failed_outcome_without_a_reason_records_none() {
+        let mut subject = deployment(DeploymentStatus::InProgress);
+
+        assert!(subject.confirm_failed(Utc::now(), None));
+        assert_eq!(subject.failure_reason, None);
+    }
+
+    #[test]
+    fn running_clears_the_reason_of_an_earlier_failure() {
+        let mut subject = deployment(DeploymentStatus::InProgress);
+        subject.confirm_failed(Utc::now(), Some("crash loop".to_string()));
+
+        assert!(subject.confirm_running(Utc::now(), None));
+        assert_eq!(subject.status, DeploymentStatus::Successful);
+        assert_eq!(subject.failure_reason, None);
     }
 
     #[test]
@@ -578,7 +632,7 @@ pub(crate) mod tests {
             assert_eq!(subject.status, status.clone());
 
             let mut subject = deployment(status.clone());
-            assert!(!subject.confirm_failed(Utc::now()), "{status:?}");
+            assert!(!subject.confirm_failed(Utc::now(), None), "{status:?}");
             assert_eq!(subject.status, status);
         }
     }
@@ -587,7 +641,7 @@ pub(crate) mod tests {
     fn a_deployment_the_operator_gave_up_on_is_marked_failed() {
         let mut subject = deployment(DeploymentStatus::InProgress);
 
-        assert!(subject.confirm_failed(Utc::now()));
+        assert!(subject.confirm_failed(Utc::now(), None));
         assert_eq!(subject.status, DeploymentStatus::Failed);
     }
 
@@ -795,7 +849,7 @@ pub(crate) mod tests {
         let mut subject = deployment(DeploymentStatus::Stopped);
 
         assert!(!subject.confirm_running(Utc::now(), Some(Version::new(27, 0, 0))));
-        assert!(!subject.confirm_failed(Utc::now()));
+        assert!(!subject.confirm_failed(Utc::now(), None));
         assert!(!subject.hand_off_to_data_plane(Utc::now()));
         assert!(!subject.fail_hand_off(Utc::now()));
         assert_eq!(subject.status, DeploymentStatus::Stopped);

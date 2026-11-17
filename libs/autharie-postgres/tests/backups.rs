@@ -566,6 +566,7 @@ async fn seed(tx: &autharie_persistence::SharedTx<'_>) -> Result<Deployment, Cor
         last_verified_restore_at: None,
         last_restore_drill_seconds: None,
         log_shipping_enabled: false,
+        failure_reason: None,
         iam_settings: Default::default(),
         distribution: Default::default(),
     };

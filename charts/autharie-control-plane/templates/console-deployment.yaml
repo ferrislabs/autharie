@@ -35,6 +35,10 @@ spec:
               value: {{ .Values.oidc.issuerUrl | quote }}
             - name: OIDC_CLIENT_ID
               value: {{ .Values.oidc.clientId | quote }}
+            - name: SUPPORT_URL
+              value: {{ .Values.console.supportUrl | default "" | quote }}
+            - name: DOCS_URL
+              value: {{ .Values.console.docsUrl | default "" | quote }}
           livenessProbe:
             httpGet:
               path: /

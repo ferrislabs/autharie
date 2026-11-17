@@ -494,6 +494,7 @@ export namespace Schemas {
     deployed_at?: (string | null) | undefined
     distribution: Distribution
     environment: Environment
+    failure_reason?: (string | null) | undefined
     iam_settings: IamSettings
     id: DeploymentId
     kind: DeploymentKind

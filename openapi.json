@@ -18052,6 +18052,12 @@
             "$ref": "#/components/schemas/Environment",
             "description": "Which environment this belongs to.\n\nStored rather than read back out of the namespace. The console used to\nsplit the namespace on its first hyphen, which cannot tell an\nenvironment nobody named from a deployment called `api-gateway`."
           },
+          "failure_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "iam_settings": {
             "$ref": "#/components/schemas/IamSettings"
           },

@@ -458,7 +458,7 @@ where
             DeploymentOutcome::Running => {
                 deployment.confirm_running(now, command.observed_version.clone())
             }
-            DeploymentOutcome::Failed => deployment.confirm_failed(now),
+            DeploymentOutcome::Failed => deployment.confirm_failed(now, command.reason.clone()),
         };
 
         if changed {
@@ -535,6 +535,7 @@ mod tests {
             last_verified_restore_at: None,
             last_restore_drill_seconds: None,
             log_shipping_enabled: false,
+            failure_reason: None,
             iam_settings: Default::default(),
             distribution: Default::default(),
         }

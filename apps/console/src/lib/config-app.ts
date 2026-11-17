@@ -1,4 +1,4 @@
-import { AppConfig, RuntimeConfig } from '@/types/config'
+import { AppConfig, AppLinks, RuntimeConfig } from '@/types/config'
 import { createUserManager } from './auth/user-manager'
 
 /// `public/config.json` ships as a template whose values the container
@@ -8,6 +8,18 @@ import { createUserManager } from './auth/user-manager'
 /// and authentication failed with no clue why.
 export function isUnsubstituted(value: unknown): boolean {
   return typeof value === 'string' && /^\$\{[A-Z_]+\}$/.test(value.trim())
+}
+
+export function usableLink(value: unknown): string | undefined {
+  if (typeof value !== 'string' || isUnsubstituted(value)) return undefined
+  const link = value.trim()
+  return /^(https?:\/\/|mailto:)/i.test(link) ? link : undefined
+}
+
+let links: AppLinks = {}
+
+export function appLinks(): AppLinks {
+  return links
 }
 
 async function loadConfigFromFile(): Promise<RuntimeConfig | null> {
@@ -43,6 +55,8 @@ async function loadConfigFromFile(): Promise<RuntimeConfig | null> {
       OIDC_ISSUER_URL: config.oidc_issuer_url,
       OIDC_CLIENT_ID: config.oidc_client_id,
       API_URL: config.api_url,
+      SUPPORT_URL: usableLink(config.support_url),
+      DOCS_URL: usableLink(config.docs_url),
     } as RuntimeConfig
   } catch (error) {
     console.warn('Failed to load config.json:', error)
@@ -69,6 +83,8 @@ function loadConfigFromEnv(): RuntimeConfig | null {
     OIDC_ISSUER_URL: issuerUrl,
     OIDC_CLIENT_ID: clientId,
     API_URL: apiUrl,
+    SUPPORT_URL: usableLink(import.meta.env.VITE_SUPPORT_URL),
+    DOCS_URL: usableLink(import.meta.env.VITE_DOCS_URL),
     IN_DEVELOPMENT_MODE: true,
   }
 }
@@ -95,6 +111,8 @@ export async function loadAppConfig(): Promise<AppConfig> {
     },
     api_url: runtimeConfig.API_URL,
     in_development_mode: runtimeConfig.IN_DEVELOPMENT_MODE,
+    support_url: runtimeConfig.SUPPORT_URL,
+    docs_url: runtimeConfig.DOCS_URL,
   }
 
   return config
@@ -103,6 +121,7 @@ export async function loadAppConfig(): Promise<AppConfig> {
 export function setupOidcConfiguration(config: AppConfig): void {
   window.issuerUrl = config.oidc.issuer_url
   window.inDevelopmentMode = config.in_development_mode
+  links = { support_url: config.support_url, docs_url: config.docs_url }
   createUserManager(config)
 }
 

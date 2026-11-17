@@ -1,5 +1,7 @@
 {
   "api_url": "${API_URL}",
   "oidc_issuer_url": "${OIDC_ISSUER_URL}",
-  "oidc_client_id": "${OIDC_CLIENT_ID}"
+  "oidc_client_id": "${OIDC_CLIENT_ID}",
+  "support_url": "${SUPPORT_URL}",
+  "docs_url": "${DOCS_URL}"
 }

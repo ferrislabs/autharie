@@ -99,6 +99,7 @@ fn draft(
         last_verified_restore_at: None,
         last_restore_drill_seconds: None,
         log_shipping_enabled: false,
+        failure_reason: None,
         iam_settings: Default::default(),
         distribution: placement.distribution,
         topology: command.topology(),
@@ -1001,6 +1002,7 @@ mod tests {
             last_verified_restore_at: None,
             last_restore_drill_seconds: None,
             log_shipping_enabled: false,
+            failure_reason: None,
             iam_settings: Default::default(),
             distribution: Default::default(),
         }
