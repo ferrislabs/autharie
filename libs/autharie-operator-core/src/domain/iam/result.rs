@@ -1,3 +1,5 @@
+use std::fmt;
+
 use serde::Serialize;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -39,11 +41,28 @@ pub struct ApplicationPage {
     pub next_page: Option<u32>,
 }
 
+#[derive(Clone, PartialEq, Eq, Serialize)]
+pub struct AdminAccess {
+    pub client_id: String,
+    pub client_secret: String,
+}
+
+impl fmt::Debug for AdminAccess {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AdminAccess")
+            .field("client_id", &self.client_id)
+            .field("client_secret", &"<redacted>")
+            .finish()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(untagged)]
 pub enum IamResult {
     Applications(ApplicationPage),
     Application(Box<ApplicationDetail>),
+    AdminAccess(AdminAccess),
 }
 
 impl IamResult {
@@ -178,7 +197,35 @@ mod tests {
     }
 
     #[test]
-    fn neither_result_type_has_a_place_for_a_secret() {
+    fn admin_access_serialises_to_the_client_id_and_its_secret_alone() {
+        let result = IamResult::AdminAccess(AdminAccess {
+            client_id: "autharie-admin".to_string(),
+            client_secret: "s3cr3t".to_string(),
+        });
+
+        let value = serde_json::from_slice::<Value>(&result.to_json().unwrap()).unwrap();
+
+        assert_eq!(
+            value,
+            json!({ "client_id": "autharie-admin", "client_secret": "s3cr3t" })
+        );
+    }
+
+    #[test]
+    fn admin_access_never_prints_its_secret() {
+        let result = IamResult::AdminAccess(AdminAccess {
+            client_id: "autharie-admin".to_string(),
+            client_secret: "s3cr3t-do-not-print".to_string(),
+        });
+
+        let shown = format!("{result:?} {:#?}", result.clone());
+
+        assert!(!shown.contains("s3cr3t"));
+        assert!(shown.contains("autharie-admin"));
+    }
+
+    #[test]
+    fn neither_read_result_type_has_a_place_for_a_secret() {
         let page = IamResult::Applications(ApplicationPage {
             items: vec![summary("1")],
             next_page: None,

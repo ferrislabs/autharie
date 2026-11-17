@@ -4,6 +4,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { DeploymentStatusBadge } from '../pages/ui/components/deployment-status'
 import type { DeploymentStatus } from '../types/deployment'
 import { failureNotice } from './failure'
+import { AdminAccessCard, type AdminAccessProps } from './admin-access-card'
 import { ActivityFeed, type ActivityEntry } from './activity-feed'
 import { AvailabilityHistory, type AvailabilityDay } from './availability-history'
 import { DeploymentActions, type DeploymentPower } from './deployment-actions'
@@ -34,6 +35,7 @@ export interface PageDeploymentOverviewProps {
   activityLoading: boolean
   clusterPanel?: React.ReactNode
   power?: DeploymentPower
+  adminAccess?: AdminAccessProps
 }
 
 const FRAME = 'mx-auto w-full max-w-6xl space-y-6 px-6 py-8'
@@ -160,6 +162,7 @@ export function PageDeploymentOverview(props: PageDeploymentOverviewProps) {
         ) : (
           <ActivityFeed entries={props.activity} />
         )}
+        {props.adminAccess && <AdminAccessCard {...props.adminAccess} />}
       </div>
 
       {props.clusterPanel}

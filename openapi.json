@@ -8162,7 +8162,7 @@
           "iam"
         ],
         "summary": "ask the data plane for one operation on one realm",
-        "description": "Records one named operation (`applications.list`, `applications.get`) on one realm of a FerrisKey deployment and hands it to the data plane, which runs it and reports the answer sealed to `sealing_key`, a public RSA JWK (RSA-OAEP-256, at least 2048 bits) the browser generated for this request. Poll `GET /iam/requests/{request_id}` for the answer. The request is audited (who, operation type, realm, request id), never its parameters or its result. A deployment holds at most 10 requests not yet collected or expired. Requires VIEW_INSTANCES.",
+        "description": "Records one named operation (`applications.list`, `applications.get`, `admin_access.issue`) on one realm of a FerrisKey deployment and hands it to the data plane, which runs it and reports the answer sealed to `sealing_key`, a public RSA JWK (RSA-OAEP-256, at least 2048 bits) the browser generated for this request. Poll `GET /iam/requests/{request_id}` for the answer. The request is audited (who, operation type, realm, request id), never its parameters or its result. A deployment holds at most 10 requests not yet collected or expired. `admin_access.issue` takes no parameters, works in realm `master` only, and answers a new `{ client_id, client_secret }` for the deployment's FerrisKey, replacing the previous one. Reads require VIEW_INSTANCES; `admin_access.issue` requires MANAGE_INSTANCES.",
         "operationId": "create_iam_request_handler",
         "parameters": [
           {
@@ -19326,6 +19326,20 @@
                 "type": "string",
                 "enum": [
                   "applications.get"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "admin_access.issue"
                 ]
               }
             }

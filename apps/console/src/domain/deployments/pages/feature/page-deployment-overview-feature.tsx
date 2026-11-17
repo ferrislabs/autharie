@@ -22,8 +22,10 @@ import { useMyPermissions } from '@/domain/organisations/hooks/use-my-permission
 import { useResolvedOrganisationId } from '@/domain/organisations/hooks/use-resolved-organisation-id'
 import { CAN } from '@/domain/organisations/permissions'
 import type { MetricKey } from '@/domain/usage/series'
+import { useIamAction } from '@/domain/identity/iam/hooks/use-iam-action'
 import { toActivity } from '../../overview/activity'
 import { toAvailabilityDays, unobservedDays } from '../../overview/availability'
+import { canIssueAdminAccess, parseAdminAccess } from '../../overview/admin-access'
 import {
   adminUrlOf,
   endpointOf,
@@ -39,6 +41,8 @@ import {
 import type { TrafficMetric, TrafficRange } from '../../overview/traffic-panel'
 import { previousWindow, seriesFor, windowFor, type Window } from '../../overview/traffic'
 import { KIND_LABELS } from '../../types/deployment'
+
+const ISSUE_ADMIN_ACCESS = { type: 'admin_access.issue' } as const
 
 const METRICS: MetricKey[] = ['requests', 'logins', 'active_users', 'token_events']
 
@@ -67,6 +71,7 @@ export default function PageDeploymentOverviewFeature() {
   const [span, setSpan] = useState(() => windowFor('24h', Date.now()))
 
   const { can } = useMyPermissions()
+  const adminAccess = useIamAction('master', ISSUE_ADMIN_ACCESS, parseAdminAccess)
   const stop = useStopDeployment()
   const start = useStartDeployment()
 
@@ -139,6 +144,17 @@ export default function PageDeploymentOverviewFeature() {
       failureReason={subject.failure_reason}
       adminUrl={adminUrlOf(endpoint, subject.kind)}
       banner={notice && <ProvisioningNoticeBanner notice={notice} />}
+      adminAccess={
+        endpoint &&
+        canIssueAdminAccess({
+          kind: subject.kind,
+          running: subject.status === 'successful',
+          mayManage: can(CAN.manageInstances),
+          endpoint,
+        })
+          ? { endpoint, view: adminAccess.view, onIssue: adminAccess.run }
+          : undefined
+      }
       power={
         can(CAN.manageInstances)
           ? {

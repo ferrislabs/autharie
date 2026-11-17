@@ -99,6 +99,7 @@ pub enum IamOperation {
     ApplicationsGet {
         id: Uuid,
     },
+    AdminAccessIssue,
 }
 
 #[derive(Deserialize)]
@@ -115,6 +116,8 @@ enum RawOperation {
     },
     #[serde(rename = "applications.get")]
     Get { id: Uuid },
+    #[serde(rename = "admin_access.issue")]
+    AdminAccessIssue,
 }
 
 fn first_page() -> u32 {
@@ -148,6 +151,7 @@ impl TryFrom<&str> for IamOperation {
                     .flatten(),
             },
             RawOperation::Get { id } => Self::ApplicationsGet { id },
+            RawOperation::AdminAccessIssue => Self::AdminAccessIssue,
         })
     }
 }
@@ -273,6 +277,14 @@ mod tests {
             IamOperation::ApplicationsGet {
                 id: Uuid::parse_str(ID).unwrap()
             }
+        );
+    }
+
+    #[test]
+    fn issuing_admin_access_takes_no_parameters() {
+        assert_eq!(
+            IamOperation::try_from(r#"{"type":"admin_access.issue"}"#).unwrap(),
+            IamOperation::AdminAccessIssue
         );
     }
 

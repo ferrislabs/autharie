@@ -235,6 +235,7 @@ where
         self.policy
             .can_access_iam(identity.clone(), organisation_id, input.operation.access())
             .await?;
+        input.operation.check_realm(input.realm.as_str())?;
         let deployment = self
             .ferriskey_deployment(organisation_id, deployment_id)
             .await?;

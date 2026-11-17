@@ -7,7 +7,7 @@ import { askIam, fetchIamResult } from '../services/iam.service'
 import type { IamOperation, IamScope } from '../types'
 import { useIamScope } from './use-iam-scope'
 
-function dependencies<T>(
+export function dependencies<T>(
   scope: IamScope,
   realm: string,
   operation: IamOperation,

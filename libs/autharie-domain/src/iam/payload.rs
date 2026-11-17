@@ -17,6 +17,8 @@ enum OperationPayload<'a> {
     },
     #[serde(rename = "applications.get")]
     ApplicationsGet { id: Uuid },
+    #[serde(rename = "admin_access.issue")]
+    AdminAccessIssue,
 }
 
 impl<'a> From<&'a IamOperation> for OperationPayload<'a> {
@@ -32,6 +34,7 @@ impl<'a> From<&'a IamOperation> for OperationPayload<'a> {
                 search: search.as_ref().map(|term| term.as_str()),
             },
             IamOperation::ApplicationsGet { id } => Self::ApplicationsGet { id: *id },
+            IamOperation::AdminAccessIssue => Self::AdminAccessIssue,
         }
     }
 }
@@ -128,6 +131,14 @@ mod tests {
         assert_eq!(
             payload(&IamOperation::ApplicationsGet { id })["operation"],
             json!({ "type": "applications.get", "id": id })
+        );
+    }
+
+    #[test]
+    fn issuing_admin_access_carries_its_type_alone() {
+        assert_eq!(
+            payload(&IamOperation::AdminAccessIssue)["operation"],
+            json!({ "type": "admin_access.issue" })
         );
     }
 }

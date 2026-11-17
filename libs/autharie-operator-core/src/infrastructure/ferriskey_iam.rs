@@ -13,6 +13,7 @@ use crate::domain::iam::result::{
 };
 use crate::domain::iam::{IamError, IamOperation, PageNumber, PageSize, SearchTerm};
 
+use super::ferriskey_admin_access;
 use super::ferriskey_agents::{Caller, KubeFerriskeyAgents, segment, send, text};
 use super::ferriskey_clients::next_page;
 use super::ferriskey_webhooks::ApiRequest;
@@ -151,6 +152,10 @@ async fn run<C: Caller>(
                 .map(|detail| IamResult::Application(Box::new(detail)))
                 .ok_or_else(malformed)
         }
+        IamOperation::AdminAccessIssue => ferriskey_admin_access::issue(caller, realm)
+            .await
+            .map(IamResult::AdminAccess)
+            .map_err(into_error),
     }
 }
 

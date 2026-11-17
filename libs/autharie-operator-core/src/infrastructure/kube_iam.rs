@@ -53,6 +53,20 @@ fn kube_error(error: kube::Error) -> IamError {
 }
 
 impl IamResultsPort for KubeIamResults {
+    async fn holds(&self, instance: &IdentityInstance, request_id: &str) -> Result<bool, IamError> {
+        let (name, namespace) = located(instance)?;
+        let secrets: Api<Secret> = Api::namespaced(self.client.clone(), namespace);
+
+        match secrets.get_opt(&iam_results_secret_name(name)).await {
+            Ok(secret) => Ok(secret.is_some_and(|secret| {
+                secret
+                    .data
+                    .is_some_and(|data| data.contains_key(request_id))
+            })),
+            Err(error) => Err(kube_error(error)),
+        }
+    }
+
     async fn put(
         &self,
         instance: &IdentityInstance,

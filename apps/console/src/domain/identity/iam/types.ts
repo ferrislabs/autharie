@@ -10,6 +10,7 @@ export interface IamScope {
 export type IamOperation =
   | { type: 'applications.list'; page?: number; limit?: number; search?: string }
   | { type: 'applications.get'; id: string }
+  | { type: 'admin_access.issue' }
 
 export interface IamRequestBody {
   realm: string

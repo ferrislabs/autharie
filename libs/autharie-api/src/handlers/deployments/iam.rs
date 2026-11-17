@@ -50,6 +50,8 @@ pub enum IamOperationBody {
     },
     #[serde(rename = "applications.get")]
     ApplicationsGet { id: Uuid },
+    #[serde(rename = "admin_access.issue")]
+    AdminAccessIssue {},
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -106,6 +108,7 @@ fn operation_from(body: IamOperationBody) -> Result<IamOperation, ApiError> {
             }
         }),
         IamOperationBody::ApplicationsGet { id } => Ok(IamOperation::ApplicationsGet { id }),
+        IamOperationBody::AdminAccessIssue {} => Ok(IamOperation::AdminAccessIssue),
     }
 }
 
@@ -122,7 +125,7 @@ fn input_from(body: IamRequestBody) -> Result<IamInput, ApiError> {
     path = "/{organisation_id}/deployments/{deployment_id}/iam/requests",
     summary = "ask the data plane for one operation on one realm",
     tag = "iam",
-    description = "Records one named operation (`applications.list`, `applications.get`) on one realm of a FerrisKey deployment and hands it to the data plane, which runs it and reports the answer sealed to `sealing_key`, a public RSA JWK (RSA-OAEP-256, at least 2048 bits) the browser generated for this request. Poll `GET /iam/requests/{request_id}` for the answer. The request is audited (who, operation type, realm, request id), never its parameters or its result. A deployment holds at most 10 requests not yet collected or expired. Requires VIEW_INSTANCES.",
+    description = "Records one named operation (`applications.list`, `applications.get`, `admin_access.issue`) on one realm of a FerrisKey deployment and hands it to the data plane, which runs it and reports the answer sealed to `sealing_key`, a public RSA JWK (RSA-OAEP-256, at least 2048 bits) the browser generated for this request. Poll `GET /iam/requests/{request_id}` for the answer. The request is audited (who, operation type, realm, request id), never its parameters or its result. A deployment holds at most 10 requests not yet collected or expired. `admin_access.issue` takes no parameters, works in realm `master` only, and answers a new `{ client_id, client_secret }` for the deployment's FerrisKey, replacing the previous one. Reads require VIEW_INSTANCES; `admin_access.issue` requires MANAGE_INSTANCES.",
     params(IamRequestsRoute),
     request_body = IamRequestBody,
     responses(
@@ -273,6 +276,20 @@ mod tests {
         let input = read(body(json!({ "type": "applications.get", "id": id }))).expect("accepted");
 
         assert_eq!(input.operation, IamOperation::ApplicationsGet { id });
+    }
+
+    #[test]
+    fn issuing_admin_access_takes_no_parameters() {
+        let input = read(body(json!({ "type": "admin_access.issue" }))).expect("accepted");
+
+        assert_eq!(input.operation, IamOperation::AdminAccessIssue);
+        assert_eq!(input.realm.as_str(), "master");
+        assert!(
+            serde_json::from_value::<IamRequestBody>(body(
+                json!({ "type": "admin_access.issue", "client_id": "x" })
+            ))
+            .is_err()
+        );
     }
 
     #[test]

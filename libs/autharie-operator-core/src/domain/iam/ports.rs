@@ -26,6 +26,12 @@ pub trait FerriskeyIamPort: Send + Sync {
 }
 
 pub trait IamResultsPort: Send + Sync {
+    fn holds(
+        &self,
+        instance: &IdentityInstance,
+        request_id: &str,
+    ) -> impl Future<Output = Result<bool, IamError>> + Send;
+
     fn put(
         &self,
         instance: &IdentityInstance,
