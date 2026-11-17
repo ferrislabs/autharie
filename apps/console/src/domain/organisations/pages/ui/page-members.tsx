@@ -35,6 +35,7 @@ interface Props {
   isLoading: boolean
   isSaving: boolean
   invitationLink: string | null
+  createdAccountFor: string | null
   onInvite: (email: string, roles: string[]) => void
   onInviteDialogClosed: () => void
   onRevoke: (invitation: Invitation) => void
@@ -50,6 +51,7 @@ export function PageMembers({
   isLoading,
   isSaving,
   invitationLink,
+  createdAccountFor,
   onInvite,
   onInviteDialogClosed,
   onRevoke,
@@ -207,6 +209,7 @@ export function PageMembers({
         isSaving={isSaving}
         onInvite={onInvite}
         link={invitationLink}
+        createdAccountFor={createdAccountFor}
       />
 
       <ConfirmRemoval

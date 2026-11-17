@@ -8,8 +8,8 @@ variable "ferriskey_url" {
     only forwards that prefix to the API -- everything else goes to the
     webapp's nginx, which answers a POST here with 405.
   DESC
-  type    = string
-  default = "https://id.autharie.fr/api"
+  type        = string
+  default     = "https://id.autharie.fr/api"
 }
 
 variable "realm" {
@@ -46,6 +46,54 @@ variable "console_origin" {
     actually redirects to (see apps/console/src/lib/auth/user-manager.ts) are
     registered rather than relying on a wildcard that does nothing.
   DESC
-  type    = string
-  default = "https://app.autharie.fr"
+  type        = string
+  default     = "https://app.autharie.fr"
+}
+
+variable "smtp_host" {
+  description = "SMTP server the realm sends mail through. Empty leaves the realm without an SMTP config, and invitees get no set-password email."
+  type        = string
+  default     = ""
+}
+
+variable "smtp_port" {
+  description = "SMTP server port."
+  type        = number
+  default     = 587
+}
+
+variable "smtp_username" {
+  description = "SMTP account name."
+  type        = string
+  default     = ""
+}
+
+variable "smtp_password" {
+  description = "SMTP account password. Pass it as TF_VAR_smtp_password."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "smtp_from_email" {
+  description = "Address the realm's mail is sent from."
+  type        = string
+  default     = ""
+}
+
+variable "smtp_from_name" {
+  description = "Name the realm's mail is sent from."
+  type        = string
+  default     = "Autharie"
+}
+
+variable "smtp_encryption" {
+  description = "Transport security towards the SMTP server."
+  type        = string
+  default     = "starttls"
+
+  validation {
+    condition     = contains(["tls", "starttls", "none"], var.smtp_encryption)
+    error_message = "smtp_encryption must be one of tls, starttls or none."
+  }
 }

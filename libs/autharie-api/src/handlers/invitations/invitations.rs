@@ -55,6 +55,10 @@ pub struct InviteResponse {
 
     /// Hand this to the person being invited. It is not shown again.
     pub token: String,
+
+    /// True when this invitation created the invitee's Autharie account, in
+    /// which case an email to set a password was requested for them.
+    pub account_created: bool,
 }
 
 #[utoipa::path(
@@ -62,7 +66,7 @@ pub struct InviteResponse {
     path = "/{organisation_id}/invitations",
     summary = "invite somebody into an organisation",
     tag = "invitations",
-    description = "Returns the secret once, in this response and nowhere else. No mail is sent: the link is handed over by whoever created it.",
+    description = "Returns the secret once, in this response and nowhere else. The link is handed over by whoever created it. When the address has no account yet, one is created and the invitee is emailed a link to set their password.",
     params(InvitationsRoute),
     request_body = InviteRequest,
     responses(
@@ -71,7 +75,8 @@ pub struct InviteResponse {
         (status = 401, description = "Unauthorized", body = ApiError),
         (status = 403, description = "The caller may not invite anybody here", body = ApiError),
         (status = 409, description = "That address is already a member", body = ApiError),
-        (status = 500, description = "Internal Server Error", body = ApiError)
+        (status = 500, description = "Internal Server Error", body = ApiError),
+        (status = 502, description = "The identity provider could not be reached to prepare the invitee's account", body = ApiError)
     ),
     security(("bearer_auth" = []))
 )]
@@ -88,14 +93,15 @@ pub async fn invite_handler(
         .map(autharie_core::role::RoleId)
         .collect();
 
-    let (invitation, token) = state
+    let issued = state
         .service
         .invite(identity, OrganisationId(organisation_id), email, roles)
         .await?;
 
     Ok(Response::Created(InviteResponse {
-        data: invitation,
-        token: token.expose().to_string(),
+        data: issued.invitation,
+        token: issued.token.expose().to_string(),
+        account_created: issued.account_created,
     }))
 }
 

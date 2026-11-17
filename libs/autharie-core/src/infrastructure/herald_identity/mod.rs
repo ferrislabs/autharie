@@ -57,6 +57,38 @@ impl RealmAdmin {
     }
 }
 
+impl RealmAdmin {
+    pub(crate) async fn token(&self, http: &Client) -> Result<String, String> {
+        let answer = http
+            .post(format!(
+                "{}/realms/{}/protocol/openid-connect/token",
+                self.base_url, self.admin_realm
+            ))
+            .form(&[
+                ("grant_type", "password"),
+                ("client_id", self.admin_client_id.as_str()),
+                ("username", self.admin_username.as_str()),
+                ("password", self.admin_password.as_str()),
+            ])
+            .send()
+            .await
+            .map_err(|e| format!("could not reach the identity provider in the realm: {e}"))?;
+
+        if !answer.status().is_success() {
+            return Err(format!(
+                "could not authenticate as the realm administrator in the realm: {}",
+                answer.status()
+            ));
+        }
+
+        answer
+            .json::<TokenAnswer>()
+            .await
+            .map(|token| token.access_token)
+            .map_err(|e| format!("could not read the administrator's token in the realm: {e}"))
+    }
+}
+
 pub struct FerrisKeyHeraldIdentities {
     http: Client,
     realm: RealmAdmin,
@@ -101,34 +133,10 @@ impl FerrisKeyHeraldIdentities {
     /// cache would be a held credential and a lifetime to get wrong, bought
     /// for a round trip nobody is waiting on.
     async fn admin_token(&self) -> Result<String, CoreError> {
-        let answer = self
-            .http
-            .post(format!(
-                "{}/realms/{}/protocol/openid-connect/token",
-                self.realm.base_url, self.realm.admin_realm
-            ))
-            .form(&[
-                ("grant_type", "password"),
-                ("client_id", self.realm.admin_client_id.as_str()),
-                ("username", self.realm.admin_username.as_str()),
-                ("password", self.realm.admin_password.as_str()),
-            ])
-            .send()
+        self.realm
+            .token(&self.http)
             .await
-            .map_err(|e| Self::failed("reach the identity provider", e))?;
-
-        if !answer.status().is_success() {
-            return Err(Self::failed(
-                "authenticate as the realm administrator",
-                answer.status(),
-            ));
-        }
-
-        Ok(answer
-            .json::<TokenAnswer>()
-            .await
-            .map_err(|e| Self::failed("read the administrator's token", e))?
-            .access_token)
+            .map_err(CoreError::InternalError)
     }
 
     async fn find_client(&self, token: &str, client_id: &str) -> Result<Option<String>, CoreError> {

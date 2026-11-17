@@ -25,6 +25,7 @@ interface Props {
   onInvite: (email: string, roles: string[]) => void
   /** The link, once the platform has answered. Shown here and nowhere else. */
   link: string | null
+  createdAccountFor: string | null
 }
 
 export function InviteDialog({
@@ -36,12 +37,17 @@ export function InviteDialog({
   isSaving,
   onInvite,
   link,
+  createdAccountFor,
 }: Props) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         {link ? (
-          <TheLink link={link} onDone={() => onOpenChange(false)} />
+          <TheLink
+            link={link}
+            createdAccountFor={createdAccountFor}
+            onDone={() => onOpenChange(false)}
+          />
         ) : (
           <InviteForm
             members={members}
@@ -64,7 +70,15 @@ export function InviteDialog({
  * closing this is the last chance to have it, and the copy says so before
  * they find out.
  */
-function TheLink({ link, onDone }: { link: string; onDone: () => void }) {
+export function TheLink({
+  link,
+  createdAccountFor,
+  onDone,
+}: {
+  link: string
+  createdAccountFor: string | null
+  onDone: () => void
+}) {
   const [copied, setCopied] = useState(false)
 
   const copy = async () => {
@@ -87,6 +101,12 @@ function TheLink({ link, onDone }: { link: string; onDone: () => void }) {
           again, and a new invitation means a new link.
         </DialogDescription>
       </DialogHeader>
+
+      {createdAccountFor && (
+        <p className='text-sm text-muted-foreground'>
+          {`An account was created for ${createdAccountFor}; they will receive an email to set their password.`}
+        </p>
+      )}
 
       <div className='flex items-center gap-2'>
         <Input readOnly value={link} className='font-mono text-xs' aria-label='Invitation link' />
@@ -128,7 +148,7 @@ function InviteForm({
 
   const toggle = (id: string) =>
     setGranted((current) =>
-      current.includes(id) ? current.filter((held) => held !== id) : [...current, id],
+      current.includes(id) ? current.filter((held) => held !== id) : [...current, id]
     )
 
   return (
@@ -136,8 +156,9 @@ function InviteForm({
       <DialogHeader>
         <DialogTitle>Invite somebody</DialogTitle>
         <DialogDescription>
-          No mail is sent. You will be given a link to pass on, and whoever opens it has to be
-          signed in as this address.
+          You will be given a link to pass on, and whoever opens it has to be signed in as this
+          address. If this address has no account yet, one is created and they are emailed a link to
+          set their password.
         </DialogDescription>
       </DialogHeader>
 
@@ -161,8 +182,8 @@ function InviteForm({
           <Label>Roles</Label>
           {roles.length === 0 ? (
             <p className='text-xs text-muted-foreground'>
-              This organisation has no roles yet. They can join without one and be granted
-              something later.
+              This organisation has no roles yet. They can join without one and be granted something
+              later.
             </p>
           ) : (
             <div className='flex flex-wrap gap-2'>
@@ -176,7 +197,7 @@ function InviteForm({
                     'rounded-md border px-2.5 py-1 text-xs transition-colors',
                     granted.includes(role.id)
                       ? 'border-primary bg-primary/10 text-foreground'
-                      : 'text-muted-foreground hover:bg-muted',
+                      : 'text-muted-foreground hover:bg-muted'
                   )}
                 >
                   {role.name}

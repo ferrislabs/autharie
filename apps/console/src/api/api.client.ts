@@ -232,6 +232,7 @@ export namespace Schemas {
     | { TooManyRequests: { reason: string } }
     | { Unprocessable: { reason: string } }
     | { BadGateway: { reason: string } }
+    | { IdentityProviderUnavailable: { reason: string } }
     | { ServiceUnavailable: { reason: string } }
   export type KeyName = string
   export type ProviderName = string
@@ -839,7 +840,7 @@ export namespace Schemas {
   }
   export type InvitationResponse = { data: Invitation }
   export type InviteRequest = { email: string; roles?: Array<string> | undefined }
-  export type InviteResponse = { data: Invitation; token: string }
+  export type InviteResponse = { account_created: boolean; data: Invitation; token: string }
   export type ListActionsResponse = {
     data: Array<Action>
     next_cursor?: (string | null) | undefined

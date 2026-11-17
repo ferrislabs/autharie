@@ -219,6 +219,12 @@ impl AutharieService {
             .map(crate::infrastructure::herald_identity::FerrisKeyHeraldIdentities::new)
     }
 
+    pub(crate) fn platform_realm(
+        &self,
+    ) -> crate::infrastructure::platform_realm::PlatformRealmAdapter {
+        crate::infrastructure::platform_realm::PlatformRealmAdapter::from_admin(self.realm.clone())
+    }
+
     pub fn log_relay(&self) -> &InProcessLogRelay {
         &self.log_relay
     }

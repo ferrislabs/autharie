@@ -3,7 +3,7 @@ use autharie_domain::{
     CoreError,
     organisation::{
         OrganisationId,
-        invitation::{Invitation, InvitationId, InvitationToken, InvitedEmail},
+        invitation::{Invitation, InvitationId, InvitationToken, InvitedEmail, IssuedInvitation},
         invitation_service::InvitationServiceImpl,
         member::Member,
         ports::InvitationService,
@@ -23,7 +23,7 @@ impl InvitationService for AutharieService {
         organisation_id: OrganisationId,
         email: InvitedEmail,
         roles: Vec<RoleId>,
-    ) -> Result<(Invitation, InvitationToken), CoreError> {
+    ) -> Result<IssuedInvitation, CoreError> {
         InvitationServiceImpl::new(
             organisation_repository,
             PostgresOrganisationRepository::new(&tx),
@@ -31,6 +31,7 @@ impl InvitationService for AutharieService {
             user_repository,
             AuthariePolicy::new(permissions_in(&tx)),
             quota_repository,
+            self.platform_realm(),
         )
         .invite(identity, organisation_id, email, roles)
         .await
@@ -49,6 +50,7 @@ impl InvitationService for AutharieService {
             user_repository,
             AuthariePolicy::new(permissions_in(&tx)),
             quota_repository,
+            self.platform_realm(),
         )
         .list_invitations(identity, organisation_id)
         .await
@@ -68,6 +70,7 @@ impl InvitationService for AutharieService {
             user_repository,
             AuthariePolicy::new(permissions_in(&tx)),
             quota_repository,
+            self.platform_realm(),
         )
         .revoke_invitation(identity, organisation_id, invitation_id)
         .await
@@ -90,6 +93,7 @@ impl InvitationService for AutharieService {
             user_repository,
             AuthariePolicy::new(permissions_in(&tx)),
             quota_repository,
+            self.platform_realm(),
         )
         .accept_invitation(identity, token)
         .await

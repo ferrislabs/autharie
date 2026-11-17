@@ -45,6 +45,25 @@ resource "ferriskey_realm_settings" "autharie" {
   # Off, unlike the local dev realm: accounts on a shared instance come from
   # an invitation, not from anyone reaching the login page.
   user_registration_enabled = false
+
+  # An invitation creates the invitee's account and asks the realm to email
+  # them a link to set a password. That email also needs a reset-password
+  # template and an SMTP config below; the provider cannot create the
+  # template, see docs/production-deployment.md.
+  forgot_password_enabled = true
+}
+
+resource "ferriskey_smtp_config" "autharie" {
+  count = var.smtp_host != "" ? 1 : 0
+
+  realm      = ferriskey_realm.autharie.name
+  host       = var.smtp_host
+  port       = var.smtp_port
+  username   = var.smtp_username
+  password   = var.smtp_password
+  from_email = var.smtp_from_email
+  from_name  = var.smtp_from_name
+  encryption = var.smtp_encryption
 }
 
 # The web console. Public because a browser cannot keep a secret, and no
