@@ -27,6 +27,7 @@ function invitationLink(token: string): string {
 export default function PageMembersFeature() {
   const organisationId = useResolvedOrganisationId()
   const [link, setLink] = useState<string | null>(null)
+  const [createdAccountFor, setCreatedAccountFor] = useState<string | null>(null)
 
   const members = useGetMembers(organisationId ?? null)
   const invitations = useGetInvitations(organisationId ?? null)
@@ -54,6 +55,7 @@ export default function PageMembersFeature() {
         isLoading={members.isLoading || invitations.isLoading}
         isSaving={isSaving}
         invitationLink={link}
+        createdAccountFor={createdAccountFor}
         onInvite={(email, granted) => {
           if (!organisationId || invite.isPending) return
 
@@ -68,11 +70,15 @@ export default function PageMembersFeature() {
               onSuccess: async (answer) => {
                 const issued = await answer.json()
                 setLink(invitationLink(issued.token))
+                setCreatedAccountFor(issued.account_created ? email : null)
               },
             }
           )
         }}
-        onInviteDialogClosed={() => setLink(null)}
+        onInviteDialogClosed={() => {
+          setLink(null)
+          setCreatedAccountFor(null)
+        }}
         onRevoke={(invitation) => {
           if (!organisationId || revoke.isPending) return
 

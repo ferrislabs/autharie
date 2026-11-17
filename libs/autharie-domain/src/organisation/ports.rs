@@ -10,6 +10,7 @@ use crate::{
         commands::{CreateOrganisationCommand, CreateOrganisationData, UpdateOrganisationCommand},
         invitation::{
             Invitation, InvitationId, InvitationToken, InvitationTokenHash, InvitedEmail,
+            IssuedInvitation,
         },
         value_objects::{OrganisationSlug, OrganisationStatus},
     },
@@ -233,6 +234,26 @@ pub trait InvitationPolicy: Send + Sync {
     ) -> impl Future<Output = Result<(), CoreError>> + Send;
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlatformUserId(pub String);
+
+pub trait PlatformRealm: Send + Sync {
+    fn find_user_by_email(
+        &self,
+        email: &str,
+    ) -> impl Future<Output = Result<Option<PlatformUserId>, CoreError>> + Send;
+
+    fn create_user(
+        &self,
+        email: &str,
+    ) -> impl Future<Output = Result<PlatformUserId, CoreError>> + Send;
+
+    fn request_password_setup(
+        &self,
+        email: &str,
+    ) -> impl Future<Output = Result<(), CoreError>> + Send;
+}
+
 pub trait InvitationService: Send + Sync {
     /// Writes an invitation and hands back the secret that opens it.
     ///
@@ -244,7 +265,7 @@ pub trait InvitationService: Send + Sync {
         organisation_id: OrganisationId,
         email: InvitedEmail,
         roles: Vec<RoleId>,
-    ) -> impl Future<Output = Result<(Invitation, InvitationToken), CoreError>> + Send;
+    ) -> impl Future<Output = Result<IssuedInvitation, CoreError>> + Send;
 
     fn list_invitations(
         &self,

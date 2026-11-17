@@ -133,6 +133,10 @@ impl InvitedEmail {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    pub fn domain(&self) -> &str {
+        self.0.split_once('@').map_or("", |(_, domain)| domain)
+    }
 }
 
 impl fmt::Display for InvitedEmail {
@@ -240,6 +244,12 @@ impl Invitation {
             }),
         }
     }
+}
+
+pub struct IssuedInvitation {
+    pub invitation: Invitation,
+    pub token: InvitationToken,
+    pub account_created: bool,
 }
 
 #[cfg(test)]

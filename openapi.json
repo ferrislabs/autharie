@@ -10803,7 +10803,7 @@
           "invitations"
         ],
         "summary": "invite somebody into an organisation",
-        "description": "Returns the secret once, in this response and nowhere else. No mail is sent: the link is handed over by whoever created it.",
+        "description": "Returns the secret once, in this response and nowhere else. The link is handed over by whoever created it. When the address has no account yet, one is created and the invitee is emailed a link to set their password.",
         "operationId": "invite_handler",
         "parameters": [
           {
@@ -10879,6 +10879,16 @@
           },
           "500": {
             "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The identity provider could not be reached to prepare the invitee's account",
             "content": {
               "application/json": {
                 "schema": {
@@ -16581,6 +16591,25 @@
           {
             "type": "object",
             "required": [
+              "IdentityProviderUnavailable"
+            ],
+            "properties": {
+              "IdentityProviderUnavailable": {
+                "type": "object",
+                "required": [
+                  "reason"
+                ],
+                "properties": {
+                  "reason": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
               "ServiceUnavailable"
             ],
             "properties": {
@@ -20061,9 +20090,14 @@
         "description": "The one response that carries the secret.\n\nIt exists at this moment and never again: nothing stores it, no listing\nreturns it, and reading the row back gives the hash. Whoever creates the\ninvitation is the only person who will ever see it.",
         "required": [
           "data",
-          "token"
+          "token",
+          "account_created"
         ],
         "properties": {
+          "account_created": {
+            "type": "boolean",
+            "description": "True when this invitation created the invitee's Autharie account, in\nwhich case an email to set a password was requested for them."
+          },
           "data": {
             "$ref": "#/components/schemas/Invitation"
           },

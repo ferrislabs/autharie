@@ -131,6 +131,12 @@ pub async fn state(args: Arc<Args>) -> Result<AppState, ApiError> {
         .config()
         .and_then(|(config, _)| TransitKeyProvider::new(config).ok());
 
+    if args.realm.admin().is_none() {
+        warn!(
+            "no realm administrator is configured: invitations will not create accounts or send set-password emails"
+        );
+    }
+
     let service = create_service(config)
         .await
         .map_err(|e| ApiError::InternalServerError {

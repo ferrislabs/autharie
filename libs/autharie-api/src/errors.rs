@@ -51,6 +51,9 @@ pub enum ApiError {
     BadGateway { reason: String },
 
     #[error("{reason}")]
+    IdentityProviderUnavailable { reason: String },
+
+    #[error("{reason}")]
     ServiceUnavailable { reason: String },
 }
 
@@ -173,6 +176,15 @@ impl IntoResponse for ApiError {
                 StatusCode::BAD_GATEWAY,
                 Json(ApiErrorResponse::new(
                     "E_BAD_GATEWAY",
+                    StatusCode::BAD_GATEWAY,
+                    reason,
+                )),
+            )
+                .into_response(),
+            ApiError::IdentityProviderUnavailable { reason } => (
+                StatusCode::BAD_GATEWAY,
+                Json(ApiErrorResponse::new(
+                    "E_IDENTITY_PROVIDER_UNAVAILABLE",
                     StatusCode::BAD_GATEWAY,
                     reason,
                 )),
@@ -394,6 +406,13 @@ impl From<CoreError> for ApiError {
 
                 ApiError::InternalServerError {
                     reason: "the credential store failed".to_string(),
+                }
+            }
+            CoreError::IdentityProviderUnavailable { .. } => {
+                tracing::error!(error = %value, "the identity provider failed");
+
+                ApiError::IdentityProviderUnavailable {
+                    reason: "the identity provider could not be reached to prepare the invitee's account".to_string(),
                 }
             }
             CoreError::Provision(_) => ApiError::BadGateway {
@@ -1422,6 +1441,19 @@ mod tests {
             panic!("expected a conflict, got {incomplete:?}");
         };
         assert!(reason.contains("billing account"), "{reason}");
+    }
+
+    #[test]
+    fn an_identity_provider_failure_is_a_bad_gateway_with_its_own_code() {
+        let response = ApiError::from(CoreError::IdentityProviderUnavailable {
+            reason: "admin password rejected".to_string(),
+        });
+
+        let ApiError::IdentityProviderUnavailable { reason } = &response else {
+            panic!("expected the identity provider error, got {response:?}");
+        };
+        assert!(!reason.contains("password"), "{reason}");
+        assert_eq!(response.into_response().status(), StatusCode::BAD_GATEWAY);
     }
 
     #[test]

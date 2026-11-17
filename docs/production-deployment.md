@@ -89,8 +89,8 @@ password, then:
    URI of `https://autharie.ferrislabs.fr/*` — this is `oidc.clientId` in the
    same file.
 3. In its settings, leave user registration **off**. The beta runs on an
-   access list: an account is made for each person with
-   `scripts/invite-user.sh` (section 7), and an open login page would let
+   access list: an account is made when somebody is invited
+   (section 7), and an open login page would let
    anyone create an organisation and a free tenant.
 
 Copy the admin credentials into the `autharie` namespace — Ferriskey cannot
@@ -153,8 +153,35 @@ push again — it is a way back in, not a standing instruction.
 ## 7. Beta accounts
 
 The beta is on an access list, so nobody can sign up from the login page.
-Make one account per person; the script prints a temporary password once,
-and FerrisKey asks for a new one at the first sign-in:
+An account is created when somebody is invited to an organisation from the
+console: the control plane creates it in the `autharie` realm and asks
+FerrisKey to email the invitee a link to set their password (valid for 30
+minutes; "Forgot password" on the sign-in page sends a new one). This needs
+the control plane's `REALM_ADMIN_*` settings and a working mail setup:
+
+1. Set the SMTP variables and apply the Terraform in
+   `deploy/autharie/terraform`: `smtp_host`, `smtp_port` (587),
+   `smtp_username`, `smtp_password` (via `TF_VAR_smtp_password`),
+   `smtp_from_email`, `smtp_from_name` and `smtp_encryption`
+   (`tls`, `starttls` or `none`). The apply also turns on
+   `forgot_password_enabled` for the realm.
+2. Once, in FerrisKey's admin UI for realm `autharie`, create a
+   `reset_password` email template and select it as the realm's
+   reset-password template. The Terraform provider cannot do this.
+3. Invite people from the console's Members page. Inviting an address that
+   already has an account creates nothing new, and revoking or letting an
+   invitation expire never deletes an account.
+
+Without `REALM_ADMIN_*` the control plane logs a warning at startup and an
+invitation only returns its link. If the set-password email cannot be
+requested the invitation is still stored, and the invitee can use "Forgot
+password" instead.
+
+### Fallback: no SMTP
+
+`scripts/invite-user.sh` remains for an installation without SMTP. It makes
+one account per person and prints a temporary password once; FerrisKey asks
+for a new one at the first sign-in:
 
 ```bash
 FERRISKEY_URL=https://id.autharie.fr/api \

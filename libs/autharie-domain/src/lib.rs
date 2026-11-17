@@ -462,6 +462,9 @@ pub enum CoreError {
     #[error("{reason}")]
     ProvisioningUnavailable { reason: String },
 
+    #[error("the identity provider is unavailable: {reason}")]
+    IdentityProviderUnavailable { reason: String },
+
     #[error("Permission denied: {reason}")]
     PermissionDenied { reason: String },
 

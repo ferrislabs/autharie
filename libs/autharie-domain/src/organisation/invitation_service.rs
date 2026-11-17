@@ -7,10 +7,11 @@ use crate::{
     CoreError,
     organisation::{
         OrganisationId,
-        invitation::{Invitation, InvitationId, InvitationToken, InvitedEmail},
+        invitation::{Invitation, InvitationId, InvitationToken, InvitedEmail, IssuedInvitation},
         member::Member,
         ports::{
             InvitationPolicy, InvitationRepository, InvitationService, OrganisationRepository,
+            PlatformRealm,
         },
     },
     quotas::{
@@ -22,16 +23,17 @@ use crate::{
     user::{UserId, ports::UserRepository},
 };
 
-pub struct InvitationServiceImpl<O, I, R, U, P, Q> {
+pub struct InvitationServiceImpl<O, I, R, U, P, Q, X> {
     organisation_repository: O,
     invitation_repository: I,
     role_repository: R,
     user_repository: U,
     policy: P,
     quotas: Q,
+    realm: X,
 }
 
-impl<O, I, R, U, P, Q> InvitationServiceImpl<O, I, R, U, P, Q> {
+impl<O, I, R, U, P, Q, X> InvitationServiceImpl<O, I, R, U, P, Q, X> {
     pub fn new(
         organisation_repository: O,
         invitation_repository: I,
@@ -39,6 +41,7 @@ impl<O, I, R, U, P, Q> InvitationServiceImpl<O, I, R, U, P, Q> {
         user_repository: U,
         policy: P,
         quotas: Q,
+        realm: X,
     ) -> Self {
         Self {
             organisation_repository,
@@ -47,11 +50,12 @@ impl<O, I, R, U, P, Q> InvitationServiceImpl<O, I, R, U, P, Q> {
             user_repository,
             policy,
             quotas,
+            realm,
         }
     }
 }
 
-impl<O, I, R, U, P, Q> InvitationService for InvitationServiceImpl<O, I, R, U, P, Q>
+impl<O, I, R, U, P, Q, X> InvitationService for InvitationServiceImpl<O, I, R, U, P, Q, X>
 where
     O: OrganisationRepository,
     I: InvitationRepository,
@@ -59,6 +63,7 @@ where
     U: UserRepository,
     P: InvitationPolicy,
     Q: QuotaRepository,
+    X: PlatformRealm,
 {
     async fn invite(
         &self,
@@ -66,7 +71,7 @@ where
         organisation_id: OrganisationId,
         email: InvitedEmail,
         roles: Vec<RoleId>,
-    ) -> Result<(Invitation, InvitationToken), CoreError> {
+    ) -> Result<IssuedInvitation, CoreError> {
         self.policy
             .can_invite_members(identity.clone(), organisation_id)
             .await?;
@@ -128,6 +133,15 @@ where
         )
         .await?;
 
+        let account_created = self
+            .realm
+            .find_user_by_email(email.as_str())
+            .await?
+            .is_none();
+        if account_created {
+            self.realm.create_user(email.as_str()).await?;
+        }
+
         let invited_by = self
             .user_repository
             .find_by_sub(identity.id())
@@ -141,7 +155,24 @@ where
             .save_invitation(&invitation, &token.hash())
             .await?;
 
-        Ok((invitation, token))
+        if account_created
+            && let Err(error) = self
+                .realm
+                .request_password_setup(invitation.email.as_str())
+                .await
+        {
+            tracing::warn!(
+                %error,
+                email_domain = invitation.email.domain(),
+                "the set-password email could not be requested for a new account"
+            );
+        }
+
+        Ok(IssuedInvitation {
+            invitation,
+            token,
+            account_created,
+        })
     }
 
     async fn list_invitations(
@@ -234,7 +265,7 @@ where
     }
 }
 
-impl<O, I, R, U, P, Q> InvitationServiceImpl<O, I, R, U, P, Q>
+impl<O, I, R, U, P, Q, X> InvitationServiceImpl<O, I, R, U, P, Q, X>
 where
     O: OrganisationRepository,
     Q: QuotaRepository,
@@ -311,6 +342,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::organisation::ports::PlatformUserId;
     use crate::{
         organisation::{
             invitation::{InvitationState, InvitationTokenHash},
@@ -670,8 +702,66 @@ mod tests {
         }
     }
 
+    #[derive(Default, Clone)]
+    struct Realm {
+        accounts: Arc<Mutex<Vec<String>>>,
+        created: Arc<Mutex<Vec<String>>>,
+        setups: Arc<Mutex<Vec<String>>>,
+        down: bool,
+        setup_fails: bool,
+    }
+
+    impl Realm {
+        fn with_account(self, email: &str) -> Self {
+            self.accounts.lock().unwrap().push(email.to_string());
+            self
+        }
+        fn created(&self) -> Vec<String> {
+            self.created.lock().unwrap().clone()
+        }
+        fn setups(&self) -> Vec<String> {
+            self.setups.lock().unwrap().clone()
+        }
+    }
+
+    fn unreachable_realm() -> CoreError {
+        CoreError::IdentityProviderUnavailable {
+            reason: "down".to_string(),
+        }
+    }
+
+    impl PlatformRealm for Realm {
+        async fn find_user_by_email(
+            &self,
+            email: &str,
+        ) -> Result<Option<PlatformUserId>, CoreError> {
+            if self.down {
+                return Err(unreachable_realm());
+            }
+            Ok(self
+                .accounts
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|account| account == email)
+                .then(|| PlatformUserId(email.to_string())))
+        }
+        async fn create_user(&self, email: &str) -> Result<PlatformUserId, CoreError> {
+            self.created.lock().unwrap().push(email.to_string());
+            self.accounts.lock().unwrap().push(email.to_string());
+            Ok(PlatformUserId(email.to_string()))
+        }
+        async fn request_password_setup(&self, email: &str) -> Result<(), CoreError> {
+            if self.setup_fails {
+                return Err(unreachable_realm());
+            }
+            self.setups.lock().unwrap().push(email.to_string());
+            Ok(())
+        }
+    }
+
     type Service =
-        InvitationServiceImpl<Organisations, Store, Roles, Users, Allowed, InMemoryQuotas>;
+        InvitationServiceImpl<Organisations, Store, Roles, Users, Allowed, InMemoryQuotas, Realm>;
 
     fn service(store: Store, roles: Vec<Role>, users: Vec<User>) -> Service {
         service_with(store, roles, users, InMemoryQuotas::default())
@@ -683,6 +773,16 @@ mod tests {
         users: Vec<User>,
         quotas: InMemoryQuotas,
     ) -> Service {
+        service_in(store, roles, users, quotas, Realm::default())
+    }
+
+    fn service_in(
+        store: Store,
+        roles: Vec<Role>,
+        users: Vec<User>,
+        quotas: InMemoryQuotas,
+        realm: Realm,
+    ) -> Service {
         InvitationServiceImpl::new(
             Organisations(store.clone()),
             store,
@@ -690,6 +790,7 @@ mod tests {
             Users(users),
             Allowed,
             quotas,
+            realm,
         )
     }
 
@@ -712,7 +813,7 @@ mod tests {
             ],
         );
 
-        let (_, token) = service
+        let IssuedInvitation { token, .. } = service
             .invite(
                 caller(INVITER),
                 OrganisationId(ORGANISATION),
@@ -748,7 +849,7 @@ mod tests {
             ],
         );
 
-        let (_, token) = service
+        let IssuedInvitation { token, .. } = service
             .invite(
                 caller(INVITER),
                 OrganisationId(ORGANISATION),
@@ -780,7 +881,7 @@ mod tests {
             ],
         );
 
-        let (_, token) = service
+        let IssuedInvitation { token, .. } = service
             .invite(
                 caller(INVITER),
                 OrganisationId(ORGANISATION),
@@ -810,7 +911,7 @@ mod tests {
             ],
         );
 
-        let (_, token) = service
+        let IssuedInvitation { token, .. } = service
             .invite(
                 caller(INVITER),
                 OrganisationId(ORGANISATION),
@@ -848,7 +949,9 @@ mod tests {
             ],
         );
 
-        let (invitation, token) = service
+        let IssuedInvitation {
+            invitation, token, ..
+        } = service
             .invite(
                 caller(INVITER),
                 OrganisationId(ORGANISATION),
@@ -883,7 +986,9 @@ mod tests {
             ],
         );
 
-        let (invitation, token) = service
+        let IssuedInvitation {
+            invitation, token, ..
+        } = service
             .invite(
                 caller(INVITER),
                 OrganisationId(ORGANISATION),
@@ -976,7 +1081,7 @@ mod tests {
             vec![user(INVITER, "inviter@acme.test")],
         );
 
-        let (invitation, _) = service
+        let IssuedInvitation { invitation, .. } = service
             .invite(
                 caller(INVITER),
                 OrganisationId(ORGANISATION),
@@ -1091,7 +1196,7 @@ mod tests {
             Vec::new(),
             vec![user(INVITER, "inviter@acme.test")],
         );
-        let (invitation, _) = service
+        let IssuedInvitation { invitation, .. } = service
             .invite(
                 caller(INVITER),
                 OrganisationId(ORGANISATION),
@@ -1186,7 +1291,7 @@ mod tests {
             user(NEWCOMER, "colleague@acme.test"),
         ];
         let inviting = service_with(store.clone(), Vec::new(), users.clone(), raised);
-        let (_, token) = inviting
+        let IssuedInvitation { token, .. } = inviting
             .invite(
                 caller(INVITER),
                 OrganisationId(ORGANISATION),
@@ -1222,7 +1327,7 @@ mod tests {
                 user(NEWCOMER, "colleague@acme.test"),
             ],
         );
-        let (_, token) = service
+        let IssuedInvitation { token, .. } = service
             .invite(
                 caller(INVITER),
                 OrganisationId(ORGANISATION),
@@ -1238,5 +1343,156 @@ mod tests {
             .expect("one member and this invitation fit two");
 
         assert_eq!(store.members(), vec![INVITER, NEWCOMER]);
+    }
+
+    /// @spec-pilot-10
+    #[tokio::test]
+    async fn an_address_with_no_account_gets_one_and_a_set_password_request() {
+        let realm = Realm::default();
+        let service = service_in(
+            Store::default(),
+            Vec::new(),
+            vec![user(INVITER, "inviter@acme.test")],
+            InMemoryQuotas::default(),
+            realm.clone(),
+        );
+
+        let issued = service
+            .invite(
+                caller(INVITER),
+                OrganisationId(ORGANISATION),
+                email("new@acme.test"),
+                Vec::new(),
+            )
+            .await
+            .expect("invited");
+
+        assert!(issued.account_created);
+        assert_eq!(realm.created(), vec!["new@acme.test".to_string()]);
+        assert_eq!(realm.setups(), vec!["new@acme.test".to_string()]);
+    }
+
+    /// @spec-pilot-10
+    #[tokio::test]
+    async fn a_second_organisation_inviting_the_same_address_creates_no_second_account() {
+        let realm = Realm::default();
+        let service = service_in(
+            Store::default(),
+            Vec::new(),
+            vec![user(INVITER, "inviter@acme.test")],
+            InMemoryQuotas::default(),
+            realm.clone(),
+        );
+
+        service
+            .invite(
+                caller(INVITER),
+                OrganisationId(ORGANISATION),
+                email("new@acme.test"),
+                Vec::new(),
+            )
+            .await
+            .expect("invited");
+        let second = service
+            .invite(
+                caller(INVITER),
+                OrganisationId(ORGANISATION),
+                email("new@acme.test"),
+                Vec::new(),
+            )
+            .await
+            .expect("invited again");
+
+        assert!(!second.account_created);
+        assert_eq!(realm.created().len(), 1);
+        assert_eq!(realm.setups().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn an_existing_account_is_not_recreated_and_gets_no_email() {
+        let realm = Realm::default().with_account("known@acme.test");
+        let service = service_in(
+            Store::default(),
+            Vec::new(),
+            vec![user(INVITER, "inviter@acme.test")],
+            InMemoryQuotas::default(),
+            realm.clone(),
+        );
+
+        let issued = service
+            .invite(
+                caller(INVITER),
+                OrganisationId(ORGANISATION),
+                email("known@acme.test"),
+                Vec::new(),
+            )
+            .await
+            .expect("invited");
+
+        assert!(!issued.account_created);
+        assert!(realm.created().is_empty());
+        assert!(realm.setups().is_empty());
+    }
+
+    /// @spec-pilot-10
+    #[tokio::test]
+    async fn an_unreachable_realm_fails_the_invitation_and_stores_nothing() {
+        let store = Store::default();
+        let service = service_in(
+            store.clone(),
+            Vec::new(),
+            vec![user(INVITER, "inviter@acme.test")],
+            InMemoryQuotas::default(),
+            Realm {
+                down: true,
+                ..Realm::default()
+            },
+        );
+
+        let error = service
+            .invite(
+                caller(INVITER),
+                OrganisationId(ORGANISATION),
+                email("new@acme.test"),
+                Vec::new(),
+            )
+            .await
+            .err()
+            .expect("realm down");
+
+        assert!(matches!(
+            error,
+            CoreError::IdentityProviderUnavailable { .. }
+        ));
+        assert!(store.invitations.lock().unwrap().is_empty());
+    }
+
+    /// @spec-pilot-10
+    #[tokio::test]
+    async fn a_failed_set_password_request_does_not_fail_the_invitation() {
+        let store = Store::default();
+        let service = service_in(
+            store.clone(),
+            Vec::new(),
+            vec![user(INVITER, "inviter@acme.test")],
+            InMemoryQuotas::default(),
+            Realm {
+                setup_fails: true,
+                ..Realm::default()
+            },
+        );
+
+        let issued = service
+            .invite(
+                caller(INVITER),
+                OrganisationId(ORGANISATION),
+                email("new@acme.test"),
+                Vec::new(),
+            )
+            .await
+            .expect("still invited");
+
+        assert!(issued.account_created);
+        assert_eq!(store.invitations.lock().unwrap().len(), 1);
     }
 }
