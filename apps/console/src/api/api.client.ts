@@ -795,6 +795,7 @@ export namespace Schemas {
         type: 'applications.list'
       }
     | { id: string; type: 'applications.get' }
+    | { type: 'admin_access.issue' }
   export type IamPending = { status: string }
   export type IamRequestData = { request_id: string }
   export type IamRequestAccepted = { data: IamRequestData }

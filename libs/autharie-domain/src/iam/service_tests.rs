@@ -533,6 +533,48 @@ async fn a_realm_the_deployment_does_not_have_is_refused_before_anything_is_reco
 }
 
 #[tokio::test]
+async fn admin_access_is_refused_outside_master_before_anything_is_recorded() {
+    let world = ferriskey();
+
+    let refused = world
+        .service
+        .ask_iam(
+            caller("alice"),
+            OrganisationId(ORGANISATION),
+            DeploymentId(DEPLOYMENT),
+            input("customers", IamOperation::AdminAccessIssue),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(matches!(is_iam(refused), IamError::Invalid { .. }));
+    assert!(world.memory.rows().is_empty());
+    assert!(world.written.actions.lock().unwrap().is_empty());
+    assert!(world.written.audit.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn admin_access_in_master_is_recorded_with_its_kind() {
+    let world = ferriskey();
+
+    world
+        .service
+        .ask_iam(
+            caller("alice"),
+            OrganisationId(ORGANISATION),
+            DeploymentId(DEPLOYMENT),
+            input("master", IamOperation::AdminAccessIssue),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        world.memory.rows()[0].request.operation,
+        IamOperationKind::AdminAccessIssue
+    );
+}
+
+#[tokio::test]
 async fn spec_iam_8_the_audit_entry_names_who_what_and_where_but_never_the_search_or_a_result() {
     let world = ferriskey();
     let operation = IamOperation::applications_list(None, None, Some(TERM)).unwrap();

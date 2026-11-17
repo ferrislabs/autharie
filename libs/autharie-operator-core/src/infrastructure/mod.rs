@@ -5,6 +5,7 @@ pub mod dataplane_upgrade_controller;
 pub mod dumps;
 pub mod edge;
 pub mod ferriskey_admin;
+pub mod ferriskey_admin_access;
 pub mod ferriskey_agents;
 pub mod ferriskey_clients;
 pub mod ferriskey_iam;

@@ -139,6 +139,9 @@ where
         now: DateTime<Utc>,
     ) -> Result<(), IamError> {
         let id = RequestId::parse(&request.request_id)?;
+        if self.results.holds(instance, &request.request_id).await? {
+            return Ok(());
+        }
         ensure_unexpired(&request.expires_at, now)?;
         let operation = IamOperation::try_from(request.operation.as_str())?;
         let key = sealing_key(&request.sealing_key)?;
@@ -247,7 +250,7 @@ mod tests {
     use crate::domain::iam::PageSize;
     use crate::domain::iam::envelope::{Envelope, fixtures::open};
     use crate::domain::iam::result::{
-        ApplicationPage, IamResult, fixtures::detail, fixtures::summary,
+        AdminAccess, ApplicationPage, IamResult, fixtures::detail, fixtures::summary,
     };
 
     const FIRST: &str = "0b9ad3c4-4a5f-4c3b-8d57-0b2d6d9e1a11";
@@ -380,6 +383,18 @@ mod tests {
     }
 
     impl IamResultsPort for FakeResults {
+        async fn holds(
+            &self,
+            _instance: &IdentityInstance,
+            request_id: &str,
+        ) -> Result<bool, IamError> {
+            Ok(self
+                .stored
+                .lock()
+                .expect("not poisoned")
+                .contains_key(request_id))
+        }
+
         async fn put(
             &self,
             _instance: &IdentityInstance,
@@ -901,6 +916,36 @@ mod tests {
 
         assert_eq!(outcome, IamOutcome::Retry);
         assert!(h.ferriskey.calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_request_whose_result_is_stored_is_never_run_again_when_its_status_was_lost() {
+        let h = harness(FakeFerriskey::answering(Ok(IamResult::AdminAccess(
+            AdminAccess {
+                client_id: "autharie-admin".to_string(),
+                client_secret: "first".to_string(),
+            },
+        ))));
+        let mut asked = request(FIRST);
+        asked.operation = json!({ "type": "admin_access.issue" }).to_string();
+        let asked = instance(vec![asked]);
+        *h.status.patch_fails.lock().unwrap() = true;
+
+        assert_eq!(
+            h.reconciler.reconcile_at(&asked, now()).await,
+            IamOutcome::Retry
+        );
+        let delivered = stored(&h, FIRST).expect("stored");
+        *h.status.patch_fails.lock().unwrap() = false;
+
+        assert_eq!(
+            h.reconciler.reconcile_at(&asked, now()).await,
+            IamOutcome::Settled
+        );
+
+        assert_eq!(h.ferriskey.calls().len(), 1);
+        assert_eq!(stored(&h, FIRST), Some(delivered));
+        assert_eq!(recorded(&h)[0].phase, IamRequestPhase::Done);
     }
 
     #[tokio::test]

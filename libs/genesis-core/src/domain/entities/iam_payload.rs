@@ -27,6 +27,8 @@ enum Operation {
     },
     #[serde(rename = "applications.get")]
     Get { id: Uuid },
+    #[serde(rename = "admin_access.issue")]
+    IssueAdminAccess,
 }
 
 fn first_page() -> u32 {
@@ -185,6 +187,14 @@ mod tests {
 
         let operation: Value = serde_json::from_str(&parsed.entry.operation).unwrap();
         assert_eq!(operation, json!({ "type": "applications.get", "id": APP }));
+    }
+
+    #[test]
+    fn issuing_admin_access_carries_its_type_alone() {
+        let parsed = parse(&payload(json!({ "type": "admin_access.issue" }))).expect("valid");
+
+        let operation: Value = serde_json::from_str(&parsed.entry.operation).unwrap();
+        assert_eq!(operation, json!({ "type": "admin_access.issue" }));
     }
 
     #[test]

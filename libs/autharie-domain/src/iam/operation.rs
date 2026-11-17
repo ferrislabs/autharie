@@ -7,6 +7,7 @@ use super::IamError;
 pub const MAX_PAGE_SIZE: u32 = 50;
 pub const DEFAULT_PAGE_SIZE: u32 = 25;
 pub const MAX_SEARCH_CHARS: usize = 100;
+pub const ADMIN_ACCESS_REALM: &str = "master";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IamAccess {
@@ -18,6 +19,7 @@ pub enum IamAccess {
 pub enum IamOperationKind {
     ApplicationsList,
     ApplicationsGet,
+    AdminAccessIssue,
 }
 
 impl IamOperationKind {
@@ -25,6 +27,7 @@ impl IamOperationKind {
         match self {
             Self::ApplicationsList => "applications.list",
             Self::ApplicationsGet => "applications.get",
+            Self::AdminAccessIssue => "admin_access.issue",
         }
     }
 
@@ -32,6 +35,7 @@ impl IamOperationKind {
         match value {
             "applications.list" => Some(Self::ApplicationsList),
             "applications.get" => Some(Self::ApplicationsGet),
+            "admin_access.issue" => Some(Self::AdminAccessIssue),
             _ => None,
         }
     }
@@ -39,6 +43,7 @@ impl IamOperationKind {
     pub fn access(&self) -> IamAccess {
         match self {
             Self::ApplicationsList | Self::ApplicationsGet => IamAccess::Read,
+            Self::AdminAccessIssue => IamAccess::Write,
         }
     }
 }
@@ -128,6 +133,7 @@ pub enum IamOperation {
     ApplicationsGet {
         id: Uuid,
     },
+    AdminAccessIssue,
 }
 
 impl IamOperation {
@@ -147,6 +153,16 @@ impl IamOperation {
         match self {
             Self::ApplicationsList { .. } => IamOperationKind::ApplicationsList,
             Self::ApplicationsGet { .. } => IamOperationKind::ApplicationsGet,
+            Self::AdminAccessIssue => IamOperationKind::AdminAccessIssue,
+        }
+    }
+
+    pub fn check_realm(&self, realm: &str) -> Result<(), IamError> {
+        match self {
+            Self::AdminAccessIssue if realm != ADMIN_ACCESS_REALM => Err(IamError::invalid(
+                format!("admin access is issued in the realm '{ADMIN_ACCESS_REALM}' only"),
+            )),
+            _ => Ok(()),
         }
     }
 
@@ -226,10 +242,44 @@ mod tests {
     }
 
     #[test]
+    fn issuing_admin_access_writes_and_takes_no_parameters() {
+        assert_eq!(
+            IamOperationKind::parse("admin_access.issue"),
+            Some(IamOperationKind::AdminAccessIssue)
+        );
+        assert_eq!(
+            IamOperationKind::AdminAccessIssue.as_str(),
+            "admin_access.issue"
+        );
+        assert_eq!(IamOperation::AdminAccessIssue.access(), IamAccess::Write);
+        assert_eq!(
+            IamOperation::AdminAccessIssue.kind(),
+            IamOperationKind::AdminAccessIssue
+        );
+    }
+
+    #[test]
+    fn admin_access_is_issued_in_master_only() {
+        assert!(IamOperation::AdminAccessIssue.check_realm("master").is_ok());
+        assert!(
+            IamOperation::AdminAccessIssue
+                .check_realm("customers")
+                .is_err()
+        );
+        assert!(
+            IamOperation::applications_list(None, None, None)
+                .unwrap()
+                .check_realm("customers")
+                .is_ok()
+        );
+    }
+
+    #[test]
     fn a_kind_round_trips_through_its_name() {
         for kind in [
             IamOperationKind::ApplicationsList,
             IamOperationKind::ApplicationsGet,
+            IamOperationKind::AdminAccessIssue,
         ] {
             assert_eq!(IamOperationKind::parse(kind.as_str()), Some(kind));
         }
