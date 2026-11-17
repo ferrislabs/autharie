@@ -7,6 +7,8 @@ ignore = [
     "RUSTSEC-2026-0381",
     "RUSTSEC-2026-0429",
     "RUSTSEC-2026-0459",
+    "RUSTSEC-2026-0545",
+    "RUSTSEC-2026-0548",
 ]
 # RUSTSEC-2023-0071 (rsa, Marvin timing attack, no fixed release)
 # Reason: the attack recovers a private key by timing decryptions or
@@ -19,7 +21,8 @@ ignore = [
 # script extracts the Swagger UI archive it downloads from its pinned source.
 # The three advisories need a crafted archive; whoever can craft that one can
 # already ship any script in the Swagger UI page. No zip runs in a binary.
-# Remove once utoipa-swagger-ui requires zip >= 9 (10.0.1 still asks ^8.6).
+# Remove once utoipa-swagger-ui requires zip >= 9 (10.0.2 does, but needs
+# utoipa 6 where we are on 5).
 #
 # RUSTSEC-2026-0381 (webpki-roots, fixed in 1.0.10)
 # Reason: the advisory is about the root certificates 1.0.9 and earlier
@@ -41,3 +44,9 @@ ignore = [
 # `cargo tree -i libsqlite3-sys` finds nothing: it is never compiled, in any
 # binary or build script. sqlx 0.8 pins ^0.30, so 0.39 cannot be reached.
 # Remove once sqlx stops locking sqlite, or if a sqlite feature is ever enabled.
+#
+# RUSTSEC-2026-0545, 0548 (zip 3.0.0, fixed in 9.0.0 and 9.0.5)
+# Reason: same zip, same build-only use by utoipa-swagger-ui. 0545 is about
+# AES-encrypted entries, which the Swagger UI archive does not use; 0548 needs
+# a crafted archive, like the advisories above. No zip runs in a binary.
+# Remove with them.
