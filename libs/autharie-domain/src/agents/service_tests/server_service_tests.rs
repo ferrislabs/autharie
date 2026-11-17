@@ -4,7 +4,7 @@ use super::*;
 use crate::agents::{
     AgentError,
     server_ports::AgentServerService,
-    servers::{DiscoveredTool, DiscoveryPhase, MAX_SERVERS, ServerInput, ServerOutcome},
+    servers::{DiscoveredTool, DiscoveryPhase, ServerInput, ServerOutcome},
 };
 
 fn crm() -> ServerInput {
@@ -92,9 +92,32 @@ async fn a_server_slug_can_only_be_used_once_per_deployment() {
 }
 
 #[tokio::test]
-async fn a_deployment_holds_at_most_ten_servers() {
-    let world = ferriskey(true);
-    for index in 0..MAX_SERVERS {
+async fn a_free_deployment_holds_one_server() {
+    let world = ferriskey_on(Offer::Free, InMemoryQuotas::default());
+    register(&world, registered("srv-0")).await;
+
+    let error = world
+        .service
+        .register_agent_server(caller(), org(), dep(), registered("one-more"))
+        .await
+        .expect_err("refused");
+
+    assert!(matches!(
+        error,
+        CoreError::OrganisationLimitReached {
+            max: 1,
+            current: 1,
+            ..
+        }
+    ));
+    assert_eq!(world.memory.read(|state| state.servers.len()), 1);
+}
+
+#[tokio::test]
+async fn an_override_lets_a_free_deployment_hold_more() {
+    let quotas = InMemoryQuotas::default().with(org(), QuotaKind::McpServers, Quota::Limited(3));
+    let world = ferriskey_on(Offer::Free, quotas);
+    for index in 0..3 {
         register(&world, registered(&format!("srv-{index}"))).await;
     }
 
@@ -106,9 +129,22 @@ async fn a_deployment_holds_at_most_ten_servers() {
 
     assert!(matches!(
         error,
-        CoreError::Agent(AgentError::TooManyServers { max: 10 })
+        CoreError::OrganisationLimitReached {
+            max: 3,
+            current: 3,
+            ..
+        }
     ));
-    assert_eq!(world.memory.read(|state| state.servers.len()), 10);
+}
+
+#[tokio::test]
+async fn a_deployment_without_an_offer_is_not_limited_by_default() {
+    let world = ferriskey(true);
+    for index in 0..12 {
+        register(&world, registered(&format!("srv-{index}"))).await;
+    }
+
+    assert_eq!(world.memory.read(|state| state.servers.len()), 12);
 }
 
 #[tokio::test]
@@ -438,4 +474,32 @@ async fn a_discovery_that_answers_an_older_request_is_dropped_whatever_its_clock
             .read(|state| state.servers[0].discovery.clone()),
         None
     );
+}
+
+#[tokio::test]
+async fn a_free_deployment_holds_five_policies_and_an_override_changes_that() {
+    let world = ferriskey_on(Offer::Free, InMemoryQuotas::default());
+    for index in 0..5 {
+        add(&world, &format!("policy-{index}"), false).await;
+    }
+
+    let refused = world
+        .service
+        .create_agent_policy(caller(), org(), dep(), policy_input("sixth", false))
+        .await
+        .expect_err("the free offer holds five");
+    assert!(matches!(
+        refused,
+        CoreError::OrganisationLimitReached {
+            max: 5,
+            current: 5,
+            ..
+        }
+    ));
+
+    let quotas = InMemoryQuotas::default().with(org(), QuotaKind::Policies, Quota::Limited(6));
+    let raised = ferriskey_on(Offer::Free, quotas);
+    for index in 0..6 {
+        add(&raised, &format!("policy-{index}"), false).await;
+    }
 }

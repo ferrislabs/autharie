@@ -9,7 +9,6 @@ use uuid::Uuid;
 
 use crate::{agents::AgentError, deployments::DeploymentId};
 
-pub const MAX_SERVERS: usize = 10;
 pub const MAX_DISCOVERED_TOOLS: usize = 200;
 pub const MAX_TOOL_NAME_CHARS: usize = 64;
 pub const MAX_TOOL_DESCRIPTION_CHARS: usize = 512;

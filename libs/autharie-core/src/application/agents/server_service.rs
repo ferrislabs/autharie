@@ -15,7 +15,7 @@ use super::InstanceRights;
 use crate::{AutharieService, infrastructure::role::permissions_in};
 
 impl AgentServerService for AutharieService {
-    #[transactional(deployment, organisation, agent, action, audit, user)]
+    #[transactional(deployment, organisation, quota, agent, action, audit, user)]
     async fn list_agent_servers(
         &self,
         identity: Identity,
@@ -32,13 +32,14 @@ impl AgentServerService for AutharieService {
             InstanceRights {
                 permissions: permissions_in(&tx),
             },
+            quota_repository,
             self.deployment_domain().map(str::to_owned),
         )
         .list_agent_servers(identity, organisation_id, deployment_id)
         .await
     }
 
-    #[transactional(deployment, organisation, agent, action, audit, user)]
+    #[transactional(deployment, organisation, quota, agent, action, audit, user)]
     async fn register_agent_server(
         &self,
         identity: Identity,
@@ -56,13 +57,14 @@ impl AgentServerService for AutharieService {
             InstanceRights {
                 permissions: permissions_in(&tx),
             },
+            quota_repository,
             self.deployment_domain().map(str::to_owned),
         )
         .register_agent_server(identity, organisation_id, deployment_id, input)
         .await
     }
 
-    #[transactional(deployment, organisation, agent, action, audit, user)]
+    #[transactional(deployment, organisation, quota, agent, action, audit, user)]
     async fn update_agent_server(
         &self,
         identity: Identity,
@@ -81,13 +83,14 @@ impl AgentServerService for AutharieService {
             InstanceRights {
                 permissions: permissions_in(&tx),
             },
+            quota_repository,
             self.deployment_domain().map(str::to_owned),
         )
         .update_agent_server(identity, organisation_id, deployment_id, server_id, input)
         .await
     }
 
-    #[transactional(deployment, organisation, agent, action, audit, user)]
+    #[transactional(deployment, organisation, quota, agent, action, audit, user)]
     async fn remove_agent_server(
         &self,
         identity: Identity,
@@ -105,13 +108,14 @@ impl AgentServerService for AutharieService {
             InstanceRights {
                 permissions: permissions_in(&tx),
             },
+            quota_repository,
             None,
         )
         .remove_agent_server(identity, organisation_id, deployment_id, server_id)
         .await
     }
 
-    #[transactional(deployment, organisation, agent, action, audit, user)]
+    #[transactional(deployment, organisation, quota, agent, action, audit, user)]
     async fn discover_agent_server(
         &self,
         identity: Identity,
@@ -129,6 +133,7 @@ impl AgentServerService for AutharieService {
             InstanceRights {
                 permissions: permissions_in(&tx),
             },
+            quota_repository,
             None,
         )
         .discover_agent_server(identity, organisation_id, deployment_id, server_id)

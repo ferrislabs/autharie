@@ -12,7 +12,7 @@ use crate::{
     },
     agents::{
         AGENT_POLICY_CREATED_AUDIT, AGENT_POLICY_DELETED_AUDIT, AGENT_POLICY_UPDATED_AUDIT,
-        AGENTS_ACTION_TYPE, AGENTS_UPDATED_AUDIT, AgentError, MAX_POLICIES,
+        AGENTS_ACTION_TYPE, AGENTS_UPDATED_AUDIT, AgentError,
         commands::{AgentSettingsInput, AgentsOutcome, PolicyInput},
         decision::{AgentDecision, AgentDecisionIndex, DecisionQuery},
         entities::{AgentPolicy, AgentSettings, AgentStatus, AgentsView, PolicyId, PolicyPhase},
@@ -29,6 +29,7 @@ use crate::{
     deployments::{Deployment, DeploymentId, DeploymentKind, ports::DeploymentRepository},
     generate_uuid_v7,
     organisation::{OrganisationId, ports::OrganisationRepository},
+    quotas::{QuotaKind, ports::QuotaRepository, service::require_room},
     user::ports::UserRepository,
 };
 
@@ -195,7 +196,7 @@ fn policy_summary(policy: &AgentPolicy) -> Value {
     })
 }
 
-pub struct AgentServiceImpl<D, O, G, A, AU, U, P>
+pub struct AgentServiceImpl<D, O, G, A, AU, U, P, Q>
 where
     A: ActionRepository,
 {
@@ -204,10 +205,11 @@ where
     audit: AU,
     users: U,
     policy: P,
+    quotas: Q,
     domain: Option<String>,
 }
 
-impl<D, O, G, A, AU, U, P> AgentServiceImpl<D, O, G, A, AU, U, P>
+impl<D, O, G, A, AU, U, P, Q> AgentServiceImpl<D, O, G, A, AU, U, P, Q>
 where
     A: ActionRepository,
 {
@@ -220,6 +222,7 @@ where
         audit: AU,
         users: U,
         policy: P,
+        quotas: Q,
         domain: Option<String>,
     ) -> Self
     where
@@ -232,12 +235,13 @@ where
             audit,
             users,
             policy,
+            quotas,
             domain,
         }
     }
 }
 
-impl<D, O, G, A, AU, U, P> AgentServiceImpl<D, O, G, A, AU, U, P>
+impl<D, O, G, A, AU, U, P, Q> AgentServiceImpl<D, O, G, A, AU, U, P, Q>
 where
     D: DeploymentRepository,
     O: OrganisationRepository,
@@ -246,6 +250,7 @@ where
     AU: AuditRepository,
     U: UserRepository,
     P: AgentAccess,
+    Q: QuotaRepository,
 {
     async fn deployment(
         &self,
@@ -358,7 +363,7 @@ where
     }
 }
 
-impl<D, O, G, A, AU, U, P> AgentService for AgentServiceImpl<D, O, G, A, AU, U, P>
+impl<D, O, G, A, AU, U, P, Q> AgentService for AgentServiceImpl<D, O, G, A, AU, U, P, Q>
 where
     D: DeploymentRepository,
     O: OrganisationRepository,
@@ -367,6 +372,7 @@ where
     AU: AuditRepository,
     U: UserRepository,
     P: AgentAccess,
+    Q: QuotaRepository,
 {
     async fn get_agents(
         &self,
@@ -462,16 +468,20 @@ where
             .await?;
         let mcp_enabled = self.organisation_mcp_enabled(organisation_id).await?;
 
-        if self
+        let held = self
             .publisher
             .agents
             .list_policies(deployment_id)
             .await?
-            .len()
-            >= MAX_POLICIES
-        {
-            return Err(AgentError::TooManyPolicies { max: MAX_POLICIES }.into());
-        }
+            .len();
+        require_room(
+            &self.quotas,
+            organisation_id,
+            deployment.offer,
+            QuotaKind::Policies,
+            held,
+        )
+        .await?;
 
         let now = Utc::now();
         let revision = self

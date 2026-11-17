@@ -1,4 +1,5 @@
-import type { Schemas } from '@/api/api.client'
+import { describeUsage, hasRoom } from '@/domain/quotas/quota'
+import type { Quota } from '@/domain/quotas/quota'
 
 export interface WebhookLimit {
   label: string
@@ -6,21 +7,26 @@ export interface WebhookLimit {
   reason: string | null
 }
 
-export function maxWebhooks(plan: Schemas.Plan): number {
-  return plan === 'Free' ? 5 : 25
-}
+/**
+ * Where a deployment stands against its webhook quota.
+ *
+ * The quota is the one the server holds the deployment to: its offer's
+ * default, or the override set for its organisation. It is not derived from
+ * the plan here, because an override would then leave the button disabled
+ * while the server accepts the create.
+ */
+export function describeLimit(count: number, quota: Quota | undefined): WebhookLimit {
+  if (!quota) return { label: String(count), atLimit: false, reason: null }
 
-export function describeLimit(count: number, plan: Schemas.Plan | undefined): WebhookLimit {
-  if (!plan) return { label: String(count), atLimit: false, reason: null }
-
-  const max = maxWebhooks(plan)
-  const atLimit = count >= max
+  const atLimit = !hasRoom(count, quota)
 
   return {
-    label: `${count} of ${max}`,
+    label: describeUsage(count, quota),
     atLimit,
     reason: atLimit
-      ? `Your ${plan} plan holds ${max} webhooks per deployment. Delete one, or upgrade the plan, to add another.`
+      ? quota.type === 'limited'
+        ? `This deployment holds ${quota.max} webhooks. Delete one, or ask for a higher quota, to add another.`
+        : null
       : null,
   }
 }

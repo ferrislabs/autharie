@@ -44,7 +44,11 @@ pub struct AutonomousAgentPayload {
     pub sealing_key: Option<SealingKeyPayload>,
 }
 
-const MAX_SERVERS: usize = 10;
+/// A sanity bound on a payload, not a plan limit: how many servers a deployment
+/// may hold is a quota the control plane enforces before it publishes, and a
+/// private deployment has none. A bound tighter than the largest quota would
+/// make the data plane refuse what the control plane accepted.
+const MAX_SERVERS: usize = 1_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct AgentServerDefinition {
@@ -456,20 +460,24 @@ mod tests {
     }
 
     #[test]
-    fn more_than_ten_servers_are_refused() {
-        let many: Vec<Value> = (0..11)
-            .map(|index| {
-                json!({
-                    "id": Uuid::from_u128(100 + index),
-                    "slug": format!("srv-{index}"),
-                    "url": "https://tools.example.com/mcp",
-                    "enabled": true,
+    fn a_payload_past_the_sanity_bound_is_refused_and_a_quota_sized_one_is_not() {
+        let payload = |count: u128| {
+            let many: Vec<Value> = (0..count)
+                .map(|index| {
+                    json!({
+                        "id": Uuid::from_u128(100 + index),
+                        "slug": format!("srv-{index}"),
+                        "url": "https://tools.example.com/mcp",
+                        "enabled": true,
+                    })
                 })
-            })
-            .collect();
-        let value = with(|value| value["servers"] = json!(many));
+                .collect();
+            with(|value| value["servers"] = json!(many))
+        };
 
-        assert!(AgentsPayloadV1::from_value(&value).is_err());
+        assert!(AgentsPayloadV1::from_value(&payload(50)).is_ok());
+        assert!(AgentsPayloadV1::from_value(&payload(1_000)).is_ok());
+        assert!(AgentsPayloadV1::from_value(&payload(1_001)).is_err());
     }
 
     #[test]

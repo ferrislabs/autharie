@@ -61,7 +61,7 @@ where
 }
 
 impl WebhookService for AutharieService {
-    #[transactional(deployment, organisation, webhook, action, audit, user)]
+    #[transactional(deployment, quota, webhook, action, audit, user)]
     async fn list_webhooks(
         &self,
         identity: Identity,
@@ -70,7 +70,7 @@ impl WebhookService for AutharieService {
     ) -> Result<Vec<WebhookView>, CoreError> {
         WebhookServiceImpl::new(
             deployment_repository,
-            organisation_repository,
+            quota_repository,
             webhook_repository,
             action_repository,
             audit_repository,
@@ -84,7 +84,7 @@ impl WebhookService for AutharieService {
         .await
     }
 
-    #[transactional(deployment, organisation, webhook, action, audit, user)]
+    #[transactional(deployment, quota, webhook, action, audit, user)]
     async fn get_webhook(
         &self,
         identity: Identity,
@@ -94,7 +94,7 @@ impl WebhookService for AutharieService {
     ) -> Result<WebhookView, CoreError> {
         WebhookServiceImpl::new(
             deployment_repository,
-            organisation_repository,
+            quota_repository,
             webhook_repository,
             action_repository,
             audit_repository,
@@ -108,7 +108,7 @@ impl WebhookService for AutharieService {
         .await
     }
 
-    #[transactional(deployment, organisation, webhook, action, audit, user)]
+    #[transactional(deployment, quota, webhook, action, audit, user)]
     async fn create_webhook(
         &self,
         identity: Identity,
@@ -118,7 +118,7 @@ impl WebhookService for AutharieService {
     ) -> Result<WebhookView, CoreError> {
         WebhookServiceImpl::new(
             deployment_repository,
-            organisation_repository,
+            quota_repository,
             webhook_repository,
             action_repository,
             audit_repository,
@@ -132,7 +132,7 @@ impl WebhookService for AutharieService {
         .await
     }
 
-    #[transactional(deployment, organisation, webhook, action, audit, user)]
+    #[transactional(deployment, quota, webhook, action, audit, user)]
     async fn update_webhook(
         &self,
         identity: Identity,
@@ -143,7 +143,7 @@ impl WebhookService for AutharieService {
     ) -> Result<WebhookView, CoreError> {
         WebhookServiceImpl::new(
             deployment_repository,
-            organisation_repository,
+            quota_repository,
             webhook_repository,
             action_repository,
             audit_repository,
@@ -157,7 +157,7 @@ impl WebhookService for AutharieService {
         .await
     }
 
-    #[transactional(deployment, organisation, webhook, action, audit, user)]
+    #[transactional(deployment, quota, webhook, action, audit, user)]
     async fn delete_webhook(
         &self,
         identity: Identity,
@@ -167,7 +167,7 @@ impl WebhookService for AutharieService {
     ) -> Result<(), CoreError> {
         WebhookServiceImpl::new(
             deployment_repository,
-            organisation_repository,
+            quota_repository,
             webhook_repository,
             action_repository,
             audit_repository,
@@ -181,7 +181,7 @@ impl WebhookService for AutharieService {
         .await
     }
 
-    #[transactional(deployment, organisation, webhook, action, audit, user)]
+    #[transactional(deployment, quota, webhook, action, audit, user)]
     async fn rotate_webhook_secret(
         &self,
         identity: Identity,
@@ -191,7 +191,7 @@ impl WebhookService for AutharieService {
     ) -> Result<WebhookRequest, CoreError> {
         WebhookServiceImpl::new(
             deployment_repository,
-            organisation_repository,
+            quota_repository,
             webhook_repository,
             action_repository,
             audit_repository,
@@ -205,7 +205,7 @@ impl WebhookService for AutharieService {
         .await
     }
 
-    #[transactional(deployment, organisation, webhook, action, audit, user)]
+    #[transactional(deployment, quota, webhook, action, audit, user)]
     async fn reveal_webhook_secret(
         &self,
         identity: Identity,
@@ -215,7 +215,7 @@ impl WebhookService for AutharieService {
     ) -> Result<RevealedSecret, CoreError> {
         WebhookServiceImpl::new(
             deployment_repository,
-            organisation_repository,
+            quota_repository,
             webhook_repository,
             action_repository,
             audit_repository,
@@ -229,7 +229,7 @@ impl WebhookService for AutharieService {
         .await
     }
 
-    #[transactional(deployment, organisation, webhook, action, audit, user)]
+    #[transactional(deployment, quota, webhook, action, audit, user)]
     async fn retry_webhook_delivery(
         &self,
         identity: Identity,
@@ -240,7 +240,7 @@ impl WebhookService for AutharieService {
     ) -> Result<WebhookRequest, CoreError> {
         WebhookServiceImpl::new(
             deployment_repository,
-            organisation_repository,
+            quota_repository,
             webhook_repository,
             action_repository,
             audit_repository,
@@ -260,7 +260,7 @@ impl WebhookService for AutharieService {
         .await
     }
 
-    #[transactional(deployment, organisation, webhook, action, audit, user)]
+    #[transactional(deployment, quota, webhook, action, audit, user)]
     async fn webhook_realms(
         &self,
         identity: Identity,
@@ -269,7 +269,7 @@ impl WebhookService for AutharieService {
     ) -> Result<Vec<String>, CoreError> {
         WebhookServiceImpl::new(
             deployment_repository,
-            organisation_repository,
+            quota_repository,
             webhook_repository,
             action_repository,
             audit_repository,
@@ -283,7 +283,7 @@ impl WebhookService for AutharieService {
         .await
     }
 
-    #[transactional(deployment, organisation, webhook, action, audit, user)]
+    #[transactional(deployment, quota, webhook, action, audit, user)]
     async fn webhook_deliveries<I>(
         &self,
         identity: Identity,
@@ -297,7 +297,7 @@ impl WebhookService for AutharieService {
     {
         WebhookServiceImpl::new(
             deployment_repository,
-            organisation_repository,
+            quota_repository,
             webhook_repository,
             action_repository,
             audit_repository,

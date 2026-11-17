@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                    INSERT INTO organisation_quotas\n                        (organisation_id, kind, max_count, updated_at, updated_by)\n                    VALUES ($1, $2, $3, $4, $5)\n                    ON CONFLICT (organisation_id, kind) DO UPDATE\n                        SET max_count = EXCLUDED.max_count,\n                            updated_at = EXCLUDED.updated_at,\n                            updated_by = EXCLUDED.updated_by\n                    ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Int4",
+        "Timestamptz",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9937207416045dce5e55732c852fb02b6f8863081aae7e1b1479a60f7db536d9"
+}

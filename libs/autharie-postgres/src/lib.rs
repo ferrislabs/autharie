@@ -58,6 +58,9 @@ pub mod signals;
 pub mod smtp;
 
 #[cfg_attr(coverage_nightly, coverage(off))]
+pub mod quotas;
+
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub mod themes;
 
 #[cfg_attr(coverage_nightly, coverage(off))]
@@ -124,6 +127,7 @@ pub mod registry {
         pub struct Organisation;
         pub struct PlatformOperator;
         pub struct ProviderEvent;
+        pub struct Quota;
         pub struct Role;
         pub struct User;
         pub struct ReachabilityCheck;
@@ -180,6 +184,7 @@ mod registry_completeness {
         assert_registered::<domain::Deployment>();
         assert_registered::<domain::Iam>();
         assert_registered::<domain::Metrics>();
+        assert_registered::<domain::Quota>();
         assert_registered::<domain::Organisation>();
         assert_registered::<domain::Release>();
         assert_registered::<domain::Signal>();

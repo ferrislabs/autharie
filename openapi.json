@@ -8691,6 +8691,93 @@
         ]
       }
     },
+    "/organisations/{organisation_id}/deployments/{deployment_id}/quotas": {
+      "get": {
+        "tags": [
+          "deployments"
+        ],
+        "summary": "list what a deployment may hold",
+        "description": "The quota of each kind that applies to this deployment: its offer's default, or the override set for its organisation. A deployment created before offers existed has no default and is limited only by an override.",
+        "operationId": "get_deployment_quotas_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The deployment's quotas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeploymentQuotasResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not view this organisation's deployments",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/organisations/{organisation_id}/deployments/{deployment_id}/start": {
       "post": {
         "tags": [
@@ -13596,6 +13683,180 @@
         ]
       }
     },
+    "/platform/organisations/{organisation_id}/quotas": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "list the quotas of an organisation",
+        "description": "Each quota kind with the default of every offer and the organisation's own override when it has one. The override applies to every deployment of the organisation, whatever its plan.",
+        "operationId": "list_tenant_quotas_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Every quota kind as this organisation sees it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TenantQuotasResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "This needs the view_estate right",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such organisation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/platform/organisations/{organisation_id}/quotas/{kind}": {
+      "put": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "set or clear a quota override for an organisation",
+        "description": "A limit or `unlimited` replaces the offer default for every deployment of this organisation; `null` clears the override. Lowering a quota below what a deployment holds deletes nothing and refuses only the next create.",
+        "operationId": "set_tenant_quota_handler",
+        "parameters": [
+          {
+            "name": "organisation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetTenantQuotaRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The quota as this organisation now sees it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TenantQuotaResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "This needs the act_on_tenant right",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such organisation or quota",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/platform/rights": {
       "get": {
         "tags": [
@@ -17974,6 +18235,45 @@
           }
         }
       },
+      "DeploymentQuotaView": {
+        "type": "object",
+        "required": [
+          "kind",
+          "quota",
+          "overridden",
+          "enforced"
+        ],
+        "properties": {
+          "enforced": {
+            "type": "boolean",
+            "description": "Whether going over refuses anything."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/QuotaKind"
+          },
+          "overridden": {
+            "type": "boolean",
+            "description": "Whether platform staff replaced the offer's default for this organisation."
+          },
+          "quota": {
+            "$ref": "#/components/schemas/Quota"
+          }
+        }
+      },
+      "DeploymentQuotasResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeploymentQuotaView"
+            }
+          }
+        }
+      },
       "DeploymentResources": {
         "type": "object",
         "description": "What one deployment costs a data plane, and what its database is sized to.\n\nThe same value reserves room during placement and is written into the\n`IdentityInstance` spec, so the two cannot drift. Before this, placement\ncounted deployments and Genesis invented the sizing at the other end --\nwhich meant a data plane could accept a deployment it had no disk for.",
@@ -20219,6 +20519,21 @@
           }
         }
       },
+      "OfferDefaultView": {
+        "type": "object",
+        "required": [
+          "offer",
+          "quota"
+        ],
+        "properties": {
+          "offer": {
+            "$ref": "#/components/schemas/Offer"
+          },
+          "quota": {
+            "$ref": "#/components/schemas/Quota"
+          }
+        }
+      },
       "OperatorResponse": {
         "type": "object",
         "required": [
@@ -20681,6 +20996,54 @@
           }
         },
         "additionalProperties": false
+      },
+      "Quota": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "max",
+              "type"
+            ],
+            "properties": {
+              "max": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "limited"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "unlimited"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A limit, or the absence of one.\n\nTagged on the wire rather than a bare number with `null` for unlimited:\nan optional quota (an override that may not exist) would then have two\nmeanings for `null`. `0` is a real quota: none may be created."
+      },
+      "QuotaKind": {
+        "type": "string",
+        "enum": [
+          "users",
+          "mcp_servers",
+          "policies",
+          "webhooks"
+        ]
       },
       "Radius": {
         "type": "integer",
@@ -21832,6 +22195,22 @@
           }
         }
       },
+      "SetTenantQuotaRequest": {
+        "type": "object",
+        "properties": {
+          "quota": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Quota",
+                "description": "A limit, or `{\"type\": \"unlimited\"}`. `null` clears the override."
+              }
+            ]
+          }
+        }
+      },
       "SetUpgradeSettingsRequest": {
         "type": "object",
         "required": [
@@ -22509,6 +22888,67 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/TenantFeatureView"
+            }
+          }
+        }
+      },
+      "TenantQuotaResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TenantQuotaView"
+          }
+        }
+      },
+      "TenantQuotaView": {
+        "type": "object",
+        "required": [
+          "kind",
+          "description",
+          "enforced",
+          "defaults"
+        ],
+        "properties": {
+          "defaults": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OfferDefaultView"
+            }
+          },
+          "description": {
+            "type": "string"
+          },
+          "enforced": {
+            "type": "boolean"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/QuotaKind"
+          },
+          "override": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Quota"
+              }
+            ]
+          }
+        }
+      },
+      "TenantQuotasResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TenantQuotaView"
             }
           }
         }

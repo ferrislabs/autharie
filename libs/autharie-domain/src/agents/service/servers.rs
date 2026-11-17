@@ -12,13 +12,14 @@ use crate::{
         ports::{AgentAccess, AgentRepository},
         registry_ports::AgentRegistryRepository,
         server_ports::{AgentServerRepository, AgentServerService},
-        servers::{CustomerServer, MAX_SERVERS, ServerId, ServerInput},
+        servers::{CustomerServer, ServerId, ServerInput},
         service::AgentServiceImpl,
     },
     audit::{AuditChange, ports::AuditRepository},
     deployments::{Deployment, DeploymentId, ports::DeploymentRepository},
     generate_uuid_v7,
     organisation::{OrganisationId, ports::OrganisationRepository},
+    quotas::{QuotaKind, ports::QuotaRepository, service::require_room},
     user::ports::UserRepository,
 };
 
@@ -32,7 +33,7 @@ fn summary(server: &CustomerServer) -> Value {
     })
 }
 
-impl<D, O, G, A, AU, U, P> AgentServiceImpl<D, O, G, A, AU, U, P>
+impl<D, O, G, A, AU, U, P, Q> AgentServiceImpl<D, O, G, A, AU, U, P, Q>
 where
     D: DeploymentRepository,
     O: OrganisationRepository,
@@ -41,6 +42,7 @@ where
     AU: AuditRepository,
     U: UserRepository,
     P: AgentAccess,
+    Q: QuotaRepository,
 {
     async fn stored_server(
         &self,
@@ -66,7 +68,7 @@ where
     }
 }
 
-impl<D, O, G, A, AU, U, P> AgentServerService for AgentServiceImpl<D, O, G, A, AU, U, P>
+impl<D, O, G, A, AU, U, P, Q> AgentServerService for AgentServiceImpl<D, O, G, A, AU, U, P, Q>
 where
     D: DeploymentRepository,
     O: OrganisationRepository,
@@ -75,6 +77,7 @@ where
     AU: AuditRepository,
     U: UserRepository,
     P: AgentAccess,
+    Q: QuotaRepository,
 {
     async fn list_agent_servers(
         &self,
@@ -117,9 +120,14 @@ where
             .ok_or_else(|| AgentError::invalid("slug: is required"))?;
 
         let known = self.publisher.agents.list_servers(deployment_id).await?;
-        if known.len() >= MAX_SERVERS {
-            return Err(AgentError::TooManyServers { max: MAX_SERVERS }.into());
-        }
+        require_room(
+            &self.quotas,
+            organisation_id,
+            deployment.offer,
+            QuotaKind::McpServers,
+            known.len(),
+        )
+        .await?;
         if known.iter().any(|server| server.slug == slug) {
             return Err(AgentError::ServerSlugTaken {
                 slug: slug.to_string(),

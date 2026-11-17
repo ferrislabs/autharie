@@ -30,11 +30,13 @@ use crate::{
         Deployment, DeploymentId, DeploymentKind, DeploymentName, DeploymentStatus,
         ports::MockDeploymentRepository,
     },
+    offers::Offer,
     organisation::{
         Organisation, OrganisationId,
         ports::MockOrganisationRepository,
         value_objects::{OrganisationName, OrganisationSlug, Plan},
     },
+    quotas::{Quota, QuotaKind, fixtures::InMemoryQuotas},
     user::{User, UserId, ports::UserRepository},
     version::Version,
 };
@@ -542,6 +544,7 @@ type Service = AgentServiceImpl<
     MockAuditRepository,
     Users,
     Access,
+    InMemoryQuotas,
 >;
 
 struct World {
@@ -551,9 +554,17 @@ struct World {
 }
 
 pub(super) fn deployments_of(kind: DeploymentKind) -> MockDeploymentRepository {
+    deployments_on(kind, None)
+}
+
+pub(super) fn deployments_on(
+    kind: DeploymentKind,
+    offer: Option<Offer>,
+) -> MockDeploymentRepository {
     let mut deployments = MockDeploymentRepository::new();
     deployments.expect_get_by_id().returning(move |_| {
-        let found = deployment(kind.clone());
+        let mut found = deployment(kind.clone());
+        found.offer = offer;
         Box::pin(async move { Ok(Some(found)) })
     });
     deployments
@@ -582,6 +593,24 @@ pub(super) fn organisation(mcp_enabled: bool) -> Organisation {
 }
 
 fn world(kind: DeploymentKind, mcp_enabled: bool, manage: bool, domain: Option<&str>) -> World {
+    world_on(
+        kind,
+        mcp_enabled,
+        manage,
+        domain,
+        None,
+        InMemoryQuotas::default(),
+    )
+}
+
+fn world_on(
+    kind: DeploymentKind,
+    mcp_enabled: bool,
+    manage: bool,
+    domain: Option<&str>,
+    offer: Option<Offer>,
+    quotas: InMemoryQuotas,
+) -> World {
     let memory = Memory::default();
     let written = Written::default();
 
@@ -600,18 +629,30 @@ fn world(kind: DeploymentKind, mcp_enabled: bool, manage: bool, domain: Option<&
 
     World {
         service: AgentServiceImpl::new(
-            deployments_of(kind),
+            deployments_on(kind, offer),
             organisations,
             memory.clone(),
             actions_into(&written),
             audit,
             Users,
             Access { manage },
+            quotas,
             domain.map(str::to_string),
         ),
         memory,
         written,
     }
+}
+
+fn ferriskey_on(offer: Offer, quotas: InMemoryQuotas) -> World {
+    world_on(
+        DeploymentKind::Ferriskey,
+        true,
+        true,
+        None,
+        Some(offer),
+        quotas,
+    )
 }
 
 fn ferriskey(mcp_enabled: bool) -> World {

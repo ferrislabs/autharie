@@ -21,7 +21,8 @@ use crate::{
     },
     deployments::{Deployment, DeploymentId, DeploymentKind, ports::DeploymentRepository},
     generate_uuid_v7,
-    organisation::{OrganisationId, ports::OrganisationRepository},
+    organisation::OrganisationId,
+    quotas::{QuotaKind, ports::QuotaRepository, service::require_room},
     user::ports::UserRepository,
     webhooks::{
         RETRY_DELIVERY_ACTION_TYPE, ROTATE_SECRET_ACTION_TYPE, WEBHOOK_CREATED_AUDIT,
@@ -66,12 +67,12 @@ fn summary(webhook: &Webhook) -> Value {
     })
 }
 
-pub struct WebhookServiceImpl<D, O, W, A, AU, U, V, P>
+pub struct WebhookServiceImpl<D, Q, W, A, AU, U, V, P>
 where
     A: ActionRepository,
 {
     deployments: D,
-    organisations: O,
+    quotas: Q,
     webhooks: W,
     actions: ActionServiceImpl<A>,
     audit: AU,
@@ -80,14 +81,14 @@ where
     policy: P,
 }
 
-impl<D, O, W, A, AU, U, V, P> WebhookServiceImpl<D, O, W, A, AU, U, V, P>
+impl<D, Q, W, A, AU, U, V, P> WebhookServiceImpl<D, Q, W, A, AU, U, V, P>
 where
     A: ActionRepository,
 {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         deployments: D,
-        organisations: O,
+        quotas: Q,
         webhooks: W,
         actions: A,
         audit: AU,
@@ -97,7 +98,7 @@ where
     ) -> Self {
         Self {
             deployments,
-            organisations,
+            quotas,
             webhooks,
             actions: ActionServiceImpl::new(actions),
             audit,
@@ -108,10 +109,10 @@ where
     }
 }
 
-impl<D, O, W, A, AU, U, V, P> WebhookServiceImpl<D, O, W, A, AU, U, V, P>
+impl<D, Q, W, A, AU, U, V, P> WebhookServiceImpl<D, Q, W, A, AU, U, V, P>
 where
     D: DeploymentRepository,
-    O: OrganisationRepository,
+    Q: QuotaRepository,
     W: WebhookRepository,
     A: ActionRepository,
     AU: AuditRepository,
@@ -374,10 +375,10 @@ where
     }
 }
 
-impl<D, O, W, A, AU, U, V, P> WebhookService for WebhookServiceImpl<D, O, W, A, AU, U, V, P>
+impl<D, Q, W, A, AU, U, V, P> WebhookService for WebhookServiceImpl<D, Q, W, A, AU, U, V, P>
 where
     D: DeploymentRepository,
-    O: OrganisationRepository,
+    Q: QuotaRepository,
     W: WebhookRepository,
     A: ActionRepository,
     AU: AuditRepository,
@@ -448,24 +449,17 @@ where
             .managed_deployment(organisation_id, deployment_id)
             .await?;
 
-        let revision = self.webhooks.next_revision(deployment_id).await?;
-
-        let organisation = self
-            .organisations
-            .find_by_id(&organisation_id)
-            .await?
-            .ok_or(CoreError::OrganisationNotFound {
-                id: organisation_id.0,
-            })?;
         let held = self.webhooks.list(deployment_id).await?.len();
-        let max = organisation.plan.max_webhooks();
-        if held >= max {
-            return Err(CoreError::OrganisationLimitReached {
-                limit_type: "webhooks".to_string(),
-                max,
-                current: held,
-            });
-        }
+        require_room(
+            &self.quotas,
+            organisation_id,
+            deployment.offer,
+            QuotaKind::Webhooks,
+            held,
+        )
+        .await?;
+
+        let revision = self.webhooks.next_revision(deployment_id).await?;
 
         self.check_realm(deployment_id, &input.realm).await?;
 
