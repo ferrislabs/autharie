@@ -11,6 +11,7 @@ import {
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { ThemeMenu } from './theme-menu'
 import { useAuthStore } from '@/stores/auth'
+import { appLinks } from '@/lib/config-app'
 import { signOut } from '@/lib/auth/sign-out'
 import {
   selectActiveOrganisationId,
@@ -21,6 +22,29 @@ import { useNavigate } from '@tanstack/react-router'
 import { useIsOperator } from '@/domain/organisations/hooks/use-is-operator'
 import { organisationPathFor, platformPath } from '@/lib/paths'
 import { cn } from '@/lib/utils'
+
+function HelpLinks() {
+  const { support_url, docs_url } = appLinks()
+  const entries = [
+    { label: 'Documentation', href: docs_url },
+    { label: 'Contact support', href: support_url },
+  ].filter((entry): entry is { label: string; href: string } => entry.href !== undefined)
+
+  if (entries.length === 0) return null
+
+  return (
+    <>
+      {entries.map((entry) => (
+        <DropdownMenuItem key={entry.label} asChild>
+          <a href={entry.href} target='_blank' rel='noopener noreferrer'>
+            {entry.label}
+          </a>
+        </DropdownMenuItem>
+      ))}
+      <DropdownMenuSeparator />
+    </>
+  )
+}
 
 export interface Crumb {
   label: string
@@ -187,6 +211,7 @@ export function TopBar({
             <DropdownMenuSeparator />
             <ThemeMenu />
             <DropdownMenuSeparator />
+            <HelpLinks />
             <DropdownMenuItem onClick={() => void signOut()}>Sign out</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

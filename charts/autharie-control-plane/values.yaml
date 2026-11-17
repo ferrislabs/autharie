@@ -32,6 +32,9 @@ controlPlane:
 
 console:
   replicaCount: 1
+  # Help links in the console's user menu. Left empty, they are hidden.
+  supportUrl: ""
+  docsUrl: ""
   resources:
     requests:
       cpu: 25m

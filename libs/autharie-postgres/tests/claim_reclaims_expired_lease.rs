@@ -215,6 +215,7 @@ fn named_deployment(
         last_verified_restore_at: None,
         last_restore_drill_seconds: None,
         log_shipping_enabled: false,
+        failure_reason: None,
         iam_settings: Default::default(),
         distribution: Default::default(),
     }

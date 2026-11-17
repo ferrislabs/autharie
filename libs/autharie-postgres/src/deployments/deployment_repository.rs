@@ -63,6 +63,7 @@ struct DeploymentRow {
     cluster_profile: Option<serde_json::Value>,
     replicas: i16,
     database_instances: i16,
+    failure_reason: Option<String>,
 }
 
 impl DeploymentRow {
@@ -134,6 +135,7 @@ impl DeploymentRow {
                 u8::try_from(self.replicas).unwrap_or(0),
                 u8::try_from(self.database_instances).unwrap_or(0),
             )?,
+            failure_reason: self.failure_reason,
         })
     }
 }
@@ -374,11 +376,12 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                 credential_id,
                 cluster_profile,
                 replicas,
-                database_instances
+                database_instances,
+                failure_reason
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
                     $17, $18, $19, $20, $21, $22, $23, $24, $25::TEXT[]::CIDR[], $26, $27, $28, $29,
-                    $30, $31, $32, $33, $34, $35)
+                    $30, $31, $32, $33, $34, $35, $36)
             "#,
                 deployment.id.0,
                 deployment.organisation_id.0,
@@ -424,6 +427,7 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                 distribution.cluster_profile,
                 i16::from(deployment.topology.replicas()),
                 i16::from(deployment.topology.database_instances()),
+                deployment.failure_reason,
             )
             .execute(&mut ***tx)
             .await
@@ -475,7 +479,8 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                    credential_id,
                    cluster_profile,
                    replicas,
-                   database_instances
+                   database_instances,
+                   failure_reason
             FROM deployments
             WHERE id = $1
             "#,
@@ -533,7 +538,8 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                    credential_id,
                    cluster_profile,
                    replicas,
-                   database_instances
+                   database_instances,
+                   failure_reason
             FROM deployments
             WHERE organisation_id = $1
               AND status <> 'deleted'
@@ -598,7 +604,8 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                 database_instances = $27,
                 cpu_millis = $28,
                 memory_mib = $29,
-                storage_gib = $30
+                storage_gib = $30,
+                failure_reason = $31
             WHERE id = $1
             "#,
                 deployment.id.0,
@@ -640,6 +647,7 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                 deployment.resources.cpu_millis as i32,
                 deployment.resources.memory_mib as i32,
                 deployment.resources.storage_gib as i32,
+                deployment.failure_reason,
             )
             .execute(&mut ***tx)
             .await
@@ -753,7 +761,8 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                    credential_id,
                    cluster_profile,
                    replicas,
-                   database_instances
+                   database_instances,
+                   failure_reason
             FROM deployments
             WHERE dataplane_id = $1
               -- A deployment the data plane has finished tearing down is not
@@ -818,7 +827,8 @@ impl DeploymentRepository for PostgresDeploymentRepository<'_> {
                    credential_id,
                    cluster_profile,
                    replicas,
-                   database_instances
+                   database_instances,
+                   failure_reason
             FROM deployments
             WHERE status IN ('successful', 'maintenance', 'upgrading', 'upgrade_required')
             ORDER BY created_at DESC
@@ -882,6 +892,7 @@ mod tests {
             cluster_profile: None,
             replicas: 1,
             database_instances: 1,
+            failure_reason: Some("crash loop".to_string()),
         }
     }
 
@@ -906,6 +917,7 @@ mod tests {
         assert_eq!(deployment.kind, DeploymentKind::Ferriskey);
         assert_eq!(deployment.status, DeploymentStatus::Successful);
         assert_eq!(deployment.namespace, "ns-alpha");
+        assert_eq!(deployment.failure_reason.as_deref(), Some("crash loop"));
         assert_eq!(deployment.version.to_string(), "1.2.3");
         assert_eq!(
             deployment.created_by.0,

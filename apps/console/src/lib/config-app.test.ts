@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { isUnsubstituted } from './config-app'
+import { isUnsubstituted, usableLink } from './config-app'
 
 describe('isUnsubstituted', () => {
   it('recognises the placeholders config.json ships with', () => {
@@ -25,5 +25,28 @@ describe('isUnsubstituted', () => {
     expect(isUnsubstituted(undefined)).toBe(false)
     expect(isUnsubstituted(null)).toBe(false)
     expect(isUnsubstituted(42)).toBe(false)
+  })
+})
+
+describe('usableLink', () => {
+  it('keeps a configured address', () => {
+    expect(usableLink('https://docs.example.com/autharie')).toBe('https://docs.example.com/autharie')
+    expect(usableLink('  mailto:help@example.com ')).toBe('mailto:help@example.com')
+  })
+
+  it('hides the link when nothing was configured', () => {
+    expect(usableLink(undefined)).toBeUndefined()
+    expect(usableLink(null)).toBeUndefined()
+    expect(usableLink('')).toBeUndefined()
+    expect(usableLink('   ')).toBeUndefined()
+  })
+
+  it('hides the link when the placeholder was never substituted', () => {
+    expect(usableLink('${SUPPORT_URL}')).toBeUndefined()
+    expect(usableLink('${DOCS_URL}')).toBeUndefined()
+  })
+
+  it('refuses an address that is not a web or mail link', () => {
+    expect(usableLink('javascript:alert(1)')).toBeUndefined()
   })
 })

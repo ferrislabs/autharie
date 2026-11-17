@@ -219,6 +219,7 @@ async fn seed_customer_plane(pool: &PgPool, account: &Seeded) -> (DataPlaneId, D
                 last_verified_restore_at: None,
                 last_restore_drill_seconds: None,
                 log_shipping_enabled: false,
+                failure_reason: None,
                 iam_settings: Default::default(),
                 distribution: Distribution::CustomerCloud {
                     credential_id: account.credential,

@@ -119,6 +119,7 @@ impl EstateRow {
                 log_shipping_enabled: false,
                 iam_settings: Default::default(),
                 distribution: Default::default(),
+                failure_reason: None,
             },
         })
     }

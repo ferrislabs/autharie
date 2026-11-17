@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { DeploymentStatusBadge } from '../pages/ui/components/deployment-status'
 import type { DeploymentStatus } from '../types/deployment'
+import { failureNotice } from './failure'
 import { ActivityFeed, type ActivityEntry } from './activity-feed'
 import { AvailabilityHistory, type AvailabilityDay } from './availability-history'
 import { DeploymentActions, type DeploymentPower } from './deployment-actions'
@@ -13,6 +14,7 @@ export interface PageDeploymentOverviewProps {
   name: string
   engine: string
   status: DeploymentStatus
+  failureReason?: string | null
   adminUrl?: string
   facts: InstanceFacts
   banner?: React.ReactNode
@@ -55,6 +57,7 @@ export function PageDeploymentOverviewSkeleton() {
 
 export function PageDeploymentOverview(props: PageDeploymentOverviewProps) {
   const { facts, availability } = props
+  const failure = failureNotice(props.status, props.failureReason)
 
   return (
     <div className={FRAME}>
@@ -110,6 +113,15 @@ export function PageDeploymentOverview(props: PageDeploymentOverviewProps) {
           )}
         </div>
       </header>
+
+      {failure && (
+        <p
+          role='alert'
+          className='rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive'
+        >
+          {failure}
+        </p>
+      )}
 
       {props.power?.refusal && (
         <p

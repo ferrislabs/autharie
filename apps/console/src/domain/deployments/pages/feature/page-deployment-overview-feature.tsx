@@ -136,6 +136,7 @@ export default function PageDeploymentOverviewFeature() {
       name={subject.name}
       engine={KIND_LABELS[subject.kind]}
       status={subject.status}
+      failureReason={subject.failure_reason}
       adminUrl={adminUrlOf(endpoint, subject.kind)}
       banner={notice && <ProvisioningNoticeBanner notice={notice} />}
       power={
