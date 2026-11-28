@@ -9,6 +9,7 @@ ignore = [
     "RUSTSEC-2026-0459",
     "RUSTSEC-2026-0545",
     "RUSTSEC-2026-0548",
+    "RUSTSEC-2026-0600",
 ]
 # RUSTSEC-2023-0071 (rsa, Marvin timing attack, no fixed release)
 # Reason: the attack recovers a private key by timing decryptions or
@@ -50,3 +51,10 @@ ignore = [
 # AES-encrypted entries, which the Swagger UI archive does not use; 0548 needs
 # a crafted archive, like the advisories above. No zip runs in a binary.
 # Remove with them.
+#
+# RUSTSEC-2026-0600 (kube-client 2.0.1, fixed in 4.2.1 and 5.2.0)
+# Reason: the advisory is about the `openssl-tls` feature trusting OpenSSL's
+# default CA store besides the cluster CA. We enable `client` and `runtime`
+# only, which use rustls: `cargo tree -i openssl-sys` finds nothing, so the
+# affected code is never compiled. A fix means jumping kube two majors.
+# Remove with the next kube upgrade, or if openssl-tls is ever enabled.
